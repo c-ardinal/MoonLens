@@ -14,7 +14,7 @@ pub struct DeepLTranslator {
 }
 
 impl DeepLTranslator {
-    pub fn new(id: impl Into<String>, config: &toml::Value) -> Self {
+    pub fn new(id: impl Into<String>, config: &serde_json::Value) -> Self {
         let key_env = config
             .get("api_key_env")
             .and_then(|v| v.as_str())

@@ -298,7 +298,11 @@ pub struct Providers {
     pub intent_classifier: TaskChain,
     /// Per-provider configuration blobs, keyed by the provider id that
     /// appears in a chain (e.g. "ollama.gemma4", "deepl", "plugin.<id>").
-    pub configs: BTreeMap<String, toml::Value>,
+    ///
+    /// Stored as `serde_json::Value` so we can round-trip through both TOML
+    /// (for on-disk persistence) and JSON Schema (for the auto-generated
+    /// settings UI). Provider constructors receive a `&serde_json::Value`.
+    pub configs: BTreeMap<String, serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]

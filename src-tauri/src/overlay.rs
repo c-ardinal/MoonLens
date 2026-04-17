@@ -1,20 +1,52 @@
-//! Overlay window control: show/hide, move near source region, pinned mode.
+//! Overlay window control and event bus toward the frontend.
 //!
-//! The actual UI is rendered by the `overlay` webview route; this module is
-//! the Rust-side puppet-master (position, visibility, event forwarding).
+//! The overlay is a separate transparent Tauri window (`overlay` label).
+//! Rust sends it updates via the app-wide event system; the Svelte route at
+//! `/overlay/` listens on `moonlens://overlay` and re-renders.
 
 use anyhow::Result;
-use tauri::{AppHandle, Manager, WebviewWindow};
+use serde::Serialize;
+use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, WebviewWindow};
 
-pub fn show_near(app: &AppHandle, x: i32, y: i32) -> Result<()> {
+use crate::pipeline::TaskResult;
+
+/// One shape for every message the overlay needs to handle. Extending the
+/// overlay UI = add a variant + handle it in the Svelte page.
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum OverlayEvent {
+    Processing { message: String },
+    Result { result: TaskResult, source_text: Option<String> },
+    Error { message: String },
+    Hidden,
+}
+
+pub fn emit(app: &AppHandle, event: OverlayEvent) -> Result<()> {
+    app.emit("moonlens://overlay", event)?;
+    Ok(())
+}
+
+pub fn show_near(app: &AppHandle, x: i32, y: i32, w: Option<u32>) -> Result<()> {
     let win = overlay(app)?;
-    win.set_position(tauri::PhysicalPosition::new(x, y))?;
+    if let Some(w) = w {
+        let _ = win.set_size(PhysicalSize::new(w, 320));
+    }
+    win.set_position(PhysicalPosition::new(x, y))?;
+    win.show()?;
+    Ok(())
+}
+
+pub fn show_centered(app: &AppHandle) -> Result<()> {
+    let win = overlay(app)?;
+    win.center()?;
     win.show()?;
     Ok(())
 }
 
 pub fn hide(app: &AppHandle) -> Result<()> {
-    overlay(app)?.hide()?;
+    let win = overlay(app)?;
+    win.hide()?;
+    emit(app, OverlayEvent::Hidden).ok();
     Ok(())
 }
 

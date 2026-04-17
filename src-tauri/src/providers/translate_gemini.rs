@@ -14,7 +14,7 @@ pub struct GeminiProvider {
 }
 
 impl GeminiProvider {
-    pub fn new(id: impl Into<String>, config: &toml::Value) -> Self {
+    pub fn new(id: impl Into<String>, config: &serde_json::Value) -> Self {
         let key_env = config
             .get("api_key_env")
             .and_then(|v| v.as_str())
@@ -29,7 +29,7 @@ impl GeminiProvider {
             api_key: std::env::var(key_env).ok(),
             temperature: config
                 .get("temperature")
-                .and_then(|v| v.as_float())
+                .and_then(|v| v.as_f64())
                 .unwrap_or(0.2) as f32,
             http: reqwest::Client::new(),
         }

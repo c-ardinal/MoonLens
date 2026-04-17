@@ -13,7 +13,7 @@ pub struct WhisperCppProvider {
 }
 
 impl WhisperCppProvider {
-    pub fn new(id: impl Into<String>, config: &toml::Value) -> Self {
+    pub fn new(id: impl Into<String>, config: &serde_json::Value) -> Self {
         Self {
             id: id.into(),
             endpoint: config

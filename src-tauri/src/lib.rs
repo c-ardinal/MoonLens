@@ -11,6 +11,8 @@ pub mod intent;
 pub mod ipc;
 pub mod overlay;
 pub mod pipeline;
+#[cfg(test)]
+mod pipeline_tests;
 pub mod plugins;
 pub mod providers;
 pub mod settings;

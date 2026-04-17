@@ -12,12 +12,13 @@ use serde::Serialize;
 use tokio::time::timeout;
 
 use crate::{
+    intent,
     plugins::PluginRegistry,
     providers::{
         asr_whisper::WhisperCppProvider, ocr_ocrs::OcrsProvider, qr_rqrr::RqrrProvider,
         search_serpapi::BrowserSearchProvider, translate_deepl::DeepLTranslator,
-        translate_gemini::GeminiProvider, translate_ollama::OllamaTranslator, Capability,
-        Provider, ProviderError, ProviderHandle, TaskInput, TaskOutput,
+        translate_gemini::GeminiProvider, translate_ollama::OllamaTranslator, Capability, Intent,
+        OcrLine, ProviderError, ProviderHandle, TaskInput, TaskOutput,
     },
     settings::{
         schema::{FallbackCondition, TaskChain},
@@ -40,7 +41,6 @@ pub struct TaskResult {
 
 pub struct Pipeline {
     settings: Arc<SettingsStore>,
-    #[allow(dead_code)]
     storage: Arc<Storage>,
     plugins: Arc<PluginRegistry>,
     providers: RwLock<HashMap<String, ProviderHandle>>,
@@ -69,7 +69,7 @@ impl Pipeline {
     pub fn rebuild_providers(&self) {
         let s = self.settings.snapshot();
         let mut map: HashMap<String, ProviderHandle> = HashMap::new();
-        let empty = toml::Value::Table(Default::default());
+        let empty = serde_json::Value::Object(Default::default());
         for (id, cfg) in &s.providers.configs {
             let cfg = cfg.clone();
             let handle: Option<ProviderHandle> = match id.as_str() {
@@ -193,6 +193,143 @@ impl Pipeline {
             .write()
             .insert(key, (id.to_string(), Instant::now() + Duration::from_millis(ms as u64)));
     }
+
+    /// High-level capture flow: given a region-of-interest PNG, classify
+    /// content, run the appropriate providers, and return a user-ready
+    /// result bundle. Used by the hotkey handler.
+    pub async fn run_capture_flow(
+        &self,
+        image_png: Vec<u8>,
+    ) -> Result<CaptureFlowResult, ProviderError> {
+        let s = self.settings.snapshot();
+        // Cheap heuristic classifier. A plugin-provided classifier can
+        // override through the `intent_classifier` chain in future work.
+        let img = image::load_from_memory(&image_png)
+            .map_err(|e| ProviderError::Other(e.to_string()))?;
+        let intent = intent::classify(&img);
+
+        // 1) Try QR — decoding is almost free and short-circuits the rest.
+        if let Ok(res) = self
+            .run(
+                Capability::QrHandler,
+                TaskInput::IntentClassifier {
+                    image_png: image_png.clone(),
+                },
+            )
+            .await
+        {
+            if let TaskOutput::Text(payload) = &res.output {
+                self.record_history(
+                    "qr",
+                    None,
+                    Some(payload),
+                    Some(&res.used_provider),
+                    res.via_cloud,
+                );
+                return Ok(CaptureFlowResult {
+                    intent: Intent::Qr,
+                    source_text: None,
+                    result: res,
+                });
+            }
+        }
+
+        // 2) OCR → translate. Always attempted for text-like or unknown regions.
+        let ocr_res = self
+            .run(
+                Capability::Ocr,
+                TaskInput::Ocr {
+                    image_png: image_png.clone(),
+                    languages: vec![],
+                },
+            )
+            .await;
+        let ocr_text = match ocr_res.as_ref() {
+            Ok(r) => match &r.output {
+                TaskOutput::Ocr { lines } => lines
+                    .iter()
+                    .map(|l: &OcrLine| l.text.clone())
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+                _ => String::new(),
+            },
+            Err(_) => String::new(),
+        };
+
+        if ocr_text.trim().is_empty() {
+            // Nothing text-like detected. Return the intent so the UI can
+            // offer actions (reverse image search, explain, ...).
+            return Ok(CaptureFlowResult {
+                intent,
+                source_text: None,
+                result: TaskResult {
+                    task: "capture".into(),
+                    output: TaskOutput::Intent(intent),
+                    used_provider: "builtin.heuristic".into(),
+                    via_cloud: false,
+                    latency_ms: 0,
+                    fallback_reasons: vec![],
+                },
+            });
+        }
+
+        let translate = self
+            .run(
+                Capability::Translate,
+                TaskInput::Translate {
+                    text: ocr_text.clone(),
+                    source_language: "auto".into(),
+                    target_language: s.subtitle.target_language.clone(),
+                },
+            )
+            .await?;
+
+        self.record_history(
+            "translate",
+            Some(&ocr_text),
+            match &translate.output {
+                TaskOutput::Text(t) => Some(t.as_str()),
+                _ => None,
+            },
+            Some(&translate.used_provider),
+            translate.via_cloud,
+        );
+
+        Ok(CaptureFlowResult {
+            intent: Intent::Text,
+            source_text: Some(ocr_text),
+            result: translate,
+        })
+    }
+
+    fn record_history(
+        &self,
+        kind: &str,
+        source_text: Option<&str>,
+        result_text: Option<&str>,
+        provider: Option<&str>,
+        via_cloud: bool,
+    ) {
+        let s = self.settings.snapshot();
+        if !s.storage.keep_history {
+            return;
+        }
+        if let Err(e) = self
+            .storage
+            .append(kind, source_text, result_text, provider, via_cloud, None)
+        {
+            tracing::warn!("history append failed: {e}");
+        }
+    }
+}
+
+/// Output of [`Pipeline::run_capture_flow`]. The frontend renders `result`
+/// directly; `source_text` is shown above translations for context.
+#[derive(Debug, Clone, Serialize)]
+pub struct CaptureFlowResult {
+    pub intent: Intent,
+    pub source_text: Option<String>,
+    pub result: TaskResult,
 }
 
 fn pick_chain(s: &crate::settings::schema::Settings, cap: Capability) -> TaskChain {
@@ -206,6 +343,35 @@ fn pick_chain(s: &crate::settings::schema::Settings, cap: Capability) -> TaskCha
         Capability::QrHandler => s.providers.qr_handler.clone(),
         Capability::IntentClassifier => s.providers.intent_classifier.clone(),
     }
+}
+
+/// Test-friendly alias for [`should_fallback`]. Kept minimal on purpose.
+#[cfg(test)]
+pub fn should_fallback_for_test(conds: &[FallbackCondition], e: &ProviderError) -> bool {
+    should_fallback(conds, e)
+}
+
+/// Test-friendly alias for [`apply_stickiness`] that avoids building an
+/// `RwLock`; tests pass an owned `HashMap` instead.
+#[cfg(test)]
+pub fn apply_stickiness_for_test(
+    key: &str,
+    map: &HashMap<String, (String, Instant)>,
+    chain: &[String],
+) -> Vec<String> {
+    if let Some((preferred, deadline)) = map.get(key) {
+        if Instant::now() < *deadline {
+            let mut ordered = Vec::with_capacity(chain.len());
+            ordered.push(preferred.clone());
+            for id in chain {
+                if id != preferred {
+                    ordered.push(id.clone());
+                }
+            }
+            return ordered;
+        }
+    }
+    chain.to_vec()
 }
 
 fn should_fallback(conds: &[FallbackCondition], e: &ProviderError) -> bool {

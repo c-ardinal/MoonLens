@@ -1,22 +1,51 @@
 /**
- * Thin typed wrappers around Tauri `invoke` calls.
- * Keeping all IPC surface in one file makes it easier to mock during tests
- * and to see everything the frontend can ask the backend to do.
+ * Typed wrappers around Tauri `invoke` calls.
+ * Every IPC surface the frontend needs lives here so it is easy to mock
+ * in tests and audit what the backend can be asked to do.
  */
 
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 
-export type Settings = Record<string, unknown>;
+export type Settings = Record<string, any>;
 
-export interface TaskResult<O = unknown> {
+export type Intent = 'qr' | 'text' | 'photo' | 'mixed' | 'unknown';
+
+export interface OcrLine {
+  text: string;
+  bbox: [number, number, number, number];
+  confidence: number;
+}
+
+export type TaskOutput =
+  | { Text: string }
+  | { TextChunk: { delta: string; done: boolean } }
+  | { Ocr: { lines: OcrLine[] } }
+  | { Transcript: { segments: { start_s: number; end_s: number; text: string }[] } }
+  | { OpenedExternalUrl: string }
+  | { Intent: Intent }
+  | 'Empty';
+
+export interface TaskResult {
   task: string;
-  output: O;
+  output: TaskOutput;
   used_provider: string;
   via_cloud: boolean;
   latency_ms: number;
   fallback_reasons: string[];
 }
+
+export interface CaptureFlowResult {
+  intent: Intent;
+  source_text: string | null;
+  result: TaskResult;
+}
+
+export type OverlayEvent =
+  | { kind: 'processing'; message: string }
+  | { kind: 'result'; source_text: string | null; result: TaskResult }
+  | { kind: 'error'; message: string }
+  | { kind: 'hidden' };
 
 export interface PluginDescriptor {
   id: string;
@@ -31,63 +60,49 @@ export interface PluginDescriptor {
   path: string;
 }
 
-export async function getSettings(): Promise<Settings> {
-  return await invoke<Settings>('get_settings');
+const hasTauri = () =>
+  typeof window !== 'undefined' && typeof (window as any).__TAURI_INTERNALS__ !== 'undefined';
+
+async function safeInvoke<T>(cmd: string, args?: Record<string, unknown>, fallback?: T): Promise<T> {
+  if (!hasTauri()) {
+    if (fallback !== undefined) return fallback;
+    throw new Error(`Tauri not available: ${cmd}`);
+  }
+  return (await invoke(cmd, args)) as T;
 }
 
-export async function setSettings(next: Settings): Promise<void> {
-  await invoke('set_settings', { new: next });
-}
+export const getSettings = () => safeInvoke<Settings>('get_settings', undefined, {});
+export const setSettings = (next: Settings) => safeInvoke<void>('set_settings', { new: next });
+export const getSettingsSchema = () => safeInvoke<any>('get_settings_schema', undefined, null);
+export const listPlugins = () =>
+  safeInvoke<PluginDescriptor[]>('list_plugins', undefined, []);
+export const setPluginEnabled = (id: string, enabled: boolean) =>
+  safeInvoke<void>('set_plugin_enabled', { id, enabled });
+export const installPluginFromPath = (archivePath: string) =>
+  safeInvoke<string>('install_plugin_from_path', { archivePath });
+export const installOcrModels = () => safeInvoke<string>('install_ocr_models');
+export const showMain = () => safeInvoke<void>('show_main');
+export const hideOverlay = () => safeInvoke<void>('hide_overlay');
 
-export async function getSettingsSchema(): Promise<unknown> {
-  return await invoke('get_settings_schema');
-}
-
-export async function listPlugins(): Promise<PluginDescriptor[]> {
-  return await invoke<PluginDescriptor[]>('list_plugins');
-}
-
-export async function setPluginEnabled(id: string, enabled: boolean): Promise<void> {
-  await invoke('set_plugin_enabled', { id, enabled });
-}
-
-export async function runTranslate(args: {
+export const runTranslate = (args: {
   text: string;
   source_language: string;
   target_language: string;
-}): Promise<TaskResult<{ Text?: string }>> {
-  return await invoke('run_translate', { args });
-}
+}) => safeInvoke<TaskResult>('run_translate', { args });
 
-export async function runOcr(
-  imagePng: Uint8Array,
-  languages: string[]
-): Promise<TaskResult> {
-  return await invoke('run_ocr', { imagePng: Array.from(imagePng), languages });
-}
+export const runIntent = (imagePng: Uint8Array) =>
+  safeInvoke<string>('run_intent', { imagePng: Array.from(imagePng) });
 
-export async function runIntent(imagePng: Uint8Array): Promise<string> {
-  return await invoke<string>('run_intent', { imagePng: Array.from(imagePng) });
-}
-
-export async function runQr(imagePng: Uint8Array): Promise<TaskResult> {
-  return await invoke('run_qr', { imagePng: Array.from(imagePng) });
-}
-
-export async function runReverseImageSearch(imageUrl: string): Promise<TaskResult> {
-  return await invoke('run_reverse_image_search', { imageUrl });
-}
-
-export async function captureRegion(args: {
+export const captureAndProcess = (region?: {
   monitor_index: number;
   x: number;
   y: number;
   w: number;
   h: number;
-}): Promise<{ image_png: number[] }> {
-  return await invoke('capture_region_cmd', { args });
-}
+}) => safeInvoke<CaptureFlowResult>('capture_and_process', { args: region ?? null });
 
-export async function onHotkey(handler: (action: string) => void): Promise<UnlistenFn> {
-  return await listen<string>('moonlens://hotkey', (e) => handler(e.payload));
-}
+export const onOverlay = (handler: (event: OverlayEvent) => void): Promise<UnlistenFn> =>
+  listen<OverlayEvent>('moonlens://overlay', (e) => handler(e.payload));
+
+export const onHotkey = (handler: (action: string) => void): Promise<UnlistenFn> =>
+  listen<string>('moonlens://hotkey', (e) => handler(e.payload));

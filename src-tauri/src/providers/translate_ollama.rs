@@ -17,7 +17,7 @@ pub struct OllamaTranslator {
 }
 
 impl OllamaTranslator {
-    pub fn new(id: impl Into<String>, config: &toml::Value) -> Self {
+    pub fn new(id: impl Into<String>, config: &serde_json::Value) -> Self {
         let get_str = |k: &str, d: &str| {
             config
                 .get(k)
@@ -26,10 +26,10 @@ impl OllamaTranslator {
                 .to_string()
         };
         let get_f = |k: &str, d: f64| {
-            config.get(k).and_then(|v| v.as_float()).unwrap_or(d) as f32
+            config.get(k).and_then(|v| v.as_f64()).unwrap_or(d) as f32
         };
-        let get_u = |k: &str, d: i64| {
-            config.get(k).and_then(|v| v.as_integer()).unwrap_or(d) as u32
+        let get_u = |k: &str, d: u64| {
+            config.get(k).and_then(|v| v.as_u64()).unwrap_or(d) as u32
         };
         Self {
             id: id.into(),

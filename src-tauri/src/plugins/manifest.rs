@@ -75,7 +75,7 @@ pub struct Permissions {
 pub struct PluginSettingsBlock {
     pub schema: String,
     #[serde(default)]
-    pub defaults: BTreeMap<String, toml::Value>,
+    pub defaults: BTreeMap<String, serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]

@@ -10,7 +10,7 @@ pub struct RqrrProvider {
 }
 
 impl RqrrProvider {
-    pub fn new(id: impl Into<String>, _config: &toml::Value) -> Self {
+    pub fn new(id: impl Into<String>, _config: &serde_json::Value) -> Self {
         Self { id: id.into() }
     }
 }

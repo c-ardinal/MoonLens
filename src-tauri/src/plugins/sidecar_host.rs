@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
     process::{Child, ChildStdin, Command},
-    sync::oneshot,
+    sync::{oneshot, Mutex as AsyncMutex},
 };
 
 use crate::providers::{
@@ -33,7 +33,11 @@ pub struct SidecarPlugin {
 }
 
 struct Conn {
-    stdin: Mutex<Option<ChildStdin>>,
+    // stdin is touched across `.await` points, so it needs an async-aware
+    // mutex. The other fields are only ever held for synchronous work, so
+    // they stay on parking_lot to avoid pulling tokio runtime guards into
+    // trivial accesses.
+    stdin: AsyncMutex<Option<ChildStdin>>,
     pending: Mutex<std::collections::HashMap<u64, oneshot::Sender<RpcResponse>>>,
     next_id: Mutex<u64>,
     _child: Mutex<Child>,
@@ -61,7 +65,7 @@ impl SidecarPlugin {
         let stdout = child.stdout.take().context("no stdout")?;
 
         let conn = Arc::new(Conn {
-            stdin: Mutex::new(Some(stdin)),
+            stdin: AsyncMutex::new(Some(stdin)),
             pending: Mutex::new(Default::default()),
             next_id: Mutex::new(1),
             _child: Mutex::new(child),
@@ -170,7 +174,7 @@ impl Provider for SidecarProvider {
         };
         let raw = serde_json::to_string(&req).map_err(|e| ProviderError::Other(e.to_string()))?;
         {
-            let mut guard = self.conn.stdin.lock();
+            let mut guard = self.conn.stdin.lock().await;
             if let Some(stdin) = guard.as_mut() {
                 stdin
                     .write_all(raw.as_bytes())

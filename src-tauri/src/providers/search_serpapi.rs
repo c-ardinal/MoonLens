@@ -11,7 +11,7 @@ pub struct BrowserSearchProvider {
 }
 
 impl BrowserSearchProvider {
-    pub fn new(id: impl Into<String>, config: &toml::Value) -> Self {
+    pub fn new(id: impl Into<String>, config: &serde_json::Value) -> Self {
         Self {
             id: id.into(),
             url_template: config
