@@ -1,0 +1,31 @@
+# Node
+node_modules/
+dist/
+.svelte-kit/
+build/
+.vite/
+
+# Rust / Tauri
+target/
+src-tauri/target/
+Cargo.lock
+
+# Editor
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+
+# MoonLens runtime
+/data/
+*.moonlens-plugin
+plugins-installed/
+logs/

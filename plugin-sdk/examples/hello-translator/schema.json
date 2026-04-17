@@ -1,0 +1,12 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Hello Translator settings",
+  "type": "object",
+  "properties": {
+    "uppercase": {
+      "type": "boolean",
+      "title": "Uppercase output",
+      "default": false
+    }
+  }
+}

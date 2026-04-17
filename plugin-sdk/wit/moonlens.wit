@@ -1,0 +1,82 @@
+// MoonLens Plugin Interface (public SDK copy)
+//
+// Keep this file in lockstep with `src-tauri/src/plugins/wit/moonlens.wit`.
+// Plugin authors depend on this package via `wit-bindgen`.
+
+package moonlens:plugin@0.1.0;
+
+interface types {
+    variant task-input {
+        translate(translate-input),
+        ocr(ocr-input),
+        asr(asr-input),
+        explain(explain-input),
+        summarize(string),
+        reverse-image-search(string),
+        qr-handler(string),
+        intent-classifier(list<u8>),
+    }
+
+    record translate-input {
+        text: string,
+        source-language: string,
+        target-language: string,
+    }
+    record ocr-input {
+        image-png: list<u8>,
+        languages: list<string>,
+    }
+    record asr-input {
+        audio-pcm16-mono-16k: list<u8>,
+        language-hint: option<string>,
+    }
+    record explain-input {
+        prompt: string,
+        image-png: option<list<u8>>,
+    }
+
+    variant task-output {
+        text(string),
+        text-chunk(text-chunk),
+        ocr(list<ocr-line>),
+        transcript(list<transcript-segment>),
+        opened-external-url(string),
+        intent(intent),
+        empty,
+    }
+
+    record text-chunk { delta: string, done: bool }
+    record ocr-line {
+        text: string,
+        bbox: tuple<f32, f32, f32, f32>,
+        confidence: f32,
+    }
+    record transcript-segment { start-s: f32, end-s: f32, text: string }
+    enum intent { qr, text, photo, mixed, unknown }
+    enum capability {
+        translate, ocr, asr, explain, summarize,
+        reverse-image-search, qr-handler, intent-classifier,
+    }
+    variant provider-error {
+        timeout(u32),
+        offline,
+        rate-limit,
+        unsupported-language(tuple<string, string>),
+        low-confidence,
+        other(string),
+    }
+}
+
+interface provider {
+    use types.{task-input, task-output, capability, provider-error};
+    list-capabilities: func() -> list<capability>;
+    run: func(input: task-input) -> result<task-output, provider-error>;
+}
+
+interface streaming {
+    use types.{task-input, text-chunk, provider-error};
+    run-stream: func(input: task-input) -> result<list<text-chunk>, provider-error>;
+}
+
+world plugin { export provider; }
+world streaming-plugin { export provider; export streaming; }

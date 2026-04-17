@@ -1,0 +1,29 @@
+[plugin]
+id = "com.moonlens.example.hello-translator"
+name = "Hello Translator"
+version = "0.1.0"
+author = "MoonLens"
+license = "Apache-2.0"
+kind = "sidecar"
+entry = "bin/hello-translator"
+api_version = "1"
+
+[capabilities]
+provides = ["translator"]
+consumes = []
+
+[permissions]
+network = []
+fs_read = []
+fs_write = []
+audio_capture = false
+screen_capture = false
+clipboard = false
+subprocess = false
+env = []
+
+[settings]
+schema = "schema.json"
+
+[settings.defaults]
+uppercase = false

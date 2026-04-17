@@ -1,0 +1,18 @@
+[plugin]
+id = "com.example.music-recognizer"
+name = "Music Recognizer"
+version = "0.1.0"
+author = "Example"
+license = "MIT"
+kind = "sidecar"
+entry = "bin/music-recognizer"
+api_version = "1"
+
+[capabilities]
+provides = ["action"]
+consumes = ["audio_loopback"]
+
+[permissions]
+network = ["https://api.audd.io"]
+audio_capture = true
+env = ["AUDD_API_TOKEN"]
