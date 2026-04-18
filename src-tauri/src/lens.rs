@@ -25,10 +25,7 @@ use std::sync::Arc;
 use anyhow::{anyhow, Context, Result};
 use parking_lot::Mutex;
 use serde::Serialize;
-use tauri::{
-    AppHandle, LogicalPosition, LogicalSize, Manager, WebviewUrl, WebviewWindow,
-    WebviewWindowBuilder,
-};
+use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 
 pub mod geometry {
     //! Pure rect-math for lens windows.

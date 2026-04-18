@@ -15,7 +15,14 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = ["tray-icon", "image-png"] }
+tauri = { version = "2", features = [
+    "tray-icon",
+    "image-png",
+    # Enable `WebviewWindowBuilder::transparent()` on macOS. Our lens and
+    # overlay windows depend on platform-native transparency; without this
+    # feature the macOS target fails to build (the method is gated off).
+    "macos-private-api",
+] }
 tauri-plugin-global-shortcut = "2"
 tauri-plugin-shell = "2"
 tauri-plugin-dialog = "2"
