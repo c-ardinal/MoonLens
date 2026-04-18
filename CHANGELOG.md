@@ -6,26 +6,35 @@ the project adheres to [SemVer](https://semver.org/).
 
 ## Unreleased
 
+_No changes yet since v0.1.0-rc.1._
+
+## v0.1.0-rc.1 — first public release candidate
+
+First release-candidate build. All 0.1.0 ship-criteria features are
+in and tested; this is the last chance to surface regressions before
+`v0.1.0` is tagged on the same commit.
+
 ### Added
 
 - Tag-driven release workflow (`.github/workflows/release.yml`) that
-  produces signed-capable `.dmg` / `.msi` / `.AppImage` / `.deb` /
-  `.rpm` bundles for every `v*` tag. `-rc` / `-beta` / `-alpha`
-  suffixes publish as pre-releases automatically.
+  produces `.dmg` / `.msi` / `.nsis` / `.AppImage` / `.deb` / `.rpm`
+  bundles for every `v*` tag. `-rc` / `-beta` / `-alpha` suffixes
+  publish as GitHub pre-releases automatically.
 - `docs/RELEASING.md` documenting the end-to-end release flow.
 
 ### Changed
 
-- Dropped the unused `network_allow` field in `WasmPlugin` /
-  `WasmProvider`. The permission will be re-introduced when WASI p3
-  sockets stabilise; until then the field would be persisted without
-  being honoured.
-- `README.md` updated to reflect the actual implementation
-  (removed the stale `tantivy` mention, mentioned Ollama streaming
-  and Ed25519 plugin signing).
+- `bundle.active` is `true` in the committed `tauri.conf.json` so
+  `tauri build` produces installer artefacts on any machine — signing
+  is optional (missing identities yield unsigned bundles that still
+  run with an OS warning).
+- Dropped the unused `network_allow` field from `WasmPlugin` /
+  `WasmProvider`. Will be re-introduced when WASI p3 sockets stabilise.
+- `README.md` synced with the actual implementation: removed the
+  stale `tantivy` mention, called out Ollama streaming and Ed25519
+  plugin signing.
 - `plugin-sdk/examples/music-recognizer/README.md` rewritten from a
-  placeholder stub into real install/build instructions now that the
-  plugin is implemented.
+  placeholder stub into real install/build instructions.
 
 ## 0.1.0 — initial release target
 

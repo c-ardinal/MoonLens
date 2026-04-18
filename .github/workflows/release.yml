@@ -70,20 +70,6 @@ jobs:
       - name: Build frontend
         run: npm run build
 
-      # Flip bundle.active back on for release builds. Our default
-      # tauri.conf.json keeps it off so `cargo build` on dev machines
-      # is not blocked by missing signing identities.
-      - name: Enable bundling for release
-        shell: bash
-        run: |
-          python3 -c "
-          import json, pathlib
-          p = pathlib.Path('src-tauri/tauri.conf.json')
-          cfg = json.loads(p.read_text())
-          cfg.setdefault('bundle', {})['active'] = True
-          p.write_text(json.dumps(cfg, indent=2))
-          "
-
       - name: Build Tauri bundle
         uses: tauri-apps/tauri-action@v0
         env:
