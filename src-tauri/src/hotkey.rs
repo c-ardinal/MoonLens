@@ -156,15 +156,23 @@ async fn run_full_capture(app: &AppHandle, pipeline: Arc<Pipeline>) -> anyhow::R
             let monitor = monitors
                 .first()
                 .ok_or_else(|| anyhow::anyhow!("no monitor"))?;
+            // xcap 0.9 exposes monitor geometry as Result-returning getters
+            // because any accessor can in principle call back into the
+            // platform API. We resolve every field eagerly so the rest of
+            // the function can work with plain integers.
+            let w = monitor.width()?;
+            let h = monitor.height()?;
+            let x = monitor.x()?;
+            let y = monitor.y()?;
             let img = capture::capture_rect(crate::capture::CaptureRect {
                 monitor_index: 0,
                 x: 0,
                 y: 0,
-                w: monitor.width(),
-                h: monitor.height(),
+                w,
+                h,
             })?;
             let png = capture::png_bytes(&img)?;
-            Ok((png, monitor.width(), monitor.x(), monitor.y()))
+            Ok((png, w, x, y))
         })
         .await??;
 

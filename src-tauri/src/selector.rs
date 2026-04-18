@@ -16,8 +16,17 @@ pub fn show(app: &AppHandle) -> Result<()> {
     let win = app
         .get_webview_window("selector")
         .ok_or_else(|| anyhow!("selector window missing"))?;
-    win.set_position(PhysicalPosition::new(monitor.x(), monitor.y()))?;
-    win.set_size(PhysicalSize::new(monitor.width(), monitor.height()))?;
+    // xcap 0.9's monitor getters can fail if the display server races
+    // with our access; propagate the error so the selector never ends
+    // up sized for the wrong monitor.
+    let (x, y, w, h) = (
+        monitor.x()?,
+        monitor.y()?,
+        monitor.width()?,
+        monitor.height()?,
+    );
+    win.set_position(PhysicalPosition::new(x, y))?;
+    win.set_size(PhysicalSize::new(w, h))?;
     win.show()?;
     win.set_always_on_top(true)?;
     win.set_focus()?;

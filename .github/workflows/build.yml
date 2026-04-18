@@ -49,6 +49,11 @@ jobs:
         if: matrix.platform.name == 'linux'
         run: |
           sudo apt-get update
+          # xcap 0.9's Linux backend pulls in PipeWire (Wayland portal
+          # screen capture) plus GBM / Wayland / DRM for the DMABUF path.
+          # Missing any one of these shows up as a linker "-l... not
+          # found" miles deep in the test build, so keep the list
+          # explicit.
           sudo apt-get install -y --no-install-recommends \
             libwebkit2gtk-4.1-dev \
             libappindicator3-dev \
@@ -56,7 +61,14 @@ jobs:
             patchelf \
             libxdo-dev \
             libasound2-dev \
-            libsoup-3.0-dev
+            libsoup-3.0-dev \
+            libpipewire-0.3-dev \
+            libspa-0.2-dev \
+            libgbm-dev \
+            libwayland-dev \
+            libegl1-mesa-dev \
+            libdrm-dev \
+            libxkbcommon-dev
 
       - uses: actions/setup-node@v4
         with:

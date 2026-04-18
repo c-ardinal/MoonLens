@@ -377,6 +377,9 @@ pub fn capture_rect(r: CaptureRect) -> Result<DynamicImage> {
     let monitor = monitors
         .get(r.monitor_index)
         .context("monitor index out of range")?;
+    // `capture_image` returns a platform-specific `image::RgbaImage` in
+    // xcap 0.9; wrap it in `DynamicImage` so the rest of the pipeline can
+    // treat every capture source uniformly.
     let full = monitor.capture_image().context("capture")?;
     let dynamic = DynamicImage::ImageRgba8(full);
     let cropped = image::imageops::crop_imm(&dynamic, r.x as u32, r.y as u32, r.w, r.h).to_image();
@@ -389,13 +392,15 @@ pub fn capture_global_rect(x: i32, y: i32, w: u32, h: u32) -> Result<DynamicImag
     let monitors = Monitor::all().context("list monitors")?;
     let bounds: Vec<rect::MonitorBounds> = monitors
         .iter()
-        .map(|m| rect::MonitorBounds {
-            origin_x: m.x(),
-            origin_y: m.y(),
-            w: m.width(),
-            h: m.height(),
+        .map(|m| -> Result<rect::MonitorBounds> {
+            Ok(rect::MonitorBounds {
+                origin_x: m.x()?,
+                origin_y: m.y()?,
+                w: m.width()?,
+                h: m.height()?,
+            })
         })
-        .collect();
+        .collect::<Result<_>>()?;
     let local = rect::to_local(&bounds, rect::GlobalRect { x, y, w, h })
         .context("rect does not intersect any monitor")?;
     capture_rect(CaptureRect {
