@@ -9,7 +9,8 @@ build/
 target/
 src-tauri/target/
 src-tauri/gen/
-Cargo.lock
+# Cargo.lock is committed: this repo ships executables, so we want
+# byte-identical dependency resolution across CI runners and platforms.
 
 # Editor
 .vscode/
