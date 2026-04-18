@@ -1,0 +1,93 @@
+[package]
+name = "moonlens"
+version = "0.1.0"
+description = "PC-resident Google Lens-style tool"
+authors = ["MoonLens contributors"]
+license = "Apache-2.0"
+edition = "2021"
+rust-version = "1.80"
+
+[lib]
+name = "moonlens_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [
+    "tray-icon",
+    "image-png",
+    # Enable `WebviewWindowBuilder::transparent()` on macOS. Our lens and
+    # overlay windows depend on platform-native transparency; without this
+    # feature the macOS target fails to build (the method is gated off).
+    "macos-private-api",
+] }
+tauri-plugin-global-shortcut = "2"
+tauri-plugin-shell = "2"
+tauri-plugin-dialog = "2"
+tauri-plugin-fs = "2"
+tauri-plugin-notification = "2"
+tauri-plugin-clipboard-manager = "2"
+tauri-plugin-opener = "2"
+zip = { version = "2", default-features = false, features = ["deflate"] }
+
+# Plugin signature verification
+ed25519-dalek = "2"
+sha2 = "0.10"
+base64 = "0.22"
+
+# async / util
+tokio = { version = "1", features = ["full"] }
+futures = "0.3"
+async-trait = "0.1"
+anyhow = "1"
+thiserror = "1"
+parking_lot = "0.12"
+
+# serde / schema / config
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+schemars = "0.8"
+notify = { version = "6", default-features = false, features = ["macos_fsevent"] }
+
+# http
+reqwest = { version = "0.12", features = ["json", "rustls-tls", "stream"], default-features = false }
+
+# logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# image / capture / ocr / qr
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
+xcap = "0.9"
+ocrs = { version = "0.8", optional = true }
+rten = { version = "0.13", optional = true }
+rqrr = "0.7"
+
+# audio
+cpal = { version = "0.15", optional = true }
+
+# storage
+rusqlite = { version = "0.31", features = ["bundled"] }
+
+# plugin runtime
+wasmtime = { version = "24", features = ["component-model", "runtime"] }
+wasmtime-wasi = "24"
+
+[features]
+default = ["audio", "ocrs-engine"]
+audio = ["dep:cpal"]
+ocrs-engine = ["dep:ocrs", "dep:rten"]
+
+[dev-dependencies]
+tempfile = "3"
+wat = "1"
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = 3
+panic = "abort"
+strip = true

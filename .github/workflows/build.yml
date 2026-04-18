@@ -1,0 +1,139 @@
+name: build
+
+on:
+  push:
+    branches: [main, release, 'claude/**']
+  pull_request:
+    # CI gates PRs into either the release candidate branch or
+    # mainline; see docs/RELEASING.md for the two-branch flow.
+    branches: [main, release]
+  workflow_dispatch:
+
+jobs:
+  tauri:
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - { name: linux, os: ubuntu-latest }
+          - { name: macos, os: macos-14 }
+          - { name: windows, os: windows-latest }
+    runs-on: ${{ matrix.platform.os }}
+    timeout-minutes: 60
+    steps:
+      # v5 is the first release that runs on Node 24 natively, which
+      # keeps CI clear of the Node 20 deprecation warnings emitted by
+      # older action versions on current GitHub runners.
+      - uses: actions/checkout@v5
+
+      # Free ~30 GiB on Ubuntu runners. The base image ships with Android
+      # SDK, .NET, GHC, etc. that we never use; without this Cargo's debug
+      # build of Tauri + wasmtime + ocrs reliably hits "no space left on
+      # device". macOS and Windows have plenty of free space already.
+      - name: Free disk space (linux)
+        if: matrix.platform.name == 'linux'
+        run: |
+          set -eux
+          sudo rm -rf \
+            /usr/share/dotnet \
+            /usr/local/lib/android \
+            /usr/local/share/boost \
+            /opt/ghc \
+            /opt/hostedtoolcache/CodeQL \
+            "$AGENT_TOOLSDIRECTORY" || true
+          sudo apt-get clean
+          df -h /
+
+      - name: Linux system deps
+        if: matrix.platform.name == 'linux'
+        run: |
+          sudo apt-get update
+          # xcap 0.9's Linux backend pulls in PipeWire (Wayland portal
+          # screen capture) plus GBM / Wayland / DRM for the DMABUF path.
+          # Missing any one of these shows up as a linker "-l... not
+          # found" miles deep in the test build, so keep the list
+          # explicit.
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            libxdo-dev \
+            libasound2-dev \
+            libsoup-3.0-dev \
+            libpipewire-0.3-dev \
+            libspa-0.2-dev \
+            libgbm-dev \
+            libwayland-dev \
+            libegl1-mesa-dev \
+            libdrm-dev \
+            libxkbcommon-dev
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            src-tauri
+            plugin-sdk/rust
+            plugin-sdk/examples/hello-translator
+            plugin-sdk/examples/music-recognizer
+          # Different OSes need separate caches because compiled artifacts
+          # are not portable. The platform name keeps them apart.
+          key: ${{ matrix.platform.name }}
+
+      - name: Install JS deps
+        run: npm ci
+
+      - name: Typecheck frontend
+        run: npm run check
+
+      - name: Vitest (logic + DOM render tests)
+        run: npm test
+
+      - name: Cargo fmt
+        working-directory: src-tauri
+        run: cargo fmt --all -- --check
+
+      - name: Cargo clippy (src-tauri)
+        working-directory: src-tauri
+        run: cargo clippy --all-targets --no-deps -- -D warnings
+
+      - name: Cargo clippy (plugin SDK)
+        working-directory: plugin-sdk/rust
+        run: cargo clippy --all-targets --no-deps -- -D warnings
+
+      - name: Cargo clippy (hello-translator)
+        working-directory: plugin-sdk/examples/hello-translator
+        run: cargo clippy --all-targets --no-deps -- -D warnings
+
+      - name: Cargo clippy (music-recognizer)
+        working-directory: plugin-sdk/examples/music-recognizer
+        run: cargo clippy --all-targets --no-deps -- -D warnings
+
+      - name: Cargo unit tests
+        working-directory: src-tauri
+        run: cargo test --lib --no-fail-fast
+
+      - name: Cargo integration tests
+        working-directory: src-tauri
+        run: cargo test --tests --no-fail-fast
+
+      - name: Test plugin SDK
+        working-directory: plugin-sdk/rust
+        run: cargo test
+
+      - name: Build + test hello-translator example
+        working-directory: plugin-sdk/examples/hello-translator
+        run: cargo test
+
+      - name: Build + test music-recognizer example
+        working-directory: plugin-sdk/examples/music-recognizer
+        run: cargo test

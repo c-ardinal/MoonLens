@@ -1,0 +1,215 @@
+# MoonLens default configuration. Every setting has a default so partial
+# user overrides are safe. Delete any section you do not want to override.
+
+active_profile = "default"
+
+[appearance]
+theme = "system"
+accent = "#8B5CF6"
+density = "normal"
+ui_language = "ja"
+font_family_ui = "Inter Variable"
+font_family_mono = "JetBrains Mono"
+reduced_motion = false
+
+[hotkeys]
+capture_region = "CommandOrControl+Shift+Space"
+capture_window = "CommandOrControl+Shift+W"
+toggle_pin_overlay = "CommandOrControl+Shift+P"
+toggle_subtitle = "CommandOrControl+Shift+S"
+open_command_palette = "CommandOrControl+K"
+open_history = "CommandOrControl+Shift+H"
+reverse_image_search = "CommandOrControl+Shift+G"
+custom = {}
+
+[overlay]
+max_width_px = 480
+opacity = 0.92
+blur_px = 24
+saturation = 1.8
+font_size_px = 14
+line_height = 1.5
+follow_source = true
+position = "near_source"
+
+[subtitle]
+source_language = "auto"
+target_language = "ja"
+model = "large-v3-turbo"
+fallback_model = "base"
+vad_aggressiveness = 2
+chunk_seconds = 3.0
+overlap_seconds = 0.5
+show_original = true
+font_size_px = 22
+
+[clipboard]
+auto_copy_translation = true
+auto_copy_source = false
+auto_copy_qr = true
+auto_copy_transcript = false
+
+[privacy]
+allow_cloud_globally = true
+show_privacy_indicator = true
+notify_on_fallback_to_cloud = true
+log_level = "info"
+redact_sensitive_in_logs = true
+
+[storage]
+keep_history = true
+retention_days = 90
+max_entries = 10000
+encrypt_at_rest = false
+save_capture_images = true
+
+[performance]
+streaming_debounce_ms = 50
+region_watcher_poll_ms = 250
+max_concurrent_tasks = 4
+cache_ttl_seconds = 3600
+use_gpu_if_available = true
+
+# ---------------------------------------------------------------------------
+# Providers
+# Each task declares an ordered chain and fallback policy. Provider ids of the
+# form "vendor.model" or "plugin.<id>" are resolved at runtime against the
+# registered providers (built-in or loaded from plugins).
+# ---------------------------------------------------------------------------
+
+[providers.translate]
+chain = ["ollama.gemma4", "deepl", "gemini"]
+parallel_race = false
+fallback_on = ["timeout", "error", "offline"]
+timeout_ms = 3000
+allow_cloud = true
+allow_network = true
+max_cost_per_request = 0.01
+sticky_session_ms = 30000
+
+[providers.ocr]
+chain = ["ocrs", "paddle"]
+parallel_race = false
+fallback_on = ["low_confidence", "error"]
+timeout_ms = 5000
+allow_cloud = false
+allow_network = false
+max_cost_per_request = 0.0
+sticky_session_ms = 0
+
+[providers.asr]
+chain = ["whisper_cpp.large_v3_turbo"]
+parallel_race = false
+fallback_on = ["error"]
+timeout_ms = 15000
+allow_cloud = false
+allow_network = false
+max_cost_per_request = 0.0
+sticky_session_ms = 0
+
+[providers.explain]
+chain = ["ollama.gemma4", "gemini"]
+parallel_race = false
+fallback_on = ["timeout", "error", "offline"]
+timeout_ms = 10000
+allow_cloud = true
+allow_network = true
+max_cost_per_request = 0.02
+sticky_session_ms = 60000
+
+[providers.summarize]
+chain = ["ollama.gemma4", "gemini"]
+parallel_race = false
+fallback_on = ["timeout", "error", "offline"]
+timeout_ms = 10000
+allow_cloud = true
+allow_network = true
+max_cost_per_request = 0.02
+sticky_session_ms = 60000
+
+[providers.reverse_image_search]
+chain = ["browser.google_images", "browser.bing", "browser.yandex"]
+parallel_race = false
+fallback_on = ["error"]
+timeout_ms = 3000
+allow_cloud = true
+allow_network = true
+max_cost_per_request = 0.0
+sticky_session_ms = 0
+
+[providers.qr_handler]
+chain = ["rqrr"]
+parallel_race = false
+fallback_on = ["error"]
+timeout_ms = 1000
+allow_cloud = false
+allow_network = false
+max_cost_per_request = 0.0
+sticky_session_ms = 0
+
+[providers.intent_classifier]
+chain = ["builtin.heuristic"]
+parallel_race = false
+fallback_on = ["error"]
+timeout_ms = 500
+allow_cloud = false
+allow_network = false
+max_cost_per_request = 0.0
+sticky_session_ms = 0
+
+# ---------------------------------------------------------------------------
+# Per-provider configuration. Unknown keys are preserved verbatim so plugins
+# can declare their own settings without the core knowing the shape.
+# ---------------------------------------------------------------------------
+
+[providers.configs."ollama.gemma4"]
+endpoint = "http://127.0.0.1:11434"
+model = "gemma4:7b-instruct-q4_K_M"
+temperature = 0.2
+top_p = 0.9
+num_ctx = 8192
+stream = true
+system_prompt = "You are a careful translator. Preserve meaning, tone, and formatting. Output only the translation."
+
+[providers.configs.deepl]
+api_key_env = "DEEPL_API_KEY"
+endpoint = "https://api-free.deepl.com/v2/translate"
+formality = "default"
+
+[providers.configs.gemini]
+api_key_env = "GEMINI_API_KEY"
+model = "gemini-2.5-flash"
+temperature = 0.2
+
+[providers.configs."whisper_cpp.large_v3_turbo"]
+endpoint = "http://127.0.0.1:9002"
+model = "large-v3-turbo"
+threads = 4
+compute_type = "int8"
+
+[providers.configs.ocrs]
+detection_threshold = 0.4
+recognition_threshold = 0.5
+
+[providers.configs.paddle]
+endpoint = "http://127.0.0.1:9003"
+
+[providers.configs."browser.google_images"]
+url_template = "https://www.google.com/searchbyimage?image_url={image_url}"
+
+[providers.configs."browser.bing"]
+url_template = "https://www.bing.com/images/search?view=detailv2&iss=sbi&q=imgurl:{image_url}"
+
+[providers.configs."browser.yandex"]
+url_template = "https://yandex.com/images/search?rpt=imageview&url={image_url}"
+
+# ---------------------------------------------------------------------------
+# Plugins. Enabled map is populated as users install plugins.
+# ---------------------------------------------------------------------------
+
+[plugins]
+auto_update_check = false
+require_signature = false
+trusted_publishers = []
+
+[plugins.enabled]

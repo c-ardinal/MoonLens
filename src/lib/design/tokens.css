@@ -1,0 +1,91 @@
+/**
+ * MoonLens design tokens.
+ * Tokens are CSS custom properties so the theme can switch without a
+ * rebuild and plugins can read them for consistent look.
+ */
+
+:root {
+  --ml-font-ui: 'Inter Variable', 'Inter', system-ui, -apple-system,
+    'Hiragino Kaku Gothic ProN', 'Yu Gothic UI', sans-serif;
+  --ml-font-mono: 'JetBrains Mono', ui-monospace, 'SFMono-Regular', monospace;
+
+  --ml-radius: 12px;
+  --ml-radius-sm: 8px;
+  --ml-shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
+  --ml-shadow-lg: 0 16px 48px rgba(0, 0, 0, 0.18);
+  --ml-border-width: 1px;
+
+  --ml-accent: #8b5cf6;
+  --ml-accent-soft: color-mix(in oklch, var(--ml-accent) 24%, transparent);
+}
+
+/* Light */
+:root,
+[data-theme='light'] {
+  --ml-surface: #fafafa;
+  --ml-surface-elevated: #ffffff;
+  --ml-surface-muted: #f3f3f3;
+  --ml-border: rgba(10, 10, 10, 0.08);
+  --ml-ink: #0a0a0a;
+  --ml-ink-muted: rgba(10, 10, 10, 0.68);
+  --ml-ink-faint: rgba(10, 10, 10, 0.44);
+}
+
+/* Dark */
+[data-theme='dark'] {
+  --ml-surface: #0a0a0a;
+  --ml-surface-elevated: #141414;
+  --ml-surface-muted: #1a1a1a;
+  --ml-border: rgba(250, 250, 250, 0.08);
+  --ml-ink: #fafafa;
+  --ml-ink-muted: rgba(250, 250, 250, 0.72);
+  --ml-ink-faint: rgba(250, 250, 250, 0.48);
+}
+
+@media (prefers-color-scheme: dark) {
+  [data-theme='system'] {
+    --ml-surface: #0a0a0a;
+    --ml-surface-elevated: #141414;
+    --ml-surface-muted: #1a1a1a;
+    --ml-border: rgba(250, 250, 250, 0.08);
+    --ml-ink: #fafafa;
+    --ml-ink-muted: rgba(250, 250, 250, 0.72);
+    --ml-ink-faint: rgba(250, 250, 250, 0.48);
+  }
+}
+
+/* Density */
+[data-density='compact'] {
+  --ml-gap-1: 6px;
+  --ml-gap-2: 8px;
+  --ml-gap-3: 12px;
+  --ml-gap-4: 16px;
+}
+[data-density='normal'],
+:root {
+  --ml-gap-1: 8px;
+  --ml-gap-2: 12px;
+  --ml-gap-3: 16px;
+  --ml-gap-4: 24px;
+}
+[data-density='comfortable'] {
+  --ml-gap-1: 10px;
+  --ml-gap-2: 16px;
+  --ml-gap-3: 20px;
+  --ml-gap-4: 32px;
+}
+
+/* Motion */
+:root {
+  --ml-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --ml-duration-fast: 120ms;
+  --ml-duration: 200ms;
+  --ml-duration-slow: 320ms;
+}
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --ml-duration-fast: 0ms;
+    --ml-duration: 0ms;
+    --ml-duration-slow: 0ms;
+  }
+}

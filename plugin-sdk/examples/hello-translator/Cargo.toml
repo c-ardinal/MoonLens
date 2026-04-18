@@ -1,0 +1,12 @@
+[package]
+name = "hello-translator"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "hello-translator"
+path = "src/main.rs"
+
+[dependencies]
+moonlens-plugin-sdk = { path = "../../rust" }
+anyhow = "1"
