@@ -53,6 +53,8 @@ macro_rules! all_commands {
             ipc::get_onboarding_status,
             ipc::mark_macos_permissions_reviewed,
             ipc::open_macos_privacy_pane,
+            ipc::macos_permissions_snapshot,
+            ipc::macos_request_screen_capture,
             ipc::new_lens_window,
             ipc::close_lens_window,
             ipc::list_lens_windows,

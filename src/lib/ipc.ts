@@ -150,15 +150,33 @@ export const startSubtitle = () => safeInvoke<void>('start_subtitle');
 export const onSubtitle = (handler: (event: SubtitleEvent) => void): Promise<UnlistenFn> =>
   listen<SubtitleEvent>('moonlens://subtitle', (e) => handler(e.payload));
 
+export type PermissionStatus = 'granted' | 'denied' | 'unknown';
+
+export interface PermissionReport {
+  screen_capture: PermissionStatus;
+  accessibility: PermissionStatus;
+  microphone: PermissionStatus;
+  input_monitoring: PermissionStatus;
+}
+
+const defaultPermissions: PermissionReport = {
+  screen_capture: 'granted',
+  accessibility: 'granted',
+  microphone: 'granted',
+  input_monitoring: 'granted'
+};
+
 export interface OnboardingStatus {
   platform: 'macos' | 'windows' | 'linux' | 'other';
   needs_macos_permissions_review: boolean;
+  macos_permissions: PermissionReport;
 }
 
 export const getOnboardingStatus = () =>
   safeInvoke<OnboardingStatus>('get_onboarding_status', undefined, {
     platform: 'other',
-    needs_macos_permissions_review: false
+    needs_macos_permissions_review: false,
+    macos_permissions: defaultPermissions
   });
 
 export const markMacosPermissionsReviewed = () =>
@@ -167,6 +185,12 @@ export const markMacosPermissionsReviewed = () =>
 export const openMacosPrivacyPane = (
   pane: 'screen_capture' | 'accessibility' | 'microphone' | 'input_monitoring'
 ) => safeInvoke<void>('open_macos_privacy_pane', { pane });
+
+export const macosPermissionsSnapshot = () =>
+  safeInvoke<PermissionReport>('macos_permissions_snapshot', undefined, defaultPermissions);
+
+export const macosRequestScreenCapture = () =>
+  safeInvoke<PermissionStatus>('macos_request_screen_capture', undefined, 'granted');
 
 export interface ModelProgress {
   filename: string;

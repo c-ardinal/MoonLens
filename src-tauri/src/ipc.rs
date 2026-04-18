@@ -588,18 +588,50 @@ pub async fn start_subtitle(app: AppHandle, state: State<'_, AppState>) -> Resul
 pub struct OnboardingStatus {
     pub platform: &'static str,
     pub needs_macos_permissions_review: bool,
+    /// Live per-permission snapshot. The modal renders each status as
+    /// a badge next to its System Settings link.
+    pub macos_permissions: crate::macos_permissions::PermissionReport,
 }
 
 #[tauri::command]
 pub async fn get_onboarding_status(state: State<'_, AppState>) -> Result<OnboardingStatus, String> {
     let snapshot = state.settings.snapshot();
     let platform = std::env::consts::OS;
-    let needs_macos_permissions_review =
-        cfg!(target_os = "macos") && !snapshot.onboarding.macos_permissions_reviewed;
+    let perms = crate::macos_permissions::snapshot();
+    // Surface the modal only when we are on macOS AND the user has
+    // not dismissed it AND at least one detectable permission is
+    // still denied. Fully-granted sessions skip onboarding entirely.
+    let needs_macos_permissions_review = cfg!(target_os = "macos")
+        && !snapshot.onboarding.macos_permissions_reviewed
+        && (matches!(
+            perms.screen_capture,
+            crate::macos_permissions::PermissionStatus::Denied
+        ) || matches!(
+            perms.accessibility,
+            crate::macos_permissions::PermissionStatus::Denied
+        ));
     Ok(OnboardingStatus {
         platform: platform_label(platform),
         needs_macos_permissions_review,
+        macos_permissions: perms,
     })
+}
+
+/// Re-query the live permission snapshot. The onboarding UI calls this
+/// after the user visits a System Settings pane so the badges flip
+/// green without requiring an app restart.
+#[tauri::command]
+pub async fn macos_permissions_snapshot(
+) -> Result<crate::macos_permissions::PermissionReport, String> {
+    Ok(crate::macos_permissions::snapshot())
+}
+
+/// Trigger the macOS "Allow MoonLens to record your screen?" prompt.
+/// No-op on non-macOS targets; returns the post-prompt status.
+#[tauri::command]
+pub async fn macos_request_screen_capture(
+) -> Result<crate::macos_permissions::PermissionStatus, String> {
+    Ok(crate::macos_permissions::request_screen_capture())
 }
 
 #[tauri::command]
