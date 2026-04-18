@@ -7,12 +7,6 @@ on:
     branches: [main]
   workflow_dispatch:
 
-env:
-  # GitHub-hosted runners ship the v4 action runtimes that still bundle
-  # Node 20. Opting into Node 24 silences the deprecation warning and
-  # keeps the actions running once Node 20 is removed in late 2026.
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
-
 jobs:
   tauri:
     strategy:
@@ -25,7 +19,10 @@ jobs:
     runs-on: ${{ matrix.platform.os }}
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
+      # v5 is the first release that runs on Node 24 natively, which
+      # keeps CI clear of the Node 20 deprecation warnings emitted by
+      # older action versions on current GitHub runners.
+      - uses: actions/checkout@v5
 
       # Free ~30 GiB on Ubuntu runners. The base image ships with Android
       # SDK, .NET, GHC, etc. that we never use; without this Cargo's debug
@@ -70,7 +67,7 @@ jobs:
             libdrm-dev \
             libxkbcommon-dev
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm
