@@ -9,7 +9,6 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, WebviewWindow};
 
 use crate::pipeline::TaskResult;
-
 /// One shape for every message the overlay needs to handle. Extending the
 /// overlay UI = add a variant + handle it in the Svelte page.
 #[derive(Debug, Clone, Serialize)]

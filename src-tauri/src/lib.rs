@@ -15,8 +15,10 @@ pub mod pipeline;
 mod pipeline_tests;
 pub mod plugins;
 pub mod providers;
+pub mod selector;
 pub mod settings;
 pub mod storage;
+pub mod subtitle;
 
 use tracing_subscriber::{fmt, EnvFilter};
 

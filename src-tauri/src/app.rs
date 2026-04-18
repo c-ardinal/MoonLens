@@ -11,7 +11,7 @@ use tauri::{
 
 use crate::{
     hotkey, ipc, pipeline::Pipeline, plugins::PluginRegistry, settings::SettingsStore,
-    storage::Storage,
+    storage::Storage, subtitle::SubtitleService,
 };
 
 macro_rules! all_commands {
@@ -33,6 +33,9 @@ macro_rules! all_commands {
             ipc::install_ocr_models,
             ipc::show_main,
             ipc::hide_overlay,
+            ipc::start_region_selection,
+            ipc::cancel_region_selection,
+            ipc::toggle_subtitle,
         ]
     };
 }
@@ -44,6 +47,7 @@ pub struct AppState {
     pub storage: Arc<Storage>,
     pub plugins: Arc<PluginRegistry>,
     pub pipeline: Arc<Pipeline>,
+    pub subtitle: Arc<SubtitleService>,
 }
 
 pub fn build() -> Result<()> {
@@ -64,8 +68,9 @@ pub fn build() -> Result<()> {
                 storage.clone(),
                 plugins.clone(),
             ));
+            let subtitle = Arc::new(SubtitleService::new(settings.clone(), pipeline.clone()));
 
-            hotkey::register_all(&handle, settings.clone(), pipeline.clone())?;
+            hotkey::register_all(&handle, settings.clone(), pipeline.clone(), subtitle.clone())?;
             build_tray(&handle)?;
 
             app.manage(AppState {
@@ -73,6 +78,7 @@ pub fn build() -> Result<()> {
                 storage,
                 plugins,
                 pipeline,
+                subtitle,
             });
             Ok(())
         })
@@ -105,10 +111,15 @@ fn build_tray(app: &AppHandle) -> Result<()> {
         }))
         .on_menu_event(move |app, event| match event.id.as_ref() {
             "open" => show_main_window(app),
-            "capture" => fire_capture(app),
+            "capture" => {
+                if let Err(e) = crate::selector::show(app) {
+                    tracing::warn!("selector show failed: {e:?}");
+                }
+            }
             "subtitle" => {
-                if let Some(w) = app.get_webview_window("subtitle") {
-                    let _ = w.show();
+                let state = app.state::<AppState>();
+                if let Err(e) = state.subtitle.toggle(app) {
+                    tracing::warn!("subtitle toggle failed: {e:?}");
                 }
             }
             "plugins" => route_main(app, "/plugins/"),
@@ -144,51 +155,3 @@ fn route_main(app: &AppHandle, path: &str) {
     }
 }
 
-fn fire_capture(app: &AppHandle) {
-    let app = app.clone();
-    tauri::async_runtime::spawn(async move {
-        let state = app.state::<AppState>();
-        if let Err(e) = run_capture_from_tray(&app, state.pipeline.clone()).await {
-            tracing::warn!("tray capture failed: {e:?}");
-        }
-    });
-}
-
-async fn run_capture_from_tray(app: &AppHandle, pipeline: Arc<Pipeline>) -> Result<()> {
-    use crate::capture::{self, CaptureRect};
-    use crate::overlay::{self, OverlayEvent};
-
-    overlay::emit(app, OverlayEvent::Processing {
-        message: "キャプチャ中…".into(),
-    })
-    .ok();
-
-    let png = tokio::task::spawn_blocking(|| -> Result<Vec<u8>> {
-        let monitors = xcap::Monitor::all()?;
-        let monitor = monitors.first().ok_or_else(|| anyhow::anyhow!("no monitor"))?;
-        let img = capture::capture_rect(CaptureRect {
-            monitor_index: 0,
-            x: 0,
-            y: 0,
-            w: monitor.width(),
-            h: monitor.height(),
-        })?;
-        capture::png_bytes(&img)
-    })
-    .await??;
-
-    let bundle = pipeline
-        .run_capture_flow(png)
-        .await
-        .map_err(|e| anyhow::anyhow!(e.to_string()))?;
-    overlay::show_centered(app)?;
-    overlay::emit(
-        app,
-        OverlayEvent::Result {
-            source_text: bundle.source_text,
-            result: bundle.result,
-        },
-    )
-    .ok();
-    Ok(())
-}

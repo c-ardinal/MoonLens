@@ -13,33 +13,59 @@ use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
 use crate::{
     app::AppState,
-    capture::{self, CaptureRect},
     overlay::{self, OverlayEvent},
     pipeline::Pipeline,
+    selector,
     settings::SettingsStore,
+    subtitle::SubtitleService,
 };
 
 pub fn register_all(
     app: &AppHandle,
     settings: Arc<SettingsStore>,
     pipeline: Arc<Pipeline>,
+    subtitle: Arc<SubtitleService>,
 ) -> Result<()> {
     let s = settings.snapshot();
     let shortcut_mgr = app.global_shortcut();
     shortcut_mgr.unregister_all().ok();
 
-    // Capture: run the full capture flow and drive the overlay.
+    // Capture: open the selector overlay; the renderer invokes
+    // capture_and_process once a rectangle is dragged. We keep the prior
+    // pipeline handle in scope so the closure is `move`-friendly even when
+    // we add a "select-then-capture" shortcut variant later.
     let app_c = app.clone();
-    let pipeline_c = pipeline.clone();
+    let _pipeline_c = pipeline.clone();
     shortcut_mgr.on_shortcut(s.hotkeys.capture_region.as_str(), move |_app, _sc, event| {
         if !matches!(event.state(), ShortcutState::Pressed) {
             return;
         }
         let app = app_c.clone();
-        let pipeline = pipeline_c.clone();
+        if let Err(e) = selector::show(&app) {
+            tracing::error!("selector show failed: {e:?}");
+            overlay::emit(
+                &app,
+                OverlayEvent::Error {
+                    message: e.to_string(),
+                },
+            )
+            .ok();
+        }
+    })?;
+
+    // Capture window (whole primary monitor) – mirrors the pre-selector
+    // behavior and is useful for one-shot full-screen translations.
+    let app_w = app.clone();
+    let pipeline_w = pipeline.clone();
+    shortcut_mgr.on_shortcut(s.hotkeys.capture_window.as_str(), move |_a, _s, e| {
+        if !matches!(e.state(), ShortcutState::Pressed) {
+            return;
+        }
+        let app = app_w.clone();
+        let pipeline = pipeline_w.clone();
         tauri::async_runtime::spawn(async move {
-            if let Err(e) = run_capture(&app, pipeline).await {
-                tracing::error!("capture flow failed: {e:?}");
+            if let Err(e) = run_full_capture(&app, pipeline).await {
+                tracing::error!("full capture failed: {e:?}");
                 overlay::emit(
                     &app,
                     OverlayEvent::Error {
@@ -59,10 +85,26 @@ pub fn register_all(
         }
     })?;
 
+    // Subtitle: toggle the live subtitle service.
+    let app_s = app.clone();
+    let subtitle_s = subtitle.clone();
+    shortcut_mgr.on_shortcut(s.hotkeys.toggle_subtitle.as_str(), move |_a, _s, e| {
+        if !matches!(e.state(), ShortcutState::Pressed) {
+            return;
+        }
+        match subtitle_s.toggle(&app_s) {
+            Ok(running) => {
+                tracing::info!("subtitle running={running}");
+            }
+            Err(err) => {
+                tracing::warn!("subtitle toggle failed: {err:?}");
+                let _ = app_s.emit("moonlens://hotkey", "toggle_subtitle_failed");
+            }
+        }
+    })?;
+
     // All other hotkeys just surface an intent; the frontend routes them.
     let remaining: Vec<(&str, &str)> = vec![
-        ("capture_window", s.hotkeys.capture_window.as_str()),
-        ("toggle_subtitle", s.hotkeys.toggle_subtitle.as_str()),
         ("open_command_palette", s.hotkeys.open_command_palette.as_str()),
         ("open_history", s.hotkeys.open_history.as_str()),
         ("reverse_image_search", s.hotkeys.reverse_image_search.as_str()),
@@ -89,29 +131,29 @@ pub fn register_all(
     Ok(())
 }
 
-async fn run_capture(app: &AppHandle, pipeline: Arc<Pipeline>) -> anyhow::Result<()> {
-    overlay::emit(app, OverlayEvent::Processing {
-        message: "キャプチャ中…".into(),
-    })
+async fn run_full_capture(app: &AppHandle, pipeline: Arc<Pipeline>) -> anyhow::Result<()> {
+    use crate::capture;
+    overlay::emit(
+        app,
+        OverlayEvent::Processing {
+            message: "キャプチャ中…".into(),
+        },
+    )
     .ok();
 
-    // MVP strategy: snapshot the primary monitor and pass the whole frame
-    // to the pipeline. The region-selector webview (future work) will
-    // instead supply a rectangle before invoking `capture_rect`.
     let (image_png, width, origin_x, origin_y) =
         tokio::task::spawn_blocking(|| -> anyhow::Result<(Vec<u8>, u32, i32, i32)> {
             let monitors = xcap::Monitor::all()?;
             let monitor = monitors
                 .first()
                 .ok_or_else(|| anyhow::anyhow!("no monitor"))?;
-            let rect = CaptureRect {
+            let img = capture::capture_rect(crate::capture::CaptureRect {
                 monitor_index: 0,
                 x: 0,
                 y: 0,
                 w: monitor.width(),
                 h: monitor.height(),
-            };
-            let img = capture::capture_rect(rect)?;
+            })?;
             let png = capture::png_bytes(&img)?;
             Ok((png, monitor.width(), monitor.x(), monitor.y()))
         })
@@ -140,5 +182,11 @@ async fn run_capture(app: &AppHandle, pipeline: Arc<Pipeline>) -> anyhow::Result
 /// Convenience re-registration triggered from the settings save command.
 pub fn reapply(app: &AppHandle) -> Result<()> {
     let state = app.state::<AppState>();
-    register_all(app, state.settings.clone(), state.pipeline.clone())
+    let s = state.inner();
+    register_all(
+        app,
+        s.settings.clone(),
+        s.pipeline.clone(),
+        s.subtitle.clone(),
+    )
 }

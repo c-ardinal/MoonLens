@@ -26,8 +26,9 @@ interface types {
         image-png: list<u8>,
         languages: list<string>,
     }
+    // Audio is mono PCM16 at 16 kHz, little-endian byte order.
     record asr-input {
-        audio-pcm16-mono-16k: list<u8>,
+        audio: list<u8>,
         language-hint: option<string>,
     }
     record explain-input {

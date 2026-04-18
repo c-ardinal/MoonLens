@@ -26,8 +26,11 @@ interface types {
         languages: list<string>,
     }
 
+    // Audio is mono PCM16 at 16 kHz, little-endian byte order. The kHz/
+    // bit-depth/channel layout is fixed by host convention so plugins do
+    // not have to inspect a header.
     record asr-input {
-        audio-pcm16-mono-16k: list<u8>,
+        audio: list<u8>,
         language-hint: option<string>,
     }
 

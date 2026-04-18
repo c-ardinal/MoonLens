@@ -12,6 +12,7 @@ use crate::{
     pipeline::{CaptureFlowResult, TaskResult},
     plugins::PluginDescriptor,
     providers::{ocr_ocrs, Capability, TaskInput},
+    selector,
     settings::schema::Settings,
 };
 
@@ -290,4 +291,19 @@ pub async fn show_main(app: AppHandle) -> Result<(), String> {
 #[tauri::command]
 pub async fn hide_overlay(app: AppHandle) -> Result<(), String> {
     overlay::hide(&app).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn start_region_selection(app: AppHandle) -> Result<(), String> {
+    selector::show(&app).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn cancel_region_selection(app: AppHandle) -> Result<(), String> {
+    selector::hide(&app).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn toggle_subtitle(app: AppHandle, state: State<'_, AppState>) -> Result<bool, String> {
+    state.subtitle.toggle(&app).map_err(|e| e.to_string())
 }
