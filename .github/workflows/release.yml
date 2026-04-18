@@ -54,10 +54,19 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # Budget-saving mode: Linux only for this release cycle.
+        # The free-tier minute budget is nearly exhausted and the
+        # macOS runner's ×10 billing multiplier alone would push us
+        # over. Windows bundles (.msi / .nsis) are produced locally
+        # and attached via `gh release upload`; macOS is deferred to
+        # the next release cycle.
+        #
+        # To restore full 3-platform output (after budget reset or
+        # on a paid plan) uncomment the macos / windows entries.
         include:
           - { name: linux, os: ubuntu-latest, bundle: deb,appimage,rpm }
-          - { name: macos, os: macos-14, bundle: dmg }
-          - { name: windows, os: windows-latest, bundle: msi,nsis }
+          # - { name: macos, os: macos-14, bundle: dmg }
+          # - { name: windows, os: windows-latest, bundle: msi,nsis }
     runs-on: ${{ matrix.os }}
     timeout-minutes: 90
     steps:
