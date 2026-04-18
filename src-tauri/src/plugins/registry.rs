@@ -51,6 +51,12 @@ pub struct PluginRegistry {
 impl PluginRegistry {
     pub fn load(app: &AppHandle, settings: Arc<SettingsStore>) -> Result<Self> {
         let plugins_dir = app.path().app_data_dir()?.join("plugins");
+        Self::load_from(plugins_dir, settings)
+    }
+
+    /// Tauri-free constructor: caller supplies the plugins directory.
+    /// Used by integration tests to point at a temp folder.
+    pub fn load_from(plugins_dir: PathBuf, settings: Arc<SettingsStore>) -> Result<Self> {
         std::fs::create_dir_all(&plugins_dir)?;
         let me = Self {
             settings: settings.clone(),

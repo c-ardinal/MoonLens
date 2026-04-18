@@ -28,6 +28,16 @@ impl SettingsStore {
             .context("no app config dir")?;
         std::fs::create_dir_all(&config_dir).ok();
         let config_path = config_dir.join("config.toml");
+        Self::load_from(config_path)
+    }
+
+    /// Tauri-free entry point: the caller provides the on-disk path.
+    /// Integration tests use this to operate on a temp directory without
+    /// spinning up a full Tauri runtime.
+    pub fn load_from(config_path: PathBuf) -> Result<Self> {
+        if let Some(parent) = config_path.parent() {
+            std::fs::create_dir_all(parent).ok();
+        }
 
         let mut settings: Settings = toml::from_str(DEFAULT_TOML)
             .context("bundled default.toml is invalid")?;

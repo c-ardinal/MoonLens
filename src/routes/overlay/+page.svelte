@@ -4,6 +4,7 @@
   import PrivacyBadge from '$lib/components/PrivacyBadge.svelte';
   import ActionRibbon from '$lib/components/ActionRibbon.svelte';
   import { hideOverlay, onOverlay, type OverlayEvent, type TaskResult } from '$lib/ipc';
+  import { extractText } from '$lib/result';
 
   let source = $state<string | null>(null);
   let translation = $state('');
@@ -35,16 +36,6 @@
   });
 
   onDestroy(() => unlisten?.());
-
-  function extractText(r: TaskResult): string {
-    const o = r.output as any;
-    if (typeof o === 'string') return '';
-    if ('Text' in o) return o.Text;
-    if ('Ocr' in o) return (o.Ocr.lines as { text: string }[]).map((l) => l.text).join('\n');
-    if ('OpenedExternalUrl' in o) return o.OpenedExternalUrl;
-    if ('Intent' in o) return `(${o.Intent} detected)`;
-    return '';
-  }
 
   function copy() {
     if (translation) navigator.clipboard.writeText(translation).catch(() => {});

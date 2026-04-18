@@ -53,6 +53,9 @@ jobs:
       - name: Typecheck frontend
         run: npm run check || true
 
+      - name: Vitest (frontend logic tests)
+        run: npm test
+
       - name: Cargo fmt
         working-directory: src-tauri
         run: cargo fmt --all -- --check
@@ -62,9 +65,13 @@ jobs:
         run: cargo clippy --all-targets --no-deps -- -D warnings
         continue-on-error: true
 
-      - name: Cargo test
+      - name: Cargo unit tests
         working-directory: src-tauri
-        run: cargo test --no-fail-fast
+        run: cargo test --lib --no-fail-fast
+
+      - name: Cargo integration tests
+        working-directory: src-tauri
+        run: cargo test --tests --no-fail-fast
 
       - name: Test plugin SDK
         working-directory: plugin-sdk/rust

@@ -47,9 +47,9 @@ impl Storage {
         })
     }
 
-    /// In-memory storage for unit tests. Not exposed through the app
-    /// builder because the path is ephemeral.
-    #[cfg(test)]
+    /// In-memory storage for tests. Not exposed through the app builder
+    /// because the path is ephemeral. Kept `pub` (not `cfg(test)`) so
+    /// integration tests in the separate `tests/` crate can use it too.
     pub fn open_in_memory() -> Result<Self> {
         let db = Connection::open_in_memory()?;
         Self::migrate(&db)?;

@@ -42,7 +42,7 @@ pub struct TaskResult {
 pub struct Pipeline {
     settings: Arc<SettingsStore>,
     storage: Arc<Storage>,
-    plugins: Arc<PluginRegistry>,
+    plugins: Option<Arc<PluginRegistry>>,
     providers: RwLock<HashMap<String, ProviderHandle>>,
     sticky: RwLock<HashMap<String, (String, Instant)>>,
 }
@@ -56,12 +56,29 @@ impl Pipeline {
         let me = Self {
             settings,
             storage,
-            plugins,
+            plugins: Some(plugins),
             providers: RwLock::new(HashMap::new()),
             sticky: RwLock::new(HashMap::new()),
         };
         me.rebuild_providers();
         me
+    }
+
+    /// Plugin-free constructor used by integration tests and any future
+    /// headless entry point. Caller supplies an explicit provider map;
+    /// no discovery or built-in lookup happens.
+    pub fn with_providers(
+        settings: Arc<SettingsStore>,
+        storage: Arc<Storage>,
+        providers: HashMap<String, ProviderHandle>,
+    ) -> Self {
+        Self {
+            settings,
+            storage,
+            plugins: None,
+            providers: RwLock::new(providers),
+            sticky: RwLock::new(HashMap::new()),
+        }
     }
 
     /// Rebuild the in-memory provider map from the current settings. Called
@@ -92,9 +109,13 @@ impl Pipeline {
                 map.insert(id.clone(), h);
             }
         }
-        // Plugin providers register themselves through the registry.
-        for (id, handle) in self.plugins.providers() {
-            map.insert(id, handle);
+        // Plugin providers register themselves through the registry. The
+        // registry is optional so the pipeline can be constructed headless
+        // in tests or future non-Tauri entry points.
+        if let Some(plugins) = &self.plugins {
+            for (id, handle) in plugins.providers() {
+                map.insert(id, handle);
+            }
         }
         // Ensure any id referenced in a chain without a configs entry still
         // has a sane default (e.g. `ollama.gemma4` without explicit config).

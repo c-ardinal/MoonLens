@@ -5,7 +5,8 @@
   import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
   import { Camera, Pin, X, RefreshCw, Clipboard } from 'lucide-svelte';
   import PrivacyBadge from '$lib/components/PrivacyBadge.svelte';
-  import type { CaptureFlowResult, TaskOutput, TaskResult } from '$lib/ipc';
+  import type { CaptureFlowResult } from '$lib/ipc';
+  import { extractText } from '$lib/result';
 
   const params = new URLSearchParams(
     typeof window !== 'undefined' ? window.location.search : ''
@@ -43,16 +44,6 @@
     } catch {
       /* Tauri may not be ready in dev */
     }
-  }
-
-  function extractText(r: TaskResult): string {
-    const o = r.output as TaskOutput;
-    if (typeof o === 'string') return '';
-    if ('Text' in o) return o.Text;
-    if ('Ocr' in o) return o.Ocr.lines.map((l) => l.text).join('\n');
-    if ('OpenedExternalUrl' in o) return o.OpenedExternalUrl;
-    if ('Intent' in o) return `(${o.Intent} detected)`;
-    return '';
   }
 
   async function capture() {
