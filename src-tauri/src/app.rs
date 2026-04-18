@@ -183,7 +183,7 @@ fn show_main_window(app: &AppHandle) {
 
 fn route_main(app: &AppHandle, path: &str) {
     if let Some(w) = app.get_webview_window("main") {
-        let _ = w.eval(&format!(
+        let _ = w.eval(format!(
             "location.hash = '#{path}'; location.pathname = '{path}';"
         ));
         let _ = w.show();

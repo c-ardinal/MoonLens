@@ -16,7 +16,7 @@
 use std::{fs, os::unix::fs::PermissionsExt, path::PathBuf};
 
 use moonlens_lib::plugins::{manifest::PluginManifest, sidecar_host::SidecarPlugin};
-use moonlens_lib::providers::{Provider, TaskInput, TaskOutput};
+use moonlens_lib::providers::{TaskInput, TaskOutput};
 
 const PYTHON_ECHO_SIDECAR: &str = r#"#!/usr/bin/env python3
 import sys, json

@@ -103,10 +103,21 @@ jobs:
         working-directory: src-tauri
         run: cargo fmt --all -- --check
 
-      - name: Cargo clippy
+      - name: Cargo clippy (src-tauri)
         working-directory: src-tauri
         run: cargo clippy --all-targets --no-deps -- -D warnings
-        continue-on-error: true
+
+      - name: Cargo clippy (plugin SDK)
+        working-directory: plugin-sdk/rust
+        run: cargo clippy --all-targets --no-deps -- -D warnings
+
+      - name: Cargo clippy (hello-translator)
+        working-directory: plugin-sdk/examples/hello-translator
+        run: cargo clippy --all-targets --no-deps -- -D warnings
+
+      - name: Cargo clippy (music-recognizer)
+        working-directory: plugin-sdk/examples/music-recognizer
+        run: cargo clippy --all-targets --no-deps -- -D warnings
 
       - name: Cargo unit tests
         working-directory: src-tauri

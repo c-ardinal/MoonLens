@@ -1,9 +1,10 @@
 //! Global hotkey registration wired to pipeline actions.
 //!
 //! Bindings are re-registered whenever settings change so rebind is
-//! immediate. Each shortcut either emits a UI intent (`moonlens://hotkey`
-//! + action name) or, for the capture shortcut, directly drives the full
-//! pipeline and pushes overlay events.
+//! immediate. Each shortcut either emits a UI intent (the
+//! `moonlens://hotkey` event with an action name payload) or — for the
+//! capture shortcut — directly drives the full pipeline and pushes
+//! overlay events.
 
 use std::sync::Arc;
 

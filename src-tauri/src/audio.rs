@@ -182,10 +182,13 @@ pub mod dsp {
             let mut frac = 0.0;
             let input: Vec<i16> = vec![i16::MIN, i16::MAX, i16::MIN, i16::MAX];
             let out = resample_to_16k_linear(&input, 16_000, &mut frac);
-            // No NaN / wrap-around; every output fits in i16 by construction.
-            for v in &out {
-                assert!(*v >= i16::MIN && *v <= i16::MAX);
-            }
+            // The point of this test is that the interpolator does not
+            // panic on the i16 extremes: a naive `(a + b) / 2` would
+            // overflow when `a = i16::MIN` and `b = i16::MAX`. Reaching
+            // this line with a populated output proves the resampler
+            // stays inside the type bounds; i16 literally cannot violate
+            // its own MIN/MAX so we check shape, not magnitude.
+            assert!(!out.is_empty());
         }
 
         #[test]
@@ -303,7 +306,7 @@ pub mod backend {
         let stream = match sample_format {
             SampleFormat::F32 => device.build_input_stream(
                 &stream_config,
-                move |data: &[f32], _| forward(data, &sink, &state_cb, |v| pcm16_from_f32(v)),
+                move |data: &[f32], _| forward(data, &sink, &state_cb, pcm16_from_f32),
                 err_fn,
                 None,
             )?,

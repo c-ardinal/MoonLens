@@ -51,7 +51,6 @@ impl WasiView for State {
 }
 
 pub struct WasmPlugin {
-    id: String,
     provides: Vec<String>,
     instance: Arc<Mutex<Option<LoadedInstance>>>,
     component_bytes: Vec<u8>,
@@ -75,8 +74,11 @@ impl WasmPlugin {
         // actually invoked.
         let _ = build_instance(&component_bytes, &manifest.permissions.network)?;
 
+        // `manifest.plugin.id` is intentionally not stored: the pipeline
+        // addresses plugins by the chain id it composes from the id passed
+        // into `provider_handles` below, so keeping a second copy here
+        // would be dead state.
         Ok(Self {
-            id: manifest.plugin.id.clone(),
             provides: manifest.capabilities.provides.clone(),
             instance: Arc::new(Mutex::new(None)),
             component_bytes,

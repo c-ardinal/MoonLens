@@ -27,7 +27,7 @@ pub fn encode_pcm16(samples: &[i16], sample_rate: u32, channels: u16) -> Vec<u8>
     out.extend_from_slice(&sample_rate.to_le_bytes());
     out.extend_from_slice(&byte_rate.to_le_bytes());
     out.extend_from_slice(&block_align.to_le_bytes());
-    out.extend_from_slice(&((bytes_per_sample as u16) * 8).to_le_bytes()); // bits per sample
+    out.extend_from_slice(&(bytes_per_sample * 8).to_le_bytes()); // bits per sample
                                                                            // data chunk
     out.extend_from_slice(b"data");
     out.extend_from_slice(&data_size.to_le_bytes());

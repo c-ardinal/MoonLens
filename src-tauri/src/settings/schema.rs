@@ -350,22 +350,11 @@ pub enum FallbackCondition {
 
 /* -------------------------------- plugins -------------------------------- */
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(default, deny_unknown_fields)]
 pub struct PluginSettings {
     pub enabled: BTreeMap<String, bool>,
     pub auto_update_check: bool,
     pub require_signature: bool,
     pub trusted_publishers: Vec<String>,
-}
-
-impl Default for PluginSettings {
-    fn default() -> Self {
-        Self {
-            enabled: BTreeMap::new(),
-            auto_update_check: false,
-            require_signature: false,
-            trusted_publishers: Vec::new(),
-        }
-    }
 }
