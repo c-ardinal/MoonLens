@@ -93,7 +93,13 @@ impl Storage {
               (created_at, kind, source_text, result_text, provider, via_cloud, image_path)
               VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             rusqlite::params![
-                now, kind, source_text, result_text, provider, via_cloud as i32, image_path
+                now,
+                kind,
+                source_text,
+                result_text,
+                provider,
+                via_cloud as i32,
+                image_path
             ],
         )?;
         Ok(db.last_insert_rowid())
@@ -188,7 +194,8 @@ mod tests {
     fn prune_older_than_removes_old_rows() {
         let s = Storage::open_in_memory().unwrap();
         // Insert one row, then drop everything dated before "now + 1s".
-        s.append("translate", None, None, None, false, None).unwrap();
+        s.append("translate", None, None, None, false, None)
+            .unwrap();
         let deleted = s.prune_older_than(now_seconds() + 1).unwrap();
         assert_eq!(deleted, 1);
         assert!(s.recent(10).unwrap().is_empty());
@@ -234,7 +241,8 @@ mod tests {
         // translation vs. no translation). The schema must preserve that.
         s.append("translate", Some(""), Some(""), None, false, None)
             .unwrap();
-        s.append("translate", None, None, None, false, None).unwrap();
+        s.append("translate", None, None, None, false, None)
+            .unwrap();
         let rows = s.recent(10).unwrap();
         // Newest first → row with Nones first, row with empties second.
         assert!(rows[0].source_text.is_none());
@@ -263,7 +271,8 @@ mod tests {
     #[test]
     fn prune_with_epoch_zero_removes_no_rows() {
         let s = Storage::open_in_memory().unwrap();
-        s.append("translate", None, None, None, false, None).unwrap();
+        s.append("translate", None, None, None, false, None)
+            .unwrap();
         assert_eq!(s.prune_older_than(0).unwrap(), 0);
         assert_eq!(s.recent(10).unwrap().len(), 1);
     }
@@ -272,7 +281,8 @@ mod tests {
     fn prune_with_epoch_max_removes_everything() {
         let s = Storage::open_in_memory().unwrap();
         for _ in 0..4 {
-            s.append("translate", None, None, None, false, None).unwrap();
+            s.append("translate", None, None, None, false, None)
+                .unwrap();
         }
         let deleted = s.prune_older_than(i64::MAX).unwrap();
         assert_eq!(deleted, 4);

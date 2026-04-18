@@ -83,7 +83,12 @@ pub fn build() -> Result<()> {
             let subtitle = Arc::new(SubtitleService::new(settings.clone(), pipeline.clone()));
             let lenses: LensRegistryHandle = Arc::new(LensRegistry::new());
 
-            hotkey::register_all(&handle, settings.clone(), pipeline.clone(), subtitle.clone())?;
+            hotkey::register_all(
+                &handle,
+                settings.clone(),
+                pipeline.clone(),
+                subtitle.clone(),
+            )?;
             build_tray(&handle)?;
 
             app.manage(AppState {
@@ -104,7 +109,13 @@ pub fn build() -> Result<()> {
 fn build_tray(app: &AppHandle) -> Result<()> {
     let open = MenuItem::with_id(app, "open", "MoonLens を開く", true, None::<&str>)?;
     let capture = MenuItem::with_id(app, "capture", "キャプチャ (⌘⇧Space)", true, None::<&str>)?;
-    let lens = MenuItem::with_id(app, "new_lens", "Lens ウィンドウを新規作成", true, None::<&str>)?;
+    let lens = MenuItem::with_id(
+        app,
+        "new_lens",
+        "Lens ウィンドウを新規作成",
+        true,
+        None::<&str>,
+    )?;
     let subtitle = MenuItem::with_id(app, "subtitle", "字幕オーバーレイ", true, None::<&str>)?;
     let plugins = MenuItem::with_id(app, "plugins", "プラグイン", true, None::<&str>)?;
     let history = MenuItem::with_id(app, "history", "履歴", true, None::<&str>)?;
@@ -113,7 +124,9 @@ fn build_tray(app: &AppHandle) -> Result<()> {
 
     let menu = Menu::with_items(
         app,
-        &[&open, &capture, &lens, &subtitle, &plugins, &history, &sep, &quit],
+        &[
+            &open, &capture, &lens, &subtitle, &plugins, &history, &sep, &quit,
+        ],
     )?;
 
     TrayIconBuilder::with_id("moonlens-tray")
@@ -170,9 +183,10 @@ fn show_main_window(app: &AppHandle) {
 
 fn route_main(app: &AppHandle, path: &str) {
     if let Some(w) = app.get_webview_window("main") {
-        let _ = w.eval(&format!("location.hash = '#{path}'; location.pathname = '{path}';"));
+        let _ = w.eval(&format!(
+            "location.hash = '#{path}'; location.pathname = '{path}';"
+        ));
         let _ = w.show();
         let _ = w.set_focus();
     }
 }
-

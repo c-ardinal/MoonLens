@@ -42,7 +42,11 @@ impl Provider for MusicRecognizer {
     }
 
     fn run(&self, input: TaskInput) -> Result<TaskOutput, ProviderError> {
-        let TaskInput::Asr { audio_pcm16_mono_16k, .. } = input else {
+        let TaskInput::Asr {
+            audio_pcm16_mono_16k,
+            ..
+        } = input
+        else {
             return Err(ProviderError::Other(
                 "music-recognizer only accepts Asr input".into(),
             ));

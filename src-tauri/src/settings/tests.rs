@@ -20,8 +20,14 @@ mod tests {
         let original: Settings = toml::from_str(DEFAULT_TOML).unwrap();
         let text = toml::to_string_pretty(&original).unwrap();
         let parsed: Settings = toml::from_str(&text).unwrap();
-        assert_eq!(parsed.providers.translate.chain, original.providers.translate.chain);
-        assert_eq!(parsed.hotkeys.capture_region, original.hotkeys.capture_region);
+        assert_eq!(
+            parsed.providers.translate.chain,
+            original.providers.translate.chain
+        );
+        assert_eq!(
+            parsed.hotkeys.capture_region,
+            original.hotkeys.capture_region
+        );
     }
 
     #[test]
@@ -66,7 +72,10 @@ mod tests {
         let parsed: Settings = toml::from_str("").unwrap();
         assert_eq!(parsed.subtitle.target_language, "ja");
         assert_eq!(parsed.overlay.max_width_px, 480);
-        assert!(!parsed.providers.translate.chain.is_empty() || parsed.providers.translate.chain.is_empty());
+        assert!(
+            !parsed.providers.translate.chain.is_empty()
+                || parsed.providers.translate.chain.is_empty()
+        );
     }
 
     #[test]
@@ -100,7 +109,10 @@ mod tests {
             (FallbackCondition::Error, "error"),
             (FallbackCondition::RateLimit, "rate_limit"),
             (FallbackCondition::Offline, "offline"),
-            (FallbackCondition::UnsupportedLanguage, "unsupported_language"),
+            (
+                FallbackCondition::UnsupportedLanguage,
+                "unsupported_language",
+            ),
             (FallbackCondition::LowConfidence, "low_confidence"),
         ];
         for (c, tag) in all {

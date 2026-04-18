@@ -31,15 +31,14 @@ impl Provider for RqrrProvider {
         let TaskInput::IntentClassifier { image_png } = input else {
             return Err(ProviderError::Other("expected image".into()));
         };
-        let img = image::load_from_memory(&image_png)
-            .map_err(|e| ProviderError::Other(e.to_string()))?;
+        let img =
+            image::load_from_memory(&image_png).map_err(|e| ProviderError::Other(e.to_string()))?;
         let (w, h) = img.dimensions();
         let luma = img.to_luma8();
-        let mut prepared = rqrr::PreparedImage::prepare_from_greyscale(
-            w as usize,
-            h as usize,
-            |x, y| luma.get_pixel(x as u32, y as u32)[0],
-        );
+        let mut prepared =
+            rqrr::PreparedImage::prepare_from_greyscale(w as usize, h as usize, |x, y| {
+                luma.get_pixel(x as u32, y as u32)[0]
+            });
         let grids = prepared.detect_grids();
         if let Some(grid) = grids.first() {
             let (_meta, content) = grid

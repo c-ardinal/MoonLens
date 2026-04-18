@@ -157,7 +157,10 @@ pub struct CapturedRegion {
 }
 
 #[tauri::command]
-pub async fn capture_region_cmd(args: RegionArgs, _app: AppHandle) -> Result<CapturedRegion, String> {
+pub async fn capture_region_cmd(
+    args: RegionArgs,
+    _app: AppHandle,
+) -> Result<CapturedRegion, String> {
     let img = tokio::task::spawn_blocking(move || {
         capture::capture_rect(CaptureRect {
             monitor_index: args.monitor_index,
@@ -229,7 +232,9 @@ pub async fn capture_and_process(
 #[tauri::command]
 pub async fn install_ocr_models(app: AppHandle) -> Result<String, String> {
     let dir = ocr_ocrs::default_models_dir().ok_or("no data dir")?;
-    ocr_ocrs::install_models(&dir).await.map_err(|e| e.to_string())?;
+    ocr_ocrs::install_models(&dir)
+        .await
+        .map_err(|e| e.to_string())?;
     let _ = app; // reserved for future progress events
     Ok(dir.display().to_string())
 }
@@ -338,9 +343,15 @@ pub async fn set_lens_insets(
     right: u32,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
-    state
-        .lenses
-        .set_insets(&id, LensInsets { top, bottom, left, right });
+    state.lenses.set_insets(
+        &id,
+        LensInsets {
+            top,
+            bottom,
+            left,
+            right,
+        },
+    );
     Ok(())
 }
 
@@ -368,10 +379,11 @@ pub async fn capture_lens_now(
     let pipeline = state.pipeline.clone();
     let app_clone = app.clone();
     let id_clone = id.clone();
-    let png = tokio::task::spawn_blocking(move || lens::capture_lens(&app_clone, &lenses, &id_clone))
-        .await
-        .map_err(|e| e.to_string())?
-        .map_err(|e| e.to_string())?;
+    let png =
+        tokio::task::spawn_blocking(move || lens::capture_lens(&app_clone, &lenses, &id_clone))
+            .await
+            .map_err(|e| e.to_string())?
+            .map_err(|e| e.to_string())?;
     let bundle = pipeline
         .run_capture_flow(png)
         .await

@@ -51,9 +51,9 @@ jobs:
         run: npm ci || npm install
 
       - name: Typecheck frontend
-        run: npm run check || true
+        run: npm run check
 
-      - name: Vitest (frontend logic tests)
+      - name: Vitest (frontend logic + component tests)
         run: npm test
 
       - name: Cargo fmt

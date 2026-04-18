@@ -14,9 +14,16 @@ use crate::pipeline::TaskResult;
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum OverlayEvent {
-    Processing { message: String },
-    Result { result: TaskResult, source_text: Option<String> },
-    Error { message: String },
+    Processing {
+        message: String,
+    },
+    Result {
+        result: TaskResult,
+        source_text: Option<String>,
+    },
+    Error {
+        message: String,
+    },
     Hidden,
 }
 

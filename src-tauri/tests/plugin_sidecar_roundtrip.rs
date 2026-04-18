@@ -5,12 +5,15 @@
 //! is language-agnostic on purpose — if this test passes, a plugin
 //! written in any language that can read line-delimited JSON on stdin
 //! will interoperate with MoonLens.
+//!
+//! The Python shebang + chmod trick is Unix-only, so the whole file is
+//! gated to `cfg(unix)`. Windows coverage for the sidecar protocol is
+//! provided at the unit-test layer (`plugins::sidecar_host::tests`),
+//! which exercises the wire format without spawning a subprocess.
 
-use std::{
-    fs,
-    os::unix::fs::PermissionsExt,
-    path::PathBuf,
-};
+#![cfg(unix)]
+
+use std::{fs, os::unix::fs::PermissionsExt, path::PathBuf};
 
 use moonlens_lib::plugins::{manifest::PluginManifest, sidecar_host::SidecarPlugin};
 use moonlens_lib::providers::{Provider, TaskInput, TaskOutput};

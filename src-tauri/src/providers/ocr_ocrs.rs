@@ -186,7 +186,11 @@ pub async fn install_models(models_dir: &Path) -> anyhow::Result<()> {
         (RECOGNITION_MODEL_URL, "text-recognition.rten"),
     ] {
         let path = models_dir.join(filename);
-        if path.exists() && std::fs::metadata(&path).map(|m| m.len() > 0).unwrap_or(false) {
+        if path.exists()
+            && std::fs::metadata(&path)
+                .map(|m| m.len() > 0)
+                .unwrap_or(false)
+        {
             continue;
         }
         let resp = client.get(url).send().await?.error_for_status()?;

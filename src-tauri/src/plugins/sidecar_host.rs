@@ -364,8 +364,8 @@ mod tests {
         let raw = serde_json::to_string(&req).unwrap();
         assert!(raw.contains("137")); // 0x89
         assert!(raw.contains("80")); // 0x50
-        // Round-trip back into the RpcRequest isn't needed; bit preservation
-        // through serialization is sufficient because the plugin's SDK uses
-        // the same `Vec<u8>` representation.
+                                     // Round-trip back into the RpcRequest isn't needed; bit preservation
+                                     // through serialization is sufficient because the plugin's SDK uses
+                                     // the same `Vec<u8>` representation.
     }
 }

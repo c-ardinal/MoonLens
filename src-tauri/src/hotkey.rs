@@ -36,22 +36,25 @@ pub fn register_all(
     // we add a "select-then-capture" shortcut variant later.
     let app_c = app.clone();
     let _pipeline_c = pipeline.clone();
-    shortcut_mgr.on_shortcut(s.hotkeys.capture_region.as_str(), move |_app, _sc, event| {
-        if !matches!(event.state(), ShortcutState::Pressed) {
-            return;
-        }
-        let app = app_c.clone();
-        if let Err(e) = selector::show(&app) {
-            tracing::error!("selector show failed: {e:?}");
-            overlay::emit(
-                &app,
-                OverlayEvent::Error {
-                    message: e.to_string(),
-                },
-            )
-            .ok();
-        }
-    })?;
+    shortcut_mgr.on_shortcut(
+        s.hotkeys.capture_region.as_str(),
+        move |_app, _sc, event| {
+            if !matches!(event.state(), ShortcutState::Pressed) {
+                return;
+            }
+            let app = app_c.clone();
+            if let Err(e) = selector::show(&app) {
+                tracing::error!("selector show failed: {e:?}");
+                overlay::emit(
+                    &app,
+                    OverlayEvent::Error {
+                        message: e.to_string(),
+                    },
+                )
+                .ok();
+            }
+        },
+    )?;
 
     // Capture window (whole primary monitor) – mirrors the pre-selector
     // behavior and is useful for one-shot full-screen translations.
@@ -105,9 +108,15 @@ pub fn register_all(
 
     // All other hotkeys just surface an intent; the frontend routes them.
     let remaining: Vec<(&str, &str)> = vec![
-        ("open_command_palette", s.hotkeys.open_command_palette.as_str()),
+        (
+            "open_command_palette",
+            s.hotkeys.open_command_palette.as_str(),
+        ),
         ("open_history", s.hotkeys.open_history.as_str()),
-        ("reverse_image_search", s.hotkeys.reverse_image_search.as_str()),
+        (
+            "reverse_image_search",
+            s.hotkeys.reverse_image_search.as_str(),
+        ),
     ];
     for (action, accel) in remaining {
         let app_x = app.clone();

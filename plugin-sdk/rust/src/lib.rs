@@ -265,7 +265,10 @@ mod tests {
         let raw = serde_json::to_string(&input).unwrap();
         let back: TaskInput = serde_json::from_str(&raw).unwrap();
         match back {
-            TaskInput::Ocr { image_png, languages } => {
+            TaskInput::Ocr {
+                image_png,
+                languages,
+            } => {
                 assert_eq!(image_png, bytes);
                 assert_eq!(languages, vec!["en"]);
             }
@@ -302,9 +305,7 @@ mod tests {
         let raw = serde_json::to_string(&input).unwrap();
         let back: TaskInput = serde_json::from_str(&raw).unwrap();
         match back {
-            TaskInput::Asr {
-                language_hint, ..
-            } => assert!(language_hint.is_none()),
+            TaskInput::Asr { language_hint, .. } => assert!(language_hint.is_none()),
             _ => panic!(),
         }
     }

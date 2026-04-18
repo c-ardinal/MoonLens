@@ -111,7 +111,12 @@ pub mod rect {
         use super::*;
 
         fn m(origin_x: i32, origin_y: i32, w: u32, h: u32) -> MonitorBounds {
-            MonitorBounds { origin_x, origin_y, w, h }
+            MonitorBounds {
+                origin_x,
+                origin_y,
+                w,
+                h,
+            }
         }
 
         #[test]
@@ -119,12 +124,23 @@ pub mod rect {
             let monitors = vec![m(0, 0, 1920, 1080)];
             let lr = to_local(
                 &monitors,
-                GlobalRect { x: 100, y: 200, w: 300, h: 150 },
+                GlobalRect {
+                    x: 100,
+                    y: 200,
+                    w: 300,
+                    h: 150,
+                },
             )
             .unwrap();
             assert_eq!(
                 lr,
-                LocalRect { monitor_index: 0, x: 100, y: 200, w: 300, h: 150 }
+                LocalRect {
+                    monitor_index: 0,
+                    x: 100,
+                    y: 200,
+                    w: 300,
+                    h: 150
+                }
             );
         }
 
@@ -133,7 +149,12 @@ pub mod rect {
             let monitors = vec![m(0, 0, 1920, 1080), m(1920, 0, 2560, 1440)];
             let lr = to_local(
                 &monitors,
-                GlobalRect { x: 2000, y: 100, w: 400, h: 300 },
+                GlobalRect {
+                    x: 2000,
+                    y: 100,
+                    w: 400,
+                    h: 300,
+                },
             )
             .unwrap();
             assert_eq!(lr.monitor_index, 1);
@@ -150,7 +171,12 @@ pub mod rect {
             let monitors = vec![m(-1920, 0, 1920, 1080), m(0, 0, 1920, 1080)];
             let lr = to_local(
                 &monitors,
-                GlobalRect { x: -1000, y: 50, w: 200, h: 200 },
+                GlobalRect {
+                    x: -1000,
+                    y: 50,
+                    w: 200,
+                    h: 200,
+                },
             )
             .unwrap();
             assert_eq!(lr.monitor_index, 0);
@@ -163,7 +189,12 @@ pub mod rect {
             // 900..1500 → 100 px on monitor 0, 500 px on monitor 1.
             let idx = best_monitor(
                 &monitors,
-                GlobalRect { x: 900, y: 0, w: 600, h: 100 },
+                GlobalRect {
+                    x: 900,
+                    y: 0,
+                    w: 600,
+                    h: 100,
+                },
             )
             .unwrap();
             assert_eq!(idx, 1);
@@ -172,9 +203,16 @@ pub mod rect {
         #[test]
         fn rect_completely_outside_monitors_returns_none() {
             let monitors = vec![m(0, 0, 1920, 1080)];
-            assert!(
-                to_local(&monitors, GlobalRect { x: 5000, y: 5000, w: 100, h: 100 }).is_none()
-            );
+            assert!(to_local(
+                &monitors,
+                GlobalRect {
+                    x: 5000,
+                    y: 5000,
+                    w: 100,
+                    h: 100
+                }
+            )
+            .is_none());
         }
 
         #[test]
@@ -183,7 +221,12 @@ pub mod rect {
             // Rect 900..1200 × 900..1200 → clipped to 900..1000.
             let lr = to_local(
                 &monitors,
-                GlobalRect { x: 900, y: 900, w: 300, h: 300 },
+                GlobalRect {
+                    x: 900,
+                    y: 900,
+                    w: 300,
+                    h: 300,
+                },
             )
             .unwrap();
             assert_eq!(lr.w, 100);
@@ -193,16 +236,41 @@ pub mod rect {
         #[test]
         fn empty_monitors_list_returns_none() {
             let monitors: Vec<MonitorBounds> = vec![];
-            assert!(
-                to_local(&monitors, GlobalRect { x: 0, y: 0, w: 100, h: 100 }).is_none()
-            );
-            assert!(best_monitor(&monitors, GlobalRect { x: 0, y: 0, w: 100, h: 100 }).is_none());
+            assert!(to_local(
+                &monitors,
+                GlobalRect {
+                    x: 0,
+                    y: 0,
+                    w: 100,
+                    h: 100
+                }
+            )
+            .is_none());
+            assert!(best_monitor(
+                &monitors,
+                GlobalRect {
+                    x: 0,
+                    y: 0,
+                    w: 100,
+                    h: 100
+                }
+            )
+            .is_none());
         }
 
         #[test]
         fn rect_with_zero_width_does_not_match_any_monitor() {
             let monitors = vec![m(0, 0, 1000, 1000)];
-            assert!(to_local(&monitors, GlobalRect { x: 100, y: 100, w: 0, h: 100 }).is_none());
+            assert!(to_local(
+                &monitors,
+                GlobalRect {
+                    x: 100,
+                    y: 100,
+                    w: 0,
+                    h: 100
+                }
+            )
+            .is_none());
         }
 
         #[test]
@@ -210,9 +278,16 @@ pub mod rect {
             // A rect whose right edge is exactly at the monitor's left edge
             // contributes no pixels and should not select that monitor.
             let monitors = vec![m(1000, 0, 1000, 1000)];
-            assert!(
-                to_local(&monitors, GlobalRect { x: 900, y: 0, w: 100, h: 100 }).is_none()
-            );
+            assert!(to_local(
+                &monitors,
+                GlobalRect {
+                    x: 900,
+                    y: 0,
+                    w: 100,
+                    h: 100
+                }
+            )
+            .is_none());
         }
 
         #[test]
@@ -220,10 +295,24 @@ pub mod rect {
             let monitors = vec![m(100, 200, 1920, 1080)];
             let lr = to_local(
                 &monitors,
-                GlobalRect { x: 100, y: 200, w: 1920, h: 1080 },
+                GlobalRect {
+                    x: 100,
+                    y: 200,
+                    w: 1920,
+                    h: 1080,
+                },
             )
             .unwrap();
-            assert_eq!(lr, LocalRect { monitor_index: 0, x: 0, y: 0, w: 1920, h: 1080 });
+            assert_eq!(
+                lr,
+                LocalRect {
+                    monitor_index: 0,
+                    x: 0,
+                    y: 0,
+                    w: 1920,
+                    h: 1080
+                }
+            );
         }
 
         #[test]
@@ -233,7 +322,12 @@ pub mod rect {
             let monitors = vec![m(0, 0, 1000, 1000), m(0, 0, 1000, 1000)];
             let idx = best_monitor(
                 &monitors,
-                GlobalRect { x: 100, y: 100, w: 200, h: 200 },
+                GlobalRect {
+                    x: 100,
+                    y: 100,
+                    w: 200,
+                    h: 200,
+                },
             )
             .unwrap();
             assert_eq!(idx, 0);
@@ -244,7 +338,12 @@ pub mod rect {
             let monitors = vec![m(0, 0, 1000, 1000)];
             let lr = to_local(
                 &monitors,
-                GlobalRect { x: 10, y: -50, w: 100, h: 200 },
+                GlobalRect {
+                    x: 10,
+                    y: -50,
+                    w: 100,
+                    h: 200,
+                },
             )
             .unwrap();
             // Top is clipped to monitor origin; height drops to 150.
@@ -258,7 +357,12 @@ pub mod rect {
             let monitors = vec![m(0, 0, 1920, 1080)];
             let lr = to_local(
                 &monitors,
-                GlobalRect { x: 500, y: 400, w: 300, h: 200 },
+                GlobalRect {
+                    x: 500,
+                    y: 400,
+                    w: 300,
+                    h: 200,
+                },
             )
             .unwrap();
             assert_eq!(lr.w, 300);

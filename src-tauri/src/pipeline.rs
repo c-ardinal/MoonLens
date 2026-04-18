@@ -90,9 +90,7 @@ impl Pipeline {
         for (id, cfg) in &s.providers.configs {
             let cfg = cfg.clone();
             let handle: Option<ProviderHandle> = match id.as_str() {
-                id if id.starts_with("ollama.") => {
-                    Some(Arc::new(OllamaTranslator::new(id, &cfg)))
-                }
+                id if id.starts_with("ollama.") => Some(Arc::new(OllamaTranslator::new(id, &cfg))),
                 "deepl" => Some(Arc::new(DeepLTranslator::new(id, &cfg))),
                 "gemini" => Some(Arc::new(GeminiProvider::new(id, &cfg))),
                 id if id.starts_with("whisper_cpp.") => {
@@ -210,9 +208,13 @@ impl Pipeline {
             return;
         }
         let key = format!("{cap:?}");
-        self.sticky
-            .write()
-            .insert(key, (id.to_string(), Instant::now() + Duration::from_millis(ms as u64)));
+        self.sticky.write().insert(
+            key,
+            (
+                id.to_string(),
+                Instant::now() + Duration::from_millis(ms as u64),
+            ),
+        );
     }
 
     /// High-level capture flow: given a region-of-interest PNG, classify
@@ -225,8 +227,8 @@ impl Pipeline {
         let s = self.settings.snapshot();
         // Cheap heuristic classifier. A plugin-provided classifier can
         // override through the `intent_classifier` chain in future work.
-        let img = image::load_from_memory(&image_png)
-            .map_err(|e| ProviderError::Other(e.to_string()))?;
+        let img =
+            image::load_from_memory(&image_png).map_err(|e| ProviderError::Other(e.to_string()))?;
         let intent = intent::classify(&img);
 
         // 1) Try QR — decoding is almost free and short-circuits the rest.
@@ -335,9 +337,9 @@ impl Pipeline {
         if !s.storage.keep_history {
             return;
         }
-        if let Err(e) = self
-            .storage
-            .append(kind, source_text, result_text, provider, via_cloud, None)
+        if let Err(e) =
+            self.storage
+                .append(kind, source_text, result_text, provider, via_cloud, None)
         {
             tracing::warn!("history append failed: {e}");
         }
@@ -396,14 +398,23 @@ pub fn apply_stickiness_for_test(
 }
 
 fn should_fallback(conds: &[FallbackCondition], e: &ProviderError) -> bool {
-    conds.iter().any(|c| matches!((c, e),
-        (FallbackCondition::Timeout, ProviderError::Timeout(_))
-        | (FallbackCondition::Error, ProviderError::Other(_))
-        | (FallbackCondition::RateLimit, ProviderError::RateLimit)
-        | (FallbackCondition::Offline, ProviderError::Offline)
-        | (FallbackCondition::UnsupportedLanguage, ProviderError::UnsupportedLanguage(_, _))
-        | (FallbackCondition::LowConfidence, ProviderError::LowConfidence)
-    ))
+    conds.iter().any(|c| {
+        matches!(
+            (c, e),
+            (FallbackCondition::Timeout, ProviderError::Timeout(_))
+                | (FallbackCondition::Error, ProviderError::Other(_))
+                | (FallbackCondition::RateLimit, ProviderError::RateLimit)
+                | (FallbackCondition::Offline, ProviderError::Offline)
+                | (
+                    FallbackCondition::UnsupportedLanguage,
+                    ProviderError::UnsupportedLanguage(_, _)
+                )
+                | (
+                    FallbackCondition::LowConfidence,
+                    ProviderError::LowConfidence
+                )
+        )
+    })
 }
 
 fn apply_stickiness(

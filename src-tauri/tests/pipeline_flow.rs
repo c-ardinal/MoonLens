@@ -17,9 +17,7 @@ use std::{
 use async_trait::async_trait;
 use moonlens_lib::{
     pipeline::Pipeline,
-    providers::{
-        Capability, Provider, ProviderError, ProviderHandle, TaskInput, TaskOutput,
-    },
+    providers::{Capability, Provider, ProviderError, ProviderHandle, TaskInput, TaskOutput},
     settings::{
         schema::{FallbackCondition, Settings, TaskChain},
         SettingsStore,

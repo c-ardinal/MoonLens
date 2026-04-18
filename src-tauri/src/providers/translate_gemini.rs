@@ -77,7 +77,11 @@ impl Provider for GeminiProvider {
         &self.id
     }
     fn capabilities(&self) -> &[Capability] {
-        &[Capability::Translate, Capability::Explain, Capability::Summarize]
+        &[
+            Capability::Translate,
+            Capability::Explain,
+            Capability::Summarize,
+        ]
     }
     fn is_local(&self) -> bool {
         false

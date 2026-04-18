@@ -10,9 +10,9 @@ use std::time::Duration;
 use anyhow::Result;
 use parking_lot::Mutex;
 use serde::Serialize;
+use tauri::async_runtime::JoinHandle;
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::mpsc;
-use tauri::async_runtime::JoinHandle;
 
 use crate::{
     audio::backend::{AudioFrame, LoopbackStream},
@@ -27,8 +27,13 @@ use crate::{
 pub enum SubtitleEvent {
     Started,
     Stopped,
-    Chunk { original: String, translated: String },
-    Error { message: String },
+    Chunk {
+        original: String,
+        translated: String,
+    },
+    Error {
+        message: String,
+    },
 }
 
 pub struct SubtitleService {

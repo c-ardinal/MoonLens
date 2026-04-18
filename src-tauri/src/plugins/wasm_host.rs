@@ -129,8 +129,7 @@ fn build_instance(bytes: &[u8], _network_allow: &[String]) -> Result<LoadedInsta
     let component = Component::from_binary(&engine, bytes)?;
 
     let mut linker = Linker::<State>::new(&engine);
-    wasmtime_wasi::add_to_linker_sync(&mut linker)
-        .context("link wasi to linker")?;
+    wasmtime_wasi::add_to_linker_sync(&mut linker).context("link wasi to linker")?;
 
     let mut wasi_builder = WasiCtxBuilder::new();
     // No filesystem, no env, no inherited stdio. Network capability is
@@ -219,7 +218,10 @@ fn to_wit_input(input: TaskInput) -> wit_types::TaskInput {
             source_language,
             target_language,
         }),
-        TaskInput::Ocr { image_png, languages } => W::Ocr(wit_types::OcrInput {
+        TaskInput::Ocr {
+            image_png,
+            languages,
+        } => W::Ocr(wit_types::OcrInput {
             image_png,
             languages,
         }),
@@ -230,10 +232,9 @@ fn to_wit_input(input: TaskInput) -> wit_types::TaskInput {
             audio: audio_pcm16_mono_16k,
             language_hint,
         }),
-        TaskInput::Explain { prompt, image_png } => W::Explain(wit_types::ExplainInput {
-            prompt,
-            image_png,
-        }),
+        TaskInput::Explain { prompt, image_png } => {
+            W::Explain(wit_types::ExplainInput { prompt, image_png })
+        }
         TaskInput::Summarize { text } => W::Summarize(text),
         TaskInput::ReverseImageSearch { image_url } => W::ReverseImageSearch(image_url),
         TaskInput::QrHandler { payload } => W::QrHandler(payload),

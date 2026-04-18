@@ -68,11 +68,13 @@ fn malformed_plugin_is_skipped_without_breaking_other_plugins() {
     fs::create_dir_all(plugins_dir.join("corrupt")).unwrap();
     // A plugin with an unparseable manifest should also be skipped.
     fs::create_dir_all(plugins_dir.join("broken")).unwrap();
-    fs::write(plugins_dir.join("broken/plugin.toml"), "not = valid :: toml").unwrap();
+    fs::write(
+        plugins_dir.join("broken/plugin.toml"),
+        "not = valid :: toml",
+    )
+    .unwrap();
 
-    let settings = Arc::new(
-        SettingsStore::load_from(tmp.path().join("config.toml")).unwrap(),
-    );
+    let settings = Arc::new(SettingsStore::load_from(tmp.path().join("config.toml")).unwrap());
     let registry = PluginRegistry::load_from(plugins_dir, settings).unwrap();
     let ids: Vec<String> = registry.list().into_iter().map(|d| d.id).collect();
     assert_eq!(ids, vec!["good".to_string()]);
@@ -86,9 +88,7 @@ fn enabled_flag_is_per_plugin_and_persists_across_rescan() {
     write_plugin(&plugins_dir, "a", "sidecar");
     write_plugin(&plugins_dir, "b", "sidecar");
 
-    let settings = Arc::new(
-        SettingsStore::load_from(tmp.path().join("config.toml")).unwrap(),
-    );
+    let settings = Arc::new(SettingsStore::load_from(tmp.path().join("config.toml")).unwrap());
     let registry = PluginRegistry::load_from(plugins_dir.clone(), settings.clone()).unwrap();
 
     // Neither plugin is enabled by default.

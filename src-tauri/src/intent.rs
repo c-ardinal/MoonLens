@@ -62,40 +62,54 @@ mod tests {
     #[test]
     fn uniform_gray_is_photo() {
         // Large uniform image has ~0 stddev.
-        let img =
-            DynamicImage::ImageRgba8(ImageBuffer::from_pixel(128, 128, Rgba([120, 120, 120, 255])));
+        let img = DynamicImage::ImageRgba8(ImageBuffer::from_pixel(
+            128,
+            128,
+            Rgba([120, 120, 120, 255]),
+        ));
         assert!(matches!(classify(&img), Intent::Photo));
     }
 
     #[test]
     fn text_like_stats_classify_as_text() {
-        let s = Stats { mean: 180.0, std: 90.0 };
+        let s = Stats {
+            mean: 180.0,
+            std: 90.0,
+        };
         assert!(matches!(classify_stats(s), Intent::Text));
     }
 
     #[test]
     fn very_uniform_stats_classify_as_photo() {
-        let s = Stats { mean: 120.0, std: 10.0 };
+        let s = Stats {
+            mean: 120.0,
+            std: 10.0,
+        };
         assert!(matches!(classify_stats(s), Intent::Photo));
     }
 
     #[test]
     fn medium_contrast_classifies_as_mixed() {
-        let s = Stats { mean: 40.0, std: 50.0 };
+        let s = Stats {
+            mean: 40.0,
+            std: 50.0,
+        };
         assert!(matches!(classify_stats(s), Intent::Mixed));
     }
 
     #[test]
     fn bright_low_contrast_classifies_as_photo() {
         // Mean outside text band AND std below 35 → photo.
-        let s = Stats { mean: 240.0, std: 10.0 };
+        let s = Stats {
+            mean: 240.0,
+            std: 10.0,
+        };
         assert!(matches!(classify_stats(s), Intent::Photo));
     }
 
     #[test]
     fn one_by_one_image_is_unknown() {
-        let img =
-            DynamicImage::ImageRgba8(ImageBuffer::from_pixel(1, 1, Rgba([0, 0, 0, 255])));
+        let img = DynamicImage::ImageRgba8(ImageBuffer::from_pixel(1, 1, Rgba([0, 0, 0, 255])));
         assert!(matches!(classify(&img), Intent::Unknown));
     }
 
@@ -123,31 +137,37 @@ mod tests {
 
     #[test]
     fn pure_white_image_is_photo() {
-        let img = DynamicImage::ImageRgba8(ImageBuffer::from_pixel(
-            96,
-            96,
-            Rgba([255, 255, 255, 255]),
-        ));
+        let img =
+            DynamicImage::ImageRgba8(ImageBuffer::from_pixel(96, 96, Rgba([255, 255, 255, 255])));
         assert!(matches!(classify(&img), Intent::Photo));
     }
 
     #[test]
     fn zero_std_with_text_band_mean_still_classifies_as_photo() {
         // Regardless of mean, std = 0 → uniform → Photo.
-        let s = Stats { mean: 150.0, std: 0.0 };
+        let s = Stats {
+            mean: 150.0,
+            std: 0.0,
+        };
         assert!(matches!(classify_stats(s), Intent::Photo));
     }
 
     #[test]
     fn high_std_but_very_dark_mean_is_mixed_not_text() {
         // std in the text range but mean below 60 → falls through to Mixed.
-        let s = Stats { mean: 50.0, std: 90.0 };
+        let s = Stats {
+            mean: 50.0,
+            std: 90.0,
+        };
         assert!(matches!(classify_stats(s), Intent::Mixed));
     }
 
     #[test]
     fn high_std_but_very_bright_mean_is_mixed_not_text() {
-        let s = Stats { mean: 240.0, std: 90.0 };
+        let s = Stats {
+            mean: 240.0,
+            std: 90.0,
+        };
         assert!(matches!(classify_stats(s), Intent::Mixed));
     }
 
@@ -167,4 +187,3 @@ mod tests {
         assert!(matches!(intent, Intent::Text));
     }
 }
-

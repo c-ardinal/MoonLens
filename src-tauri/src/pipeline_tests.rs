@@ -19,11 +19,11 @@ mod tests {
     #[test]
     fn fallback_timeout_matches_condition() {
         let conds = [FallbackCondition::Timeout];
-        assert!(should_fallback_for_test(&conds, &ProviderError::Timeout(100)));
-        assert!(!should_fallback_for_test(
+        assert!(should_fallback_for_test(
             &conds,
-            &ProviderError::Offline
+            &ProviderError::Timeout(100)
         ));
+        assert!(!should_fallback_for_test(&conds, &ProviderError::Offline));
     }
 
     #[test]
@@ -124,8 +124,14 @@ mod tests {
         // (timeouts and offline have their own categories). Verify the
         // scoping in isolation so we do not accidentally broaden it.
         let conds = [FallbackCondition::Error];
-        assert!(should_fallback_for_test(&conds, &ProviderError::Other("x".into())));
-        assert!(!should_fallback_for_test(&conds, &ProviderError::Timeout(10)));
+        assert!(should_fallback_for_test(
+            &conds,
+            &ProviderError::Other("x".into())
+        ));
+        assert!(!should_fallback_for_test(
+            &conds,
+            &ProviderError::Timeout(10)
+        ));
         assert!(!should_fallback_for_test(&conds, &ProviderError::Offline));
     }
 

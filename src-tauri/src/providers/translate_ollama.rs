@@ -25,12 +25,8 @@ impl OllamaTranslator {
                 .unwrap_or(d)
                 .to_string()
         };
-        let get_f = |k: &str, d: f64| {
-            config.get(k).and_then(|v| v.as_f64()).unwrap_or(d) as f32
-        };
-        let get_u = |k: &str, d: u64| {
-            config.get(k).and_then(|v| v.as_u64()).unwrap_or(d) as u32
-        };
+        let get_f = |k: &str, d: f64| config.get(k).and_then(|v| v.as_f64()).unwrap_or(d) as f32;
+        let get_u = |k: &str, d: u64| config.get(k).and_then(|v| v.as_u64()).unwrap_or(d) as u32;
         Self {
             id: id.into(),
             endpoint: get_str("endpoint", "http://127.0.0.1:11434"),
@@ -118,21 +114,15 @@ impl Provider for OllamaTranslator {
             },
         };
 
-        let resp = self
-            .http
-            .post(&url)
-            .json(&req)
-            .send()
-            .await
-            .map_err(|e| {
-                if e.is_timeout() {
-                    ProviderError::Timeout(0)
-                } else if e.is_connect() {
-                    ProviderError::Offline
-                } else {
-                    ProviderError::Other(e.to_string())
-                }
-            })?;
+        let resp = self.http.post(&url).json(&req).send().await.map_err(|e| {
+            if e.is_timeout() {
+                ProviderError::Timeout(0)
+            } else if e.is_connect() {
+                ProviderError::Offline
+            } else {
+                ProviderError::Other(e.to_string())
+            }
+        })?;
 
         let body: GenerateResponse = resp
             .json()

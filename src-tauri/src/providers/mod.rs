@@ -88,9 +88,16 @@ pub enum TaskInput {
 pub enum TaskOutput {
     Text(String),
     /// Streaming chunk; the pipeline forwards each to the UI via events.
-    TextChunk { delta: String, done: bool },
-    Ocr { lines: Vec<OcrLine> },
-    Transcript { segments: Vec<TranscriptSegment> },
+    TextChunk {
+        delta: String,
+        done: bool,
+    },
+    Ocr {
+        lines: Vec<OcrLine>,
+    },
+    Transcript {
+        segments: Vec<TranscriptSegment>,
+    },
     OpenedExternalUrl(String),
     Intent(Intent),
     Empty,

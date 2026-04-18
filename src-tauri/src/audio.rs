@@ -36,7 +36,11 @@ pub mod dsp {
     /// in/out: callers thread it across successive callbacks so that
     /// phase is continuous. Output rate is 16 kHz; input rate is given
     /// in `source_rate_hz`.
-    pub fn resample_to_16k_linear(mono: &[i16], source_rate_hz: u32, fractional: &mut f32) -> Vec<i16> {
+    pub fn resample_to_16k_linear(
+        mono: &[i16],
+        source_rate_hz: u32,
+        fractional: &mut f32,
+    ) -> Vec<i16> {
         if mono.is_empty() || source_rate_hz == 0 {
             return Vec::new();
         }

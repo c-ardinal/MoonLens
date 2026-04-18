@@ -39,10 +39,9 @@ impl Provider for BrowserSearchProvider {
         let TaskInput::ReverseImageSearch { image_url } = input else {
             return Err(ProviderError::Other("expected ReverseImageSearch".into()));
         };
-        let url = self.url_template.replace(
-            "{image_url}",
-            &url_encode(&image_url),
-        );
+        let url = self
+            .url_template
+            .replace("{image_url}", &url_encode(&image_url));
         Ok(TaskOutput::OpenedExternalUrl(url))
     }
 }
@@ -74,7 +73,10 @@ mod tests {
 
     #[test]
     fn reserved_characters_are_percent_encoded() {
-        assert_eq!(url_encode("https://example.com/a b"), "https%3A%2F%2Fexample.com%2Fa%20b");
+        assert_eq!(
+            url_encode("https://example.com/a b"),
+            "https%3A%2F%2Fexample.com%2Fa%20b"
+        );
     }
 
     #[test]

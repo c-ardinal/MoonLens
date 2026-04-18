@@ -62,12 +62,8 @@ pub mod geometry {
     pub fn observed_rect(outer: LensOuterRect, insets: LensInsets) -> Option<LensOuterRect> {
         let x = outer.x + insets.left as i32;
         let y = outer.y + insets.top as i32;
-        let w = outer
-            .w
-            .saturating_sub(insets.left + insets.right);
-        let h = outer
-            .h
-            .saturating_sub(insets.top + insets.bottom);
+        let w = outer.w.saturating_sub(insets.left + insets.right);
+        let h = outer.h.saturating_sub(insets.top + insets.bottom);
         if w == 0 || h == 0 {
             None
         } else {
@@ -81,23 +77,61 @@ pub mod geometry {
 
         #[test]
         fn insets_trim_the_header() {
-            let outer = LensOuterRect { x: 100, y: 200, w: 400, h: 300 };
-            let insets = LensInsets { top: 32, bottom: 0, left: 0, right: 0 };
+            let outer = LensOuterRect {
+                x: 100,
+                y: 200,
+                w: 400,
+                h: 300,
+            };
+            let insets = LensInsets {
+                top: 32,
+                bottom: 0,
+                left: 0,
+                right: 0,
+            };
             let observed = observed_rect(outer, insets).unwrap();
-            assert_eq!(observed, LensOuterRect { x: 100, y: 232, w: 400, h: 268 });
+            assert_eq!(
+                observed,
+                LensOuterRect {
+                    x: 100,
+                    y: 232,
+                    w: 400,
+                    h: 268
+                }
+            );
         }
 
         #[test]
         fn insets_that_consume_the_window_return_none() {
-            let outer = LensOuterRect { x: 0, y: 0, w: 100, h: 32 };
-            let insets = LensInsets { top: 32, bottom: 0, left: 0, right: 0 };
+            let outer = LensOuterRect {
+                x: 0,
+                y: 0,
+                w: 100,
+                h: 32,
+            };
+            let insets = LensInsets {
+                top: 32,
+                bottom: 0,
+                left: 0,
+                right: 0,
+            };
             assert!(observed_rect(outer, insets).is_none());
         }
 
         #[test]
         fn insets_larger_than_the_window_do_not_panic() {
-            let outer = LensOuterRect { x: 0, y: 0, w: 100, h: 100 };
-            let insets = LensInsets { top: 200, bottom: 200, left: 200, right: 200 };
+            let outer = LensOuterRect {
+                x: 0,
+                y: 0,
+                w: 100,
+                h: 100,
+            };
+            let insets = LensInsets {
+                top: 200,
+                bottom: 200,
+                left: 200,
+                right: 200,
+            };
             // saturating_sub keeps the values in bounds; result is None.
             assert!(observed_rect(outer, insets).is_none());
         }
@@ -283,11 +317,7 @@ pub fn outer_rect(win: &WebviewWindow) -> Result<geometry::LensOuterRect> {
 
 /// Compute the observed rect, hide the window, capture, then show again.
 /// Returns the captured PNG.
-pub fn capture_lens(
-    app: &AppHandle,
-    registry: &LensRegistryHandle,
-    id: &str,
-) -> Result<Vec<u8>> {
+pub fn capture_lens(app: &AppHandle, registry: &LensRegistryHandle, id: &str) -> Result<Vec<u8>> {
     use crate::capture;
 
     let win = app
@@ -348,7 +378,13 @@ mod tests {
         let r = new_registry_for_test();
         r.track("a".into());
         r.track("b".into());
-        r.set_insets("a", LensInsets { top: 30, ..Default::default() });
+        r.set_insets(
+            "a",
+            LensInsets {
+                top: 30,
+                ..Default::default()
+            },
+        );
         assert_eq!(r.insets("a").unwrap().top, 30);
         assert_eq!(r.insets("b").unwrap().top, 0);
     }
@@ -398,7 +434,13 @@ mod tests {
     fn setting_insets_on_missing_id_is_a_noop() {
         // Should not panic and should not create an entry.
         let r = new_registry_for_test();
-        r.set_insets("missing", LensInsets { top: 10, ..Default::default() });
+        r.set_insets(
+            "missing",
+            LensInsets {
+                top: 10,
+                ..Default::default()
+            },
+        );
         assert_eq!(r.list().len(), 0);
     }
 
@@ -414,25 +456,50 @@ mod tests {
 
     #[test]
     fn observed_rect_with_zero_size_outer_returns_none() {
-        let outer = geometry::LensOuterRect { x: 0, y: 0, w: 0, h: 0 };
+        let outer = geometry::LensOuterRect {
+            x: 0,
+            y: 0,
+            w: 0,
+            h: 0,
+        };
         assert!(geometry::observed_rect(outer, geometry::LensInsets::default()).is_none());
     }
 
     #[test]
     fn observed_rect_with_zero_insets_equals_outer() {
-        let outer = geometry::LensOuterRect { x: 10, y: 20, w: 300, h: 200 };
+        let outer = geometry::LensOuterRect {
+            x: 10,
+            y: 20,
+            w: 300,
+            h: 200,
+        };
         let observed = geometry::observed_rect(outer, geometry::LensInsets::default()).unwrap();
         assert_eq!(observed, outer);
     }
 
     #[test]
     fn observed_rect_trims_all_four_sides() {
-        let outer = geometry::LensOuterRect { x: 0, y: 0, w: 400, h: 300 };
-        let insets = geometry::LensInsets { top: 30, bottom: 20, left: 10, right: 15 };
+        let outer = geometry::LensOuterRect {
+            x: 0,
+            y: 0,
+            w: 400,
+            h: 300,
+        };
+        let insets = geometry::LensInsets {
+            top: 30,
+            bottom: 20,
+            left: 10,
+            right: 15,
+        };
         let observed = geometry::observed_rect(outer, insets).unwrap();
         assert_eq!(
             observed,
-            geometry::LensOuterRect { x: 10, y: 30, w: 375, h: 250 }
+            geometry::LensOuterRect {
+                x: 10,
+                y: 30,
+                w: 375,
+                h: 250
+            }
         );
     }
 

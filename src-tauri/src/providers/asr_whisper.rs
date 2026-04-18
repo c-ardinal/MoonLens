@@ -62,16 +62,13 @@ impl Provider for WhisperCppProvider {
         if let Some(lang) = language_hint {
             req = req.query(&[("language", lang)]);
         }
-        let resp = req
-            .send()
-            .await
-            .map_err(|e| {
-                if e.is_connect() {
-                    ProviderError::Offline
-                } else {
-                    ProviderError::Other(e.to_string())
-                }
-            })?;
+        let resp = req.send().await.map_err(|e| {
+            if e.is_connect() {
+                ProviderError::Offline
+            } else {
+                ProviderError::Other(e.to_string())
+            }
+        })?;
         let body: ApiResponse = resp
             .json()
             .await

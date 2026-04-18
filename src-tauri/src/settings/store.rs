@@ -22,10 +22,7 @@ pub struct SettingsStore {
 
 impl SettingsStore {
     pub fn load_or_default(app: &AppHandle) -> Result<Self> {
-        let config_dir = app
-            .path()
-            .app_config_dir()
-            .context("no app config dir")?;
+        let config_dir = app.path().app_config_dir().context("no app config dir")?;
         std::fs::create_dir_all(&config_dir).ok();
         let config_path = config_dir.join("config.toml");
         Self::load_from(config_path)
@@ -39,8 +36,8 @@ impl SettingsStore {
             std::fs::create_dir_all(parent).ok();
         }
 
-        let mut settings: Settings = toml::from_str(DEFAULT_TOML)
-            .context("bundled default.toml is invalid")?;
+        let mut settings: Settings =
+            toml::from_str(DEFAULT_TOML).context("bundled default.toml is invalid")?;
         if config_path.exists() {
             match std::fs::read_to_string(&config_path) {
                 Ok(raw) => match toml::from_str::<Settings>(&raw) {
@@ -81,8 +78,7 @@ impl SettingsStore {
     /// JSON Schema for the current `Settings` type, consumed by the frontend
     /// to auto-generate a form.
     pub fn json_schema() -> serde_json::Value {
-        serde_json::to_value(schemars::schema_for!(Settings))
-            .expect("schema is serializable")
+        serde_json::to_value(schemars::schema_for!(Settings)).expect("schema is serializable")
     }
 
     pub fn config_path(&self) -> &Path {
