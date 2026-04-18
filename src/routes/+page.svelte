@@ -3,13 +3,19 @@
   import { onDestroy, onMount } from 'svelte';
   import {
     Camera,
+    Focus,
     Keyboard,
     Puzzle,
     History,
     Download,
     Settings as SettingsIcon
   } from 'lucide-svelte';
-  import { captureAndProcess, installOcrModels, onHotkey } from '$lib/ipc';
+  import {
+    captureAndProcess,
+    installOcrModels,
+    newLensWindow,
+    onHotkey
+  } from '$lib/ipc';
 
   let running = $state(false);
   let lastError = $state<string | null>(null);
@@ -39,6 +45,14 @@
     }
   }
 
+  async function createLens() {
+    try {
+      await newLensWindow();
+    } catch (e) {
+      lastError = String(e);
+    }
+  }
+
   async function setupModels() {
     installing = true;
     try {
@@ -64,25 +78,37 @@
     <p class="text-sm text-ink-muted">Lens + 字幕 + 検索、すべて1つのホットキーで。</p>
   </header>
 
-  <section
-    class="rounded-ml border border-border bg-surface-elevated p-5 shadow-ml"
-  >
+  <section class="rounded-ml border border-border bg-surface-elevated p-5 shadow-ml">
     <div class="flex items-center justify-between gap-4">
       <div>
         <h2 class="text-base font-semibold">キャプチャ</h2>
-        <p class="text-sm text-ink-muted">プライマリモニタ全体を読み取り、OCR＋翻訳を実行します。</p>
+        <p class="text-sm text-ink-muted">
+          ワンショットは <code class="font-mono">⌘⇧Space</code> でドラッグ選択。<br />
+          Lens ウィンドウは領域を常駐させて継続監視（動画字幕・ゲームUIに最適）。
+        </p>
       </div>
-      <button
-        class="inline-flex items-center gap-2 rounded-ml-sm bg-accent px-4 py-2 text-sm font-medium text-white shadow-ml transition hover:opacity-90 disabled:opacity-40"
-        onclick={capture}
-        disabled={running}
-      >
-        <Camera class="h-4 w-4" />
-        {running ? '処理中…' : 'いますぐキャプチャ'}
-      </button>
+      <div class="flex flex-col gap-2">
+        <button
+          class="inline-flex items-center gap-2 rounded-ml-sm bg-accent px-4 py-2 text-sm font-medium text-white shadow-ml transition hover:opacity-90 disabled:opacity-40"
+          onclick={capture}
+          disabled={running}
+        >
+          <Camera class="h-4 w-4" />
+          {running ? '処理中…' : '全画面キャプチャ'}
+        </button>
+        <button
+          class="inline-flex items-center gap-2 rounded-ml-sm border border-border bg-surface px-4 py-2 text-sm font-medium text-ink-muted transition hover:border-accent/60 hover:text-ink"
+          onclick={createLens}
+        >
+          <Focus class="h-4 w-4" />
+          Lens ウィンドウを開く
+        </button>
+      </div>
     </div>
     {#if lastProvider}
-      <p class="mt-3 text-xs text-ink-faint">前回のプロバイダ: <code class="font-mono">{lastProvider}</code></p>
+      <p class="mt-3 text-xs text-ink-faint">
+        前回のプロバイダ: <code class="font-mono">{lastProvider}</code>
+      </p>
     {/if}
     {#if lastError}
       <p class="mt-3 text-xs text-red-500">エラー: {lastError}</p>

@@ -1,22 +1,153 @@
 //! System audio loopback capture for live subtitles.
 //!
-//! `cpal::Stream` is `!Send`, so we cannot hand it to async code that may
-//! migrate across threads. The capture lives on its own dedicated OS
-//! thread; control flows through a stop-notify and the audio frames flow
-//! through an `mpsc` channel that the rest of the app reads from.
-//!
-//! Each platform exposes loopback differently:
-//! - **Windows**: WASAPI loopback on the default render device.
-//! - **macOS**: requires a virtual loopback driver (BlackHole, Loopback);
-//!   we look for a device whose name contains "BlackHole" or "Loopback".
-//! - **Linux**: PulseAudio exposes a `*.monitor` source per sink.
-//!
-//! Captured frames are downmixed to mono and resampled to 16 kHz PCM16
-//! so they can be fed straight into whisper.cpp / Whisper-compatible
-//! servers without further conversion.
+//! Pure resampling/downmix math lives in [`dsp`] so it can be unit tested
+//! without a cpal stream.
 
+pub mod dsp {
+    //! Pure, allocation-friendly DSP helpers for the loopback pipeline.
+
+    /// Convert a normalized float sample in `[-1.0, 1.0]` to a clamped
+    /// `i16` suitable for PCM16 output.
+    pub fn pcm16_from_f32(v: f32) -> i16 {
+        let clamped = v.clamp(-1.0, 1.0);
+        (clamped * 32767.0) as i16
+    }
+
+    /// Downmix an interleaved multi-channel i16 buffer to mono by
+    /// averaging channels per frame. Returns an empty vector if
+    /// `channels` is zero or the buffer length is not a clean multiple.
+    pub fn downmix_interleaved_i16(data: &[i16], channels: usize) -> Vec<i16> {
+        if channels == 0 {
+            return Vec::new();
+        }
+        let frames = data.len() / channels;
+        let mut out = Vec::with_capacity(frames);
+        for frame in data.chunks_exact(channels) {
+            let mut acc: i32 = 0;
+            for v in frame {
+                acc += *v as i32;
+            }
+            out.push((acc / channels as i32) as i16);
+        }
+        out
+    }
+
+    /// Linear-interpolating resampler for speech. `fractional` is
+    /// in/out: callers thread it across successive callbacks so that
+    /// phase is continuous. Output rate is 16 kHz; input rate is given
+    /// in `source_rate_hz`.
+    pub fn resample_to_16k_linear(mono: &[i16], source_rate_hz: u32, fractional: &mut f32) -> Vec<i16> {
+        if mono.is_empty() || source_rate_hz == 0 {
+            return Vec::new();
+        }
+        let ratio = source_rate_hz as f32 / 16_000.0;
+        if ratio <= 0.0 {
+            return Vec::new();
+        }
+        let mut out = Vec::with_capacity((mono.len() as f32 / ratio) as usize + 4);
+        let mut idx = *fractional;
+        while (idx as usize) + 1 < mono.len() {
+            let i = idx as usize;
+            let frac = idx - i as f32;
+            let a = mono[i] as f32;
+            let b = mono[i + 1] as f32;
+            out.push((a + (b - a) * frac) as i16);
+            idx += ratio;
+        }
+        // Carry the phase remainder into the next callback.
+        let leftover = idx - mono.len().max(1) as f32 + 1.0;
+        *fractional = if leftover < 0.0 { 0.0 } else { leftover };
+        out
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn pcm16_conversion_rounds_and_clamps() {
+            assert_eq!(pcm16_from_f32(0.0), 0);
+            assert_eq!(pcm16_from_f32(1.0), 32767);
+            assert_eq!(pcm16_from_f32(-1.0), -32767);
+            assert_eq!(pcm16_from_f32(2.0), 32767);
+            assert_eq!(pcm16_from_f32(-2.0), -32767);
+        }
+
+        #[test]
+        fn downmix_stereo_averages_channels() {
+            let stereo: Vec<i16> = vec![100, 200, 300, 400, -100, -200];
+            let mono = downmix_interleaved_i16(&stereo, 2);
+            assert_eq!(mono, vec![150, 350, -150]);
+        }
+
+        #[test]
+        fn downmix_mono_is_identity() {
+            let mono_in: Vec<i16> = vec![1, 2, 3, 4];
+            let mono = downmix_interleaved_i16(&mono_in, 1);
+            assert_eq!(mono, mono_in);
+        }
+
+        #[test]
+        fn downmix_zero_channels_returns_empty() {
+            assert!(downmix_interleaved_i16(&[1, 2, 3], 0).is_empty());
+        }
+
+        #[test]
+        fn resample_same_rate_is_near_identity() {
+            let mut frac = 0.0_f32;
+            let input: Vec<i16> = (0..16).map(|i| (i * 1000) as i16).collect();
+            let out = resample_to_16k_linear(&input, 16_000, &mut frac);
+            // Length should match within 1; values should follow the linear
+            // ramp (since our input is exactly linear, interpolation is exact).
+            assert!((out.len() as i32 - input.len() as i32).abs() <= 1);
+            for (i, v) in out.iter().enumerate() {
+                assert_eq!(*v as i32, (i as i32) * 1000);
+            }
+        }
+
+        #[test]
+        fn resample_downsamples_48k_to_16k_by_roughly_three_to_one() {
+            let mut frac = 0.0_f32;
+            let input: Vec<i16> = vec![0; 480]; // 10ms of silence at 48 kHz
+            let out = resample_to_16k_linear(&input, 48_000, &mut frac);
+            // 480 / 3 = 160 samples of 16 kHz silence; allow ±1 for phase.
+            assert!((159..=161).contains(&out.len()), "got {}", out.len());
+            assert!(out.iter().all(|&v| v == 0));
+        }
+
+        #[test]
+        fn resample_preserves_continuity_across_calls() {
+            // Two consecutive calls of equal-rate data should produce the
+            // same total number of output samples as one big call.
+            let input: Vec<i16> = (0..32).map(|i| i as i16 * 100).collect();
+            let (a, b) = input.split_at(16);
+            let mut frac1 = 0.0_f32;
+            let mut out = resample_to_16k_linear(a, 16_000, &mut frac1);
+            out.extend(resample_to_16k_linear(b, 16_000, &mut frac1));
+            let mut frac2 = 0.0_f32;
+            let whole = resample_to_16k_linear(&input, 16_000, &mut frac2);
+            // Phase may differ by at most 1 sample at the boundary.
+            assert!((out.len() as i32 - whole.len() as i32).abs() <= 1);
+        }
+    }
+}
+
+// `cpal::Stream` is `!Send`, so we cannot hand it to async code that may
+// migrate across threads. The capture lives on its own dedicated OS thread;
+// control flows through a stop-notify and the audio frames flow through an
+// `mpsc` channel that the rest of the app reads from.
 #[cfg(feature = "audio")]
 pub mod backend {
+    //! Loopback capture backend.
+    //!
+    //! Each platform exposes loopback differently:
+    //! - **Windows**: WASAPI loopback on the default render device.
+    //! - **macOS**: requires a virtual loopback driver (BlackHole, Loopback).
+    //! - **Linux**: PulseAudio exposes a `*.monitor` source per sink.
+    //!
+    //! Captured frames are downmixed to mono and resampled to 16 kHz PCM16
+    //! so they can be fed straight into whisper.cpp / Whisper-compatible
+    //! servers without further conversion.
     use std::sync::Arc;
     use std::thread;
 
@@ -142,10 +273,7 @@ pub mod backend {
         pub fractional: f32,
     }
 
-    fn pcm16_from_f32(v: f32) -> i16 {
-        let clamped = v.clamp(-1.0, 1.0);
-        (clamped * 32767.0) as i16
-    }
+    use super::dsp;
 
     fn forward<T: Copy>(
         data: &[T],
@@ -160,35 +288,22 @@ pub mod backend {
         if channels == 0 || rate == 0 {
             return;
         }
-        let mut mono = Vec::with_capacity(data.len() / channels);
-        for frame in data.chunks_exact(channels) {
-            let mut acc: i32 = 0;
-            for v in frame {
-                acc += to_i16(*v) as i32;
-            }
-            mono.push((acc / channels as i32) as i16);
+        // Pre-convert samples to i16, interleaved, so `dsp::downmix_...`
+        // can operate on the shared i16 path regardless of source format.
+        let mut interleaved: Vec<i16> = Vec::with_capacity(data.len());
+        for v in data {
+            interleaved.push(to_i16(*v));
         }
-        let target = 16_000.0_f32;
-        let ratio = rate as f32 / target;
-        let mut out = Vec::with_capacity((mono.len() as f32 / ratio) as usize + 4);
-        let mut idx = fractional;
-        while (idx as usize) + 1 < mono.len() {
-            let i = idx as usize;
-            let frac = idx - i as f32;
-            let a = mono[i] as f32;
-            let b = mono[i + 1] as f32;
-            out.push((a + (b - a) * frac) as i16);
-            idx += ratio;
-        }
-        fractional = idx - mono.len().max(1) as f32 + 1.0;
-        if fractional < 0.0 {
-            fractional = 0.0;
-        }
+        let mono = dsp::downmix_interleaved_i16(&interleaved, channels);
+        let out = dsp::resample_to_16k_linear(&mono, rate, &mut fractional);
         state.lock().fractional = fractional;
-
         if !out.is_empty() {
             let _ = sink.try_send(out);
         }
+    }
+
+    fn pcm16_from_f32(v: f32) -> i16 {
+        dsp::pcm16_from_f32(v)
     }
 
     fn pick_loopback_device(host: &cpal::Host) -> Option<cpal::Device> {

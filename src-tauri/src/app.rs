@@ -10,8 +10,13 @@ use tauri::{
 };
 
 use crate::{
-    hotkey, ipc, pipeline::Pipeline, plugins::PluginRegistry, settings::SettingsStore,
-    storage::Storage, subtitle::SubtitleService,
+    hotkey, ipc,
+    lens::{LensRegistry, LensRegistryHandle},
+    pipeline::Pipeline,
+    plugins::PluginRegistry,
+    settings::SettingsStore,
+    storage::Storage,
+    subtitle::SubtitleService,
 };
 
 macro_rules! all_commands {
@@ -36,6 +41,12 @@ macro_rules! all_commands {
             ipc::start_region_selection,
             ipc::cancel_region_selection,
             ipc::toggle_subtitle,
+            ipc::new_lens_window,
+            ipc::close_lens_window,
+            ipc::list_lens_windows,
+            ipc::set_lens_insets,
+            ipc::set_lens_auto_refresh,
+            ipc::capture_lens_now,
         ]
     };
 }
@@ -48,6 +59,7 @@ pub struct AppState {
     pub plugins: Arc<PluginRegistry>,
     pub pipeline: Arc<Pipeline>,
     pub subtitle: Arc<SubtitleService>,
+    pub lenses: LensRegistryHandle,
 }
 
 pub fn build() -> Result<()> {
@@ -69,6 +81,7 @@ pub fn build() -> Result<()> {
                 plugins.clone(),
             ));
             let subtitle = Arc::new(SubtitleService::new(settings.clone(), pipeline.clone()));
+            let lenses: LensRegistryHandle = Arc::new(LensRegistry::new());
 
             hotkey::register_all(&handle, settings.clone(), pipeline.clone(), subtitle.clone())?;
             build_tray(&handle)?;
@@ -79,6 +92,7 @@ pub fn build() -> Result<()> {
                 plugins,
                 pipeline,
                 subtitle,
+                lenses,
             });
             Ok(())
         })
@@ -90,6 +104,7 @@ pub fn build() -> Result<()> {
 fn build_tray(app: &AppHandle) -> Result<()> {
     let open = MenuItem::with_id(app, "open", "MoonLens を開く", true, None::<&str>)?;
     let capture = MenuItem::with_id(app, "capture", "キャプチャ (⌘⇧Space)", true, None::<&str>)?;
+    let lens = MenuItem::with_id(app, "new_lens", "Lens ウィンドウを新規作成", true, None::<&str>)?;
     let subtitle = MenuItem::with_id(app, "subtitle", "字幕オーバーレイ", true, None::<&str>)?;
     let plugins = MenuItem::with_id(app, "plugins", "プラグイン", true, None::<&str>)?;
     let history = MenuItem::with_id(app, "history", "履歴", true, None::<&str>)?;
@@ -98,7 +113,7 @@ fn build_tray(app: &AppHandle) -> Result<()> {
 
     let menu = Menu::with_items(
         app,
-        &[&open, &capture, &subtitle, &plugins, &history, &sep, &quit],
+        &[&open, &capture, &lens, &subtitle, &plugins, &history, &sep, &quit],
     )?;
 
     TrayIconBuilder::with_id("moonlens-tray")
@@ -114,6 +129,12 @@ fn build_tray(app: &AppHandle) -> Result<()> {
             "capture" => {
                 if let Err(e) = crate::selector::show(app) {
                     tracing::warn!("selector show failed: {e:?}");
+                }
+            }
+            "new_lens" => {
+                let state = app.state::<AppState>();
+                if let Err(e) = crate::lens::create(app, &state.lenses) {
+                    tracing::warn!("lens create failed: {e:?}");
                 }
             }
             "subtitle" => {

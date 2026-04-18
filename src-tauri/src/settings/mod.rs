@@ -11,6 +11,8 @@
 pub mod profiles;
 pub mod schema;
 pub mod store;
+#[cfg(test)]
+mod tests;
 
 pub use schema::Settings;
 pub use store::SettingsStore;

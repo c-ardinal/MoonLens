@@ -66,9 +66,17 @@ jobs:
         working-directory: src-tauri
         run: cargo test --no-fail-fast
 
-      - name: Build plugin SDK
+      - name: Test plugin SDK
         working-directory: plugin-sdk/rust
-        run: cargo build --release
+        run: cargo test --release
+
+      - name: Build + test hello-translator example
+        working-directory: plugin-sdk/examples/hello-translator
+        run: cargo test --release
+
+      - name: Build + test music-recognizer example
+        working-directory: plugin-sdk/examples/music-recognizer
+        run: cargo test --release
 
       - name: Build Tauri app
         run: npm run tauri:build -- --ci

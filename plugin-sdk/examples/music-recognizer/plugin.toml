@@ -9,7 +9,7 @@ entry = "bin/music-recognizer"
 api_version = "1"
 
 [capabilities]
-provides = ["action"]
+provides = ["asr"]
 consumes = ["audio_loopback"]
 
 [permissions]

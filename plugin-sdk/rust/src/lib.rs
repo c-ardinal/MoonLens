@@ -183,3 +183,75 @@ struct RpcError {
     code: i32,
     message: String,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn task_input_translate_round_trips_through_json() {
+        let input = TaskInput::Translate {
+            text: "hi".into(),
+            source_language: "en".into(),
+            target_language: "ja".into(),
+        };
+        let raw = serde_json::to_string(&input).unwrap();
+        let parsed: TaskInput = serde_json::from_str(&raw).unwrap();
+        match parsed {
+            TaskInput::Translate {
+                text,
+                source_language,
+                target_language,
+            } => {
+                assert_eq!(text, "hi");
+                assert_eq!(source_language, "en");
+                assert_eq!(target_language, "ja");
+            }
+            _ => panic!("wrong variant after round trip"),
+        }
+    }
+
+    #[test]
+    fn task_output_text_round_trips() {
+        let out = TaskOutput::Text("hola".into());
+        let raw = serde_json::to_string(&out).unwrap();
+        let parsed: TaskOutput = serde_json::from_str(&raw).unwrap();
+        match parsed {
+            TaskOutput::Text(t) => assert_eq!(t, "hola"),
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn request_deserialization_accepts_host_wire_format() {
+        // Exact shape the host `sidecar_host` emits.
+        let raw = r#"{"jsonrpc":"2.0","id":1,"method":"run","params":{"capability":"translate","input":{"Translate":{"text":"hi","source_language":"en","target_language":"ja"}}}}"#;
+        let req: RpcRequest = serde_json::from_str(raw).unwrap();
+        assert_eq!(req.id, 1);
+        assert_eq!(req.method, "run");
+        assert_eq!(req.params.capability, "translate");
+    }
+
+    #[test]
+    fn response_serialization_shape_is_compatible_with_host() {
+        let resp = RpcResponse {
+            jsonrpc: "2.0".into(),
+            id: 1,
+            result: Some(TaskOutput::Text("hello".into())),
+            error: None,
+        };
+        let raw = serde_json::to_string(&resp).unwrap();
+        assert!(raw.contains("\"id\":1"));
+        assert!(raw.contains("\"result\""));
+        assert!(!raw.contains("\"error\""));
+    }
+
+    #[test]
+    fn provider_error_variants_serialize_as_tagged_enum() {
+        let e = ProviderError::Offline;
+        let raw = serde_json::to_string(&e).unwrap();
+        assert_eq!(raw, "\"Offline\"");
+        let timeout = serde_json::to_string(&ProviderError::Timeout(500)).unwrap();
+        assert_eq!(timeout, "{\"Timeout\":500}");
+    }
+}

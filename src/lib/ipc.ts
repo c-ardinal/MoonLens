@@ -106,3 +106,17 @@ export const onOverlay = (handler: (event: OverlayEvent) => void): Promise<Unlis
 
 export const onHotkey = (handler: (action: string) => void): Promise<UnlistenFn> =>
   listen<string>('moonlens://hotkey', (e) => handler(e.payload));
+
+export interface LensDescriptor {
+  id: string;
+  title: string;
+  insets: { top: number; bottom: number; left: number; right: number };
+  auto_refresh_ms: number | null;
+}
+
+export const newLensWindow = () => safeInvoke<string>('new_lens_window');
+export const closeLensWindow = (id: string) => safeInvoke<void>('close_lens_window', { id });
+export const listLensWindows = () =>
+  safeInvoke<LensDescriptor[]>('list_lens_windows', undefined, []);
+export const captureLensNow = (id: string) =>
+  safeInvoke<CaptureFlowResult>('capture_lens_now', { id });

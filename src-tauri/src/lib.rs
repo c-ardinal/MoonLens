@@ -9,6 +9,7 @@ pub mod capture;
 pub mod hotkey;
 pub mod intent;
 pub mod ipc;
+pub mod lens;
 pub mod overlay;
 pub mod pipeline;
 #[cfg(test)]

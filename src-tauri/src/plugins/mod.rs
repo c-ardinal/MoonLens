@@ -16,6 +16,8 @@
 pub mod manifest;
 pub mod registry;
 pub mod sidecar_host;
+#[cfg(test)]
+mod tests;
 pub mod wasm_host;
 
 pub use manifest::{PluginKind, PluginManifest};

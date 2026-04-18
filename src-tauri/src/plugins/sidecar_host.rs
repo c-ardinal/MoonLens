@@ -242,3 +242,74 @@ struct RpcError {
     code: i32,
     message: String,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::providers::{TaskInput, TaskOutput};
+
+    #[test]
+    fn capability_tag_matches_api_contract() {
+        // These strings are part of the stable plugin wire protocol; any
+        // change here is a breaking change for existing plugins.
+        assert_eq!(capability_tag(Capability::Translate), "translate");
+        assert_eq!(capability_tag(Capability::Ocr), "ocr");
+        assert_eq!(capability_tag(Capability::Asr), "asr");
+        assert_eq!(capability_tag(Capability::Explain), "explain");
+        assert_eq!(capability_tag(Capability::Summarize), "summarize");
+        assert_eq!(
+            capability_tag(Capability::ReverseImageSearch),
+            "reverse_image_search"
+        );
+        assert_eq!(capability_tag(Capability::QrHandler), "qr_handler");
+        assert_eq!(
+            capability_tag(Capability::IntentClassifier),
+            "intent_classifier"
+        );
+    }
+
+    #[test]
+    fn rpc_request_serialization_matches_expected_shape() {
+        let req = RpcRequest {
+            jsonrpc: "2.0",
+            id: 42,
+            method: "run",
+            params: RpcParams {
+                capability: "translate",
+                input: TaskInput::Translate {
+                    text: "hi".into(),
+                    source_language: "en".into(),
+                    target_language: "ja".into(),
+                },
+            },
+        };
+        let raw = serde_json::to_string(&req).unwrap();
+        // Stable wire contract: checks against key fields without being
+        // overly sensitive to field ordering.
+        assert!(raw.contains("\"jsonrpc\":\"2.0\""));
+        assert!(raw.contains("\"id\":42"));
+        assert!(raw.contains("\"capability\":\"translate\""));
+        assert!(raw.contains("\"text\":\"hi\""));
+        assert!(raw.contains("\"target_language\":\"ja\""));
+    }
+
+    #[test]
+    fn rpc_response_parses_successful_text_output() {
+        let raw = r#"{"jsonrpc":"2.0","id":7,"result":{"Text":"hola"}}"#;
+        let parsed: RpcResponse = serde_json::from_str(raw).unwrap();
+        assert_eq!(parsed.id, 7);
+        match parsed.result {
+            Some(TaskOutput::Text(t)) => assert_eq!(t, "hola"),
+            other => panic!("unexpected result: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn rpc_response_parses_error_shape() {
+        let raw = r#"{"jsonrpc":"2.0","id":9,"error":{"code":-1,"message":"offline"}}"#;
+        let parsed: RpcResponse = serde_json::from_str(raw).unwrap();
+        assert!(parsed.result.is_none());
+        let err = parsed.error.expect("error present");
+        assert_eq!(err.message, "offline");
+    }
+}

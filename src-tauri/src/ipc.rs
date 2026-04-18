@@ -3,12 +3,14 @@
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::{
     app::AppState,
     capture::{self, CaptureRect},
-    hotkey, intent, overlay,
+    hotkey, intent,
+    lens::{self, geometry::LensInsets, LensDescriptor},
+    overlay,
     pipeline::{CaptureFlowResult, TaskResult},
     plugins::PluginDescriptor,
     providers::{ocr_ocrs, Capability, TaskInput},
@@ -306,4 +308,89 @@ pub async fn cancel_region_selection(app: AppHandle) -> Result<(), String> {
 #[tauri::command]
 pub async fn toggle_subtitle(app: AppHandle, state: State<'_, AppState>) -> Result<bool, String> {
     state.subtitle.toggle(&app).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn new_lens_window(app: AppHandle, state: State<'_, AppState>) -> Result<String, String> {
+    lens::create(&app, &state.lenses).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn close_lens_window(
+    id: String,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    lens::close(&app, &state.lenses, &id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn list_lens_windows(state: State<'_, AppState>) -> Result<Vec<LensDescriptor>, String> {
+    Ok(state.lenses.list())
+}
+
+#[tauri::command]
+pub async fn set_lens_insets(
+    id: String,
+    top: u32,
+    bottom: u32,
+    left: u32,
+    right: u32,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    state
+        .lenses
+        .set_insets(&id, LensInsets { top, bottom, left, right });
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn set_lens_auto_refresh(
+    id: String,
+    ms: Option<u32>,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    state.lenses.set_auto_refresh(&id, ms);
+    Ok(())
+}
+
+/// Capture the observed rect of a lens window and run the full pipeline.
+/// Emits overlay events to the regular overlay window so the result can
+/// be displayed either inside the lens body (via the lens page) or over
+/// it (legacy overlay).
+#[tauri::command]
+pub async fn capture_lens_now(
+    id: String,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<CaptureFlowResult, String> {
+    let lenses = state.lenses.clone();
+    let pipeline = state.pipeline.clone();
+    let app_clone = app.clone();
+    let id_clone = id.clone();
+    let png = tokio::task::spawn_blocking(move || lens::capture_lens(&app_clone, &lenses, &id_clone))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())?;
+    let bundle = pipeline
+        .run_capture_flow(png)
+        .await
+        .map_err(|e| e.to_string())?;
+    // Push the result to the lens-specific event channel so the lens
+    // renderer updates in place; also emit the generic overlay event so
+    // the floating panel can mirror it if opened.
+    let _ = app.emit_to(
+        tauri::EventTarget::WebviewWindow { label: id.clone() },
+        "moonlens://lens-result",
+        bundle.clone(),
+    );
+    overlay::emit(
+        &app,
+        overlay::OverlayEvent::Result {
+            source_text: bundle.source_text.clone(),
+            result: bundle.result.clone(),
+        },
+    )
+    .ok();
+    Ok(bundle)
 }
