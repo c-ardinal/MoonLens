@@ -35,6 +35,7 @@ macro_rules! all_commands {
             ipc::run_ocr,
             ipc::run_intent,
             ipc::run_qr,
+            ipc::run_explain,
             ipc::run_reverse_image_search,
             ipc::capture_region_cmd,
             ipc::capture_and_process,

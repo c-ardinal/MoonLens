@@ -192,6 +192,7 @@ async fn run_full_capture(app: &AppHandle, pipeline: Arc<Pipeline>) -> anyhow::R
             source_text: bundle.source_text,
             intent: Some(bundle.intent),
             result: bundle.result,
+            source_rect: bundle.source_rect,
         },
     )
     .ok();

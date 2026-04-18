@@ -281,6 +281,7 @@ impl Pipeline {
                     intent: Intent::Qr,
                     source_text: None,
                     result: res,
+                    source_rect: None,
                 });
             }
         }
@@ -313,6 +314,7 @@ impl Pipeline {
             return Ok(CaptureFlowResult {
                 intent,
                 source_text: None,
+                source_rect: None,
                 result: TaskResult {
                     task: "capture".into(),
                     output: TaskOutput::Intent(intent),
@@ -350,6 +352,7 @@ impl Pipeline {
             intent: Intent::Text,
             source_text: Some(ocr_text),
             result: translate,
+            source_rect: None,
         })
     }
 
@@ -381,6 +384,19 @@ pub struct CaptureFlowResult {
     pub intent: Intent,
     pub source_text: Option<String>,
     pub result: TaskResult,
+    /// The rect that produced this capture, in monitor-local pixel
+    /// coordinates. The overlay uses this to pin the region watcher
+    /// onto the same area the user just captured.
+    pub source_rect: Option<CaptureFlowRect>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct CaptureFlowRect {
+    pub monitor_index: usize,
+    pub x: i32,
+    pub y: i32,
+    pub w: u32,
+    pub h: u32,
 }
 
 fn pick_chain(s: &crate::settings::schema::Settings, cap: Capability) -> TaskChain {

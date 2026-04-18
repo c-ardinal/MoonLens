@@ -35,10 +35,19 @@ export interface TaskResult {
   fallback_reasons: string[];
 }
 
+export interface CaptureFlowRect {
+  monitor_index: number;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
 export interface CaptureFlowResult {
   intent: Intent;
   source_text: string | null;
   result: TaskResult;
+  source_rect: CaptureFlowRect | null;
 }
 
 export type OverlayEvent =
@@ -49,6 +58,7 @@ export type OverlayEvent =
       source_text: string | null;
       intent: Intent | null;
       result: TaskResult;
+      source_rect: CaptureFlowRect | null;
     }
   | { kind: 'error'; message: string }
   | { kind: 'hidden' };
@@ -92,6 +102,10 @@ export const installOcrModels = () => safeInvoke<string>('install_ocr_models');
 export const showMain = () => safeInvoke<void>('show_main');
 export const hideOverlay = () => safeInvoke<void>('hide_overlay');
 
+export const pinOverlay = (args: CaptureFlowRect) =>
+  safeInvoke<void>('pin_overlay', { args });
+export const unpinOverlay = () => safeInvoke<void>('unpin_overlay');
+
 export const runTranslate = (args: {
   text: string;
   source_language: string;
@@ -103,6 +117,11 @@ export const runIntent = (imagePng: Uint8Array) =>
 
 export const runReverseImageSearch = (imageUrl: string) =>
   safeInvoke<TaskResult>('run_reverse_image_search', { imageUrl });
+
+export const runExplain = (prompt: string, imagePng?: Uint8Array) =>
+  safeInvoke<TaskResult>('run_explain', {
+    args: { prompt, image_png: imagePng ? Array.from(imagePng) : null }
+  });
 
 export const captureAndProcess = (region?: {
   monitor_index: number;

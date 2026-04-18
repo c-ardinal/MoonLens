@@ -31,6 +31,10 @@ pub enum OverlayEvent {
         /// this to adapt the action ribbon (QR → open URL first, photo
         /// → reverse image search first, etc).
         intent: Option<crate::providers::Intent>,
+        /// The monitor-local rect that produced the capture. Required
+        /// by the "Pin" action so the overlay can ask the region
+        /// watcher to monitor the exact same area.
+        source_rect: Option<crate::pipeline::CaptureFlowRect>,
     },
     Error {
         message: String,

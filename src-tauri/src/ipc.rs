@@ -127,6 +127,30 @@ pub async fn run_qr(image_png: Vec<u8>, state: State<'_, AppState>) -> Result<Ta
         .map_err(|e| e.to_string())
 }
 
+#[derive(Deserialize)]
+pub struct ExplainArgs {
+    pub prompt: String,
+    pub image_png: Option<Vec<u8>>,
+}
+
+#[tauri::command]
+pub async fn run_explain(
+    args: ExplainArgs,
+    state: State<'_, AppState>,
+) -> Result<TaskResult, String> {
+    state
+        .pipeline
+        .run(
+            Capability::Explain,
+            TaskInput::Explain {
+                prompt: args.prompt,
+                image_png: args.image_png,
+            },
+        )
+        .await
+        .map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 pub async fn run_reverse_image_search(
     image_url: String,
@@ -152,7 +176,7 @@ pub async fn run_reverse_image_search(
     Ok(result)
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Clone)]
 pub struct RegionArgs {
     pub monitor_index: usize,
     pub x: i32,
@@ -235,8 +259,9 @@ pub async fn capture_and_process(
     )
     .ok();
 
+    let args_for_capture = args.clone();
     let png = tokio::task::spawn_blocking(move || -> anyhow::Result<Vec<u8>> {
-        let img = match args {
+        let img = match args_for_capture {
             Some(a) => capture::capture_rect(CaptureRect {
                 monitor_index: a.monitor_index,
                 x: a.x,
@@ -252,11 +277,34 @@ pub async fn capture_and_process(
     .map_err(|e| e.to_string())?
     .map_err(|e| e.to_string())?;
 
-    let bundle = state
+    let mut bundle = state
         .pipeline
         .run_capture_flow(png)
         .await
         .map_err(|e| e.to_string())?;
+    // Record the rect we actually captured so the overlay can pin the
+    // region watcher onto it. Full-monitor captures resolve to the
+    // primary monitor's bounds.
+    bundle.source_rect = Some(match args {
+        Some(a) => crate::pipeline::CaptureFlowRect {
+            monitor_index: a.monitor_index,
+            x: a.x,
+            y: a.y,
+            w: a.w,
+            h: a.h,
+        },
+        None => {
+            let monitors = xcap::Monitor::all().map_err(|e| e.to_string())?;
+            let m = monitors.first().ok_or("no monitor")?;
+            crate::pipeline::CaptureFlowRect {
+                monitor_index: 0,
+                x: 0,
+                y: 0,
+                w: m.width().map_err(|e| e.to_string())?,
+                h: m.height().map_err(|e| e.to_string())?,
+            }
+        }
+    });
 
     // Honour the clipboard policy: translation for text captures, QR
     // payload for QR captures. Source text is only copied when the user
@@ -292,6 +340,7 @@ pub async fn capture_and_process(
             source_text: bundle.source_text.clone(),
             intent: Some(bundle.intent),
             result: bundle.result.clone(),
+            source_rect: bundle.source_rect.clone(),
         },
     )
     .ok();
@@ -666,6 +715,20 @@ pub async fn capture_lens_now(
         .run_capture_flow(png)
         .await
         .map_err(|e| e.to_string())?;
+    // Lens captures must obey the same clipboard policy as the
+    // regular ⌘⇧Space flow. Without this the user's auto_copy settings
+    // would apply to ad-hoc captures but silently drop lens results.
+    let clipboard_cfg = state.settings.snapshot().clipboard.clone();
+    if let Some(src) = &bundle.source_text {
+        clipboard::auto_copy(&app, clipboard::Kind::Source, src, &clipboard_cfg);
+    }
+    if let crate::providers::TaskOutput::Text(t) = &bundle.result.output {
+        let kind = match bundle.intent {
+            crate::providers::Intent::Qr => clipboard::Kind::Qr,
+            _ => clipboard::Kind::Translation,
+        };
+        clipboard::auto_copy(&app, kind, t, &clipboard_cfg);
+    }
     // Push the result to the lens-specific event channel so the lens
     // renderer updates in place; also emit the generic overlay event so
     // the floating panel can mirror it if opened.
@@ -680,6 +743,7 @@ pub async fn capture_lens_now(
             source_text: bundle.source_text.clone(),
             intent: Some(bundle.intent),
             result: bundle.result.clone(),
+            source_rect: bundle.source_rect.clone(),
         },
     )
     .ok();

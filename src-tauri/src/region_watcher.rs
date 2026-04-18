@@ -122,6 +122,7 @@ async fn run_watch(
                         source_text: bundle.source_text,
                         intent: Some(bundle.intent),
                         result: bundle.result,
+                        source_rect: bundle.source_rect,
                     },
                 );
             }
