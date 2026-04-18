@@ -54,7 +54,6 @@ pub struct WasmPlugin {
     provides: Vec<String>,
     instance: Arc<Mutex<Option<LoadedInstance>>>,
     component_bytes: Vec<u8>,
-    network_allow: Vec<String>,
 }
 
 struct LoadedInstance {
@@ -72,17 +71,18 @@ impl WasmPlugin {
         // surface load-time errors. We then drop the instance and rebuild
         // it on first call to keep memory usage low until the plugin is
         // actually invoked.
-        let _ = build_instance(&component_bytes, &manifest.permissions.network)?;
+        let _ = build_instance(&component_bytes)?;
 
         // `manifest.plugin.id` is intentionally not stored: the pipeline
         // addresses plugins by the chain id it composes from the id passed
         // into `provider_handles` below, so keeping a second copy here
-        // would be dead state.
+        // would be dead state. Likewise for `manifest.permissions.network`:
+        // the component runs without sockets until WASI p3 lands, so we
+        // would be persisting a field we cannot yet honour.
         Ok(Self {
             provides: manifest.capabilities.provides.clone(),
             instance: Arc::new(Mutex::new(None)),
             component_bytes,
-            network_allow: manifest.permissions.network.clone(),
         })
     }
 
@@ -97,7 +97,6 @@ impl WasmPlugin {
                     capability: cap,
                     component: self.component_bytes.clone(),
                     instance: self.instance.clone(),
-                    network_allow: self.network_allow.clone(),
                 });
                 (chain_id, handle)
             })
@@ -126,17 +125,17 @@ fn engine() -> Result<Engine> {
     Engine::new(&cfg)
 }
 
-fn build_instance(bytes: &[u8], _network_allow: &[String]) -> Result<LoadedInstance> {
+fn build_instance(bytes: &[u8]) -> Result<LoadedInstance> {
     let engine = engine()?;
     let component = Component::from_binary(&engine, bytes)?;
 
     let mut linker = Linker::<State>::new(&engine);
     wasmtime_wasi::add_to_linker_sync(&mut linker).context("link wasi to linker")?;
 
+    // No filesystem, no env, no inherited stdio. Network capability
+    // will be plumbed via WASI p3 sockets when that stabilises — until
+    // then WASM plugins are offline-only by construction.
     let mut wasi_builder = WasiCtxBuilder::new();
-    // No filesystem, no env, no inherited stdio. Network capability is
-    // handled by WASI sockets in p3; for now we keep WASM plugins offline
-    // and expose `_network_allow` as a future hook.
     let wasi = wasi_builder.build();
     let state = State {
         table: ResourceTable::new(),
@@ -154,7 +153,6 @@ struct WasmProvider {
     capability: Capability,
     component: Vec<u8>,
     instance: Arc<Mutex<Option<LoadedInstance>>>,
-    network_allow: Vec<String>,
 }
 
 #[async_trait]
@@ -173,14 +171,13 @@ impl Provider for WasmProvider {
 
     async fn run(&self, input: TaskInput) -> Result<TaskOutput, ProviderError> {
         let component = self.component.clone();
-        let net = self.network_allow.clone();
         let cell = self.instance.clone();
         // wasmtime is synchronous in the configuration we use; offload to
         // the blocking pool so the async runtime stays responsive.
         let out: Result<TaskOutput, ProviderError> = task::spawn_blocking(move || {
             let mut guard = cell.lock();
             if guard.is_none() {
-                *guard = Some(build_instance(&component, &net).map_err(provider_other)?);
+                *guard = Some(build_instance(&component).map_err(provider_other)?);
             }
             let inst = guard.as_mut().unwrap();
             let wit_input = to_wit_input(input);

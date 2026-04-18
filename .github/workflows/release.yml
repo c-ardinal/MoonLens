@@ -1,0 +1,116 @@
+name: release
+
+# Tag-driven releases. Pushing `v0.1.0-rc.1` creates a GitHub Release
+# marked as pre-release; `v0.1.0` creates a full release. The
+# workflow builds signed Tauri bundles on all three platforms and
+# attaches them as release assets.
+#
+# Pre-release detection: GitHub's `softprops/action-gh-release` sets
+# `prerelease` automatically when the tag name contains a `-`
+# (SemVer pre-release suffix), which matches `-rc.N` / `-beta.N` /
+# `-alpha.N` out of the box.
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to release (must already exist)'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: linux, os: ubuntu-latest, bundle: deb,appimage,rpm }
+          - { name: macos, os: macos-14, bundle: dmg }
+          - { name: windows, os: windows-latest, bundle: msi,nsis }
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Free disk space (linux)
+        if: matrix.name == 'linux'
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android \
+            /usr/local/share/boost /opt/ghc \
+            /opt/hostedtoolcache/CodeQL "$AGENT_TOOLSDIRECTORY" || true
+          sudo apt-get clean
+
+      - name: Linux system deps
+        if: matrix.name == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev \
+            patchelf libxdo-dev libasound2-dev libsoup-3.0-dev \
+            libpipewire-0.3-dev libspa-0.2-dev libgbm-dev \
+            libwayland-dev libegl1-mesa-dev libdrm-dev libxkbcommon-dev
+
+      - uses: actions/setup-node@v5
+        with: { node-version: 22, cache: npm }
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          key: release-${{ matrix.name }}
+
+      - name: Install JS deps
+        run: npm ci
+
+      - name: Build frontend
+        run: npm run build
+
+      # Flip bundle.active back on for release builds. Our default
+      # tauri.conf.json keeps it off so `cargo build` on dev machines
+      # is not blocked by missing signing identities.
+      - name: Enable bundling for release
+        shell: bash
+        run: |
+          python3 -c "
+          import json, pathlib
+          p = pathlib.Path('src-tauri/tauri.conf.json')
+          cfg = json.loads(p.read_text())
+          cfg.setdefault('bundle', {})['active'] = True
+          p.write_text(json.dumps(cfg, indent=2))
+          "
+
+      - name: Build Tauri bundle
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Optional signing secrets. If unset, bundles are produced
+          # unsigned (valid for local use but users will see an
+          # untrusted-developer warning on macOS / SmartScreen on
+          # Windows). Populate these in repo settings once a signing
+          # identity is available.
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          projectPath: .
+          tagName: ${{ github.event.inputs.tag || github.ref_name }}
+          releaseName: 'MoonLens ${{ github.event.inputs.tag || github.ref_name }}'
+          releaseBody: |
+            Changes since the previous release are generated below. See
+            `docs/plan.md` for the overall architecture and
+            `CHANGELOG.md` for human-curated release notes.
+          releaseDraft: false
+          # A tag like `v0.1.0-rc.1` contains a `-`; flag as pre-release.
+          prerelease: ${{ contains(github.event.inputs.tag || github.ref_name, '-') }}
+          includeUpdaterJson: true
+          args: --bundles ${{ matrix.bundle }}
