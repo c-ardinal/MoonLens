@@ -1,37 +1,209 @@
 <script lang="ts">
-  import { Search } from 'lucide-svelte';
+  import { onDestroy, onMount } from 'svelte';
+  import { Search, Trash2, RefreshCw, Cloud, Cpu, XCircle } from 'lucide-svelte';
+  import {
+    listHistory,
+    deleteHistoryEntry,
+    clearHistory,
+    type HistoryEntry
+  } from '$lib/ipc';
+
   let q = $state('');
-  const placeholder = [
-    { when: '10分前', kind: 'translate', source: 'The quick brown fox', result: '素早い茶色の狐' },
-    { when: '2時間前', kind: 'qr', source: '', result: 'https://example.com/promo' }
-  ];
+  let entries = $state<HistoryEntry[]>([]);
+  let loading = $state(true);
+  let error = $state<string | null>(null);
+  let confirmClear = $state(false);
+  let refreshTimer: ReturnType<typeof setTimeout> | undefined;
+
+  async function refresh(query = q) {
+    loading = true;
+    error = null;
+    try {
+      entries = await listHistory({ limit: 500, query });
+    } catch (e) {
+      error = String(e);
+    } finally {
+      loading = false;
+    }
+  }
+
+  onMount(() => {
+    refresh();
+  });
+  onDestroy(() => {
+    if (refreshTimer) clearTimeout(refreshTimer);
+  });
+
+  function onQueryInput(value: string) {
+    q = value;
+    // Debounce so the backend is not hit on every keystroke.
+    if (refreshTimer) clearTimeout(refreshTimer);
+    refreshTimer = setTimeout(() => refresh(value), 180);
+  }
+
+  async function remove(id: number) {
+    // Optimistic UI so the click feels instant; roll back if the
+    // backend says otherwise.
+    const prev = entries;
+    entries = entries.filter((e) => e.id !== id);
+    try {
+      await deleteHistoryEntry(id);
+    } catch (e) {
+      entries = prev;
+      error = String(e);
+    }
+  }
+
+  async function wipe() {
+    try {
+      await clearHistory();
+      entries = [];
+      confirmClear = false;
+    } catch (e) {
+      error = String(e);
+    }
+  }
+
+  function when(created: number): string {
+    const delta = Date.now() / 1000 - created;
+    if (delta < 60) return `${Math.floor(delta)}秒前`;
+    if (delta < 3600) return `${Math.floor(delta / 60)}分前`;
+    if (delta < 86_400) return `${Math.floor(delta / 3600)}時間前`;
+    return `${Math.floor(delta / 86_400)}日前`;
+  }
 </script>
 
 <main class="mx-auto flex max-w-3xl flex-col gap-4 p-8">
-  <header class="flex items-center justify-between">
-    <h1 class="text-xl font-semibold tracking-tight">履歴</h1>
-    <div class="relative">
-      <Search class="pointer-events-none absolute left-2 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-faint" />
-      <input
-        bind:value={q}
-        placeholder="検索"
-        class="w-64 rounded-ml-sm border border-border bg-surface-elevated py-1.5 pl-7 pr-3 text-sm"
-      />
+  <header class="flex items-center justify-between gap-3">
+    <div>
+      <h1 class="text-xl font-semibold tracking-tight">履歴</h1>
+      <p class="text-sm text-ink-muted">
+        {#if loading}
+          読み込み中…
+        {:else}
+          {entries.length} 件
+        {/if}
+      </p>
+    </div>
+    <div class="flex items-center gap-2">
+      <div class="relative">
+        <Search
+          class="pointer-events-none absolute left-2 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-faint"
+        />
+        <input
+          value={q}
+          oninput={(e) => onQueryInput((e.target as HTMLInputElement).value)}
+          placeholder="検索 (原文 / 訳文 / プロバイダ / 種別)"
+          class="w-72 rounded-ml-sm border border-border bg-surface-elevated py-1.5 pl-7 pr-3 text-sm"
+        />
+      </div>
+      <button
+        class="inline-flex items-center gap-1 rounded-ml-sm border border-border bg-surface px-3 py-1.5 text-sm text-ink-muted transition hover:border-accent/60 hover:text-ink"
+        onclick={() => refresh()}
+        title="再読み込み"
+      >
+        <RefreshCw class="h-4 w-4" />
+      </button>
+      {#if entries.length > 0}
+        <button
+          class="inline-flex items-center gap-1 rounded-ml-sm border border-border bg-surface px-3 py-1.5 text-sm text-red-500 transition hover:border-red-500/60"
+          onclick={() => (confirmClear = true)}
+        >
+          <Trash2 class="h-4 w-4" />
+          全消去
+        </button>
+      {/if}
     </div>
   </header>
 
+  {#if error}
+    <div
+      class="rounded-ml border border-red-500/50 bg-red-500/10 p-3 text-sm text-red-500"
+    >
+      エラー: {error}
+    </div>
+  {/if}
+
+  {#if !loading && entries.length === 0}
+    <div
+      class="rounded-ml border border-dashed border-border bg-surface-elevated p-8 text-center text-ink-muted"
+    >
+      {#if q.trim().length > 0}
+        <p>「{q}」に一致する履歴はありません。</p>
+      {:else}
+        <p>まだ履歴がありません。⌘⇧Space でキャプチャすると追加されます。</p>
+      {/if}
+    </div>
+  {/if}
+
   <ul class="flex flex-col gap-2">
-    {#each placeholder as e}
-      <li class="rounded-ml border border-border bg-surface-elevated p-3 shadow-ml">
+    {#each entries as e (e.id)}
+      <li class="group rounded-ml border border-border bg-surface-elevated p-3 shadow-ml">
         <div class="flex items-center justify-between text-xs text-ink-faint">
-          <span>{e.when}</span>
-          <span class="uppercase tracking-wide">{e.kind}</span>
+          <span class="flex items-center gap-2">
+            {when(e.created_at)}
+            <span class="rounded-full bg-surface-muted px-2 py-0.5 uppercase tracking-wide">
+              {e.kind}
+            </span>
+            {#if e.provider}
+              <span class="inline-flex items-center gap-1 font-mono">
+                {#if e.via_cloud}
+                  <Cloud class="h-3 w-3 text-accent" />
+                {:else}
+                  <Cpu class="h-3 w-3" />
+                {/if}
+                {e.provider}
+              </span>
+            {/if}
+          </span>
+          <button
+            class="opacity-0 transition group-hover:opacity-100"
+            onclick={() => remove(e.id)}
+            title="削除"
+          >
+            <XCircle class="h-4 w-4 text-ink-faint hover:text-red-500" />
+          </button>
         </div>
-        {#if e.source}
-          <p class="mt-1 font-mono text-xs text-ink-faint">{e.source}</p>
+        {#if e.source_text}
+          <p class="mt-1 font-mono text-xs text-ink-faint whitespace-pre-wrap">
+            {e.source_text}
+          </p>
         {/if}
-        <p class="mt-1 text-sm">{e.result}</p>
+        {#if e.result_text}
+          <p class="mt-1 text-sm leading-relaxed whitespace-pre-wrap">{e.result_text}</p>
+        {/if}
       </li>
     {/each}
   </ul>
 </main>
+
+{#if confirmClear}
+  <div
+    class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-6"
+    role="presentation"
+    onclick={() => (confirmClear = false)}
+  >
+    <div
+      class="w-full max-w-sm rounded-ml border border-border bg-surface-elevated p-5 shadow-ml-lg"
+      role="dialog"
+      onclick={(e) => e.stopPropagation()}
+    >
+      <h2 class="text-base font-semibold">履歴を全て削除しますか？</h2>
+      <p class="mt-1 text-sm text-ink-muted">この操作は取り消せません。</p>
+      <div class="mt-4 flex justify-end gap-2">
+        <button
+          class="rounded-ml-sm border border-border bg-surface px-3 py-1.5 text-sm"
+          onclick={() => (confirmClear = false)}
+        >
+          キャンセル
+        </button>
+        <button
+          class="rounded-ml-sm bg-red-500 px-3 py-1.5 text-sm font-medium text-white"
+          onclick={wipe}
+        >
+          削除する
+        </button>
+      </div>
+    </div>
+  </div>
+{/if}

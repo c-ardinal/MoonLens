@@ -13,11 +13,14 @@
 //! Both expose the same [`crate::providers::Provider`] trait so the pipeline
 //! does not care about the transport.
 
+pub mod installer;
 pub mod manifest;
 pub mod registry;
 pub mod sidecar_host;
+pub mod signature;
 #[cfg(test)]
 mod tests;
+pub mod updates;
 pub mod wasm_host;
 
 pub use manifest::{PluginKind, PluginManifest};

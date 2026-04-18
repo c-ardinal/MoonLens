@@ -3,7 +3,13 @@
   import { Pin, Sparkles, X } from 'lucide-svelte';
   import PrivacyBadge from '$lib/components/PrivacyBadge.svelte';
   import ActionRibbon from '$lib/components/ActionRibbon.svelte';
-  import { hideOverlay, onOverlay, type OverlayEvent, type TaskResult } from '$lib/ipc';
+  import {
+    hideOverlay,
+    onOverlay,
+    type Intent,
+    type OverlayEvent,
+    type TaskResult
+  } from '$lib/ipc';
   import { extractText } from '$lib/result';
 
   let source = $state<string | null>(null);
@@ -13,6 +19,7 @@
   let pinned = $state(false);
   let status = $state<'idle' | 'processing' | 'result' | 'error'>('idle');
   let statusMessage = $state('');
+  let intent = $state<Intent | null>(null);
   let unlisten: (() => void) | undefined;
 
   onMount(async () => {
@@ -26,6 +33,16 @@
         translation = extractText(event.result);
         viaCloud = event.result.via_cloud;
         provider = event.result.used_provider;
+        intent = event.intent;
+      } else if (event.kind === 'chunk') {
+        // Ollama streaming: append deltas as they arrive so the user
+        // sees tokens live. The final `Result` event will replace the
+        // accumulated string with the authoritative output.
+        if (status !== 'result') {
+          status = 'processing';
+          translation = '';
+        }
+        translation += event.delta;
       } else if (event.kind === 'error') {
         status = 'error';
         statusMessage = event.message;
@@ -83,7 +100,15 @@
       <hr class="my-2 border-border" />
     {/if}
     <p class="whitespace-pre-wrap text-sm leading-relaxed">{translation}</p>
-    <ActionRibbon onAction={(a) => a === 'copy' && copy()} />
+    <ActionRibbon
+      {intent}
+      onAction={(a) => {
+        if (a === 'copy') copy();
+        // Other action ids are surfaced as data-action attributes for
+        // parent pages to hook into; the overlay itself only owns the
+        // copy action (the rest live in the main window).
+      }}
+    />
   {:else}
     <p class="text-sm text-ink-faint">⌘⇧Space でキャプチャ…</p>
   {/if}

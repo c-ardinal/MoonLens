@@ -190,6 +190,7 @@ async fn run_full_capture(app: &AppHandle, pipeline: Arc<Pipeline>) -> anyhow::R
         app,
         OverlayEvent::Result {
             source_text: bundle.source_text,
+            intent: Some(bundle.intent),
             result: bundle.result,
         },
     )

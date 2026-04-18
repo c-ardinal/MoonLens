@@ -137,6 +137,21 @@ impl Storage {
         let n = db.execute("DELETE FROM history WHERE created_at < ?1", [epoch_seconds])?;
         Ok(n)
     }
+
+    /// Delete a single entry by primary key. Returns the number of rows
+    /// removed (0 if the id did not exist).
+    pub fn delete(&self, id: i64) -> Result<usize> {
+        let db = self.db.lock();
+        let n = db.execute("DELETE FROM history WHERE id = ?1", [id])?;
+        Ok(n)
+    }
+
+    /// Drop every history row. Returns the number of rows removed.
+    pub fn clear_all(&self) -> Result<usize> {
+        let db = self.db.lock();
+        let n = db.execute("DELETE FROM history", [])?;
+        Ok(n)
+    }
 }
 
 fn now_seconds() -> i64 {
@@ -287,6 +302,53 @@ mod tests {
         let deleted = s.prune_older_than(i64::MAX).unwrap();
         assert_eq!(deleted, 4);
         assert!(s.recent(10).unwrap().is_empty());
+    }
+
+    #[test]
+    fn delete_removes_only_the_requested_row() {
+        let s = Storage::open_in_memory().unwrap();
+        let ids: Vec<i64> = (0..3)
+            .map(|i| {
+                s.append("translate", Some(&format!("s{i}")), None, None, false, None)
+                    .unwrap()
+            })
+            .collect();
+        let removed = s.delete(ids[1]).unwrap();
+        assert_eq!(removed, 1);
+        let remaining: Vec<i64> = s.recent(10).unwrap().into_iter().map(|e| e.id).collect();
+        assert_eq!(remaining.len(), 2);
+        assert!(!remaining.contains(&ids[1]));
+        assert!(remaining.contains(&ids[0]));
+        assert!(remaining.contains(&ids[2]));
+    }
+
+    #[test]
+    fn delete_missing_id_is_a_noop() {
+        let s = Storage::open_in_memory().unwrap();
+        s.append("translate", Some("x"), None, None, false, None)
+            .unwrap();
+        // Removing a non-existent id must not panic and must not touch
+        // any other row.
+        assert_eq!(s.delete(9_999_999).unwrap(), 0);
+        assert_eq!(s.recent(10).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn clear_all_empties_the_history() {
+        let s = Storage::open_in_memory().unwrap();
+        for _ in 0..5 {
+            s.append("translate", None, None, None, false, None)
+                .unwrap();
+        }
+        let removed = s.clear_all().unwrap();
+        assert_eq!(removed, 5);
+        assert!(s.recent(10).unwrap().is_empty());
+    }
+
+    #[test]
+    fn clear_all_on_empty_db_returns_zero() {
+        let s = Storage::open_in_memory().unwrap();
+        assert_eq!(s.clear_all().unwrap(), 0);
     }
 
     #[test]

@@ -39,12 +39,22 @@ pub struct TaskResult {
     pub fallback_reasons: Vec<String>,
 }
 
+/// Callback signature used by streaming translators to publish each
+/// token delta. Kept behind a type alias so `Pipeline` does not trip
+/// the `clippy::type_complexity` lint every time it appears.
+pub type ChunkSink = Arc<dyn Fn(String, bool) + Send + Sync>;
+
 pub struct Pipeline {
     settings: Arc<SettingsStore>,
     storage: Arc<Storage>,
     plugins: Option<Arc<PluginRegistry>>,
     providers: RwLock<HashMap<String, ProviderHandle>>,
     sticky: RwLock<HashMap<String, (String, Instant)>>,
+    /// Optional callback fired whenever a streaming translator emits a
+    /// chunk. Used by the Tauri wiring to forward chunks to the
+    /// overlay webview; unset in test builds that construct a pipeline
+    /// directly.
+    chunk_sink: RwLock<Option<ChunkSink>>,
 }
 
 impl Pipeline {
@@ -59,6 +69,7 @@ impl Pipeline {
             plugins: Some(plugins),
             providers: RwLock::new(HashMap::new()),
             sticky: RwLock::new(HashMap::new()),
+            chunk_sink: RwLock::new(None),
         };
         me.rebuild_providers();
         me
@@ -78,7 +89,16 @@ impl Pipeline {
             plugins: None,
             providers: RwLock::new(providers),
             sticky: RwLock::new(HashMap::new()),
+            chunk_sink: RwLock::new(None),
         }
+    }
+
+    /// Install a callback that every Ollama-style streaming provider
+    /// will invoke per chunk. Re-runs provider discovery so existing
+    /// provider instances see the new sink.
+    pub fn set_chunk_sink(&self, sink: Option<ChunkSink>) {
+        *self.chunk_sink.write() = sink;
+        self.rebuild_providers();
     }
 
     /// Rebuild the in-memory provider map from the current settings. Called
@@ -87,10 +107,17 @@ impl Pipeline {
         let s = self.settings.snapshot();
         let mut map: HashMap<String, ProviderHandle> = HashMap::new();
         let empty = serde_json::Value::Object(Default::default());
+        let sink = self.chunk_sink.read().clone();
         for (id, cfg) in &s.providers.configs {
             let cfg = cfg.clone();
             let handle: Option<ProviderHandle> = match id.as_str() {
-                id if id.starts_with("ollama.") => Some(Arc::new(OllamaTranslator::new(id, &cfg))),
+                id if id.starts_with("ollama.") => {
+                    let mut p = OllamaTranslator::new(id, &cfg);
+                    if let Some(sink) = &sink {
+                        p = p.with_chunk_sink(sink.clone());
+                    }
+                    Some(Arc::new(p))
+                }
                 "deepl" => Some(Arc::new(DeepLTranslator::new(id, &cfg))),
                 "gemini" => Some(Arc::new(GeminiProvider::new(id, &cfg))),
                 id if id.starts_with("whisper_cpp.") => {
@@ -125,10 +152,11 @@ impl Pipeline {
                 .chain(s.providers.summarize.chain.iter()),
         ) {
             if !map.contains_key(id) && id.starts_with("ollama.") {
-                map.insert(
-                    id.clone(),
-                    Arc::new(OllamaTranslator::new(id.as_str(), &empty)),
-                );
+                let mut p = OllamaTranslator::new(id.as_str(), &empty);
+                if let Some(sink) = &sink {
+                    p = p.with_chunk_sink(sink.clone());
+                }
+                map.insert(id.clone(), Arc::new(p));
             }
         }
         *self.providers.write() = map;

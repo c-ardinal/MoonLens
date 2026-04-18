@@ -176,9 +176,22 @@ impl Provider for OcrsProvider {
     }
 }
 
+/// Progress callback signature for [`install_models_with_progress`].
+/// `total` is `None` when the server did not advertise Content-Length.
+pub type ProgressCb = dyn Fn(&str, u64, Option<u64>) + Send + Sync;
+
 /// Download models into `models_dir`. Called by the Tauri command
 /// `install_ocr_models` on user request so first launch stays offline.
-pub async fn install_models(models_dir: &Path) -> anyhow::Result<()> {
+///
+/// When a `progress` callback is supplied, it is invoked each time a
+/// new chunk of bytes arrives so the UI can render a progress bar.
+pub async fn install_models_with_progress(
+    models_dir: &Path,
+    progress: Option<&ProgressCb>,
+) -> anyhow::Result<()> {
+    use futures::StreamExt;
+    use tokio::io::AsyncWriteExt;
+
     std::fs::create_dir_all(models_dir)?;
     let client = reqwest::Client::new();
     for (url, filename) in [
@@ -191,11 +204,38 @@ pub async fn install_models(models_dir: &Path) -> anyhow::Result<()> {
                 .map(|m| m.len() > 0)
                 .unwrap_or(false)
         {
+            if let Some(cb) = progress {
+                let size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+                cb(filename, size, Some(size));
+            }
             continue;
         }
         let resp = client.get(url).send().await?.error_for_status()?;
-        let bytes = resp.bytes().await?;
-        std::fs::write(&path, &bytes)?;
+        let total = resp.content_length();
+        let mut stream = resp.bytes_stream();
+        // Write atomically to a tempfile then rename, so a cancelled
+        // download does not leave a truncated .rten for the engine to
+        // try to load on the next launch.
+        let tmp_path = path.with_extension("rten.part");
+        let mut file = tokio::fs::File::create(&tmp_path).await?;
+        let mut downloaded: u64 = 0;
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk?;
+            file.write_all(&chunk).await?;
+            downloaded += chunk.len() as u64;
+            if let Some(cb) = progress {
+                cb(filename, downloaded, total);
+            }
+        }
+        file.flush().await?;
+        drop(file);
+        tokio::fs::rename(&tmp_path, &path).await?;
     }
     Ok(())
+}
+
+/// Convenience wrapper used by non-UI callers. Equivalent to
+/// `install_models_with_progress(dir, None)`.
+pub async fn install_models(models_dir: &Path) -> anyhow::Result<()> {
+    install_models_with_progress(models_dir, None).await
 }

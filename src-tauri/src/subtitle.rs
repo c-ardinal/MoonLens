@@ -16,7 +16,7 @@ use tokio::sync::mpsc;
 
 use crate::{
     audio::backend::{AudioFrame, LoopbackStream},
-    overlay,
+    clipboard, overlay,
     pipeline::Pipeline,
     providers::{Capability, TaskInput, TaskOutput},
     settings::SettingsStore,
@@ -196,6 +196,13 @@ async fn run_loop(
                     },
                     Err(_) => String::new(),
                 };
+                let clipboard_cfg = settings.snapshot().clipboard.clone();
+                let copy_text = if !translated.is_empty() {
+                    translated.as_str()
+                } else {
+                    original.as_str()
+                };
+                clipboard::auto_copy(&app, clipboard::Kind::Transcript, copy_text, &clipboard_cfg);
                 let _ = app.emit(
                     "moonlens://subtitle",
                     SubtitleEvent::Chunk {

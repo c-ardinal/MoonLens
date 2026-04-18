@@ -2,6 +2,7 @@
   import '../app.css';
   import { onMount } from 'svelte';
   import { getSettings } from '$lib/ipc';
+  import MacOnboarding from '$lib/components/MacOnboarding.svelte';
 
   let { children } = $props();
   let theme = $state<'light' | 'dark' | 'system'>('system');
@@ -24,3 +25,4 @@
 </script>
 
 {@render children()}
+<MacOnboarding />

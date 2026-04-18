@@ -6,6 +6,7 @@
 pub mod app;
 pub mod audio;
 pub mod capture;
+pub mod clipboard;
 pub mod hotkey;
 pub mod intent;
 pub mod ipc;
@@ -16,6 +17,7 @@ pub mod pipeline;
 mod pipeline_tests;
 pub mod plugins;
 pub mod providers;
+pub mod region_watcher;
 pub mod selector;
 pub mod settings;
 pub mod storage;

@@ -84,6 +84,18 @@ impl PluginRegistry {
         Ok(())
     }
 
+    /// Snapshot of every known manifest, regardless of enabled state.
+    /// Used by the update checker so it can query `update_url` for each
+    /// plugin without locking the registry for the duration of the
+    /// network requests.
+    pub fn manifests(&self) -> Vec<PluginManifest> {
+        self.plugins
+            .read()
+            .iter()
+            .map(|l| l.manifest.clone())
+            .collect()
+    }
+
     pub fn list(&self) -> Vec<PluginDescriptor> {
         self.plugins
             .read()
@@ -104,6 +116,21 @@ impl PluginRegistry {
     }
 
     pub fn set_enabled(&self, id: &str, enabled: bool) -> Result<()> {
+        let snapshot = self.settings.snapshot();
+        if enabled && snapshot.plugins.require_signature {
+            // Look up the plugin manifest + path up front so we can
+            // verify before mutating any state.
+            let (manifest, path) = {
+                let guard = self.plugins.read();
+                let l = guard
+                    .iter()
+                    .find(|l| l.manifest.plugin.id == id)
+                    .ok_or_else(|| anyhow::anyhow!("plugin {id} not found"))?;
+                (l.manifest.clone(), l.path.clone())
+            };
+            verify_plugin_signature(&manifest, &path, &snapshot.plugins.trusted_publishers)?;
+        }
+
         let mut guard = self.plugins.write();
         if let Some(l) = guard.iter_mut().find(|l| l.manifest.plugin.id == id) {
             l.enabled = enabled;
@@ -114,7 +141,7 @@ impl PluginRegistry {
                 l.instance = None;
             }
         }
-        let mut s = (*self.settings.snapshot()).clone();
+        let mut s = (*snapshot).clone();
         s.plugins.enabled.insert(id.to_string(), enabled);
         self.settings.save(s)?;
         Ok(())
@@ -177,6 +204,32 @@ fn instantiate(manifest: &PluginManifest, dir: &Path) -> Result<Instance> {
         super::PluginKind::Wasm => Ok(Instance::Wasm(WasmPlugin::load(manifest, dir)?)),
         super::PluginKind::Sidecar => Ok(Instance::Sidecar(SidecarPlugin::spawn(manifest, dir)?)),
     }
+}
+
+fn verify_plugin_signature(
+    manifest: &PluginManifest,
+    plugin_dir: &Path,
+    trusted: &[String],
+) -> Result<()> {
+    use super::signature;
+    let signature_b64 =
+        manifest.plugin.signature.as_deref().ok_or_else(|| {
+            anyhow::anyhow!("signature required but plugin.toml has no `signature`")
+        })?;
+    let entry = plugin_dir.join(&manifest.plugin.entry);
+    let digest = signature::sha256_file(&entry)?;
+    let parsed: Result<Vec<_>> = trusted
+        .iter()
+        .map(|s| signature::parse_trusted(s))
+        .collect();
+    let keys = parsed.context("trusted_publishers contains an invalid entry")?;
+    if keys.is_empty() {
+        anyhow::bail!("require_signature is on but no trusted publishers are configured");
+    }
+    let publisher = signature::verify_digest(&digest, signature_b64, &keys)
+        .context("signature verification failed")?;
+    tracing::info!("plugin {} signed by {publisher}", manifest.plugin.id);
+    Ok(())
 }
 
 fn summarize_permissions(p: &super::manifest::Permissions) -> Vec<String> {

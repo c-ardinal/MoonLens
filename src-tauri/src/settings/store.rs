@@ -67,6 +67,33 @@ impl SettingsStore {
         self.tx.subscribe()
     }
 
+    /// Re-read the on-disk TOML, layer it over the bundled defaults, and
+    /// broadcast the new snapshot if anything changed. Used by the
+    /// file-watcher for hot reload.
+    pub fn reload_from_disk(&self) -> Result<bool> {
+        let mut settings: Settings =
+            toml::from_str(DEFAULT_TOML).context("bundled default.toml is invalid")?;
+        if self.config_path.exists() {
+            let raw = std::fs::read_to_string(&self.config_path).context("re-read user config")?;
+            match toml::from_str::<Settings>(&raw) {
+                Ok(user) => merge(&mut settings, user),
+                Err(e) => {
+                    tracing::warn!("user config invalid on reload, keeping previous: {e}");
+                    return Ok(false);
+                }
+            }
+        }
+        let changed = {
+            let current = self.inner.read();
+            toml::to_string(&*current).ok() != toml::to_string(&settings).ok()
+        };
+        if changed {
+            *self.inner.write() = settings.clone();
+            let _ = self.tx.send(Arc::new(settings));
+        }
+        Ok(changed)
+    }
+
     pub fn save(&self, new: Settings) -> Result<()> {
         let serialized = toml::to_string_pretty(&new)?;
         std::fs::write(&self.config_path, serialized)?;

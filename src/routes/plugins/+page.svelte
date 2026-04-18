@@ -1,10 +1,18 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { Puzzle, Shield, Check } from 'lucide-svelte';
-  import { listPlugins, setPluginEnabled, type PluginDescriptor } from '$lib/ipc';
+  import {
+    listPlugins,
+    setPluginEnabled,
+    pickAndInstallPlugin,
+    type PluginDescriptor
+  } from '$lib/ipc';
 
   let plugins = $state<PluginDescriptor[]>([]);
   let loading = $state(true);
+  let installing = $state(false);
+  let installMsg = $state<string | null>(null);
+  let installError = $state<string | null>(null);
 
   async function refresh() {
     try {
@@ -20,6 +28,26 @@
     await setPluginEnabled(p.id, enabled);
     await refresh();
   }
+
+  async function install() {
+    if (installing) return;
+    installing = true;
+    installMsg = null;
+    installError = null;
+    try {
+      const result = await pickAndInstallPlugin();
+      if (result) {
+        installMsg = `インストール完了: ${result}`;
+        await refresh();
+      } else {
+        installMsg = 'キャンセルされました。';
+      }
+    } catch (e) {
+      installError = String(e);
+    } finally {
+      installing = false;
+    }
+  }
 </script>
 
 <main class="mx-auto flex max-w-4xl flex-col gap-6 p-8">
@@ -28,13 +56,25 @@
       <h1 class="text-xl font-semibold tracking-tight">プラグイン</h1>
       <p class="text-sm text-ink-muted">ユーザ拡張の有効化・権限確認・設定編集。</p>
     </div>
-    <a
-      href="/plugins/install/"
-      class="rounded-ml-sm bg-accent px-3 py-1.5 text-sm font-medium text-white"
+    <button
+      class="rounded-ml-sm bg-accent px-3 py-1.5 text-sm font-medium text-white disabled:opacity-40"
+      onclick={install}
+      disabled={installing}
     >
-      追加
-    </a>
+      {installing ? 'インストール中…' : '追加'}
+    </button>
   </header>
+
+  {#if installMsg}
+    <p class="rounded-ml border border-accent/40 bg-accent-soft p-2 text-sm text-accent">
+      {installMsg}
+    </p>
+  {/if}
+  {#if installError}
+    <p class="rounded-ml border border-red-500/50 bg-red-500/10 p-2 text-sm text-red-500">
+      エラー: {installError}
+    </p>
+  {/if}
 
   {#if loading}
     <p class="text-ink-faint">読み込み中…</p>

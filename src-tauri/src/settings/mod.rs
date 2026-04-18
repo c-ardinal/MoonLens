@@ -13,6 +13,8 @@ pub mod schema;
 pub mod store;
 #[cfg(test)]
 mod tests;
+pub mod watcher;
 
 pub use schema::Settings;
 pub use store::SettingsStore;
+pub use watcher::Watcher;

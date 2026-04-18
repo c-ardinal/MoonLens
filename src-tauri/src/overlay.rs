@@ -17,9 +17,20 @@ pub enum OverlayEvent {
     Processing {
         message: String,
     },
+    /// Streaming chunk delta for in-place updates. Emitted by the
+    /// Ollama streaming path so the overlay can render tokens as they
+    /// arrive rather than waiting for the full response.
+    Chunk {
+        delta: String,
+        done: bool,
+    },
     Result {
         result: TaskResult,
         source_text: Option<String>,
+        /// Content classification for the captured region. The UI uses
+        /// this to adapt the action ribbon (QR → open URL first, photo
+        /// → reverse image search first, etc).
+        intent: Option<crate::providers::Intent>,
     },
     Error {
         message: String,

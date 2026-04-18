@@ -22,8 +22,18 @@ pub struct Settings {
     pub performance: PerformanceSettings,
     pub providers: Providers,
     pub plugins: PluginSettings,
+    pub onboarding: OnboardingState,
     /// Active profile name; profiles are additional TOML files that overlay.
     pub active_profile: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(default, deny_unknown_fields)]
+pub struct OnboardingState {
+    /// Whether the user has completed (or skipped) the first-run permission
+    /// walk-through on macOS. Other platforms always store `true` so the
+    /// flag is a no-op there.
+    pub macos_permissions_reviewed: bool,
 }
 
 /* ------------------------------- appearance ------------------------------ */

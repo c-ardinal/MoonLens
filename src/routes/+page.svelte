@@ -14,7 +14,13 @@
     captureAndProcess,
     installOcrModels,
     newLensWindow,
-    onHotkey
+    onHotkey,
+    onModelProgress,
+    onSubtitle,
+    startSubtitle,
+    stopSubtitle,
+    subtitleState,
+    type ModelProgress
   } from '$lib/ipc';
 
   let running = $state(false);
@@ -22,15 +28,52 @@
   let lastProvider = $state<string | null>(null);
   let installing = $state(false);
   let modelsPath = $state<string | null>(null);
+  let modelProgress = $state<ModelProgress | null>(null);
+  let unlistenProgress: (() => void) | undefined;
+  let subtitleRunning = $state(false);
+  let subtitlePreview = $state<string | null>(null);
   let unlisten: (() => void) | undefined;
+  let unlistenSubtitle: (() => void) | undefined;
 
   onMount(async () => {
     unlisten = await onHotkey((action) => {
       if (action === 'open_history') goto('/history/');
       if (action === 'open_command_palette') goto('/settings/');
     });
+    unlistenSubtitle = await onSubtitle((event) => {
+      if (event.kind === 'started') subtitleRunning = true;
+      else if (event.kind === 'stopped') subtitleRunning = false;
+      else if (event.kind === 'chunk') subtitlePreview = event.translated || event.original;
+      else if (event.kind === 'error') lastError = `字幕エラー: ${event.message}`;
+    });
+    subtitleRunning = await subtitleState();
+    unlistenProgress = await onModelProgress((p) => {
+      modelProgress = p;
+    });
   });
-  onDestroy(() => unlisten?.());
+  onDestroy(() => {
+    unlisten?.();
+    unlistenSubtitle?.();
+    unlistenProgress?.();
+  });
+
+  async function startSub() {
+    try {
+      await startSubtitle();
+      subtitleRunning = true;
+    } catch (e) {
+      lastError = String(e);
+    }
+  }
+  async function stopSub() {
+    try {
+      await stopSubtitle();
+      subtitleRunning = false;
+      subtitlePreview = null;
+    } catch (e) {
+      lastError = String(e);
+    }
+  }
 
   async function capture() {
     running = true;
@@ -115,6 +158,52 @@
     {/if}
   </section>
 
+  <section class="rounded-ml border border-border bg-surface-elevated p-5 shadow-ml">
+    <div class="flex items-center justify-between gap-4">
+      <div>
+        <h2 class="flex items-center gap-2 text-base font-semibold">
+          ライブ字幕
+          {#if subtitleRunning}
+            <span
+              class="inline-flex items-center gap-1 rounded-full bg-accent-soft px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-accent"
+            >
+              <span
+                class="block h-1.5 w-1.5 animate-pulse rounded-full bg-accent"
+                aria-hidden="true"
+              ></span>
+              ON AIR
+            </span>
+          {/if}
+        </h2>
+        <p class="text-sm text-ink-muted">
+          システム音声 (ループバック) を書き起こし → 翻訳してオーバーレイ表示します。
+        </p>
+        {#if subtitlePreview}
+          <p class="mt-2 line-clamp-2 font-mono text-xs text-ink-faint">
+            {subtitlePreview}
+          </p>
+        {/if}
+      </div>
+      <div class="flex flex-col gap-2">
+        {#if subtitleRunning}
+          <button
+            class="inline-flex items-center gap-2 rounded-ml-sm border border-red-500/60 bg-red-500/10 px-4 py-2 text-sm font-medium text-red-500"
+            onclick={stopSub}
+          >
+            停止
+          </button>
+        {:else}
+          <button
+            class="inline-flex items-center gap-2 rounded-ml-sm border border-border bg-surface px-4 py-2 text-sm font-medium text-ink-muted hover:border-accent/60 hover:text-ink"
+            onclick={startSub}
+          >
+            開始 (⌘⇧S)
+          </button>
+        {/if}
+      </div>
+    </div>
+  </section>
+
   <section
     class="rounded-ml border border-border bg-surface-elevated p-5 shadow-ml"
   >
@@ -134,6 +223,25 @@
         {installing ? '取得中…' : 'モデル取得'}
       </button>
     </div>
+    {#if modelProgress}
+      <div class="mt-3">
+        <div class="flex items-center justify-between text-xs text-ink-faint">
+          <span class="font-mono">{modelProgress.filename}</span>
+          <span>
+            {(modelProgress.downloaded / 1_048_576).toFixed(1)} MB
+            {#if modelProgress.total}
+              / {(modelProgress.total / 1_048_576).toFixed(1)} MB
+            {/if}
+          </span>
+        </div>
+        <div class="mt-1 h-1.5 overflow-hidden rounded-full bg-surface-muted">
+          <div
+            class="h-full rounded-full bg-accent transition-[width]"
+            style="width: {((modelProgress.fraction ?? 0) * 100).toFixed(1)}%"
+          ></div>
+        </div>
+      </div>
+    {/if}
     {#if modelsPath}
       <p class="mt-3 text-xs text-ink-faint">
         インストール先: <code class="font-mono">{modelsPath}</code>

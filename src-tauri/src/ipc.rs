@@ -8,7 +8,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use crate::{
     app::AppState,
     capture::{self, CaptureRect},
-    hotkey, intent,
+    clipboard, hotkey, intent,
     lens::{self, geometry::LensInsets, LensDescriptor},
     overlay,
     pipeline::{CaptureFlowResult, TaskResult},
@@ -130,16 +130,26 @@ pub async fn run_qr(image_png: Vec<u8>, state: State<'_, AppState>) -> Result<Ta
 #[tauri::command]
 pub async fn run_reverse_image_search(
     image_url: String,
+    app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<TaskResult, String> {
-    state
+    let result = state
         .pipeline
         .run(
             Capability::ReverseImageSearch,
             TaskInput::ReverseImageSearch { image_url },
         )
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    // The provider returns the URL that should be visited — actually
+    // open it in the default browser so the user sees results instead
+    // of just a raw string in the overlay.
+    if let crate::providers::TaskOutput::OpenedExternalUrl(url) = &result.output {
+        tauri_plugin_opener::OpenerExt::opener(&app)
+            .open_url(url, None::<&str>)
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(result)
 }
 
 #[derive(Deserialize)]
@@ -180,6 +190,37 @@ pub async fn capture_region_cmd(
 /// End-to-end: capture a region (or the whole primary monitor if `args`
 /// is `None`), run intent → OCR → translate, and return the full flow
 /// result. Emits overlay events so the floating panel updates live.
+/// Start the region watcher on the last captured rect so subsequent
+/// pixel changes refresh the overlay automatically. Matches the
+/// "pinned overlay" UX. Idempotent: calling it twice just replaces
+/// the target.
+#[tauri::command]
+pub async fn pin_overlay(
+    args: RegionArgs,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let target = crate::region_watcher::WatchTarget {
+        rect: CaptureRect {
+            monitor_index: args.monitor_index,
+            x: args.x,
+            y: args.y,
+            w: args.w,
+            h: args.h,
+        },
+    };
+    state
+        .region_watcher
+        .start(app, state.pipeline.clone(), state.settings.clone(), target);
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn unpin_overlay(state: State<'_, AppState>) -> Result<(), String> {
+    state.region_watcher.stop();
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn capture_and_process(
     args: Option<RegionArgs>,
@@ -217,11 +258,39 @@ pub async fn capture_and_process(
         .await
         .map_err(|e| e.to_string())?;
 
+    // Honour the clipboard policy: translation for text captures, QR
+    // payload for QR captures. Source text is only copied when the user
+    // opted in (default off). All of this is no-op safe when the user
+    // disabled the relevant setting.
+    let clipboard_cfg = state.settings.snapshot().clipboard.clone();
+    if let Some(src) = &bundle.source_text {
+        clipboard::auto_copy(&app, clipboard::Kind::Source, src, &clipboard_cfg);
+    }
+    match &bundle.result.output {
+        crate::providers::TaskOutput::Text(t) => {
+            let kind = match bundle.intent {
+                crate::providers::Intent::Qr => clipboard::Kind::Qr,
+                _ => clipboard::Kind::Translation,
+            };
+            clipboard::auto_copy(&app, kind, t, &clipboard_cfg);
+        }
+        crate::providers::TaskOutput::Ocr { lines } => {
+            let joined = lines
+                .iter()
+                .map(|l| l.text.as_str())
+                .collect::<Vec<_>>()
+                .join("\n");
+            clipboard::auto_copy(&app, clipboard::Kind::Source, &joined, &clipboard_cfg);
+        }
+        _ => {}
+    }
+
     overlay::show_centered(&app).ok();
     overlay::emit(
         &app,
         overlay::OverlayEvent::Result {
             source_text: bundle.source_text.clone(),
+            intent: Some(bundle.intent),
             result: bundle.result.clone(),
         },
     )
@@ -229,14 +298,99 @@ pub async fn capture_and_process(
     Ok(bundle)
 }
 
+#[derive(serde::Serialize, Clone)]
+pub struct ModelProgress {
+    pub filename: String,
+    pub downloaded: u64,
+    pub total: Option<u64>,
+    /// 0.0..=1.0 when the server advertised Content-Length, else null.
+    /// Pre-computed so the UI does not have to guard against division
+    /// by zero in a template.
+    pub fraction: Option<f32>,
+}
+
 #[tauri::command]
 pub async fn install_ocr_models(app: AppHandle) -> Result<String, String> {
     let dir = ocr_ocrs::default_models_dir().ok_or("no data dir")?;
-    ocr_ocrs::install_models(&dir)
+    let app_for_cb = app.clone();
+    let cb: Box<ocr_ocrs::ProgressCb> = Box::new(move |filename, downloaded, total| {
+        let fraction = total.and_then(|t| {
+            if t == 0 {
+                None
+            } else {
+                Some((downloaded as f32 / t as f32).clamp(0.0, 1.0))
+            }
+        });
+        let payload = ModelProgress {
+            filename: filename.to_string(),
+            downloaded,
+            total,
+            fraction,
+        };
+        let _ = app_for_cb.emit("moonlens://ocr-model-progress", payload);
+    });
+    ocr_ocrs::install_models_with_progress(&dir, Some(&*cb))
         .await
         .map_err(|e| e.to_string())?;
-    let _ = app; // reserved for future progress events
     Ok(dir.display().to_string())
+}
+
+/// Pick a `.moonlens-plugin` archive (or a plugin directory) with the
+/// platform's native file picker and install it. Returns the new plugin
+/// root on success; returns Ok(None) when the user cancels the dialog.
+/// Query each plugin's `update_url` concurrently and return the subset
+/// that advertises a newer version than installed.
+#[tauri::command]
+pub async fn check_plugin_updates(
+    state: State<'_, AppState>,
+) -> Result<Vec<crate::plugins::updates::UpdateAvailable>, String> {
+    let manifests = state.plugins.manifests();
+    let http = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .map_err(|e| e.to_string())?;
+    let futures = manifests.iter().filter_map(|m| {
+        m.plugin.update_url.as_ref().map(|_| {
+            let m = m.clone();
+            let http = http.clone();
+            async move { crate::plugins::updates::check_one(&http, &m).await }
+        })
+    });
+    let results = futures::future::join_all(futures).await;
+    let mut updates = Vec::new();
+    for res in results {
+        match res {
+            Ok(Some(u)) => updates.push(u),
+            Ok(None) => {}
+            Err(e) => tracing::warn!("update check failed: {e}"),
+        }
+    }
+    Ok(updates)
+}
+
+#[tauri::command]
+pub async fn pick_and_install_plugin(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<Option<String>, String> {
+    use tauri_plugin_dialog::DialogExt;
+    let dialog = app.dialog().clone();
+    let chosen = tokio::task::spawn_blocking(move || {
+        dialog
+            .file()
+            .add_filter("MoonLens Plugin", &["moonlens-plugin", "zip"])
+            .blocking_pick_file()
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+    let Some(file) = chosen else { return Ok(None) };
+    let path = file
+        .into_path()
+        .map_err(|e| e.to_string())?
+        .to_string_lossy()
+        .to_string();
+    let installed = install_plugin_from_path(path, app, state).await?;
+    Ok(Some(installed))
 }
 
 #[tauri::command]
@@ -252,10 +406,7 @@ pub async fn install_plugin_from_path(
         .join("plugins");
     std::fs::create_dir_all(&dest).map_err(|e| e.to_string())?;
     let src = PathBuf::from(&archive_path);
-    // The installer accepts either a directory laid out like an installed
-    // plugin or a `.moonlens-plugin` zip. Directories are copied; zips are
-    // left for a future enhancement (pulls in a `zip` crate).
-    if src.is_dir() {
+    let target = if src.is_dir() {
         let name = src
             .file_name()
             .ok_or("invalid archive path")?
@@ -263,12 +414,15 @@ pub async fn install_plugin_from_path(
             .to_string();
         let target = dest.join(&name);
         copy_dir(&src, &target).map_err(|e| e.to_string())?;
-        state.plugins.rescan().map_err(|e| e.to_string())?;
-        state.pipeline.rebuild_providers();
-        Ok(target.display().to_string())
+        target
+    } else if src.is_file() {
+        crate::plugins::installer::extract_zip(&src, &dest).map_err(|e| e.to_string())?
     } else {
-        Err("zip archives not yet supported; copy the plugin directory manually".into())
-    }
+        return Err("archive_path is neither a file nor a directory".into());
+    };
+    state.plugins.rescan().map_err(|e| e.to_string())?;
+    state.pipeline.rebuild_providers();
+    Ok(target.display().to_string())
 }
 
 fn copy_dir(src: &std::path::Path, dst: &std::path::Path) -> std::io::Result<()> {
@@ -301,6 +455,55 @@ pub async fn hide_overlay(app: AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
+pub async fn list_history(
+    limit: Option<usize>,
+    query: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<Vec<crate::storage::HistoryEntry>, String> {
+    let cap = limit.unwrap_or(200);
+    let all = state.storage.recent(cap).map_err(|e| e.to_string())?;
+    let needle = query
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_lowercase);
+    let filtered = match needle {
+        None => all,
+        Some(q) => all
+            .into_iter()
+            .filter(|e| {
+                e.source_text
+                    .as_deref()
+                    .map(|s| s.to_lowercase().contains(&q))
+                    .unwrap_or(false)
+                    || e.result_text
+                        .as_deref()
+                        .map(|s| s.to_lowercase().contains(&q))
+                        .unwrap_or(false)
+                    || e.provider
+                        .as_deref()
+                        .map(|s| s.to_lowercase().contains(&q))
+                        .unwrap_or(false)
+                    || e.kind.to_lowercase().contains(&q)
+            })
+            .collect(),
+    };
+    Ok(filtered)
+}
+
+#[tauri::command]
+pub async fn delete_history_entry(id: i64, state: State<'_, AppState>) -> Result<usize, String> {
+    // Return the affected row count so the UI can distinguish "no such
+    // id" (0) from an actual removal (1) without a second round-trip.
+    state.storage.delete(id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn clear_history(state: State<'_, AppState>) -> Result<usize, String> {
+    state.storage.clear_all().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 pub async fn start_region_selection(app: AppHandle) -> Result<(), String> {
     selector::show(&app).map_err(|e| e.to_string())
 }
@@ -313,6 +516,81 @@ pub async fn cancel_region_selection(app: AppHandle) -> Result<(), String> {
 #[tauri::command]
 pub async fn toggle_subtitle(app: AppHandle, state: State<'_, AppState>) -> Result<bool, String> {
     state.subtitle.toggle(&app).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn subtitle_state(state: State<'_, AppState>) -> Result<bool, String> {
+    Ok(state.subtitle.is_running())
+}
+
+#[tauri::command]
+pub async fn stop_subtitle(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+    state.subtitle.stop(&app).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn start_subtitle(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+    state.subtitle.start(app).map_err(|e| e.to_string())
+}
+
+/// Describes which first-run guidance the UI should show. Exposed as a
+/// single struct so the frontend can decide in one round-trip.
+#[derive(serde::Serialize)]
+pub struct OnboardingStatus {
+    pub platform: &'static str,
+    pub needs_macos_permissions_review: bool,
+}
+
+#[tauri::command]
+pub async fn get_onboarding_status(state: State<'_, AppState>) -> Result<OnboardingStatus, String> {
+    let snapshot = state.settings.snapshot();
+    let platform = std::env::consts::OS;
+    let needs_macos_permissions_review =
+        cfg!(target_os = "macos") && !snapshot.onboarding.macos_permissions_reviewed;
+    Ok(OnboardingStatus {
+        platform: platform_label(platform),
+        needs_macos_permissions_review,
+    })
+}
+
+#[tauri::command]
+pub async fn mark_macos_permissions_reviewed(state: State<'_, AppState>) -> Result<(), String> {
+    let mut s = (*state.settings.snapshot()).clone();
+    s.onboarding.macos_permissions_reviewed = true;
+    state.settings.save(s).map_err(|e| e.to_string())
+}
+
+/// Open a specific macOS privacy pane via the `x-apple.systempreferences`
+/// URL scheme. No-op on other platforms (returns Ok).
+#[tauri::command]
+pub async fn open_macos_privacy_pane(app: AppHandle, pane: String) -> Result<(), String> {
+    let url = match pane.as_str() {
+        "screen_capture" => {
+            "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"
+        }
+        "accessibility" => {
+            "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
+        }
+        "microphone" => {
+            "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone"
+        }
+        "input_monitoring" => {
+            "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent"
+        }
+        other => return Err(format!("unknown pane: {other}")),
+    };
+    tauri_plugin_opener::OpenerExt::opener(&app)
+        .open_url(url, None::<&str>)
+        .map_err(|e| e.to_string())
+}
+
+fn platform_label(os: &str) -> &'static str {
+    match os {
+        "macos" => "macos",
+        "windows" => "windows",
+        "linux" => "linux",
+        _ => "other",
+    }
 }
 
 #[tauri::command]
@@ -400,6 +678,7 @@ pub async fn capture_lens_now(
         &app,
         overlay::OverlayEvent::Result {
             source_text: bundle.source_text.clone(),
+            intent: Some(bundle.intent),
             result: bundle.result.clone(),
         },
     )

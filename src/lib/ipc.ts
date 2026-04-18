@@ -43,7 +43,13 @@ export interface CaptureFlowResult {
 
 export type OverlayEvent =
   | { kind: 'processing'; message: string }
-  | { kind: 'result'; source_text: string | null; result: TaskResult }
+  | { kind: 'chunk'; delta: string; done: boolean }
+  | {
+      kind: 'result';
+      source_text: string | null;
+      intent: Intent | null;
+      result: TaskResult;
+    }
   | { kind: 'error'; message: string }
   | { kind: 'hidden' };
 
@@ -80,6 +86,8 @@ export const setPluginEnabled = (id: string, enabled: boolean) =>
   safeInvoke<void>('set_plugin_enabled', { id, enabled });
 export const installPluginFromPath = (archivePath: string) =>
   safeInvoke<string>('install_plugin_from_path', { archivePath });
+export const pickAndInstallPlugin = () =>
+  safeInvoke<string | null>('pick_and_install_plugin');
 export const installOcrModels = () => safeInvoke<string>('install_ocr_models');
 export const showMain = () => safeInvoke<void>('show_main');
 export const hideOverlay = () => safeInvoke<void>('hide_overlay');
@@ -92,6 +100,9 @@ export const runTranslate = (args: {
 
 export const runIntent = (imagePng: Uint8Array) =>
   safeInvoke<string>('run_intent', { imagePng: Array.from(imagePng) });
+
+export const runReverseImageSearch = (imageUrl: string) =>
+  safeInvoke<TaskResult>('run_reverse_image_search', { imageUrl });
 
 export const captureAndProcess = (region?: {
   monitor_index: number;
@@ -107,6 +118,60 @@ export const onOverlay = (handler: (event: OverlayEvent) => void): Promise<Unlis
 export const onHotkey = (handler: (action: string) => void): Promise<UnlistenFn> =>
   listen<string>('moonlens://hotkey', (e) => handler(e.payload));
 
+export type SubtitleEvent =
+  | { kind: 'started' }
+  | { kind: 'stopped' }
+  | { kind: 'chunk'; original: string; translated: string }
+  | { kind: 'error'; message: string };
+
+export const toggleSubtitle = () => safeInvoke<boolean>('toggle_subtitle');
+export const subtitleState = () => safeInvoke<boolean>('subtitle_state', undefined, false);
+export const stopSubtitle = () => safeInvoke<void>('stop_subtitle');
+export const startSubtitle = () => safeInvoke<void>('start_subtitle');
+export const onSubtitle = (handler: (event: SubtitleEvent) => void): Promise<UnlistenFn> =>
+  listen<SubtitleEvent>('moonlens://subtitle', (e) => handler(e.payload));
+
+export interface OnboardingStatus {
+  platform: 'macos' | 'windows' | 'linux' | 'other';
+  needs_macos_permissions_review: boolean;
+}
+
+export const getOnboardingStatus = () =>
+  safeInvoke<OnboardingStatus>('get_onboarding_status', undefined, {
+    platform: 'other',
+    needs_macos_permissions_review: false
+  });
+
+export const markMacosPermissionsReviewed = () =>
+  safeInvoke<void>('mark_macos_permissions_reviewed');
+
+export const openMacosPrivacyPane = (
+  pane: 'screen_capture' | 'accessibility' | 'microphone' | 'input_monitoring'
+) => safeInvoke<void>('open_macos_privacy_pane', { pane });
+
+export interface ModelProgress {
+  filename: string;
+  downloaded: number;
+  total: number | null;
+  fraction: number | null;
+}
+
+export const onModelProgress = (
+  handler: (p: ModelProgress) => void
+): Promise<UnlistenFn> =>
+  listen<ModelProgress>('moonlens://ocr-model-progress', (e) => handler(e.payload));
+
+export const checkPluginUpdates = () =>
+  safeInvoke<
+    {
+      plugin_id: string;
+      installed_version: string;
+      latest_version: string;
+      download_url: string | null;
+      notes: string | null;
+    }[]
+  >('check_plugin_updates', undefined, []);
+
 export interface LensDescriptor {
   id: string;
   title: string;
@@ -120,3 +185,26 @@ export const listLensWindows = () =>
   safeInvoke<LensDescriptor[]>('list_lens_windows', undefined, []);
 export const captureLensNow = (id: string) =>
   safeInvoke<CaptureFlowResult>('capture_lens_now', { id });
+
+export interface HistoryEntry {
+  id: number;
+  created_at: number;
+  kind: string;
+  source_text: string | null;
+  result_text: string | null;
+  provider: string | null;
+  via_cloud: boolean;
+  image_path: string | null;
+}
+
+export const listHistory = (args: { limit?: number; query?: string } = {}) =>
+  safeInvoke<HistoryEntry[]>(
+    'list_history',
+    { limit: args.limit ?? null, query: args.query ?? null },
+    []
+  );
+
+export const deleteHistoryEntry = (id: number) =>
+  safeInvoke<number>('delete_history_entry', { id }, 0);
+
+export const clearHistory = () => safeInvoke<number>('clear_history', undefined, 0);
