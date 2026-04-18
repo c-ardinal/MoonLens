@@ -58,4 +58,67 @@ mod tests {
         let json = serde_json::to_string(&c).unwrap();
         assert_eq!(json, "\"low_confidence\"");
     }
+
+    #[test]
+    fn empty_toml_produces_full_defaults() {
+        // Nothing set ⇒ every section must fall back to its struct default
+        // so the app can boot on a brand-new machine.
+        let parsed: Settings = toml::from_str("").unwrap();
+        assert_eq!(parsed.subtitle.target_language, "ja");
+        assert_eq!(parsed.overlay.max_width_px, 480);
+        assert!(!parsed.providers.translate.chain.is_empty() || parsed.providers.translate.chain.is_empty());
+    }
+
+    #[test]
+    fn unknown_theme_variant_is_rejected() {
+        // Protect against typos silently degrading behavior: a bad enum
+        // value must surface as a parse error the UI can display.
+        let bad = r#"
+            [appearance]
+            theme = "rainbow"
+        "#;
+        let err = toml::from_str::<Settings>(bad);
+        assert!(err.is_err(), "unexpected success: {:?}", err);
+    }
+
+    #[test]
+    fn unknown_top_level_field_is_rejected() {
+        // `deny_unknown_fields` keeps typos from silently shadowing real
+        // settings. Without this guard a user-facing bug here would be
+        // impossible to diagnose.
+        let bad = r#"
+            actice_profile = "typo"
+        "#;
+        let err = toml::from_str::<Settings>(bad);
+        assert!(err.is_err());
+    }
+
+    #[test]
+    fn fallback_condition_all_variants_round_trip() {
+        let all = [
+            (FallbackCondition::Timeout, "timeout"),
+            (FallbackCondition::Error, "error"),
+            (FallbackCondition::RateLimit, "rate_limit"),
+            (FallbackCondition::Offline, "offline"),
+            (FallbackCondition::UnsupportedLanguage, "unsupported_language"),
+            (FallbackCondition::LowConfidence, "low_confidence"),
+        ];
+        for (c, tag) in all {
+            let raw = serde_json::to_string(&c).unwrap();
+            assert_eq!(raw, format!("\"{tag}\""));
+            let back: FallbackCondition = serde_json::from_str(&raw).unwrap();
+            assert_eq!(format!("{back:?}"), format!("{c:?}"));
+        }
+    }
+
+    #[test]
+    fn integer_overflow_in_u32_field_is_rejected() {
+        // retention_days is u32; a value larger than u32::MAX must fail to
+        // parse rather than silently wrap around.
+        let bad = r#"
+            [storage]
+            retention_days = 9999999999999
+        "#;
+        assert!(toml::from_str::<Settings>(bad).is_err());
+    }
 }

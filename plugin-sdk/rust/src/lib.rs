@@ -254,4 +254,164 @@ mod tests {
         let timeout = serde_json::to_string(&ProviderError::Timeout(500)).unwrap();
         assert_eq!(timeout, "{\"Timeout\":500}");
     }
+
+    #[test]
+    fn task_input_ocr_preserves_binary_bytes() {
+        let bytes = vec![0u8, 1, 2, 255, 128, 64];
+        let input = TaskInput::Ocr {
+            image_png: bytes.clone(),
+            languages: vec!["en".into()],
+        };
+        let raw = serde_json::to_string(&input).unwrap();
+        let back: TaskInput = serde_json::from_str(&raw).unwrap();
+        match back {
+            TaskInput::Ocr { image_png, languages } => {
+                assert_eq!(image_png, bytes);
+                assert_eq!(languages, vec!["en"]);
+            }
+            _ => panic!(),
+        }
+    }
+
+    #[test]
+    fn task_input_asr_round_trips_with_language_hint() {
+        let input = TaskInput::Asr {
+            audio_pcm16_mono_16k: vec![1, 2, 3, 4],
+            language_hint: Some("ja".into()),
+        };
+        let raw = serde_json::to_string(&input).unwrap();
+        let back: TaskInput = serde_json::from_str(&raw).unwrap();
+        match back {
+            TaskInput::Asr {
+                audio_pcm16_mono_16k,
+                language_hint,
+            } => {
+                assert_eq!(audio_pcm16_mono_16k, vec![1, 2, 3, 4]);
+                assert_eq!(language_hint.as_deref(), Some("ja"));
+            }
+            _ => panic!(),
+        }
+    }
+
+    #[test]
+    fn task_input_asr_round_trips_with_no_language_hint() {
+        let input = TaskInput::Asr {
+            audio_pcm16_mono_16k: vec![],
+            language_hint: None,
+        };
+        let raw = serde_json::to_string(&input).unwrap();
+        let back: TaskInput = serde_json::from_str(&raw).unwrap();
+        match back {
+            TaskInput::Asr {
+                language_hint, ..
+            } => assert!(language_hint.is_none()),
+            _ => panic!(),
+        }
+    }
+
+    #[test]
+    fn task_input_explain_with_image_round_trips() {
+        let input = TaskInput::Explain {
+            prompt: "describe".into(),
+            image_png: Some(vec![0xFF, 0x00, 0xEE]),
+        };
+        let raw = serde_json::to_string(&input).unwrap();
+        let back: TaskInput = serde_json::from_str(&raw).unwrap();
+        match back {
+            TaskInput::Explain { prompt, image_png } => {
+                assert_eq!(prompt, "describe");
+                assert_eq!(image_png, Some(vec![0xFF, 0x00, 0xEE]));
+            }
+            _ => panic!(),
+        }
+    }
+
+    #[test]
+    fn task_output_all_non_binary_variants_round_trip() {
+        let cases = vec![
+            TaskOutput::Text("x".into()),
+            TaskOutput::TextChunk {
+                delta: "y".into(),
+                done: true,
+            },
+            TaskOutput::OpenedExternalUrl("https://ex".into()),
+            TaskOutput::Empty,
+        ];
+        for c in cases {
+            let raw = serde_json::to_string(&c).unwrap();
+            let _: TaskOutput = serde_json::from_str(&raw).unwrap();
+        }
+    }
+
+    #[test]
+    fn task_output_ocr_round_trips_with_bboxes() {
+        let out = TaskOutput::Ocr {
+            lines: vec![OcrLine {
+                text: "hello".into(),
+                bbox: [1.0, 2.0, 3.0, 4.0],
+                confidence: 0.9,
+            }],
+        };
+        let raw = serde_json::to_string(&out).unwrap();
+        let back: TaskOutput = serde_json::from_str(&raw).unwrap();
+        match back {
+            TaskOutput::Ocr { lines } => {
+                assert_eq!(lines.len(), 1);
+                assert_eq!(lines[0].text, "hello");
+                assert_eq!(lines[0].bbox, [1.0, 2.0, 3.0, 4.0]);
+            }
+            _ => panic!(),
+        }
+    }
+
+    #[test]
+    fn task_output_transcript_preserves_timestamps() {
+        let out = TaskOutput::Transcript {
+            segments: vec![
+                TranscriptSegment {
+                    start_s: 0.0,
+                    end_s: 1.5,
+                    text: "hi".into(),
+                },
+                TranscriptSegment {
+                    start_s: 1.5,
+                    end_s: 3.0,
+                    text: "there".into(),
+                },
+            ],
+        };
+        let raw = serde_json::to_string(&out).unwrap();
+        let back: TaskOutput = serde_json::from_str(&raw).unwrap();
+        match back {
+            TaskOutput::Transcript { segments } => {
+                assert_eq!(segments.len(), 2);
+                assert_eq!(segments[0].end_s, 1.5);
+                assert_eq!(segments[1].text, "there");
+            }
+            _ => panic!(),
+        }
+    }
+
+    #[test]
+    fn provider_error_unsupported_language_carries_both_codes() {
+        let e = ProviderError::UnsupportedLanguage("xx".into(), "yy".into());
+        let raw = serde_json::to_string(&e).unwrap();
+        let back: ProviderError = serde_json::from_str(&raw).unwrap();
+        match back {
+            ProviderError::UnsupportedLanguage(a, b) => {
+                assert_eq!(a, "xx");
+                assert_eq!(b, "yy");
+            }
+            _ => panic!(),
+        }
+    }
+
+    #[test]
+    fn provider_error_low_confidence_and_rate_limit_round_trip() {
+        for e in [ProviderError::LowConfidence, ProviderError::RateLimit] {
+            let raw = serde_json::to_string(&e).unwrap();
+            let back: ProviderError = serde_json::from_str(&raw).unwrap();
+            assert_eq!(format!("{back:?}"), format!("{e:?}"));
+        }
+    }
 }

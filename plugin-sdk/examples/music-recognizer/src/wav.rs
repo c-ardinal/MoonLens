@@ -97,4 +97,42 @@ mod tests {
         assert_eq!(wav[46], 0xFF);
         assert_eq!(wav[47], 0xFF);
     }
+
+    #[test]
+    fn zero_samples_produces_44_byte_header_only() {
+        let wav = encode_pcm16_mono_16k(&[]);
+        assert_eq!(wav.len(), 44);
+        assert_eq!(read_u32_le(&wav, 40), 0); // data size
+        // riff_size = 36 when data_size is 0.
+        assert_eq!(read_u32_le(&wav, 4), 36);
+    }
+
+    #[test]
+    fn single_sample_produces_46_byte_file() {
+        let wav = encode_pcm16_mono_16k(&[0]);
+        assert_eq!(wav.len(), 46);
+        assert_eq!(read_u32_le(&wav, 40), 2);
+    }
+
+    #[test]
+    fn i16_extremes_do_not_overflow_encoding() {
+        let wav = encode_pcm16_mono_16k(&[i16::MIN, i16::MAX]);
+        assert_eq!(wav.len(), 48);
+        // i16::MIN = 0x8000 → LE bytes 0x00, 0x80
+        assert_eq!(wav[44], 0x00);
+        assert_eq!(wav[45], 0x80);
+        assert_eq!(wav[46], 0xFF);
+        assert_eq!(wav[47], 0x7F);
+    }
+
+    #[test]
+    fn stereo_48k_fmt_chunk_is_correct() {
+        let wav = encode_pcm16(&[0, 0, 0, 0], 48_000, 2);
+        assert_eq!(read_u16_le(&wav, 22), 2); // channels
+        assert_eq!(read_u32_le(&wav, 24), 48_000);
+        // byte_rate = sample_rate * channels * bytes_per_sample
+        assert_eq!(read_u32_le(&wav, 28), 48_000 * 2 * 2);
+        // block_align = channels * bytes_per_sample
+        assert_eq!(read_u16_le(&wav, 32), 4);
+    }
 }

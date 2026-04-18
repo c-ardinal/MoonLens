@@ -205,6 +205,38 @@ mod tests {
     }
 
     #[test]
+    fn bytes_to_i16_empty_input_returns_empty() {
+        assert!(bytes_to_i16_le(&[]).is_empty());
+    }
+
+    #[test]
+    fn bytes_to_i16_single_byte_drops_it() {
+        // One byte is less than one i16, so it must be dropped without
+        // reading past the buffer.
+        assert!(bytes_to_i16_le(&[0x01]).is_empty());
+    }
+
+    #[test]
+    fn bytes_to_i16_decodes_negative_max_correctly() {
+        // 0x0080 = 128; 0x80 0xFF = -128 (sign-extended from 0xFF80).
+        let bytes = vec![0x80, 0xFF];
+        assert_eq!(bytes_to_i16_le(&bytes), vec![-128]);
+    }
+
+    #[test]
+    fn format_track_preserves_unicode_and_special_characters() {
+        let t = AudDTrack {
+            artist: Some("坂本龍一".into()),
+            title: Some("Energy Flow — 'piano'".into()),
+            album: Some("ウラBTTB".into()),
+        };
+        assert_eq!(
+            format_track(&t),
+            "坂本龍一 — Energy Flow — 'piano' (ウラBTTB)"
+        );
+    }
+
+    #[test]
     fn non_asr_input_is_rejected() {
         let p = MusicRecognizer {
             token: String::new(),

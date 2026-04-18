@@ -71,6 +71,86 @@ mod tests {
     }
 
     #[test]
+    fn missing_required_plugin_id_fails_to_parse() {
+        let bad = r#"
+            [plugin]
+            name = "Nameless"
+            version = "0.1"
+            author = ""
+            license = ""
+            kind = "sidecar"
+            entry = "bin/x"
+            api_version = "1"
+        "#;
+        assert!(toml::from_str::<PluginManifest>(bad).is_err());
+    }
+
+    #[test]
+    fn invalid_plugin_kind_is_rejected() {
+        // A plugin author mistyping the kind must see a parse error, not
+        // a silently-disabled plugin.
+        let bad = r#"
+            [plugin]
+            id = "x"
+            name = "X"
+            version = "0.1"
+            author = ""
+            license = ""
+            kind = "docker"
+            entry = "x"
+            api_version = "1"
+        "#;
+        assert!(toml::from_str::<PluginManifest>(bad).is_err());
+    }
+
+    #[test]
+    fn empty_provides_parses_as_empty_vec() {
+        // An empty `provides` table is valid (plugin provides nothing
+        // discoverable) and must parse without error.
+        let m: PluginManifest = toml::from_str(
+            r#"
+            [plugin]
+            id = "x"
+            name = "X"
+            version = "0.1"
+            author = ""
+            license = ""
+            kind = "wasm"
+            entry = "x.wasm"
+            api_version = "1"
+
+            [capabilities]
+            provides = []
+        "#,
+        )
+        .unwrap();
+        assert!(m.capabilities.provides.is_empty());
+    }
+
+    #[test]
+    fn permission_booleans_default_to_false() {
+        let m: PluginManifest = toml::from_str(
+            r#"
+            [plugin]
+            id = "a"
+            name = "A"
+            version = "0.1"
+            author = ""
+            license = ""
+            kind = "sidecar"
+            entry = "a"
+            api_version = "1"
+            [permissions]
+        "#,
+        )
+        .unwrap();
+        assert!(!m.permissions.audio_capture);
+        assert!(!m.permissions.screen_capture);
+        assert!(!m.permissions.clipboard);
+        assert!(!m.permissions.subprocess);
+    }
+
+    #[test]
     fn chain_id_format_is_stable() {
         // The chain id format is `plugin.<id>.<cap_str>`. Assert it once so
         // config authors have a single source of truth.

@@ -202,4 +202,92 @@ mod tests {
         let entries = s.recent(1).unwrap();
         assert!(entries[0].via_cloud);
     }
+
+    #[test]
+    fn empty_database_recent_returns_empty_vec() {
+        let s = Storage::open_in_memory().unwrap();
+        assert!(s.recent(10).unwrap().is_empty());
+    }
+
+    #[test]
+    fn recent_with_zero_limit_returns_empty() {
+        let s = Storage::open_in_memory().unwrap();
+        s.append("translate", Some("x"), Some("y"), None, false, None)
+            .unwrap();
+        assert!(s.recent(0).unwrap().is_empty());
+    }
+
+    #[test]
+    fn recent_limit_larger_than_row_count_returns_all_rows() {
+        let s = Storage::open_in_memory().unwrap();
+        for i in 0..3 {
+            s.append("translate", Some(&i.to_string()), None, None, false, None)
+                .unwrap();
+        }
+        assert_eq!(s.recent(1000).unwrap().len(), 3);
+    }
+
+    #[test]
+    fn empty_string_is_stored_distinct_from_none() {
+        let s = Storage::open_in_memory().unwrap();
+        // Empty `Some("")` and `None` mean different things (an empty
+        // translation vs. no translation). The schema must preserve that.
+        s.append("translate", Some(""), Some(""), None, false, None)
+            .unwrap();
+        s.append("translate", None, None, None, false, None).unwrap();
+        let rows = s.recent(10).unwrap();
+        // Newest first → row with Nones first, row with empties second.
+        assert!(rows[0].source_text.is_none());
+        assert_eq!(rows[1].source_text.as_deref(), Some(""));
+    }
+
+    #[test]
+    fn unicode_is_preserved_in_all_text_fields() {
+        let s = Storage::open_in_memory().unwrap();
+        s.append(
+            "translate",
+            Some("猫が鳴く 🐱"),
+            Some("Cat meows 🐱"),
+            Some("plugin.🔌"),
+            true,
+            Some("/tmp/猫.png"),
+        )
+        .unwrap();
+        let e = &s.recent(1).unwrap()[0];
+        assert_eq!(e.source_text.as_deref(), Some("猫が鳴く 🐱"));
+        assert_eq!(e.result_text.as_deref(), Some("Cat meows 🐱"));
+        assert_eq!(e.provider.as_deref(), Some("plugin.🔌"));
+        assert_eq!(e.image_path.as_deref(), Some("/tmp/猫.png"));
+    }
+
+    #[test]
+    fn prune_with_epoch_zero_removes_no_rows() {
+        let s = Storage::open_in_memory().unwrap();
+        s.append("translate", None, None, None, false, None).unwrap();
+        assert_eq!(s.prune_older_than(0).unwrap(), 0);
+        assert_eq!(s.recent(10).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn prune_with_epoch_max_removes_everything() {
+        let s = Storage::open_in_memory().unwrap();
+        for _ in 0..4 {
+            s.append("translate", None, None, None, false, None).unwrap();
+        }
+        let deleted = s.prune_older_than(i64::MAX).unwrap();
+        assert_eq!(deleted, 4);
+        assert!(s.recent(10).unwrap().is_empty());
+    }
+
+    #[test]
+    fn very_long_text_round_trips() {
+        // 1 MiB of text: common ceiling for pathological OCR output. The
+        // schema must not truncate or reject.
+        let big = "あ".repeat(300_000); // ~900 KB in UTF-8
+        let s = Storage::open_in_memory().unwrap();
+        s.append("translate", Some(&big), None, None, false, None)
+            .unwrap();
+        let e = &s.recent(1).unwrap()[0];
+        assert_eq!(e.source_text.as_ref().map(|s| s.len()), Some(big.len()));
+    }
 }

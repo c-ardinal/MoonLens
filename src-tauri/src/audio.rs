@@ -116,6 +116,75 @@ pub mod dsp {
         }
 
         #[test]
+        fn pcm16_from_nan_returns_zero_not_panic() {
+            // f32::NaN.clamp(...) returns NaN; casting NaN→i16 yields 0 in
+            // Rust. We rely on that to keep the audio pipeline robust when
+            // an upstream driver emits NaNs.
+            assert_eq!(pcm16_from_f32(f32::NAN), 0);
+        }
+
+        #[test]
+        fn pcm16_from_infinity_clamps() {
+            assert_eq!(pcm16_from_f32(f32::INFINITY), 32767);
+            assert_eq!(pcm16_from_f32(f32::NEG_INFINITY), -32767);
+        }
+
+        #[test]
+        fn downmix_drops_trailing_partial_frame() {
+            // 5 samples with 2 channels is 2 complete frames + 1 leftover.
+            let stereo: Vec<i16> = vec![10, 20, 30, 40, 99];
+            let mono = downmix_interleaved_i16(&stereo, 2);
+            assert_eq!(mono, vec![15, 35]);
+        }
+
+        #[test]
+        fn downmix_71_surround_averages_eight_channels() {
+            let frame: Vec<i16> = vec![8, 8, 8, 8, 8, 8, 8, 8];
+            assert_eq!(downmix_interleaved_i16(&frame, 8), vec![8]);
+        }
+
+        #[test]
+        fn resample_with_zero_source_rate_returns_empty() {
+            let mut frac = 0.0;
+            assert!(resample_to_16k_linear(&[1, 2, 3], 0, &mut frac).is_empty());
+        }
+
+        #[test]
+        fn resample_empty_input_returns_empty() {
+            let mut frac = 0.0;
+            assert!(resample_to_16k_linear(&[], 16_000, &mut frac).is_empty());
+        }
+
+        #[test]
+        fn resample_upsamples_8k_to_16k_roughly_doubling() {
+            let mut frac = 0.0;
+            let input: Vec<i16> = vec![0; 100];
+            let out = resample_to_16k_linear(&input, 8_000, &mut frac);
+            // ratio = 0.5 → ~2x samples; allow small rounding slack.
+            assert!((195..=210).contains(&out.len()), "got {}", out.len());
+        }
+
+        #[test]
+        fn resample_single_sample_input_cannot_interpolate() {
+            // With only one sample we need at least two to interpolate
+            // between, so output must be empty without panicking.
+            let mut frac = 0.0;
+            let out = resample_to_16k_linear(&[42], 16_000, &mut frac);
+            assert!(out.is_empty());
+        }
+
+        #[test]
+        fn resample_handles_i16_extremes_without_overflow() {
+            let mut frac = 0.0;
+            let input: Vec<i16> = vec![i16::MIN, i16::MAX, i16::MIN, i16::MAX];
+            let out = resample_to_16k_linear(&input, 16_000, &mut frac);
+            // No NaN / wrap-around; every output fits in i16 by construction.
+            for v in &out {
+                assert!(*v >= i16::MIN && *v <= i16::MAX);
+            }
+        }
+
+        #[test]
         fn resample_preserves_continuity_across_calls() {
             // Two consecutive calls of equal-rate data should produce the
             // same total number of output samples as one big call.

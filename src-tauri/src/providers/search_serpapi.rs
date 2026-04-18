@@ -83,6 +83,35 @@ mod tests {
         assert_eq!(url_encode("猫"), "%E7%8C%AB");
     }
 
+    #[test]
+    fn empty_string_encodes_to_empty_string() {
+        assert_eq!(url_encode(""), "");
+    }
+
+    #[test]
+    fn null_byte_is_encoded_not_dropped() {
+        // An embedded NUL must not silently vanish or truncate the rest.
+        assert_eq!(url_encode("a\x00b"), "a%00b");
+    }
+
+    #[test]
+    fn ascii_control_characters_are_encoded() {
+        assert_eq!(url_encode("a\tb\nc"), "a%09b%0Ac");
+    }
+
+    #[test]
+    fn four_byte_emoji_encodes_all_four_bytes() {
+        // "🎵" is F0 9F 8E B5 in UTF-8.
+        assert_eq!(url_encode("🎵"), "%F0%9F%8E%B5");
+    }
+
+    #[test]
+    fn already_percent_encoded_input_gets_percent_double_encoded() {
+        // We do not attempt to be smart about already-encoded input; if
+        // callers want idempotency they must decode first.
+        assert_eq!(url_encode("%20"), "%2520");
+    }
+
     #[tokio::test]
     async fn browser_search_fills_template_and_returns_url() {
         let cfg = json!({

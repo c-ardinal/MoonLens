@@ -189,6 +189,81 @@ pub mod rect {
             assert_eq!(lr.w, 100);
             assert_eq!(lr.h, 100);
         }
+
+        #[test]
+        fn empty_monitors_list_returns_none() {
+            let monitors: Vec<MonitorBounds> = vec![];
+            assert!(
+                to_local(&monitors, GlobalRect { x: 0, y: 0, w: 100, h: 100 }).is_none()
+            );
+            assert!(best_monitor(&monitors, GlobalRect { x: 0, y: 0, w: 100, h: 100 }).is_none());
+        }
+
+        #[test]
+        fn rect_with_zero_width_does_not_match_any_monitor() {
+            let monitors = vec![m(0, 0, 1000, 1000)];
+            assert!(to_local(&monitors, GlobalRect { x: 100, y: 100, w: 0, h: 100 }).is_none());
+        }
+
+        #[test]
+        fn rect_touching_monitor_edge_has_zero_overlap() {
+            // A rect whose right edge is exactly at the monitor's left edge
+            // contributes no pixels and should not select that monitor.
+            let monitors = vec![m(1000, 0, 1000, 1000)];
+            assert!(
+                to_local(&monitors, GlobalRect { x: 900, y: 0, w: 100, h: 100 }).is_none()
+            );
+        }
+
+        #[test]
+        fn rect_exactly_equal_to_monitor_bounds_is_full_local_rect() {
+            let monitors = vec![m(100, 200, 1920, 1080)];
+            let lr = to_local(
+                &monitors,
+                GlobalRect { x: 100, y: 200, w: 1920, h: 1080 },
+            )
+            .unwrap();
+            assert_eq!(lr, LocalRect { monitor_index: 0, x: 0, y: 0, w: 1920, h: 1080 });
+        }
+
+        #[test]
+        fn tied_overlap_prefers_earlier_monitor_for_determinism() {
+            // Two monitors with identical overlap of the rect — the earlier
+            // index must win so the selection is stable across runs.
+            let monitors = vec![m(0, 0, 1000, 1000), m(0, 0, 1000, 1000)];
+            let idx = best_monitor(
+                &monitors,
+                GlobalRect { x: 100, y: 100, w: 200, h: 200 },
+            )
+            .unwrap();
+            assert_eq!(idx, 0);
+        }
+
+        #[test]
+        fn rect_starting_above_monitor_clips_top_edge() {
+            let monitors = vec![m(0, 0, 1000, 1000)];
+            let lr = to_local(
+                &monitors,
+                GlobalRect { x: 10, y: -50, w: 100, h: 200 },
+            )
+            .unwrap();
+            // Top is clipped to monitor origin; height drops to 150.
+            assert_eq!(lr.y, 0);
+            assert_eq!(lr.h, 150);
+            assert_eq!(lr.x, 10);
+        }
+
+        #[test]
+        fn rect_inside_monitor_is_not_clipped() {
+            let monitors = vec![m(0, 0, 1920, 1080)];
+            let lr = to_local(
+                &monitors,
+                GlobalRect { x: 500, y: 400, w: 300, h: 200 },
+            )
+            .unwrap();
+            assert_eq!(lr.w, 300);
+            assert_eq!(lr.h, 200);
+        }
     }
 }
 

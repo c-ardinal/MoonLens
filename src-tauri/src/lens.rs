@@ -376,4 +376,75 @@ mod tests {
     fn short_strips_everything_before_the_last_dash() {
         assert_eq!(short("lens-ffee-7"), "7");
     }
+
+    #[test]
+    fn short_returns_id_verbatim_if_no_dash() {
+        // Lens ids always have dashes in production, but we want the
+        // helper to be defensive for robustness under weird inputs.
+        assert_eq!(short("noseparator"), "noseparator");
+    }
+
+    #[test]
+    fn list_preserves_tracking_order() {
+        let r = new_registry_for_test();
+        r.track("a".into());
+        r.track("b".into());
+        r.track("c".into());
+        let ids: Vec<String> = r.list().into_iter().map(|d| d.id).collect();
+        assert_eq!(ids, vec!["a", "b", "c"]);
+    }
+
+    #[test]
+    fn setting_insets_on_missing_id_is_a_noop() {
+        // Should not panic and should not create an entry.
+        let r = new_registry_for_test();
+        r.set_insets("missing", LensInsets { top: 10, ..Default::default() });
+        assert_eq!(r.list().len(), 0);
+    }
+
+    #[test]
+    fn untracking_missing_id_is_a_noop() {
+        let r = new_registry_for_test();
+        r.untrack("missing"); // must not panic
+        r.track("a".into());
+        r.untrack("a");
+        r.untrack("a"); // twice in a row is fine
+        assert!(r.list().is_empty());
+    }
+
+    #[test]
+    fn observed_rect_with_zero_size_outer_returns_none() {
+        let outer = geometry::LensOuterRect { x: 0, y: 0, w: 0, h: 0 };
+        assert!(geometry::observed_rect(outer, geometry::LensInsets::default()).is_none());
+    }
+
+    #[test]
+    fn observed_rect_with_zero_insets_equals_outer() {
+        let outer = geometry::LensOuterRect { x: 10, y: 20, w: 300, h: 200 };
+        let observed = geometry::observed_rect(outer, geometry::LensInsets::default()).unwrap();
+        assert_eq!(observed, outer);
+    }
+
+    #[test]
+    fn observed_rect_trims_all_four_sides() {
+        let outer = geometry::LensOuterRect { x: 0, y: 0, w: 400, h: 300 };
+        let insets = geometry::LensInsets { top: 30, bottom: 20, left: 10, right: 15 };
+        let observed = geometry::observed_rect(outer, insets).unwrap();
+        assert_eq!(
+            observed,
+            geometry::LensOuterRect { x: 10, y: 30, w: 375, h: 250 }
+        );
+    }
+
+    #[test]
+    fn duplicate_track_does_allow_duplicates_callers_must_dedupe() {
+        // Document the current contract: track() is append-only and does
+        // NOT dedupe. The caller (app::build()) must ensure unique ids;
+        // this test pins the behaviour so a future refactor that adds
+        // dedup is a conscious decision, not an accident.
+        let r = new_registry_for_test();
+        r.track("a".into());
+        r.track("a".into());
+        assert_eq!(r.list().len(), 2);
+    }
 }

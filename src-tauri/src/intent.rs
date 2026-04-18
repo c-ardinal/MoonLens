@@ -93,6 +93,65 @@ mod tests {
     }
 
     #[test]
+    fn one_by_one_image_is_unknown() {
+        let img =
+            DynamicImage::ImageRgba8(ImageBuffer::from_pixel(1, 1, Rgba([0, 0, 0, 255])));
+        assert!(matches!(classify(&img), Intent::Unknown));
+    }
+
+    #[test]
+    fn exactly_sixty_three_pixels_is_still_unknown() {
+        let img =
+            DynamicImage::ImageRgba8(ImageBuffer::from_pixel(63, 63, Rgba([100, 100, 100, 255])));
+        assert!(matches!(classify(&img), Intent::Unknown));
+    }
+
+    #[test]
+    fn exactly_sixty_four_pixels_passes_size_gate() {
+        // At the boundary we run full stats; a uniform 64x64 → Photo.
+        let img =
+            DynamicImage::ImageRgba8(ImageBuffer::from_pixel(64, 64, Rgba([100, 100, 100, 255])));
+        assert!(matches!(classify(&img), Intent::Photo));
+    }
+
+    #[test]
+    fn pure_black_image_is_photo() {
+        // Mean 0, std 0 → std < 35 branch → Photo.
+        let img = DynamicImage::ImageRgba8(ImageBuffer::from_pixel(96, 96, Rgba([0, 0, 0, 255])));
+        assert!(matches!(classify(&img), Intent::Photo));
+    }
+
+    #[test]
+    fn pure_white_image_is_photo() {
+        let img = DynamicImage::ImageRgba8(ImageBuffer::from_pixel(
+            96,
+            96,
+            Rgba([255, 255, 255, 255]),
+        ));
+        assert!(matches!(classify(&img), Intent::Photo));
+    }
+
+    #[test]
+    fn zero_std_with_text_band_mean_still_classifies_as_photo() {
+        // Regardless of mean, std = 0 → uniform → Photo.
+        let s = Stats { mean: 150.0, std: 0.0 };
+        assert!(matches!(classify_stats(s), Intent::Photo));
+    }
+
+    #[test]
+    fn high_std_but_very_dark_mean_is_mixed_not_text() {
+        // std in the text range but mean below 60 → falls through to Mixed.
+        let s = Stats { mean: 50.0, std: 90.0 };
+        assert!(matches!(classify_stats(s), Intent::Mixed));
+    }
+
+    #[test]
+    fn high_std_but_very_bright_mean_is_mixed_not_text() {
+        let s = Stats { mean: 240.0, std: 90.0 };
+        assert!(matches!(classify_stats(s), Intent::Mixed));
+    }
+
+    #[test]
     fn checkerboard_high_contrast_stats_are_text_like() {
         // 128x128 checkerboard of 8x8 squares alternating black/white.
         // Using grayscale values (equal R/G/B) so the luma conversion
