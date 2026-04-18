@@ -1,16 +1,152 @@
 name: build
 
+# CI is split into two tiers to keep GitHub Actions minutes in budget:
+#
+#   * `fast` — Linux-only fmt / clippy / test. Runs on pushes to
+#     feature branches (`claude/**`, `feature/**`, `fix/**`, `hotfix/**`).
+#     Catches the vast majority of regressions in a single runner.
+#   * `full` — 3-platform (linux/macos/windows) matrix. Runs on PRs
+#     into `main` / `release` and on direct pushes to those branches.
+#     This is the real gate; merging requires it to be green.
+#
+# Concurrency: newer runs on the same ref (branch or PR) cancel older
+# ones, so force-pushes / rapid iteration do not stack. `paths-ignore`
+# skips docs-only churn.
+
 on:
   push:
-    branches: [main, release, 'claude/**']
+    branches: [main, release, 'claude/**', 'feature/**', 'fix/**', 'hotfix/**']
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'CHANGELOG.md'
+      - 'LICENSE'
   pull_request:
-    # CI gates PRs into either the release candidate branch or
-    # mainline; see docs/RELEASING.md for the two-branch flow.
     branches: [main, release]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'CHANGELOG.md'
+      - 'LICENSE'
   workflow_dispatch:
 
+concurrency:
+  group: build-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' && github.ref != 'refs/heads/release' }}
+
 jobs:
-  tauri:
+  # Lightweight single-runner check for feature-branch pushes. Gives
+  # fast signal without burning the full matrix; the `full` job gates
+  # the merge into main/release.
+  fast:
+    if: github.event_name == 'push' && github.ref != 'refs/heads/main' && github.ref != 'refs/heads/release'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Free disk space
+        run: |
+          set -eux
+          sudo rm -rf \
+            /usr/share/dotnet \
+            /usr/local/lib/android \
+            /usr/local/share/boost \
+            /opt/ghc \
+            /opt/hostedtoolcache/CodeQL \
+            "$AGENT_TOOLSDIRECTORY" || true
+          sudo apt-get clean
+
+      - name: Linux system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            libxdo-dev \
+            libasound2-dev \
+            libsoup-3.0-dev \
+            libpipewire-0.3-dev \
+            libspa-0.2-dev \
+            libgbm-dev \
+            libwayland-dev \
+            libegl1-mesa-dev \
+            libdrm-dev \
+            libxkbcommon-dev
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            src-tauri
+            plugin-sdk/rust
+            plugin-sdk/examples/hello-translator
+            plugin-sdk/examples/music-recognizer
+          key: fast-linux
+
+      - name: Install JS deps
+        run: npm ci
+
+      - name: Typecheck frontend
+        run: npm run check
+
+      - name: Vitest (logic + DOM render tests)
+        run: npm test
+
+      - name: Cargo fmt
+        working-directory: src-tauri
+        run: cargo fmt --all -- --check
+
+      - name: Cargo clippy (src-tauri)
+        working-directory: src-tauri
+        run: cargo clippy --all-targets --no-deps -- -D warnings
+
+      - name: Cargo clippy (plugin SDK)
+        working-directory: plugin-sdk/rust
+        run: cargo clippy --all-targets --no-deps -- -D warnings
+
+      - name: Cargo clippy (hello-translator)
+        working-directory: plugin-sdk/examples/hello-translator
+        run: cargo clippy --all-targets --no-deps -- -D warnings
+
+      - name: Cargo clippy (music-recognizer)
+        working-directory: plugin-sdk/examples/music-recognizer
+        run: cargo clippy --all-targets --no-deps -- -D warnings
+
+      - name: Cargo unit tests
+        working-directory: src-tauri
+        run: cargo test --lib --no-fail-fast
+
+      - name: Cargo integration tests
+        working-directory: src-tauri
+        run: cargo test --tests --no-fail-fast
+
+      - name: Test plugin SDK
+        working-directory: plugin-sdk/rust
+        run: cargo test
+
+      - name: Build + test hello-translator example
+        working-directory: plugin-sdk/examples/hello-translator
+        run: cargo test
+
+      - name: Build + test music-recognizer example
+        working-directory: plugin-sdk/examples/music-recognizer
+        run: cargo test
+
+  # Full 3-platform gate. Runs on PRs into main/release and on direct
+  # pushes to those branches (the latter covers merges and force-pushes).
+  full:
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main' || github.ref == 'refs/heads/release'
     strategy:
       fail-fast: false
       matrix:
