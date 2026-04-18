@@ -1,14 +1,15 @@
 name: release
 
-# Tag-driven releases. Pushing `v0.1.0-rc.1` creates a GitHub Release
-# marked as pre-release; `v0.1.0` creates a full release. The
-# workflow builds signed Tauri bundles on all three platforms and
-# attaches them as release assets.
+# Tag-driven releases on a two-branch repository:
+#   * `release` branch → pre-release tags (`v0.1.0-rc.1`, `-beta.N`,
+#     `-alpha.N`). Published as GitHub pre-releases.
+#   * `main` branch → full release tags (`v0.1.0`, `v0.1.1`).
+#     Published as full releases.
 #
-# Pre-release detection: GitHub's `softprops/action-gh-release` sets
-# `prerelease` automatically when the tag name contains a `-`
-# (SemVer pre-release suffix), which matches `-rc.N` / `-beta.N` /
-# `-alpha.N` out of the box.
+# Pre-release vs full is decided by the tag name: a `-` suffix flags
+# pre-release. The branch check below is advisory only — it logs a
+# warning when the tag's branch does not match the convention, but
+# never fails the build so emergency tags are always possible.
 
 on:
   push:
@@ -23,7 +24,33 @@ permissions:
   contents: write
 
 jobs:
+  guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with: { fetch-depth: 0 }
+      - name: Check tag branch hygiene
+        shell: bash
+        run: |
+          tag="${{ github.event.inputs.tag || github.ref_name }}"
+          echo "Releasing tag: $tag"
+          case "$tag" in
+            *-*)
+              expected=release
+              ;;
+            *)
+              expected=main
+              ;;
+          esac
+          commit=$(git rev-list -n 1 "$tag")
+          if git merge-base --is-ancestor "$commit" "origin/$expected"; then
+            echo "✓ tag $tag sits on origin/$expected (expected for this naming)"
+          else
+            echo "::warning::tag $tag is not reachable from origin/$expected; double-check you tagged on the right branch"
+          fi
+
   build:
+    needs: guard
     strategy:
       fail-fast: false
       matrix:

@@ -2,9 +2,11 @@ name: build
 
 on:
   push:
-    branches: [main, 'claude/**']
+    branches: [main, release, 'claude/**']
   pull_request:
-    branches: [main]
+    # CI gates PRs into either the release candidate branch or
+    # mainline; see docs/RELEASING.md for the two-branch flow.
+    branches: [main, release]
   workflow_dispatch:
 
 jobs:

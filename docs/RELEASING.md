@@ -1,122 +1,154 @@
 # Releasing MoonLens
 
-MoonLens follows a **tag-driven** release flow on a single `main`
-branch. There is no long-lived "release" branch; pre-releases and
-full releases are both just tags with different SemVer suffixes.
+MoonLens ships through a **two-branch, tag-driven** release flow:
+
+| Branch    | Purpose                                           | Tag shape                              |
+| --------- | ------------------------------------------------- | -------------------------------------- |
+| `release` | Integration branch for the **next** version.     | `vX.Y.Z-rc.N` / `-beta.N` / `-alpha.N` |
+| `main`    | Code that has already shipped as a full release. | `vX.Y.Z` (no suffix)                   |
+
+Feature work merges into `release` first. Release candidates are tagged
+on `release`; once an RC is approved, `release` is merged into `main`
+and the matching full-release tag is cut there. No feature branch is
+ever merged directly into `main`.
+
+Why split the two: it keeps `main` a ready-to-ship snapshot of the
+latest published binary, while `release` can accumulate work that
+produces rc builds for dog-fooding without disturbing the official
+line.
 
 ## Version scheme
 
-Semantic Versioning (`MAJOR.MINOR.PATCH`):
+[Semantic Versioning](https://semver.org):
 
-| Example          | What it means                                                       |
-| ---------------- | ------------------------------------------------------------------- |
-| `v0.2.0-alpha.1` | Internal / dogfood. Surfaces may change without notice.             |
-| `v0.2.0-beta.3`  | Feature-complete for the target. External testers welcome.          |
-| `v0.2.0-rc.1`    | No known regressions. Last chance to find showstoppers.             |
-| `v0.2.0`         | Shipped. No further changes until the next tag.                     |
-| `v0.2.1`         | Bug-fix. No new features, no schema migrations beyond compat ones.  |
+| Tag              | Branch    | Published as       | Meaning                                                  |
+| ---------------- | --------- | ------------------ | -------------------------------------------------------- |
+| `v0.2.0-alpha.1` | `release` | GitHub pre-release | Internal / dog-food. Surfaces may change without notice. |
+| `v0.2.0-beta.3`  | `release` | GitHub pre-release | Feature-complete. External testers welcome.             |
+| `v0.2.0-rc.1`    | `release` | GitHub pre-release | No known regressions. Last call for showstoppers.       |
+| `v0.2.0`         | `main`    | GitHub release     | Shipped. No further changes until the next tag.         |
+| `v0.2.1`         | `main`    | GitHub release     | Bug-fix on top of `v0.2.0`. No schema migrations.       |
 
-GitHub's release UI automatically flags any tag whose name contains
-a `-` as a **pre-release** — `v0.2.0-rc.1` is a pre-release, `v0.2.0`
-is not. The `.github/workflows/release.yml` pipeline honours the same
-rule.
+A tag whose name contains a `-` publishes as a GitHub pre-release
+automatically. The release workflow also logs a warning if a
+pre-release tag is cut outside `release`, or a full-release tag
+outside `main` — advisory only so emergency tags still work.
 
-## Cutting a release
+## Day-to-day flow
+
+```text
+feature branch
+     │  PR
+     ▼
+  release  ── tag vX.Y.Z-rc.N ──▶  release.yml ──▶  pre-release
+     │                                                   │
+     │ QA / dog-food                                     ▼
+     │                                            feedback issues
+     │  PR (fast-forward when green)
+     ▼
+    main   ── tag vX.Y.Z      ──▶  release.yml ──▶  full release
+```
+
+## Cutting a release candidate
 
 ```bash
-# 1. make sure main is green
-git checkout main
+# 1. Make sure the release branch is green
+git checkout release
 git pull --ff-only
-gh run watch  # wait for the latest CI run on main
+gh run watch                          # wait for the latest CI on release
 
-# 2. update the changelog (manual curation wins over auto-generation)
+# 2. Update CHANGELOG.md (manual curation wins over auto-generation)
 $EDITOR CHANGELOG.md
 git add CHANGELOG.md && git commit -m "Changelog: v0.2.0-rc.1"
 git push
 
-# 3. tag + push
+# 3. Tag + push
 git tag -s v0.2.0-rc.1 -m "v0.2.0-rc.1"
 git push origin v0.2.0-rc.1
 ```
 
-Pushing the tag triggers `release.yml`, which:
+Pushing the tag fires `release.yml`:
 
-1. Builds the frontend (`npm run build`).
-2. Flips `bundle.active` on in `tauri.conf.json` for the build only.
-3. Runs `tauri-action` on macOS, Linux and Windows — producing
-   `.dmg`, `.app.tar.gz`, `.AppImage`, `.deb`, `.rpm`, `.msi` and
-   `.nsis` artifacts.
-4. Creates (or updates) a GitHub Release, marks it pre-release if
-   the tag contains a `-`, and attaches every artifact.
+1. The `guard` job checks the tag sits on `release` (warns otherwise).
+2. The `build` matrix runs `tauri-action` on macOS, Linux and Windows
+   and attaches `.dmg` / `.app.tar.gz` / `.AppImage` / `.deb` / `.rpm`
+   / `.msi` / `.nsis` artefacts.
+3. The GitHub Release is created with the pre-release flag set.
 
-Track progress at <https://github.com/c-ardinal/MoonLens/actions>.
+Watch progress at
+<https://github.com/c-ardinal/MoonLens/actions/workflows/release.yml>.
 
-## QA window for pre-releases
+## QA window
 
-While a release candidate is live:
+While an rc is live:
 
-- Download the artefact matching your host.
-- Run through the top-line flows: ⌘⇧Space capture → OCR → translate,
+- Download the artefact matching your host from the pre-release.
+- Walk through the main flows: ⌘⇧Space capture → OCR → translate,
   Lens window, Pin overlay, live subtitles, plugin install, settings
   hot-reload.
-- File any issues with the `rc.N` label so they are sorted into the
-  milestone for the next candidate.
+- File any issue against the matching `rc.N` label / milestone.
 
-Report-back by commenting on the automatically-created GitHub Release,
-or on a dedicated "rc.N feedback" issue.
+Feedback lands on the pre-release as GitHub comments or (preferred)
+on an issue template.
 
-## Promoting a pre-release to a full release
+## Promoting an rc to a full release
 
-Two supported paths:
-
-**A. Cut a new tag (preferred).** The canonical approach: if
-`v0.2.0-rc.3` proves clean, tag `v0.2.0` at the same commit:
+When an `rc.N` is declared clean:
 
 ```bash
-git tag -s v0.2.0 -m "v0.2.0" v0.2.0-rc.3
+# 1. Fast-forward main from release
+git checkout main
+git pull --ff-only
+git merge --ff-only release
+git push origin main
+
+# 2. Tag the new shipped version
+git tag -s v0.2.0 -m "v0.2.0"
 git push origin v0.2.0
 ```
 
-The release workflow runs again and publishes `v0.2.0` as a full
-release with fresh artefacts. This keeps the release and its
-artefacts aligned on a single tag, which is what package managers
-like Homebrew, winget, and Flatpak expect to discover.
+`release.yml` builds fresh binaries and publishes a full release with
+the new artefacts. `release` and `main` now point at the same commit
+and `release` can start accumulating work for the next cycle.
 
-**B. Flip the flag on the existing pre-release.** If rebuilding
-from scratch is undesirable (rare: no tag change, no new artefacts)
-you can flip the GitHub flag by hand:
-
-```bash
-gh release edit v0.2.0-rc.3 --prerelease=false --latest
-```
-
-The artefacts keep their `v0.2.0-rc.3` names, which is why (A) is
-usually cleaner.
+Alternative: if rebuilding is undesirable, `gh release edit
+v0.2.0-rc.3 --prerelease=false --latest` flips the flag on the
+existing pre-release. Keeps the old artefact names; prefer the tag
+route for installers published to package managers (Homebrew,
+winget, Flatpak) which expect to discover the release at its tag
+URL.
 
 ## Hotfixes
 
 For an urgent patch on a shipped release:
 
-1. `git checkout -b hotfix/v0.2.1 v0.2.0`
-2. Commit the fix, push, open a PR against `main` and merge.
-3. Tag `v0.2.1` on `main` once merged. The release workflow runs as
-   normal.
+```bash
+git checkout -b hotfix/v0.2.1 v0.2.0
+# commit the fix
+git push -u origin hotfix/v0.2.1
+```
 
-We intentionally do **not** keep a separate `release/0.2.x` branch;
-tags and `git describe` give us everything that branch-style
-maintenance would, without the overhead of cherry-picking between
-branches when the stream is this thin.
+Open a PR into `main`. Once merged, fast-forward `release` from
+`main` so it keeps up:
+
+```bash
+git checkout release
+git merge --ff-only main
+git push origin release
+```
+
+Then tag `v0.2.1` on `main`.
 
 ## Signing
 
 `release.yml` reads the following repository secrets. All are
-optional: missing secrets produce unsigned bundles that still work
-locally but show the OS's untrusted-developer warnings.
+optional: missing secrets produce unsigned bundles that still run
+locally with the OS's untrusted-developer warning.
 
 - **Tauri updater**: `TAURI_SIGNING_PRIVATE_KEY`,
-  `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. Generated by
-  `tauri signer generate`.
-- **macOS notarisation**: `APPLE_CERTIFICATE` (Base64-encoded .p12),
+  `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` (generate with
+  `tauri signer generate`).
+- **macOS notarisation**: `APPLE_CERTIFICATE` (base64 .p12),
   `APPLE_CERTIFICATE_PASSWORD`, `APPLE_SIGNING_IDENTITY`,
   `APPLE_ID`, `APPLE_PASSWORD` (app-specific password),
   `APPLE_TEAM_ID`.
@@ -124,17 +156,15 @@ locally but show the OS's untrusted-developer warnings.
   `WINDOWS_CERTIFICATE_PASSWORD` and reference them in
   `tauri.conf.json > bundle.windows` once an EV cert is available.
 
-Populate these in *Settings ▸ Secrets and variables ▸ Actions* when
-a signing identity becomes available. No code changes required.
+Populate in *Settings ▸ Secrets and variables ▸ Actions*. No code
+changes required.
 
 ## Rolling back
 
 If a release turns out broken:
 
-1. `gh release edit vX.Y.Z --draft` to hide it from users.
-2. Open a hotfix PR, cut `vX.Y.(Z+1)` per above.
-3. Once the hotfix is out, you can either delete the broken release
-   or leave it draft as a historical record.
-
-The auto-updater never serves a draft release, so step 1 stops
-existing clients from upgrading into the broken build.
+1. `gh release edit vX.Y.Z --draft` to hide it from users (and the
+   auto-updater, which never serves drafts).
+2. Cut `vX.Y.(Z+1)` via the hotfix flow above.
+3. Either delete the broken release, or leave it as a draft for
+   historical reference.
