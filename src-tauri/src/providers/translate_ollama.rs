@@ -15,6 +15,15 @@ pub struct OllamaTranslator {
     temperature: f32,
     top_p: f32,
     num_ctx: u32,
+    num_predict: Option<u32>,
+    /// Reasoning-capable models (gemma4, qwen3, deepseek, ...) run a
+    /// silent "thinking" pass before emitting visible tokens, adding
+    /// seconds to first-token latency. We default to `false` because
+    /// translation does not benefit from reasoning and the latency hit
+    /// is unacceptable for Lens streaming (bench 2026-04-20: 10x slower
+    /// with thinking on). Users can opt in via settings for models that
+    /// benefit from it (Explain / Summarize capabilities may want true).
+    think: bool,
     system_prompt: String,
     http: reqwest::Client,
     /// Callback invoked for each streaming chunk received from Ollama.
@@ -35,13 +44,23 @@ impl OllamaTranslator {
         };
         let get_f = |k: &str, d: f64| config.get(k).and_then(|v| v.as_f64()).unwrap_or(d) as f32;
         let get_u = |k: &str, d: u64| config.get(k).and_then(|v| v.as_u64()).unwrap_or(d) as u32;
+        let get_bool =
+            |k: &str, d: bool| config.get(k).and_then(|v| v.as_bool()).unwrap_or(d);
+        let get_opt_u = |k: &str| config.get(k).and_then(|v| v.as_u64()).map(|v| v as u32);
         Self {
             id: id.into(),
             endpoint: get_str("endpoint", "http://127.0.0.1:11434"),
-            model: get_str("model", "gemma4:7b-instruct-q4_K_M"),
+            // Default model changed 2026-04-20 from 7B quantised to E2B
+            // (effective 2B, MatFormer). Bench shows ~373ms first-token on
+            // RTX 4080 versus several seconds for a 7B class model.
+            model: get_str("model", "gemma4:e2b"),
             temperature: get_f("temperature", 0.2),
             top_p: get_f("top_p", 0.9),
-            num_ctx: get_u("num_ctx", 8192),
+            // Translation rarely benefits from >4K context; prefill time
+            // scales with num_ctx so keep it tight unless user overrides.
+            num_ctx: get_u("num_ctx", 4096),
+            num_predict: get_opt_u("num_predict").or(Some(256)),
+            think: get_bool("think", false),
             system_prompt: get_str(
                 "system_prompt",
                 "You are a careful translator. Preserve meaning, tone, and formatting. Output only the translation.",
@@ -65,6 +84,9 @@ struct GenerateRequest<'a> {
     prompt: String,
     system: &'a str,
     stream: bool,
+    /// Disables reasoning pass on models that support it. Serialised
+    /// unconditionally — older Ollama versions ignore unknown fields.
+    think: bool,
     options: Options,
 }
 
@@ -73,6 +95,8 @@ struct Options {
     temperature: f32,
     top_p: f32,
     num_ctx: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    num_predict: Option<u32>,
 }
 
 #[derive(Deserialize)]
@@ -146,10 +170,12 @@ impl Provider for OllamaTranslator {
             prompt,
             system: &self.system_prompt,
             stream,
+            think: self.think,
             options: Options {
                 temperature: self.temperature,
                 top_p: self.top_p,
                 num_ctx: self.num_ctx,
+                num_predict: self.num_predict,
             },
         };
 
@@ -210,8 +236,55 @@ impl Provider for OllamaTranslator {
 }
 
 #[cfg(test)]
+impl OllamaTranslator {
+    pub(crate) fn think_for_test(&self) -> bool {
+        self.think
+    }
+    pub(crate) fn model_for_test(&self) -> &str {
+        &self.model
+    }
+    pub(crate) fn num_ctx_for_test(&self) -> u32 {
+        self.num_ctx
+    }
+    pub(crate) fn num_predict_for_test(&self) -> Option<u32> {
+        self.num_predict
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn default_config_disables_thinking_and_picks_e2b_model() {
+        // Bench 2026-04-20 verdict: thinking mode costs 10x first-token
+        // latency on gemma4 class models. Default MUST be false — if a
+        // future refactor flips this, Lens streaming goes from ~370ms to
+        // ~3700ms first-token.
+        let t = OllamaTranslator::new("ollama.gemma4", &serde_json::Value::Null);
+        assert!(!t.think_for_test(), "default `think` must be false");
+        assert_eq!(t.model_for_test(), "gemma4:e2b");
+        assert_eq!(t.num_ctx_for_test(), 4096);
+        assert_eq!(t.num_predict_for_test(), Some(256));
+    }
+
+    #[test]
+    fn config_can_override_think_and_num_predict() {
+        // Explain / Summarize capabilities may genuinely want thinking
+        // on. The override path must honour that rather than forcing
+        // `false` at the call site.
+        let cfg = serde_json::json!({
+            "think": true,
+            "num_predict": 512,
+            "num_ctx": 8192,
+            "model": "gemma4:e4b",
+        });
+        let t = OllamaTranslator::new("x", &cfg);
+        assert!(t.think_for_test());
+        assert_eq!(t.num_predict_for_test(), Some(512));
+        assert_eq!(t.num_ctx_for_test(), 8192);
+        assert_eq!(t.model_for_test(), "gemma4:e4b");
+    }
 
     #[test]
     fn merge_stream_chunks_concatenates_response_fields() {

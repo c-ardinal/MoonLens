@@ -164,10 +164,21 @@ sticky_session_ms = 0
 
 [providers.configs."ollama.gemma4"]
 endpoint = "http://127.0.0.1:11434"
-model = "gemma4:7b-instruct-q4_K_M"
+# Default model changed 2026-04-20 from 7B to E2B (effective 2B MatFormer).
+# RTX 4080 warm first-token ~370ms vs seconds for 7B class. See
+# docs/benchmarks/2026-04-20-speed-feasibility.md.
+model = "gemma4:e2b"
 temperature = 0.2
 top_p = 0.9
-num_ctx = 8192
+# Translation rarely needs >4K context; prefill time scales with num_ctx
+# so we keep it tight by default. Users can override for long-document
+# translation workflows.
+num_ctx = 4096
+num_predict = 256
+# CRITICAL: Gemma 4 / Qwen 3 / DeepSeek have reasoning capability and
+# run a silent "thinking" pass that costs several seconds of first-token
+# latency. Translation does not benefit from reasoning — keep this off.
+think = false
 stream = true
 system_prompt = "You are a careful translator. Preserve meaning, tone, and formatting. Output only the translation."
 
