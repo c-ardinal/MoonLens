@@ -7,6 +7,7 @@
     clearHistory,
     type HistoryEntry
   } from '$lib/ipc';
+  import AppHeader from '$lib/components/AppHeader.svelte';
 
   let q = $state('');
   let entries = $state<HistoryEntry[]>([]);
@@ -74,18 +75,11 @@
 </script>
 
 <main class="mx-auto flex max-w-3xl flex-col gap-4 p-8">
-  <header class="flex items-center justify-between gap-3">
-    <div>
-      <h1 class="text-xl font-semibold tracking-tight">履歴</h1>
-      <p class="text-sm text-ink-muted">
-        {#if loading}
-          読み込み中…
-        {:else}
-          {entries.length} 件
-        {/if}
-      </p>
-    </div>
-    <div class="flex items-center gap-2">
+  <AppHeader
+    title="履歴"
+    subtitle={loading ? '読み込み中…' : `${entries.length} 件`}
+  >
+    {#snippet actions()}
       <div class="relative">
         <Search
           class="pointer-events-none absolute left-2 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-faint"
@@ -113,8 +107,8 @@
           全消去
         </button>
       {/if}
-    </div>
-  </header>
+    {/snippet}
+  </AppHeader>
 
   {#if error}
     <div

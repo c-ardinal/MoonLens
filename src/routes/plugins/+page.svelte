@@ -9,6 +9,7 @@
     type PluginDescriptor
   } from '$lib/ipc';
   import { RefreshCw, Download } from 'lucide-svelte';
+  import AppHeader from '$lib/components/AppHeader.svelte';
 
   type PluginUpdate = {
     plugin_id: string;
@@ -77,12 +78,8 @@
 </script>
 
 <main class="mx-auto flex max-w-4xl flex-col gap-6 p-8">
-  <header class="flex items-center justify-between">
-    <div>
-      <h1 class="text-xl font-semibold tracking-tight">プラグイン</h1>
-      <p class="text-sm text-ink-muted">ユーザ拡張の有効化・権限確認・設定編集。</p>
-    </div>
-    <div class="flex items-center gap-2">
+  <AppHeader title="プラグイン" subtitle="ユーザ拡張の有効化・権限確認・設定編集。">
+    {#snippet actions()}
       <button
         class="inline-flex items-center gap-1.5 rounded-ml-sm border border-border bg-surface px-3 py-1.5 text-sm text-ink-muted hover:border-accent/60 hover:text-ink disabled:opacity-40"
         onclick={checkUpdates}
@@ -98,8 +95,8 @@
       >
         {installing ? 'インストール中…' : '追加'}
       </button>
-    </div>
-  </header>
+    {/snippet}
+  </AppHeader>
 
   {#if installMsg}
     <p class="rounded-ml border border-accent/40 bg-accent-soft p-2 text-sm text-accent">
