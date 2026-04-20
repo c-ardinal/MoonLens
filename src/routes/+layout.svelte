@@ -3,6 +3,7 @@
   import { onMount } from 'svelte';
   import { getSettings } from '$lib/ipc';
   import MacOnboarding from '$lib/components/MacOnboarding.svelte';
+  import HotkeyFailureToast from '$lib/components/HotkeyFailureToast.svelte';
 
   let { children } = $props();
   let theme = $state<'light' | 'dark' | 'system'>('system');
@@ -26,3 +27,4 @@
 
 {@render children()}
 <MacOnboarding />
+<HotkeyFailureToast />

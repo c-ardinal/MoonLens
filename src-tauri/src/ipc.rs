@@ -35,8 +35,11 @@ pub async fn set_settings(
 ) -> Result<(), String> {
     state.settings.save(new).map_err(|e| e.to_string())?;
     state.pipeline.rebuild_providers();
-    // Hotkey bindings might have changed; re-register atomically.
-    hotkey::reapply(&app).map_err(|e| e.to_string())?;
+    // Hotkey bindings might have changed; re-register best-effort and
+    // surface per-shortcut failures via the `moonlens://hotkey-failure`
+    // event rather than rejecting the whole save.
+    let report = hotkey::reapply(&app).map_err(|e| e.to_string())?;
+    hotkey::notify_failures(&app, &report);
     Ok(())
 }
 

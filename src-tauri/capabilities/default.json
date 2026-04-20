@@ -1,0 +1,16 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Default capability: grants baseline IPC/event/window access to every MoonLens webview so custom #[tauri::command] handlers, event listeners and window manipulation all work. Without this file Tauri v2 denies every IPC call and every webview renders empty (black screen).",
+  "windows": [
+    "main",
+    "overlay",
+    "subtitle",
+    "selector",
+    "lens-*"
+  ],
+  "permissions": [
+    "core:default",
+    "core:webview:allow-internal-toggle-devtools"
+  ]
+}

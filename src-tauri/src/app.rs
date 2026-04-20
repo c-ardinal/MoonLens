@@ -109,8 +109,11 @@ pub fn build() -> Result<()> {
                 while let Ok(_snapshot) = reload_rx.recv().await {
                     let state = reload_handle.state::<AppState>();
                     state.inner().pipeline.rebuild_providers();
-                    if let Err(e) = hotkey::reapply(&reload_handle) {
-                        tracing::warn!("hotkey reapply after settings reload: {e}");
+                    match hotkey::reapply(&reload_handle) {
+                        Ok(report) => hotkey::notify_failures(&reload_handle, &report),
+                        Err(e) => {
+                            tracing::warn!("hotkey reapply after settings reload: {e}");
+                        }
                     }
                 }
             });
@@ -137,12 +140,17 @@ pub fn build() -> Result<()> {
             let lenses: LensRegistryHandle = Arc::new(LensRegistry::new());
             let region_watcher = Arc::new(RegionWatcher::new());
 
-            hotkey::register_all(
+            // Register hotkeys best-effort: an accelerator held by another
+            // process (IME, PowerToys, etc.) must NOT abort startup.
+            // Collect failures and emit a UI event so the user can rebind
+            // the offending shortcut from the settings page.
+            let hotkey_report = hotkey::register_all(
                 &handle,
                 settings.clone(),
                 pipeline.clone(),
                 subtitle.clone(),
             )?;
+            hotkey::notify_failures(&handle, &hotkey_report);
             build_tray(&handle)?;
 
             app.manage(AppState {

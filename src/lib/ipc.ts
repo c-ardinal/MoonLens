@@ -137,6 +137,28 @@ export const onOverlay = (handler: (event: OverlayEvent) => void): Promise<Unlis
 export const onHotkey = (handler: (action: string) => void): Promise<UnlistenFn> =>
   listen<string>('moonlens://hotkey', (e) => handler(e.payload));
 
+/**
+ * One hotkey the backend could not bind on startup or on a settings
+ * reload. Mirror of the Rust struct in `src-tauri/src/hotkey.rs`.
+ */
+export interface HotkeyFailure {
+  /** Logical action id, e.g. "capture_region" or a custom shortcut id. */
+  id: string;
+  /** The accelerator string that failed, e.g. "Ctrl+Shift+Space". */
+  accelerator: string;
+  /** Error message from `tauri_plugin_global_shortcut`. */
+  error: string;
+}
+
+export interface HotkeyRegistrationReport {
+  failed: HotkeyFailure[];
+}
+
+export const onHotkeyFailure = (
+  handler: (report: HotkeyRegistrationReport) => void
+): Promise<UnlistenFn> =>
+  listen<HotkeyRegistrationReport>('moonlens://hotkey-failure', (e) => handler(e.payload));
+
 export type SubtitleEvent =
   | { kind: 'started' }
   | { kind: 'stopped' }
