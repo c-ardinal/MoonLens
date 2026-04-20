@@ -34,3 +34,9 @@ Thumbs.db
 *.moonlens-plugin
 plugins-installed/
 logs/
+.gstack/
+.playwright-mcp/
+
+# Benchmark fixtures (captured from user's screen; may contain PII —
+# regenerate with `cargo run --example bench_speed --release`).
+src-tauri/tests/fixtures/bench/*.png
