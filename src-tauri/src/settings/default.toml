@@ -94,8 +94,16 @@ allow_network = true
 max_cost_per_request = 0.01
 sticky_session_ms = 30000
 
+# OCR chain. On Windows we prefer the built-in `Windows.Media.Ocr`
+# engine because it supports Japanese / Chinese / Korean language
+# packs out of the box — `ocrs` is Latin-focused and produces
+# Latin gibberish on CJK source. The chain falls back to `ocrs`
+# automatically when the `windows` provider returns LowConfidence
+# (no detected text, missing language pack on a locked-down host,
+# etc.). Non-Windows builds skip `windows` silently — it's a
+# cfg-gated compile.
 [providers.ocr]
-chain = ["ocrs", "paddle"]
+chain = ["windows", "ocrs", "paddle"]
 parallel_race = false
 fallback_on = ["low_confidence", "error"]
 # First OCR call after a cold start has to load ~60MB of rten models
@@ -227,6 +235,14 @@ compute_type = "int8"
 [providers.configs.ocrs]
 detection_threshold = 0.4
 recognition_threshold = 0.5
+
+# Windows Media OCR: native Japanese / Chinese / Korean support
+# through the OS language packs. `language` is an optional BCP-47
+# tag — leave blank to use whatever the user's profile lists as
+# preferred. When the requested pack is missing the provider
+# returns LowConfidence so the chain falls through to `ocrs`.
+[providers.configs.windows]
+language = "ja"
 
 [providers.configs.paddle]
 endpoint = "http://127.0.0.1:9003"

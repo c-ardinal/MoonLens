@@ -77,14 +77,22 @@ wasmtime = { version = "24", features = ["component-model", "runtime"] }
 wasmtime-wasi = "24"
 
 # Windows-only: exclude the Lens window from screen capture so xcap
-# sees the underlying source instead of our own transparent chrome.
-# This is what eliminates the masking-dance blink that plagued the
-# MVP — cards stay fully visible to the user while the screen grab
-# reads straight through them.
+# sees the underlying source instead of our own transparent chrome
+# (`WDA_EXCLUDEFROMCAPTURE`). Also the Windows.Media.Ocr WinRT APIs,
+# which give us a native Japanese / CJK-capable OCR engine — the
+# whole reason Japanese source text stops rendering as alphanumeric
+# gibberish once the `windows` OCR provider is the primary backend.
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.58", features = [
     "Win32_Foundation",
+    "Win32_System_Com",
     "Win32_UI_WindowsAndMessaging",
+    "Foundation",
+    "Foundation_Collections",
+    "Globalization",
+    "Graphics_Imaging",
+    "Media_Ocr",
+    "Storage_Streams",
 ] }
 
 [features]

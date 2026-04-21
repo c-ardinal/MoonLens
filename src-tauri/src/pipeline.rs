@@ -139,6 +139,10 @@ impl Pipeline {
                     Some(Arc::new(WhisperCppProvider::new(id, &cfg)))
                 }
                 "ocrs" => Some(Arc::new(OcrsProvider::new(id, &cfg))),
+                #[cfg(target_os = "windows")]
+                "windows" => Some(Arc::new(
+                    crate::providers::ocr_windows::WindowsOcrProvider::new(id, &cfg),
+                )),
                 "rqrr" => Some(Arc::new(RqrrProvider::new(id, &cfg))),
                 id if id.starts_with("browser.") => {
                     Some(Arc::new(BrowserSearchProvider::new(id, &cfg)))
