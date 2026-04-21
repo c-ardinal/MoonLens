@@ -45,6 +45,25 @@ the project adheres to [SemVer](https://semver.org/).
   追加、既存 `SchemaForm.svelte.test.ts` に `$ref` / unsupported /
   additionalProperties の 3 ケース追加。全 67 テスト green。
 
+### Changed (翻訳品質改善 — 2026-04-22)
+
+- **OCR ノイズフィルタ** — `looks_like_ocr_noise(text)` 導入。3 文字未満
+  / 句読点比率 > 60% / Latin 文字中の母音比率 < 15% を「ocrs が解読
+  できなかった glyph の残骸」として drop する。カード自体を描画せず、
+  LLM 呼び出しも発生させない。これまで CJK ソースで出ていた
+  "bcdfghjk" → 謎翻訳ループを止める。
+- **system_prompt を自然訳寄りに書き換え** — "translate faithfully" →
+  "Render naturally and idiomatically … match the meaning, tone, and
+  register a native reader would expect, not the word order of the
+  source"。同時に user prompt も「Translate …」ではなく「Rewrite …
+  naturally」に変更して Gemma の literal mode trigger を回避。
+- **サンプリングパラメータ調整** — `temperature` 0.2 → 0.4、
+  `top_p` 0.9 → 0.95。これまでの保守的な設定が直訳を強制していた。
+  0.4 は semantic drift を起こさずに idiomatic rephrasing を許容する
+  実用レンジ。settings.toml でユーザが上書き可。
+- **noise filter 単体テスト 5 件 + sampling defaults テスト 1 件**
+  追加。192/192 Rust + 67/67 vitest green。
+
 ### Fixed (Lens blink 根絶 — 2026-04-21 後半 3)
 
 - **blink の真因**: OCR 毎に「main に opacity:0 を付与 → 60ms sleep →
