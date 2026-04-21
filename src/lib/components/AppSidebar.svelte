@@ -14,8 +14,10 @@
     History,
     Mic,
     PanelLeftClose,
-    PanelLeft
+    PanelLeft,
+    OctagonX
   } from 'lucide-svelte';
+  import { stopAll } from '$lib/ipc';
 
   interface NavItem {
     href: string;
@@ -35,6 +37,28 @@
   const STORAGE_KEY = 'moonlens.sidebar.collapsed';
 
   let collapsed = $state(false);
+  let stopping = $state(false);
+  let stopReport = $state<string | null>(null);
+  let stopReportTimer: ReturnType<typeof setTimeout> | undefined;
+
+  async function panicStopAll() {
+    if (stopping) return;
+    stopping = true;
+    try {
+      const r = await stopAll();
+      const parts: string[] = [];
+      if (r.lens_count > 0) parts.push(`Lens ${r.lens_count}件`);
+      if (r.subtitle_was_running) parts.push('字幕');
+      if (r.overlay_was_open) parts.push('Overlay');
+      stopReport = parts.length === 0 ? '何も動いていません' : `${parts.join('・')} を停止`;
+    } catch (e) {
+      stopReport = `停止失敗: ${e}`;
+    } finally {
+      stopping = false;
+      if (stopReportTimer) clearTimeout(stopReportTimer);
+      stopReportTimer = setTimeout(() => (stopReport = null), 3000);
+    }
+  }
 
   $effect(() => {
     if (typeof window === 'undefined') return;
@@ -108,8 +132,31 @@
   <div class="border-t border-border p-2">
     <button
       type="button"
+      onclick={panicStopAll}
+      disabled={stopping}
+      class="group flex w-full items-center gap-3 rounded-ml-sm px-2.5 py-2 text-xs text-ink-muted transition-colors hover:bg-red-500/10 hover:text-red-500 disabled:opacity-40"
+      aria-label="全停止 (panic)"
+      title={collapsed ? '全停止' : '全 Lens + 字幕 + Overlay を停止 (⌘⌥Esc)'}
+    >
+      <OctagonX class="h-4 w-4 shrink-0" aria-hidden="true" />
+      {#if !collapsed}
+        <span class="flex-1 text-left">{stopping ? '停止中…' : '全停止'}</span>
+        <kbd class="font-mono text-[10px] text-ink-faint group-hover:text-red-500/70">⌘⌥Esc</kbd>
+      {/if}
+    </button>
+    {#if stopReport && !collapsed}
+      <p
+        class="mt-1 rounded-ml-sm bg-surface-muted px-2 py-1 text-[10px] text-ink-faint"
+        aria-live="polite"
+      >
+        {stopReport}
+      </p>
+    {/if}
+
+    <button
+      type="button"
       onclick={toggle}
-      class="flex w-full items-center gap-3 rounded-ml-sm px-2.5 py-2 text-xs text-ink-faint transition-colors hover:bg-surface-muted hover:text-ink-muted"
+      class="mt-1 flex w-full items-center gap-3 rounded-ml-sm px-2.5 py-2 text-xs text-ink-faint transition-colors hover:bg-surface-muted hover:text-ink-muted"
       aria-label={collapsed ? 'サイドバーを展開' : 'サイドバーを折り畳む'}
       title={collapsed ? '展開' : '折り畳む'}
     >

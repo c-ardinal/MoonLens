@@ -17,6 +17,20 @@ fn bundled_default_toml_parses() {
 }
 
 #[test]
+fn stop_all_hotkey_has_a_sensible_default() {
+    // The panic button should ship pre-bound so users can reach it
+    // even before opening the settings form. Windows `Ctrl+Alt+Esc`
+    // is chosen because it is seldom held by other apps and the
+    // Mac-equivalent `CommandOrControl+Alt+Escape` still parses as a
+    // valid Tauri accelerator.
+    let s: Settings = toml::from_str(DEFAULT_TOML).expect("default.toml parses");
+    assert_eq!(
+        s.hotkeys.stop_all, "CommandOrControl+Alt+Escape",
+        "stop_all default must match docs/USAGE.md"
+    );
+}
+
+#[test]
 fn settings_round_trip_through_toml_preserves_fields() {
     let original: Settings = toml::from_str(DEFAULT_TOML).unwrap();
     let text = toml::to_string_pretty(&original).unwrap();

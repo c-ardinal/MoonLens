@@ -733,6 +733,77 @@ pub async fn close_lens_window(
     lens::close(&app, &state.lenses, &id).map_err(|e| e.to_string())
 }
 
+/// Summary of what the global panic button actually stopped. Returned
+/// so the UI can surface a toast like "Lens 3件・字幕・Overlay を停止"
+/// without having to round-trip multiple status checks.
+#[derive(Debug, Clone, Serialize, Default)]
+pub struct StopAllReport {
+    pub lens_count: usize,
+    pub subtitle_was_running: bool,
+    pub overlay_was_open: bool,
+}
+
+/// Panic-button stop: drains every running Lens streaming session,
+/// closes each Lens window, halts the subtitle pipeline, and hides the
+/// one-shot overlay. Best-effort — individual failures do not abort
+/// the rest so the UI is guaranteed to reach a quiet state.
+///
+/// Surfaces `moonlens://stop-all` with the report so other windows
+/// (overlay, subtitle) can reset any local UI state. Bound to the
+/// `Ctrl+Alt+Escape` global hotkey by default, exposed to the frontend
+/// for the sidebar panic button and command palette entry.
+#[tauri::command]
+pub async fn stop_all(app: AppHandle, state: State<'_, AppState>) -> Result<StopAllReport, String> {
+    // Snapshot state first so the report reflects what was actually
+    // running when the user hit the button, not what remains after the
+    // cascade of cleanup calls.
+    let lens_ids: Vec<String> = state.lenses.list().into_iter().map(|d| d.id).collect();
+    let subtitle_was_running = state.subtitle.is_running();
+    let overlay_was_open = app
+        .get_webview_window("overlay")
+        .and_then(|w| w.is_visible().ok())
+        .unwrap_or(false);
+
+    // 1. Drain every per-lens capture task. Safe even if already empty.
+    state.lens_watchers.stop_all();
+
+    // 2. Close each Lens window. Individual failures log but don't
+    //    stop the rest — the user just hit a panic button, so partial
+    //    cleanup is better than returning halfway through.
+    let mut lens_count = 0usize;
+    for id in &lens_ids {
+        match lens::close(&app, &state.lenses, id) {
+            Ok(()) => lens_count += 1,
+            Err(e) => {
+                tracing::warn!("stop_all: failed to close lens {id}: {e:?}");
+            }
+        }
+    }
+
+    // 3. Subtitle pipeline. `stop` is a no-op when nothing is running.
+    if let Err(e) = state.subtitle.stop(&app) {
+        tracing::warn!("stop_all: failed to stop subtitle pipeline: {e:?}");
+    }
+
+    // 4. Overlay window hide. Idempotent — already-hidden overlays just
+    //    return Ok.
+    if let Err(e) = overlay::hide(&app) {
+        tracing::warn!("stop_all: failed to hide overlay: {e:?}");
+    }
+
+    let report = StopAllReport {
+        lens_count,
+        subtitle_was_running,
+        overlay_was_open,
+    };
+
+    // 5. Tell the frontend so every window (not just main) can reset
+    //    any streaming buffer / mask state it was holding.
+    let _ = app.emit("moonlens://stop-all", &report);
+
+    Ok(report)
+}
+
 #[tauri::command]
 pub async fn list_lens_windows(state: State<'_, AppState>) -> Result<Vec<LensDescriptor>, String> {
     Ok(state.lenses.list())

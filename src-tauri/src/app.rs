@@ -66,6 +66,7 @@ macro_rules! all_commands {
             ipc::list_history,
             ipc::delete_history_entry,
             ipc::clear_history,
+            ipc::stop_all,
         ]
     };
 }

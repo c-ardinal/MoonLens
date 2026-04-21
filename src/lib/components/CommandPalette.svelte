@@ -2,7 +2,6 @@
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import {
-    Languages,
     Camera,
     Puzzle,
     History,
@@ -10,13 +9,15 @@
     Settings as SettingsIcon,
     Mic,
     MicOff,
-    Image
+    Image,
+    OctagonX
   } from 'lucide-svelte';
   import {
     captureAndProcess,
     newLensWindow,
     runReverseImageSearch,
     startSubtitle,
+    stopAll,
     stopSubtitle,
     subtitleState
   } from '$lib/ipc';
@@ -58,6 +59,11 @@
     if (subtitleRunning) await stopSubtitle();
     else await startSubtitle();
     subtitleRunning = !subtitleRunning;
+  }
+
+  async function panicStopAll() {
+    open = false;
+    await stopAll();
   }
 
   const commands: Command[] = $derived([
@@ -110,6 +116,13 @@
         open = false;
         goto('/plugins/');
       }
+    },
+    {
+      id: 'stop_all',
+      label: '全停止 (Lens・字幕・Overlay)',
+      hint: '⌘⌥Esc',
+      icon: OctagonX,
+      run: panicStopAll
     }
   ]);
 

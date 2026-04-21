@@ -174,6 +174,60 @@ pub fn register_all(
         report.push("toggle_subtitle", toggle_subtitle_accel, e.to_string());
     }
 
+    // Stop-all panic button: drives the full shutdown cascade inline
+    // so the user gets immediate feedback even if no frontend window is
+    // open to receive the intent event. Duplicates the logic from
+    // `ipc::stop_all` but keeps the public command as the canonical
+    // entry point (this path just reuses AppState handles directly).
+    let app_stop = app.clone();
+    let stop_all_accel = s.hotkeys.stop_all.clone();
+    if let Err(e) = shortcut_mgr.on_shortcut(stop_all_accel.as_str(), move |_a, _s, e| {
+        if !matches!(e.state(), ShortcutState::Pressed) {
+            return;
+        }
+        let app = app_stop.clone();
+        let state = app.state::<AppState>();
+        // Snapshot before teardown so the event payload reflects what
+        // was running when the button was hit.
+        let lens_ids: Vec<String> = state.lenses.list().into_iter().map(|d| d.id).collect();
+        let subtitle_was_running = state.subtitle.is_running();
+        let overlay_was_open = app
+            .get_webview_window("overlay")
+            .and_then(|w| w.is_visible().ok())
+            .unwrap_or(false);
+        state.lens_watchers.stop_all();
+        let mut lens_count = 0usize;
+        for id in &lens_ids {
+            match crate::lens::close(&app, &state.lenses, id) {
+                Ok(()) => lens_count += 1,
+                Err(err) => tracing::warn!("stop_all hotkey: close lens {id} failed: {err:?}"),
+            }
+        }
+        if let Err(err) = state.subtitle.stop(&app) {
+            tracing::warn!("stop_all hotkey: stop subtitle failed: {err:?}");
+        }
+        if let Err(err) = overlay::hide(&app) {
+            tracing::warn!("stop_all hotkey: hide overlay failed: {err:?}");
+        }
+        let payload = serde_json::json!({
+            "lens_count": lens_count,
+            "subtitle_was_running": subtitle_was_running,
+            "overlay_was_open": overlay_was_open,
+        });
+        let _ = app.emit("moonlens://stop-all", payload);
+        tracing::info!(
+            "stop_all hotkey fired: {} lens closed, subtitle={}, overlay={}",
+            lens_count,
+            subtitle_was_running,
+            overlay_was_open
+        );
+    }) {
+        tracing::warn!(
+            "hotkey 'stop_all' registration failed: accel='{stop_all_accel}' error={e:?}"
+        );
+        report.push("stop_all", stop_all_accel, e.to_string());
+    }
+
     // All other hotkeys just surface an intent; the frontend routes them.
     let remaining: Vec<(&str, String)> = vec![
         (

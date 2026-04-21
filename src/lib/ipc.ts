@@ -331,6 +331,30 @@ export const onLensFlowDone = (
 export const onLensMask = (handler: (event: LensMask) => void): Promise<UnlistenFn> =>
   listen<LensMask>('moonlens://lens-mask', (e) => handler(e.payload));
 
+/** Summary of what the global panic button actually stopped. Mirror of
+ * the Rust struct in `src-tauri/src/ipc.rs`. */
+export interface StopAllReport {
+  lens_count: number;
+  subtitle_was_running: boolean;
+  overlay_was_open: boolean;
+}
+
+/** Tear down every Lens window, halt subtitle capture, and hide the
+ * overlay. Safe to call when nothing is running (all fields will be 0
+ * / false in the returned report). */
+export const stopAll = () =>
+  safeInvoke<StopAllReport>('stop_all', undefined, {
+    lens_count: 0,
+    subtitle_was_running: false,
+    overlay_was_open: false
+  });
+
+/** Fired after `stopAll` completes (from either the hotkey or the
+ * command). Other windows listen so they can reset local streaming
+ * state. */
+export const onStopAll = (handler: (report: StopAllReport) => void): Promise<UnlistenFn> =>
+  listen<StopAllReport>('moonlens://stop-all', (e) => handler(e.payload));
+
 export interface HistoryEntry {
   id: number;
   created_at: number;

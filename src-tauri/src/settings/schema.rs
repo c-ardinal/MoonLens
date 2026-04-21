@@ -94,6 +94,10 @@ pub struct Hotkeys {
     pub open_command_palette: String,
     pub open_history: String,
     pub reverse_image_search: String,
+    /// Global "panic" shortcut — tears down every Lens window, halts
+    /// the subtitle pipeline, and hides the overlay. Useful when
+    /// output floods the screen and the user just wants quiet.
+    pub stop_all: String,
     /// Free-form additional bindings keyed by plugin/action id.
     pub custom: BTreeMap<String, String>,
 }
@@ -108,6 +112,7 @@ impl Default for Hotkeys {
             open_command_palette: "CommandOrControl+K".into(),
             open_history: "CommandOrControl+Shift+H".into(),
             reverse_image_search: "CommandOrControl+Shift+G".into(),
+            stop_all: "CommandOrControl+Alt+Escape".into(),
             custom: BTreeMap::new(),
         }
     }

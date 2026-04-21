@@ -20,6 +20,7 @@ toggle_subtitle = "CommandOrControl+Shift+S"
 open_command_palette = "CommandOrControl+K"
 open_history = "CommandOrControl+Shift+H"
 reverse_image_search = "CommandOrControl+Shift+G"
+stop_all = "CommandOrControl+Alt+Escape"
 custom = {}
 
 [overlay]
