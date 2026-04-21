@@ -41,8 +41,14 @@ use crate::{
 /// Polling cadence.
 pub const POLL_INTERVAL_MS: u64 = 500;
 
-/// Matches `crate::region_watcher::HASH_DIFF_THRESHOLD`.
-pub const HASH_DIFF_THRESHOLD: u32 = 8;
+/// Minimum Hamming distance in the 64-bit average hash that counts
+/// as "source changed". 8 was the original value shared with
+/// `region_watcher`, but ocrs' own rasterisation + font antialiasing
+/// causes 6-10 bits of jitter between truly-identical frames under
+/// some compositors. 20 is still well under the ~32 bits you'd see
+/// for an obviously different screen (e.g. a different paragraph)
+/// and kills the auto-poll → retranslate infinite loop.
+pub const HASH_DIFF_THRESHOLD: u32 = 20;
 
 /// Registry of running per-lens capture tasks.
 ///
@@ -605,9 +611,13 @@ async fn run_capture_loop(
 
         // Mask the lens UI (opacity 0 on every card) BEFORE the
         // capture so the screen grab sees through our transparent
-        // window to the real source underneath. Two vsync-ish frames
-        // (~32 ms) give Svelte + compositor time to propagate the
-        // class change.
+        // window to the real source underneath. 60 ms covers
+        // reactive update + browser paint + compositor + any
+        // Windows DWM frame scheduling, and is the difference
+        // between a clean source capture and half-opaque cards
+        // leaking into the hash — the latter manifested as
+        // "re-translation fires even when nothing moved" because
+        // every capture hashed differently.
         let _ = app.emit(
             "moonlens://lens-mask",
             LensMask {
@@ -615,7 +625,7 @@ async fn run_capture_loop(
                 masked: true,
             },
         );
-        tokio::time::sleep(Duration::from_millis(32)).await;
+        tokio::time::sleep(Duration::from_millis(60)).await;
 
         let lens_id_c = lens_id.clone();
         let app_c = app.clone();

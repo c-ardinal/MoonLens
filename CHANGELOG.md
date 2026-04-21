@@ -45,6 +45,22 @@ the project adheres to [SemVer](https://semver.org/).
   追加、既存 `SchemaForm.svelte.test.ts` に `$ref` / unsupported /
   additionalProperties の 3 ケース追加。全 67 テスト green。
 
+### Fixed (Lens visual & capture 回帰修正 — 2026-04-21 後半 2)
+
+- **無限再翻訳ループ** — `transition-opacity duration-75` 中に 32ms
+  sleep で capture していたため、cards が半透明のまま hash 対象に
+  混入し毎回 hash が違って "source changed" 誤検知。CSS transition を
+  撤去して mask を instant 化、backend sleep を 60ms に延長。
+- **Hash threshold 緩和** — ocrs のラスタライズ揺れ + フォント
+  antialias で 6-10 ビット程度の jitter が実環境で観測される。
+  threshold 8 → 20 に引き上げ、真の change（~32 bits 以上）は
+  引き続き検知しつつ再翻訳の自走を停止。
+- **blink** — 上記 transition 撤去でフェード in/out が消え、mask 期間
+  のみ完全不可視 → 復帰が瞬時に。自動 poll 中でも視覚的に静か。
+- **翻訳レイアウト** — `text-center` → `text-left`、font-size max
+  40px → 22px、縦 budget 90cqh → 75cqh。短い翻訳が card 中央に
+  ポツンと浮く / 原文より極端に大きくなる問題を解消。
+
 ### Fixed (Lens pipeline 緊急修正 — 2026-04-21 後半)
 
 - **翻訳が出ない / 部分欠落** — Tauri 2 のチャンネル間イベント順序

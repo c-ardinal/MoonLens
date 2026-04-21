@@ -263,8 +263,8 @@
     close button so the window stays interactive without chrome.
 -->
 <main
-  class="relative h-screen w-screen overflow-hidden transition-opacity duration-75"
-  class:opacity-0={masked}
+  class="relative h-screen w-screen overflow-hidden"
+  class:masked
   style="background: transparent;"
   onmouseenter={() => (hovered = true)}
   onmouseleave={() => (hovered = false)}
@@ -300,7 +300,7 @@
   {#each visibleLines as line (line.line_index)}
     <div class="lens-card absolute flex items-center overflow-hidden" style={cardStyle(line)}>
       <p
-        class="line-text w-full overflow-hidden whitespace-pre-wrap break-words text-center"
+        class="line-text w-full overflow-hidden whitespace-pre-wrap break-words text-left"
         style="--text-len: {Math.max(1, longestSubLine(line.translation))}; --line-count: {subLineCount(line.translation)}"
       >
         {line.translation}
@@ -329,26 +329,35 @@
     background: transparent !important;
     margin: 0;
   }
+  /* Mask is applied INSTANTLY — no transition-opacity here. The
+     backend sleeps 60ms after emitting the mask signal; that budget
+     has to cover Svelte's reactive update + browser repaint +
+     compositor, not an animation. A visible fade would both (a) flash
+     the user on every auto-poll tick and (b) leak half-opaque cards
+     into the hash-compare capture, which the backend then mistakes
+     for "source changed" and re-runs translation forever. */
+  :global(main.masked) {
+    opacity: 0;
+  }
   .lens-card {
     container-type: size;
     line-height: 1.2;
   }
   .line-text {
-    /* Size the font to fit both axes:
-         - vertical: card_height / (line_count × 1.2) × 0.9
-         - horizontal: card_width / longest_sub_line × 0.95
-       `--text-len` is the longest sub-line's character count,
-       `--line-count` is the number of \n-separated lines in the
-       translation. For a single-line card both reduce to the same
-       behaviour as before; multi-line paragraph cards shrink the
-       font so every sub-line fits. */
+    /* Size the font so the translation looks at home on top of the
+       source, not like a billboard. Max is capped at 22px — real
+       on-screen text is rarely bigger than that, so letting a short
+       translation balloon to 40px made the card feel disconnected
+       from the source layout. The vertical budget uses 75cqh (not
+       90) because `line-height: 1.2` already eats 20% of the
+       allotted height per line. */
     font-size: clamp(
-      6px,
+      8px,
       min(
-        calc(90cqh / var(--line-count, 1) / 1.2),
+        calc(75cqh / var(--line-count, 1)),
         calc(95cqw / var(--text-len, 10))
       ),
-      40px
+      22px
     );
     line-height: 1.2;
     padding: 0 2px;
