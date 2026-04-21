@@ -70,6 +70,12 @@ region_watcher_poll_ms = 250
 max_concurrent_tasks = 4
 cache_ttl_seconds = 3600
 use_gpu_if_available = true
+# Lens content-change auto-poll. The watcher fires a capture trigger every
+# `lens_auto_poll_ms` milliseconds so a stationary lens over video /
+# chat / subtitles still re-translates when the source text changes.
+# Hash-compare skips ticks with no change, so the only cost on static
+# sources is a brief mask + capture per tick. Set to 0 to disable.
+lens_auto_poll_ms = 1500
 
 # ---------------------------------------------------------------------------
 # Providers

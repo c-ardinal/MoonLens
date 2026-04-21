@@ -284,6 +284,14 @@ pub struct PerformanceSettings {
     pub max_concurrent_tasks: u32,
     pub cache_ttl_seconds: u32,
     pub use_gpu_if_available: bool,
+    /// Lens content-change auto-poll interval in milliseconds.
+    /// Lens watchers fire a capture trigger on this cadence so source
+    /// text that changes under a stationary window (video subtitles,
+    /// chat messages) still re-translates. Hash-compare short-
+    /// circuits ticks where nothing changed, so the only cost is a
+    /// brief mask + capture every `N` ms when source is static. Set
+    /// to 0 to disable periodic polling (event-driven only).
+    pub lens_auto_poll_ms: u32,
 }
 
 impl Default for PerformanceSettings {
@@ -294,6 +302,7 @@ impl Default for PerformanceSettings {
             max_concurrent_tasks: 4,
             cache_ttl_seconds: 3600,
             use_gpu_if_available: true,
+            lens_auto_poll_ms: 1500,
         }
     }
 }

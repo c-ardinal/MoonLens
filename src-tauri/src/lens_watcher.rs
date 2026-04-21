@@ -139,6 +139,44 @@ impl LensStreamWatchers {
                 }
             });
         }
+
+        // Content-change auto-poll. The capture loop already hash-
+        // compares every trigger and bails out when nothing changed,
+        // so firing a periodic trigger is safe — it costs at most one
+        // brief mask + capture per tick when source is static, and
+        // auto-refreshes the translation the moment source text
+        // actually changes (video subtitles, chat messages, etc.).
+        // User-configurable via `performance.lens_auto_poll_ms`; 0
+        // disables periodic polling entirely (event-driven only).
+        {
+            let settings_for_auto = settings.clone();
+            let trigger_for_auto = trigger.clone();
+            let stop_for_auto = stop.clone();
+            let id_for_auto = lens_id.clone();
+            tauri::async_runtime::spawn(async move {
+                loop {
+                    let interval_ms = settings_for_auto
+                        .snapshot()
+                        .performance
+                        .lens_auto_poll_ms;
+                    if interval_ms == 0 {
+                        // Re-check every 1 s — the user can turn
+                        // auto-poll on from settings without needing a
+                        // restart.
+                        tokio::select! {
+                            _ = stop_for_auto.notified() => break,
+                            _ = tokio::time::sleep(Duration::from_millis(1000)) => continue,
+                        }
+                    }
+                    tokio::select! {
+                        _ = stop_for_auto.notified() => break,
+                        _ = tokio::time::sleep(Duration::from_millis(interval_ms as u64)) => {}
+                    }
+                    trigger_for_auto.notify_one();
+                    tracing::trace!("lens {id_for_auto}: auto-poll trigger");
+                }
+            });
+        }
         let handle = tauri::async_runtime::spawn(async move {
             run_capture_loop(id_clone, app, pipeline, lenses, settings, stop_t, trigger_t)
                 .await;
@@ -318,15 +356,208 @@ fn sample_rim_color(img: &image::DynamicImage, bbox: [f32; 4]) -> [u8; 3] {
     ]
 }
 
-/// Pick a text colour (black or white) that contrasts with `bg` using
-/// the standard ITU-R BT.601 luma formula.
-fn contrast_text(bg: [u8; 3]) -> [u8; 3] {
-    let luma = 0.299 * bg[0] as f32 + 0.587 * bg[1] as f32 + 0.114 * bg[2] as f32;
-    if luma < 140.0 {
-        [255, 255, 255]
+/// Linearise one sRGB channel (0..=255) to linear light 0..=1 using
+/// the piecewise curve from the sRGB spec.
+fn srgb_to_linear(c: u8) -> f32 {
+    let f = c as f32 / 255.0;
+    if f <= 0.040_45 {
+        f / 12.92
     } else {
-        [15, 15, 15]
+        ((f + 0.055) / 1.055).powf(2.4)
     }
+}
+
+/// Relative luminance per WCAG 2.x (Y component). Returns 0..=1 where
+/// 0 is pure black and 1 is pure white in linear light.
+fn relative_luminance(bg: [u8; 3]) -> f32 {
+    let r = srgb_to_linear(bg[0]);
+    let g = srgb_to_linear(bg[1]);
+    let b = srgb_to_linear(bg[2]);
+    0.2126 * r + 0.7152 * g + 0.0722 * b
+}
+
+/// Pick a text colour that contrasts with `bg`. Uses the WCAG
+/// relative-luminance threshold (~0.179 ~ sRGB 128 grey) and falls
+/// back to pure black / white for maximum contrast. Cuts the previous
+/// luma-140 BT.601 formula which under-lit text against mid-grey
+/// backgrounds.
+fn contrast_text(bg: [u8; 3]) -> [u8; 3] {
+    // The threshold 0.179 is where a mid-grey `#777` sits; backgrounds
+    // brighter than that read better with black text, darker with
+    // white. Matches https://www.w3.org/TR/WCAG20-TECHS/G18.html.
+    if relative_luminance(bg) > 0.179 {
+        [10, 10, 10]
+    } else {
+        [245, 245, 245]
+    }
+}
+
+/// Does `text` appear to already be written in `target_language`? Used
+/// to skip the translation round-trip for OCR output that is already
+/// in the user's target tongue (e.g. OCR detects Japanese while the
+/// target is `ja`). Heuristic-only — defers to a proper language-id
+/// provider in plan.md's v0.2 roadmap.
+pub fn text_is_already_target(text: &str, target_language: &str) -> bool {
+    let target = target_language.trim().to_ascii_lowercase();
+    if target.is_empty() || target == "auto" {
+        return false;
+    }
+    // Strip whitespace / punctuation for the detection pass — single
+    // kanji in an otherwise English line is still worth translating.
+    let letters: Vec<char> = text.chars().filter(|c| c.is_alphabetic()).collect();
+    if letters.is_empty() {
+        return false;
+    }
+    match target.as_str() {
+        "ja" | "ja-jp" | "jpn" | "japanese" => {
+            // Any hiragana or katakana is a strong Japanese signal.
+            let has_kana = letters.iter().any(|c| {
+                let u = *c as u32;
+                (0x3040..=0x309F).contains(&u) || (0x30A0..=0x30FF).contains(&u)
+            });
+            if has_kana {
+                return true;
+            }
+            // Pure-kanji runs are ambiguous (could be Chinese). Treat
+            // as Japanese when the line is ≥ 2 chars and all letters
+            // are CJK — the `never` misclassification bias would strand
+            // Japanese subtitles that happen to be kanji-only.
+            let all_cjk = letters.iter().all(|c| {
+                let u = *c as u32;
+                (0x3400..=0x4DBF).contains(&u)
+                    || (0x4E00..=0x9FFF).contains(&u)
+                    || (0xF900..=0xFAFF).contains(&u)
+            });
+            all_cjk && letters.len() >= 2
+        }
+        "en" | "en-us" | "en-gb" | "eng" | "english" => {
+            // English = every letter is ASCII. Numbers / punctuation
+            // are stripped before we get here so "123" doesn't falsely
+            // match as English.
+            letters.iter().all(|c| c.is_ascii_alphabetic())
+        }
+        "zh" | "zh-cn" | "zh-tw" | "chi" | "chinese" => {
+            // Chinese = all CJK kanji-ish, NO hiragana/katakana.
+            let has_kana = letters.iter().any(|c| {
+                let u = *c as u32;
+                (0x3040..=0x309F).contains(&u) || (0x30A0..=0x30FF).contains(&u)
+            });
+            if has_kana {
+                return false;
+            }
+            letters.iter().all(|c| {
+                let u = *c as u32;
+                (0x3400..=0x4DBF).contains(&u) || (0x4E00..=0x9FFF).contains(&u)
+            })
+        }
+        "ko" | "kor" | "korean" => letters.iter().any(|c| {
+            let u = *c as u32;
+            (0xAC00..=0xD7A3).contains(&u) || (0x1100..=0x11FF).contains(&u)
+        }),
+        _ => false,
+    }
+}
+
+/// A paragraph is one or more OCR lines that read as a single
+/// sentence. Grouping them before translation gives Gemma the full
+/// context ("Very interesting.\nIndeed it is." → one translation
+/// preserving the pronoun reference) and the UI renders them as one
+/// card spanning the union bbox.
+#[derive(Debug, Clone)]
+struct Paragraph {
+    /// Source line indices (original OcrLine positions) covered by
+    /// this paragraph, sorted top → bottom.
+    lines: Vec<usize>,
+    /// Union bbox covering every source line, tight enough for the
+    /// single card to sit over the whole paragraph.
+    bbox: [f32; 4],
+    /// Joined original text, newline-separated so the LLM sees the
+    /// original layout.
+    text: String,
+}
+
+/// Group OCR lines into paragraphs. Two consecutive (sorted-by-y)
+/// lines join the same paragraph when:
+///   - Their vertical gap is less than 0.8 × the smaller line's
+///     height (i.e. one line break, not a paragraph break).
+///   - Their horizontal ranges overlap by at least 30% of the smaller
+///     range (left-aligned continuation).
+///   - The upper line does NOT end with sentence-final punctuation
+///     that would mark a hard break.
+fn group_paragraphs(lines: &[OcrLine]) -> Vec<Paragraph> {
+    if lines.is_empty() {
+        return Vec::new();
+    }
+    let mut order: Vec<usize> = (0..lines.len()).collect();
+    order.sort_by(|&a, &b| {
+        lines[a].bbox[1]
+            .partial_cmp(&lines[b].bbox[1])
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+
+    let ends_paragraph = |text: &str| -> bool {
+        let trimmed = text.trim_end();
+        let last = trimmed.chars().last();
+        matches!(last, Some('.') | Some('!') | Some('?') | Some('。') | Some('！') | Some('？'))
+    };
+
+    let mut groups: Vec<Vec<usize>> = Vec::new();
+    let mut current: Vec<usize> = Vec::new();
+    for &idx in &order {
+        if current.is_empty() {
+            current.push(idx);
+            continue;
+        }
+        let prev_idx = *current.last().unwrap();
+        let prev = &lines[prev_idx].bbox;
+        let curr = &lines[idx].bbox;
+        let prev_bottom = prev[1] + prev[3];
+        let gap = (curr[1] - prev_bottom).max(0.0);
+        let min_h = prev[3].min(curr[3]).max(1.0);
+        let close_vertically = gap < 0.8 * min_h;
+        let prev_left = prev[0];
+        let prev_right = prev[0] + prev[2];
+        let curr_left = curr[0];
+        let curr_right = curr[0] + curr[2];
+        let overlap = (prev_right.min(curr_right) - prev_left.max(curr_left)).max(0.0);
+        let min_w = (prev[2]).min(curr[2]).max(1.0);
+        let overlap_ratio = overlap / min_w;
+        let horizontally_aligned = overlap_ratio > 0.3;
+        let prev_text_finished = ends_paragraph(&lines[prev_idx].text);
+        if close_vertically && horizontally_aligned && !prev_text_finished {
+            current.push(idx);
+        } else {
+            groups.push(std::mem::take(&mut current));
+            current.push(idx);
+        }
+    }
+    if !current.is_empty() {
+        groups.push(current);
+    }
+
+    groups
+        .into_iter()
+        .map(|group| {
+            let mut min_x = f32::INFINITY;
+            let mut min_y = f32::INFINITY;
+            let mut max_x = f32::NEG_INFINITY;
+            let mut max_y = f32::NEG_INFINITY;
+            let mut parts: Vec<String> = Vec::with_capacity(group.len());
+            for &idx in &group {
+                let b = &lines[idx].bbox;
+                min_x = min_x.min(b[0]);
+                min_y = min_y.min(b[1]);
+                max_x = max_x.max(b[0] + b[2]);
+                max_y = max_y.max(b[1] + b[3]);
+                parts.push(lines[idx].text.clone());
+            }
+            Paragraph {
+                lines: group,
+                bbox: [min_x, min_y, (max_x - min_x).max(1.0), (max_y - min_y).max(1.0)],
+                text: parts.join("\n"),
+            }
+        })
+        .collect()
 }
 
 async fn run_capture_loop(
@@ -497,72 +728,67 @@ async fn run_capture_loop(
         // colours around each bbox. Failure here is non-fatal — we
         // fall back to a neutral grey fill so the card still renders.
         let decoded = image::load_from_memory(&png_for_colors).ok();
-        // Tile cards vertically so adjacent rows never overlap each
-        // other AND never leave a sliver of source peeking through.
-        // The row dividers are the midpoint between one line's bottom
-        // and the next line's top — so whether ocrs returned
-        // overlapping or gapped bboxes, the output cards exactly meet
-        // at that midpoint and share no pixels.
-        let mut by_y: Vec<usize> = (0..ocr_lines.len()).collect();
+
+        // Group consecutive, horizontally-aligned, same-paragraph
+        // lines into a single translation unit so the LLM sees the
+        // whole sentence instead of dangling clauses.
+        let paragraphs = group_paragraphs(&ocr_lines);
+
+        // Tile paragraph cards vertically so adjacent rows never
+        // overlap AND never leave a sliver of source peeking through.
+        let mut by_y: Vec<usize> = (0..paragraphs.len()).collect();
         by_y.sort_by(|&a, &b| {
-            ocr_lines[a].bbox[1]
-                .partial_cmp(&ocr_lines[b].bbox[1])
+            paragraphs[a].bbox[1]
+                .partial_cmp(&paragraphs[b].bbox[1])
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
         let position_in_sort: std::collections::HashMap<usize, usize> =
             by_y.iter().enumerate().map(|(pos, &idx)| (idx, pos)).collect();
-        let lens_lines: Vec<LensOcrLine> = ocr_lines
+
+        let lens_lines: Vec<LensOcrLine> = paragraphs
             .iter()
             .enumerate()
-            .map(|(i, l)| {
-                // Sample the rim from the ORIGINAL (tight) bbox so we
-                // do not average our expansion margin back into the
-                // background colour.
+            .map(|(i, p)| {
                 let bg = match &decoded {
-                    Some(img) => sample_rim_color(img, l.bbox),
+                    Some(img) => sample_rim_color(img, p.bbox),
                     None => [128, 128, 128],
                 };
-                let [x, _y, w, _h] = l.bbox;
-                let orig_top = l.bbox[1];
-                let orig_bottom = l.bbox[1] + l.bbox[3];
+                let [x, _y, w, _h] = p.bbox;
+                let orig_top = p.bbox[1];
+                let orig_bottom = p.bbox[1] + p.bbox[3];
 
-                // Horizontal: ocrs clips 1-2 source chars off either
-                // side of the glyph run; +8 px of slack covers that.
                 let ex: f32 = 8.0;
-
-                // Vertical tiling via midpoint dividers.
                 let pos = position_in_sort.get(&i).copied().unwrap_or(0);
                 let top_divider = if pos > 0 {
-                    let prev = &ocr_lines[by_y[pos - 1]].bbox;
+                    let prev = &paragraphs[by_y[pos - 1]].bbox;
                     let prev_bottom = prev[1] + prev[3];
                     (prev_bottom + orig_top) * 0.5
                 } else {
-                    // No row above — pad up to 6 px or the image edge.
                     (orig_top - 6.0).max(0.0)
                 };
                 let bot_divider = if pos + 1 < by_y.len() {
-                    let nxt = &ocr_lines[by_y[pos + 1]].bbox;
+                    let nxt = &paragraphs[by_y[pos + 1]].bbox;
                     let next_top = nxt[1];
                     (orig_bottom + next_top) * 0.5
                 } else {
                     (orig_bottom + 6.0).min(image_h as f32)
                 };
-
                 let ny = top_divider.clamp(0.0, image_h as f32);
                 let bottom = bot_divider.clamp(ny + 1.0, image_h as f32);
                 let nh = bottom - ny;
-
                 let nx = (x - ex).max(0.0);
                 let nw = (w + ex * 2.0).min((image_w as f32) - nx);
                 LensOcrLine {
                     line_index: i,
-                    text: l.text.clone(),
+                    text: p.text.clone(),
                     bbox: [nx, ny, nw, nh],
                     bg_color: bg,
                     fg_color: contrast_text(bg),
                 }
             })
             .collect();
+
+        let line_count = lens_lines.len();
         let ocr_payload = LensOcrLines {
             id: lens_id.clone(),
             flow_id,
@@ -570,12 +796,9 @@ async fn run_capture_loop(
             image_h,
             lines: lens_lines,
         };
-        let line_count = ocr_payload.lines.len();
         let _ = app.emit("moonlens://lens-ocr-lines", ocr_payload);
 
-        // No text detected — UI will show an empty placeholder. Still
-        // emit flow-done so spinners clear.
-        if ocr_lines.is_empty() {
+        if paragraphs.is_empty() {
             let _ = app.emit(
                 "moonlens://lens-flow-done",
                 LensFlowDone {
@@ -595,15 +818,33 @@ async fn run_capture_loop(
         let semaphore = Arc::new(Semaphore::new(max_concurrent));
 
         let mut tasks: Vec<JoinHandle<()>> = Vec::with_capacity(line_count);
-        for (i, line) in ocr_lines.into_iter().enumerate() {
+        for (i, para) in paragraphs.into_iter().enumerate() {
+            // Short-circuit if the OCR output is already in the
+            // target language — emit the original text as the final
+            // chunk and skip the LLM call entirely.
+            if text_is_already_target(&para.text, &target) {
+                tracing::info!(
+                    "lens line {i}: skipped translation (already {target}) — {:?}",
+                    para.text.chars().take(20).collect::<String>()
+                );
+                let _ = app.emit(
+                    "moonlens://lens-line-chunk",
+                    LensLineChunk {
+                        id: lens_id.clone(),
+                        flow_id,
+                        line_index: i,
+                        delta: para.text.clone(),
+                        done: true,
+                    },
+                );
+                continue;
+            }
             let sem = semaphore.clone();
             let app_c = app.clone();
             let id_c = lens_id.clone();
             let settings_c = settings.clone();
             let target_c = target.clone();
             let task = tauri::async_runtime::spawn(async move {
-                // A permit is required before making the HTTP call so
-                // the server is not swamped when a screen has 50 lines.
                 let _permit = match sem.acquire_owned().await {
                     Ok(p) => p,
                     Err(_) => return,
@@ -613,13 +854,13 @@ async fn run_capture_loop(
                     id_c,
                     flow_id,
                     i,
-                    line.text,
+                    para.text,
                     target_c,
                     settings_c,
                 )
                 .await
                 {
-                    tracing::info!("lens line {i} translate failed: {e}");
+                    tracing::info!("lens paragraph {i} translate failed: {e}");
                 }
             });
             tasks.push(task);
@@ -724,6 +965,127 @@ mod tests {
         let w = LensStreamWatchers::new();
         w.stop_all();
         assert_eq!(w.running_count(), 0);
+    }
+
+    #[test]
+    fn text_is_already_target_detects_hiragana_katakana_for_ja() {
+        assert!(text_is_already_target("こんにちは", "ja"));
+        assert!(text_is_already_target("カタカナ", "ja"));
+        assert!(text_is_already_target("漢字だけ", "ja"));
+    }
+
+    #[test]
+    fn text_is_already_target_skips_pure_english_for_ja() {
+        assert!(!text_is_already_target("Hello world", "ja"));
+        assert!(!text_is_already_target("It was quite interesting.", "ja"));
+    }
+
+    #[test]
+    fn text_is_already_target_auto_never_matches() {
+        // "auto" target means "translate everything" — detection must
+        // opt out so nothing is ever silently skipped.
+        assert!(!text_is_already_target("こんにちは", "auto"));
+        assert!(!text_is_already_target("Hello", ""));
+    }
+
+    #[test]
+    fn text_is_already_target_requires_min_length_for_kanji_only() {
+        // A single kanji is too ambiguous (could be a Chinese word)
+        // to short-circuit on. Need at least two CJK chars.
+        assert!(!text_is_already_target("日", "ja"));
+        assert!(text_is_already_target("日本", "ja"));
+    }
+
+    #[test]
+    fn text_is_already_target_korean_and_chinese() {
+        assert!(text_is_already_target("안녕하세요", "ko"));
+        assert!(text_is_already_target("你好世界", "zh"));
+        // Japanese kana must NOT be classified as Chinese.
+        assert!(!text_is_already_target("こんにちは", "zh"));
+    }
+
+    #[test]
+    fn contrast_text_picks_black_on_light_bg() {
+        assert_eq!(contrast_text([255, 255, 255]), [10, 10, 10]);
+        assert_eq!(contrast_text([240, 230, 200]), [10, 10, 10]);
+    }
+
+    #[test]
+    fn contrast_text_picks_white_on_dark_bg() {
+        assert_eq!(contrast_text([0, 0, 0]), [245, 245, 245]);
+        assert_eq!(contrast_text([30, 30, 70]), [245, 245, 245]);
+    }
+
+    #[test]
+    fn relative_luminance_matches_wcag_anchors() {
+        // Reference values from the WCAG spec.
+        assert!((relative_luminance([0, 0, 0])).abs() < 1e-5);
+        assert!((relative_luminance([255, 255, 255]) - 1.0).abs() < 1e-5);
+        // Pure red should be about 0.2126 (R coefficient).
+        let r = relative_luminance([255, 0, 0]);
+        assert!((r - 0.2126).abs() < 1e-3, "expected ~0.2126, got {r}");
+    }
+
+    #[test]
+    fn group_paragraphs_merges_adjacent_aligned_lines() {
+        let lines = vec![
+            OcrLine {
+                text: "This is a long".into(),
+                bbox: [10.0, 10.0, 200.0, 20.0],
+                confidence: 0.9,
+            },
+            OcrLine {
+                text: "sentence that wraps".into(),
+                bbox: [10.0, 32.0, 200.0, 20.0],
+                confidence: 0.9,
+            },
+        ];
+        let p = group_paragraphs(&lines);
+        assert_eq!(p.len(), 1, "close aligned lines must merge");
+        assert_eq!(p[0].lines.len(), 2);
+        assert!(p[0].text.contains('\n'));
+    }
+
+    #[test]
+    fn group_paragraphs_splits_on_sentence_end() {
+        let lines = vec![
+            OcrLine {
+                text: "Very interesting.".into(),
+                bbox: [10.0, 10.0, 200.0, 20.0],
+                confidence: 0.9,
+            },
+            OcrLine {
+                text: "Indeed it is.".into(),
+                bbox: [10.0, 32.0, 200.0, 20.0],
+                confidence: 0.9,
+            },
+        ];
+        let p = group_paragraphs(&lines);
+        assert_eq!(p.len(), 2, "sentence-final punctuation breaks a paragraph");
+    }
+
+    #[test]
+    fn group_paragraphs_splits_on_large_vertical_gap() {
+        let lines = vec![
+            OcrLine {
+                text: "Header".into(),
+                bbox: [10.0, 10.0, 100.0, 20.0],
+                confidence: 0.9,
+            },
+            OcrLine {
+                text: "Body text unrelated".into(),
+                bbox: [10.0, 200.0, 100.0, 20.0],
+                confidence: 0.9,
+            },
+        ];
+        let p = group_paragraphs(&lines);
+        assert_eq!(p.len(), 2, "large vertical gap splits paragraphs");
+    }
+
+    #[test]
+    fn group_paragraphs_returns_empty_for_no_lines() {
+        let p = group_paragraphs(&[]);
+        assert!(p.is_empty());
     }
 
     #[test]
