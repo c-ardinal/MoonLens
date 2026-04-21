@@ -54,7 +54,7 @@ v0.1 系で把握済みの制約・既知不具合を一箇所にまとめたも
 | 項目 | 現状 | 解消予定 |
 |---|---|---|
 | HotkeyInput widget | S1 で実装済 — ただし競合検出（同一 accelerator の重複割当）は schemars 側ではなく保存時チェックに依存 | v0.1.0-beta.2 |
-| `stop_all` panic button | 実装済、`Ctrl+Alt+Escape`。UI からの明示的な呼び出しボタン（ホーム画面等）は未配置 | v0.1.0-beta.3 |
+| `stop_all` panic button | ✅ 実装済、`Ctrl+Alt+Escape` + サイドバー赤ボタン + コマンドパレット。内部は Lens watchers `stop_all()` + 全 Lens close + subtitle stop + overlay hide | - |
 | Linux Wayland での global-hotkey | 動作はするが、compositor によっては一部 accelerator が取れないケース | v0.2+ |
 
 ## 履歴 / ストレージ

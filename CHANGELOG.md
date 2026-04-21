@@ -45,6 +45,16 @@ the project adheres to [SemVer](https://semver.org/).
   追加、既存 `SchemaForm.svelte.test.ts` に `$ref` / unsupported /
   additionalProperties の 3 ケース追加。全 67 テスト green。
 
+### Safety
+
+- `stop_all` パニックボタン実装 — 全 Lens ウィンドウ閉鎖・字幕停止・
+  Overlay 非表示・実行中 watchers の即時 abort を 1 コマンドに束ねた。
+  `Ctrl+Alt+Escape` グローバルホットキー (`settings.hotkeys.stop_all`)、
+  サイドバーフッターの赤色 OctagonX ボタン、コマンドパレット
+  "全停止" エントリの 3 経路から呼び出し可能。実行結果は
+  `StopAllReport` (lens_count / subtitle_was_running / overlay_was_open)
+  として返却、`moonlens://stop-all` イベントでも全ウィンドウに配信。
+
 ### Docs
 
 - `README.md` を MVP + S1 完了後の姿に reshape — プロジェクト
