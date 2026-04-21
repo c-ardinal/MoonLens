@@ -6,27 +6,37 @@
 
 ---
 
-## 現在地（2026-04-20 時点、**S0.5 速度検証完了 → MVP 優先路線に転換**）
+## 現在地（2026-04-21 時点、**S0.5 MVP 完了 / 意義確認レビュー済み**）
 
-### ステータス: **Speed feasibility benchmark 完了 / MVP 実装待ち**
+### ステータス: **In-place Lens overlay MVP がユーザ承認を得て成立**
 
-**2026-04-20 午後のユーザ方針**: 「最速で Lens streaming (ストリーミング翻訳) が出来る状態」を優先。S0 の docs 整備（README/USAGE/DEV/KNOWN_ISSUES/TECH_CHANGES/CONTRIBUTING/ISSUE_TEMPLATE）は **S0.5 で後回し** とし、MVP 動作検証後に再開。商用化議論（embedded Gemma + freemium）は MVP 後の validation 後に判断。
+**2026-04-21 のユーザ判定**: 「ひとまず MVP としてはこれで良しとする」。動作確認した機能:
+- Lens 窓作成 + ドラッグ可（hover-only chrome）
+- 英字段落への自動 OCR 検出 + 行ごと bbox 抽出
+- 背景色サンプリング + コントラスト自動文字色
+- 行ごと並列ストリーミング翻訳 (gemma4:e2b via Ollama)
+- **イベント駆動 capture**（window 移動/リサイズ検出時のみ）→ 静止中は一切 blink 無し
+- カードは隣接行の midpoint で tile、重複ゼロ
+- ガラス風透過 + 枠なし
 
-#### Session 0 の todo 進捗
+**2026-04-20 方針継続**: S0 の docs 整備（README/USAGE/DEV/KNOWN_ISSUES/TECH_CHANGES/CONTRIBUTING/ISSUE_TEMPLATE）は MVP 検証後に再開、商用化議論（embedded Gemma + freemium）は別フェーズで判断。
 
-- [x] plan.md を Q1-Q19 決定で全面改訂（本書）
-- [x] plan.md に「現在地」と「引継ぎ protocol」追加（本 section）
-- [x] **`plugin-sdk/` 実在確認**: `plugin-sdk/{docs,examples,rust,wit}` 存在。v0.1 scope 維持
+#### Session 0 / 0.5 / MVP todo 進捗
+
+- [x] plan.md を Q1-Q19 決定で全面改訂
+- [x] plan.md に「現在地」と「引継ぎ protocol」追加
+- [x] **`plugin-sdk/` 実在確認** — v0.1 scope 維持
 - [x] **Speed feasibility benchmark** (2026-04-20): `docs/benchmarks/2026-04-20-speed-feasibility.md`、category **beta**（続行 OK、S2 で DXGI + OCR 差替必須）
-- [ ] README.md を Q15-A γ に沿って reshape — **S0.5 繰延**
-- [ ] `docs/USAGE.md` 新規作成 — **S0.5 繰延**
-- [ ] `docs/DEV.md` 新規作成 — **S0.5 繰延**
-- [ ] `docs/KNOWN_ISSUES.md` 新規作成 — **S0.5 繰延**
-- [ ] `docs/TECH_CHANGES.md` 新規作成 — **S0.5 繰延**
-- [ ] `CONTRIBUTING.md` 新規作成 — **S0.5 繰延**
-- [ ] `.github/ISSUE_TEMPLATE/` 整備 — **S0.5 繰延**
+- [x] **`think: false` / `gemma4:e2b` デフォルト化** — Gemma 4 thinking mode 10× first-token 遅延問題修正
+- [x] **MVP Lens streaming** — per-line bbox + streaming translation + in-place overlay 実装、ユーザ承認済 (2026-04-21)
+- [x] **Event-driven capture** — polling 撤廃、window move/resize + position polling backup → blink 完全消失
+- [x] **背景色サンプリング** — 2px rim mean RGB + コントラスト文字色自動選択で Lens らしい in-place 置換体験
+- [x] **行間 midpoint tiling** — 隣接行のカードが overlap もせず source 漏れもせず厳密に接する
+- [x] **Live 統合テスト** — `cargo test --test lens_pipeline_live -- --ignored` で tauri 起動不要の OCR+翻訳回帰チェック
+- [x] **Dev build ML crate 最適化** — `[profile.dev.package.*]` opt-level=3 で tauri:dev でも OCR が release 速度
+- [ ] README.md / docs/USAGE.md / docs/DEV.md / docs/KNOWN_ISSUES.md / docs/TECH_CHANGES.md / CONTRIBUTING.md / .github/ISSUE_TEMPLATE/ — **S0.5 繰延続行**
 - [ ] `CHANGELOG.md` 更新（`v0.1.0-beta.1` 〜 `v0.1.0` の予定 entry）
-- [ ] Session 0/MVP 成果を分割 commit、push、次セッション開始点を明示
+- [ ] MVP 成果を分割 commit / push / PR — ユーザ承認時に実施
 
 ### 現在の branch / PR / CI
 
@@ -34,40 +44,35 @@
 - **Open PRs**: なし（PR #1, #2 は既にマージ済み）
 - **Main branches**: `main`（shipped）, `release`（pre-release tags）— 直接 push 禁止、PR 経由
 - **CI budget**: 残 ~115 分 / 2000（Linux-only 方針で節約中、Q10-B γ）
-- **Latest commit on branch**: `07bf863 docs: add CI & release build policy spec`
+- **Latest commit on branch**: `f31d690 perf(bench): speed feasibility harness + gemma4:e2b default + think:false`
 - **前セッション用タグ案**（破棄）: `v0.1.0-rc.1` を直接打つ計画は Q10-E α で一度決めたが Q18-D β に上書き、beta ladder に変更
 
-### 未コミットの変更（既存セッション成果、S0 完了後に分割コミット）
+### 本セッション未コミット変更（commit 直前状態、2026-04-21）
 
 **Rust (`src-tauri/`)**
-- 🆕 `capabilities/default.json` — Tauri v2 capabilities、全 window に `core:default` + `core:webview:allow-internal-toggle-devtools`（Q16-A α）
-- ✏️ `src/hotkey.rs` — 個別 shortcut 登録失敗を panic から「log + `HotkeyRegistrationReport` 蓄積 + `notify_failures` emit」に緩和。テスト 5 件 green（過去の失敗 #5 解消）
-- ✏️ `src/app.rs` — setup hook 内で `register_all` の戻り値 handling + `notify_failures` 呼出、settings reload loop も同様
-- ✏️ `src/ipc.rs` — `set_settings` で `reapply` の戻り値を `notify_failures` へ
+- 🆕 `src/lens_watcher.rs` — event-driven per-Lens watcher（`Notify` trigger、position polling backup 250ms、card mask event、OCR bbox→tiling/color sampling）
+- 🆕 `tests/lens_pipeline_live.rs` — live 統合テスト（OCR 模型 + Ollama 実叩き、`#[ignore]` デフォルト、`--ignored --nocapture` で実行）
+- ✏️ `src/lens.rs` — `capture_lens` hide 撤去、window 常時表示
+- ✏️ `src/lib.rs` — `pub mod lens_watcher` 追加
+- ✏️ `src/app.rs` — `AppState.lens_watchers` / chunk_sink 単純化 / preload_all spawn / tray handler に event hook 追加
+- ✏️ `src/ipc.rs` — `new_lens_window` で watcher + event hook 配線、`refresh_lens` IPC 追加
+- ✏️ `src/pipeline.rs` — `preload_all` 追加
+- ✏️ `src/providers/mod.rs` — `Provider::preload` trait method（default noop）
+- ✏️ `src/providers/ocr_ocrs.rs` — `Arc<Mutex<Option<OcrEngine>>>` 共有 cache、`preload` 実装、AABB from RotatedRect、ログ拡充
+- ✏️ `src/settings/default.toml` — OCR chain `timeout_ms` 5000 → 15000
+- ✏️ `src/capabilities/default.json` — `core:window:allow-start-dragging` + `allow-set-ignore-cursor-events` 追加
+- ✏️ `Cargo.toml` — `[profile.dev.package.{ocrs,rten,rten-imageproc,rten-tensor,rten-simd,rten-vecmath,image,png}]` opt-level=3（tauri:dev でも ML crate は release 速度）
 
 **Frontend (`src/`)**
-- 🆕 `lib/components/AppHeader.svelte` — 共通ヘッダ（← 戻る + タイトル + ESC で戻る）。**S1 でサイドバー導入時に縮退予定**（back ボタン削除、title のみ残す）
-- 🆕 `lib/components/HotkeyFailureToast.svelte` — `moonlens://hotkey-failure` listen、トースト表示、「設定で変更」遷移
-- 🆕 `lib/components/HotkeyFailureToast.svelte.test.ts` — vitest 5 件 green
-- 🆕 `lib/navigation.ts` — SvelteKit `goto` の薄いラッパー（vitest から `$app/navigation` を mock できない問題対策）
-- ✏️ `lib/ipc.ts` — `HotkeyFailure` / `HotkeyRegistrationReport` 型 + `onHotkeyFailure` リスナヘルパ追加
-- ✏️ `routes/+layout.svelte` — `HotkeyFailureToast` を mount
-- ✏️ `routes/settings/+page.svelte` — `AppHeader` 導入（保存ボタンは残留、**S1 で廃止、自動保存 + indicator 化**、Q13-B δ）
-- ✏️ `routes/plugins/+page.svelte` — `AppHeader` 導入
-- ✏️ `routes/history/+page.svelte` — `AppHeader` 導入
+- ✏️ `lib/ipc.ts` — `LensOcrLine`（`bg_color`/`fg_color`/`bbox` 追加）、`LensLineChunk`、`LensOcrLines`、`LensFlowDone`、`LensMask`、`onLensOcrLines`/`onLensLineChunk`/`onLensFlowDone`/`onLensMask` ヘルパ
+- ✏️ `routes/lens/+page.svelte` — 全面書換: position absolute bbox カード、背景色サンプリング反映、hover-only header、window drag via `startDragging()`、mask 同期、midpoint tiling 描画
 
 **その他**
-- ✏️ `.gitignore` — `.gstack/` 追加（browse skill state dir の除外）
-- ✏️ `package-lock.json` — 前セッション lockfile 更新（無害）
-- ✏️ `docs/plan.md` — 本書、Q1-Q19 全面反映 + 本 section
+- 🆕 `tests/input/english0001.png` — ユーザ提供英文字幕 fixture（integration test 用）
+- ✏️ `docs/plan.md` — 本 section 更新、次 action を commit + S0.5 docs 再開に改訂
 
-**Session 0.5（2026-04-20 追加、速度検証 + 所見）**
-- 🆕 `src-tauri/examples/bench_speed.rs` — capture / OCR / LLM first-token / E2E の latency 計測 harness（~550 行）
-- 🆕 `docs/benchmarks/2026-04-20-speed-feasibility.md` — ベンチ結果レポート（P50/P95/P99）
-- 🆕 `tests/fixtures/bench/` — 再現用 fixture PNG（gitignore、初回実行で auto-generate）
-- **所見 1**: `OllamaTranslator::run()` は `think` パラメータを送らず Gemma 4 の thinking mode が ON になり first-token が 3.7 秒。`think: false` 必須 → spec 追加、コード修正
-- **所見 2**: `OcrsProvider::run()` は `spawn_blocking` 内で `try_load_engine` を毎回呼んでおり、モデル再読込のオーバーヘッドを払う。今回は baseline として許容、S2 で修正
-- **所見 3**: RTX 4080 で gemma4:e2b の first-token P50 = 373ms（theoretical ~100-150ms の 2-3×）。`num_ctx` / `num_batch` / flash attention tuning の余地、ただし MVP 段階では許容範囲
+**Session 0.5 当初変更（commit 済: `f31d690 perf(bench): speed feasibility harness ...`）**
+- `src-tauri/examples/bench_speed.rs`, `docs/benchmarks/2026-04-20-speed-feasibility.md`, `src-tauri/tests/fixtures/bench/README.md`, `translate_ollama.rs` think:false / gemma4:e2b 対応, settings/default.toml 翻訳モデル更新
 
 ### 直近のユーザ指摘事項（過去 2 セッションの矯正点、必ず遵守）
 
@@ -78,24 +83,22 @@
 5. **正直レポート** — 「正直に言うと〜」の前置き禁止、嘘・誇張禁止、gap は最初に明示
 6. **速度目標**: Lens streaming は **<0.5s 目標 / <1.0s 最悪**（spec L337 の <1.5s を Q18 で上書き）
 
-### 次の具体的 action — **MVP 先行路線 (2026-04-20 方針転換)**
+### 次の具体的 action — **MVP 承認後の手順**
 
-優先順で:
+**直近**（本セッション完了時）:
 
-1. **OllamaTranslator に `think: false` デフォルト追加** + system prompt 強化（既存バグ修正、ベンチで実証された必須 fix）
-2. **bench 成果 + plan.md 更新 + OllamaTranslator fix を分割 commit**（user 承認後）
-3. **MVP 実装（Lens streaming 配線 3 箇所、A 案）**:
-   - 🆕 `src-tauri/src/lens_watcher.rs` — per-Lens change detector（`RegionWatcher` の per-Lens 版、hash diff + auto poll）
-   - ✏️ `src-tauri/src/pipeline.rs` — chunk_sink を per-Lens-id な event channel に配線（`moonlens://lens-chunk`）
-   - ✏️ `src/routes/lens/+page.svelte` — `moonlens://lens-chunk` 受信、`translation` を delta で追記表示
-   - ✏️ `src-tauri/src/ipc.rs` — `new_lens_window` 時に watcher 自動 spawn
-   - TDD: watcher の hash 判定 unit test + chunk 配信 integration test + Svelte UI vitest
-4. **MVP 動作確認**: `npm run tauri:dev` で起動 → Lens 窓を対象テキストに重ねる → ストリーミング翻訳が token 単位で表示されることを目視
-5. **ユーザに「意義確認」レビュー依頼** — 動作速度・翻訳品質・ UX が「開発継続に値するか」判断してもらう
-6. **判断 = 続行 なら**:
-   - S0.5 残タスク（docs 整備）再開
-   - S1（WindowChrome + Sidebar）着手
-   - 商用化（embedded Gemma + freemium）議論再開
+1. **MVP 成果を分割 commit** — 以下 4 本で割付け、ユーザ承認後に順次実施（push なし）:
+   - E: `feat(lens): in-place streaming overlay with per-line bbox cards`
+   - F: `perf(ocr): cache engine + bg preload + populate bboxes + bump timeout`
+   - G: `test(lens): live integration harness + dev-build ML crate opt-level=3`
+   - H: `docs(plan): S0.5 / MVP completion + S1 handoff`
+
+**次セッション以降**（優先度順）:
+
+2. **S0.5 繰延 docs の再開**: README reshape / USAGE / DEV / KNOWN_ISSUES / TECH_CHANGES / CONTRIBUTING / ISSUE_TEMPLATE / CHANGELOG
+3. **S1 Sidebar + WindowChrome**: `WindowChrome.svelte` + `AppSidebar.svelte` + SchemaForm 改修 + 保存ボタン廃止
+4. **S2 DXGI + Windows OCR API 差替**: MVP のカード mask 方式は残存 blink 解消済みだが、speed SLO <0.5s 達成には DXGI Desktop Duplication + `Windows.Media.Ocr` 差替えが必要（bench β 判定のルート、`Session 0.5` 「所見 3」対応）
+5. **商用化議論の再開**: MVP 意義確認を踏まえて embedded Gemma + freemium + Paddle/LemonSqueezy + 日本国 EULA + 特商法表記、plan.md 新規 section で議論
 7. **判断 = 撤退 or 再考 なら**:
    - plan.md に retrospective 追記
    - commit して branch 凍結
@@ -128,7 +131,17 @@
 
 - ~~`plugin-sdk/` 実在状態~~ → **2026-04-20 確定**（存在、v0.1 scope 維持）
 - ~~OCR エンジン決定~~ → **2026-04-20 ベンチ結果**: ocrs は beta 圏、S2 で **Windows OCR API (`Windows.Media.Ocr`)** 差替が第一候補（商用配布制限無し、~80-150ms 想定）、PaddleOCR はラストリゾート
-- **商用化 (embedded Gemma + freemium)** → MVP「意義確認」レビュー後に再議論。方向性: gemma4-e2b 同梱 (A 案 installer bundle 1.5GB) + Paddle/LemonSqueezy MoR + 14-day trial + EULA 日本国法準拠。**この section は意図的に未確定、user の go/no-go 後に plan.md 正式追記**
+- **MVP 残課題** (S2/S3 に継続):
+  - 32ms blink → **解消済** (card mask + event-driven capture)
+  - DXGI Desktop Duplication への移行 → **S2** (SLO <0.5s 達成に必要)
+  - Click-through + hover toolbar per plan.md Q2 → **S3** (per-pixel hit-testing 要、現状は hover-only header で代替)
+  - Font auto-shrink + 2-line wrap + ellipsis per Q3 → **S3** (現状は `clamp(7px, min(85cqh, 90cqw/len), 40px)` で簡易)
+  - WCAG 自動コントラスト最適化 → **S3** (現状は luma 140 閾値で黒/白 flip)
+  - per-line 並列翻訳の cloud fallback → **S3** (現状は Ollama 直叩き、fallback なし)
+  - 段落まとまり翻訳 → **S3** (行ごと独立翻訳で文脈ロス、例: "interesting." が単独文扱い)
+- **商用化 (embedded Gemma + freemium)** → MVP 意義確認レビュー通過済。具体化は別フェーズで:
+  - embedded llama-cpp-2 + gemma4-e2b (A 案 installer bundle 約 7.2GB)
+  - Paddle/LemonSqueezy MoR、14-day trial、日本国法準拠 EULA、特商法表記
 - Lens window 位置メモリ、マルチモニタ跨ぎ、RTL 等の edge case → 該当機能実装時に個別議論
 - OllamaTranslator で Ollama version 検出 → `think` パラメータは Ollama 0.9+ 必要、fallback 考慮
 
