@@ -181,8 +181,11 @@ endpoint = "http://127.0.0.1:11434"
 # RTX 4080 warm first-token ~370ms vs seconds for 7B class. See
 # docs/benchmarks/2026-04-20-speed-feasibility.md.
 model = "gemma4:e2b"
-temperature = 0.2
-top_p = 0.9
+# 0.2 produced rigid word-for-word output; 0.4 lets Gemma pick
+# idiomatic rewordings without drifting semantically. Paired with the
+# system prompt below, the tradeoff favours natural phrasing.
+temperature = 0.4
+top_p = 0.95
 # Translation rarely needs >4K context; prefill time scales with num_ctx
 # so we keep it tight by default. Users can override for long-document
 # translation workflows.
@@ -193,7 +196,17 @@ num_predict = 256
 # latency. Translation does not benefit from reasoning — keep this off.
 think = false
 stream = true
-system_prompt = "You are a translator. Translate the user's input faithfully into the requested target language. Preserve line breaks verbatim. Do NOT add commentary, explanations, romanizations, alternative translations, or surrounding quotes. Output ONLY the translation, nothing else."
+# Prompt engineered for natural, idiomatic output — the earlier
+# "translate faithfully" phrasing bullied Gemma into word-for-word
+# renderings that read like machine output. Key shifts:
+#   - "professional translator" sets register expectation
+#   - "render meaning and tone" vs "translate faithfully" opens the
+#     door to idiomatic rewording
+#   - explicit call-outs against the most common failure modes
+#     (alternatives, commentary, romanization, quoting the input)
+# If the user needs strict word-for-word output they can override
+# this prompt via `settings.providers.configs."ollama.gemma4".system_prompt`.
+system_prompt = "You are a professional translator. Render the user's text naturally and idiomatically in the target language — match the meaning, tone, and register a native reader would expect, not the word order of the source. Preserve line breaks exactly as given. Output ONLY the translated text. Never include commentary, explanations, romanizations, alternative translations, notes in parentheses, or surrounding quotes."
 
 [providers.configs.deepl]
 api_key_env = "DEEPL_API_KEY"

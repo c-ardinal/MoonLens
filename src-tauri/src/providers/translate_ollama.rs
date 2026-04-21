@@ -54,8 +54,11 @@ impl OllamaTranslator {
             // (effective 2B, MatFormer). Bench shows ~373ms first-token on
             // RTX 4080 versus several seconds for a 7B class model.
             model: get_str("model", "gemma4:e2b"),
-            temperature: get_f("temperature", 0.2),
-            top_p: get_f("top_p", 0.9),
+            // 0.4 favours natural, idiomatic phrasing without the
+            // semantic drift 0.6+ would introduce. See
+            // `settings/default.toml` comment for the full rationale.
+            temperature: get_f("temperature", 0.4),
+            top_p: get_f("top_p", 0.95),
             // Translation rarely benefits from >4K context; prefill time
             // scales with num_ctx so keep it tight unless user overrides.
             num_ctx: get_u("num_ctx", 4096),
@@ -63,7 +66,7 @@ impl OllamaTranslator {
             think: get_bool("think", false),
             system_prompt: get_str(
                 "system_prompt",
-                "You are a careful translator. Preserve meaning, tone, and formatting. Output only the translation.",
+                "You are a professional translator. Render the user's text naturally and idiomatically in the target language — match the meaning, tone, and register a native reader would expect, not the word order of the source. Preserve line breaks exactly as given. Output ONLY the translated text. Never include commentary, explanations, romanizations, alternative translations, notes in parentheses, or surrounding quotes.",
             ),
             http: reqwest::Client::new(),
             chunk_sink: None,
@@ -148,12 +151,26 @@ impl Provider for OllamaTranslator {
                 text,
                 source_language,
                 target_language,
-            } => format!(
-                "Translate the following text from {src} to {tgt}.\n\n{txt}",
-                src = source_language,
-                tgt = target_language,
-                txt = text
-            ),
+            } => {
+                // Minimal user prompt — the system prompt already
+                // instructs the model to produce natural, idiomatic
+                // output. Avoid the verb "translate" here too: it
+                // primes Gemma toward word-for-word mode even when
+                // the system asks for naturalisation.
+                let from_clause = if source_language.trim().is_empty()
+                    || source_language.eq_ignore_ascii_case("auto")
+                {
+                    String::new()
+                } else {
+                    format!(" from {source_language}")
+                };
+                format!(
+                    "Target language: {tgt}. Rewrite the following{from_clause} naturally in {tgt}:\n\n{txt}",
+                    tgt = target_language,
+                    from_clause = from_clause,
+                    txt = text
+                )
+            }
             TaskInput::Explain { prompt, .. } => prompt,
             TaskInput::Summarize { text } => format!("Summarize concisely:\n\n{text}"),
             _ => {
@@ -249,6 +266,12 @@ impl OllamaTranslator {
     pub(crate) fn num_predict_for_test(&self) -> Option<u32> {
         self.num_predict
     }
+    pub(crate) fn temperature_for_test(&self) -> f32 {
+        self.temperature
+    }
+    pub(crate) fn top_p_for_test(&self) -> f32 {
+        self.top_p
+    }
 }
 
 #[cfg(test)]
@@ -266,6 +289,26 @@ mod tests {
         assert_eq!(t.model_for_test(), "gemma4:e2b");
         assert_eq!(t.num_ctx_for_test(), 4096);
         assert_eq!(t.num_predict_for_test(), Some(256));
+    }
+
+    #[test]
+    fn default_sampling_favours_natural_output() {
+        // 2026-04-22: earlier 0.2 / 0.9 defaults produced word-for-word
+        // translations that read like machine output. 0.4 / 0.95 give
+        // Gemma enough room to pick idiomatic phrasings without
+        // hallucinating. Guard the defaults so a future tuning pass
+        // doesn't silently regress to rigid output.
+        let t = OllamaTranslator::new("ollama.gemma4", &serde_json::Value::Null);
+        assert!(
+            (t.temperature_for_test() - 0.4).abs() < 1e-4,
+            "default temperature should be 0.4, got {}",
+            t.temperature_for_test()
+        );
+        assert!(
+            (t.top_p_for_test() - 0.95).abs() < 1e-4,
+            "default top_p should be 0.95, got {}",
+            t.top_p_for_test()
+        );
     }
 
     #[test]

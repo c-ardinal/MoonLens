@@ -475,6 +475,59 @@ fn sample_text_color(img: &image::DynamicImage, bbox: [f32; 4], bg: [u8; 3]) -> 
     mean
 }
 
+/// Does `text` look like OCR noise — unrecognisable glyphs that ocrs
+/// produced from non-Latin source or low-quality input? Sending such
+/// output to an LLM wastes cycles and returns nonsense translations.
+/// Heuristic stack (all bias toward *keeping* a line — false
+/// positives hide real short content):
+///   - fewer than 3 alphanumeric characters → too little to mean
+///     anything useful
+///   - non-letter / total ratio above 60 % → mostly punctuation or
+///     symbols, almost always misread glyphs
+///   - for Latin-script lines ≥ 4 letters, vowel ratio below 15 %
+///     → `bcdfgz`-style random consonants, a hallmark of ocrs
+///     running on CJK source it cannot parse
+pub fn looks_like_ocr_noise(text: &str) -> bool {
+    let trimmed = text.trim();
+    let chars: Vec<char> = trimmed.chars().collect();
+    if chars.is_empty() {
+        return true;
+    }
+    let letter_or_digit: Vec<char> = chars
+        .iter()
+        .copied()
+        .filter(|c| c.is_alphanumeric())
+        .collect();
+    if letter_or_digit.len() < 3 {
+        return true;
+    }
+    let total = chars.len();
+    let non_letter = chars.iter().filter(|c| !c.is_alphanumeric() && !c.is_whitespace()).count();
+    if total > 0 && (non_letter as f32 / total as f32) > 0.6 {
+        return true;
+    }
+    // Latin-only garbled text: ocrs's usual failure mode when pointed
+    // at Japanese/Chinese is to emit mostly-consonant nonsense. CJK
+    // text itself is not scored here (it has no Latin vowels but
+    // should not be flagged as noise).
+    let latin_letters: Vec<char> = chars
+        .iter()
+        .copied()
+        .filter(|c| c.is_ascii_alphabetic())
+        .collect();
+    if latin_letters.len() >= 4 && (latin_letters.len() as f32 / total as f32) > 0.6 {
+        let vowels = latin_letters
+            .iter()
+            .filter(|c| matches!(c.to_ascii_lowercase(), 'a' | 'e' | 'i' | 'o' | 'u' | 'y'))
+            .count();
+        let ratio = vowels as f32 / latin_letters.len() as f32;
+        if ratio < 0.15 {
+            return true;
+        }
+    }
+    false
+}
+
 /// Does `text` appear to already be written in `target_language`? Used
 /// to skip the translation round-trip for OCR output that is already
 /// in the user's target tongue (e.g. OCR detects Japanese while the
@@ -686,7 +739,26 @@ async fn run_capture_loop(
 
         let ocr_lines: Vec<OcrLine> = match ocr_result {
             Ok(r) => match r.output {
-                TaskOutput::Ocr { lines } => lines,
+                // Drop lines that look like OCR noise here rather
+                // than downstream — the Lens UI only ever sees
+                // "real" lines, so there's no garbage card that
+                // needs a translation round-trip to figure out.
+                TaskOutput::Ocr { lines } => {
+                    let kept: Vec<OcrLine> = lines
+                        .into_iter()
+                        .filter(|l| {
+                            let drop = looks_like_ocr_noise(&l.text);
+                            if drop {
+                                tracing::debug!(
+                                    "lens {lens_id}: dropped noise line {:?}",
+                                    l.text
+                                );
+                            }
+                            !drop
+                        })
+                        .collect();
+                    kept
+                }
                 _ => Vec::new(),
             },
             Err(e) => {
@@ -976,6 +1048,44 @@ mod tests {
         let w = LensStreamWatchers::new();
         w.stop_all();
         assert_eq!(w.running_count(), 0);
+    }
+
+    #[test]
+    fn noise_filter_keeps_normal_english() {
+        assert!(!looks_like_ocr_noise("Hello world"));
+        assert!(!looks_like_ocr_noise("The quick brown fox jumps."));
+        assert!(!looks_like_ocr_noise("On your left"));
+    }
+
+    #[test]
+    fn noise_filter_keeps_normal_japanese() {
+        // CJK lines should pass straight through — Latin-vowel check
+        // must not fire on hiragana/kanji.
+        assert!(!looks_like_ocr_noise("こんにちは世界"));
+        assert!(!looks_like_ocr_noise("日本語のテキストです"));
+    }
+
+    #[test]
+    fn noise_filter_rejects_very_short_text() {
+        assert!(looks_like_ocr_noise("Hi"));
+        assert!(looks_like_ocr_noise("!"));
+        assert!(looks_like_ocr_noise(""));
+    }
+
+    #[test]
+    fn noise_filter_rejects_punctuation_heavy_glyphs() {
+        // Classic ocrs misread of CJK: long strings of @/#/* noise.
+        assert!(looks_like_ocr_noise("@#$%^&*"));
+        assert!(looks_like_ocr_noise("...:::;;;"));
+    }
+
+    #[test]
+    fn noise_filter_rejects_consonant_only_latin() {
+        // ocrs aimed at Japanese often emits consonant-heavy garbage.
+        assert!(looks_like_ocr_noise("bcdfgzhk"));
+        assert!(looks_like_ocr_noise("zxcvbnmsdfg"));
+        // But real words with a natural consonant:vowel balance pass.
+        assert!(!looks_like_ocr_noise("rhythm music"));
     }
 
     #[test]
