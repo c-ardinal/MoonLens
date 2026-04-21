@@ -45,6 +45,23 @@ the project adheres to [SemVer](https://semver.org/).
   追加、既存 `SchemaForm.svelte.test.ts` に `$ref` / unsupported /
   additionalProperties の 3 ケース追加。全 67 テスト green。
 
+### Changed (OCR gibberish 検知強化 — 2026-04-22 夜)
+
+- **英語 digram 密度 + 頻出語 stopword 検査を追加**: 従来の vowel ratio
+  < 15% 単独チェックを通り抜けていた「見た目それっぽい Latin 文字列」
+  (ocrs が CJK ソースから生成する典型パターン) を多重シグナルで検出。
+  Latin 支配的テキストに対し:
+  (1) vowel ratio off (< 20% or > 70%)、
+  (2) English digram 密度 < 12% (top-50 digram 表で照合)、
+  (3) `the`/`and`/UI 動詞等の stopword 不在 — **3 条件同時成立で reject**。
+- **限界を正直に docs 化**: `al` / `hi` 等の common digram を含む
+  borderline Latin (例: "aloo oki" 形式) は heuristic を通過する。
+  完全対応は plan.md S2 の Windows OCR API / PaddleOCR 差替で達成予定。
+  KNOWN_ISSUES.md に明記。
+- **5 新規テスト**: 日本語 OCR 生成物を模したパターン、真の英語 / 技術
+  用語の false-positive 防止、digram density scorer の sanity check。
+  **Rust 223 / vitest 67 green**。
+
 ### Fixed (gradient 精度・日本語判定・OCR ノイズ — 2026-04-22 後半 3)
 
 - **Multi-stop gradient + bbox 内部サンプリング**: 従来は rim 2 点のみで

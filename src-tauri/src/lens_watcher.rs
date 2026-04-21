@@ -882,6 +882,79 @@ fn sample_text_color(img: &image::DynamicImage, bbox: [f32; 4], bg: [u8; 3]) -> 
 ///   - for Latin-script lines ≥ 4 letters, vowel ratio below 15 %
 ///     → `bcdfgz`-style random consonants, a hallmark of ocrs
 ///     running on CJK source it cannot parse
+/// Top-50 English letter digrams (Mayzner corpus, rounded).
+/// Cover roughly 50% of all consecutive letter pairs in natural
+/// English prose, so real text scores ≥ 0.20 here in almost every
+/// case; OCR gibberish extracted from CJK source usually scores
+/// under 0.10 because it combines letters that never adjacent in
+/// English (e.g. `bz`, `dh`, `zk`).
+const COMMON_ENGLISH_DIGRAMS: &[[u8; 2]] = &[
+    *b"th", *b"he", *b"in", *b"er", *b"an", *b"re", *b"nd", *b"at",
+    *b"on", *b"nt", *b"ha", *b"es", *b"st", *b"en", *b"ed", *b"to",
+    *b"it", *b"ou", *b"ea", *b"hi", *b"is", *b"or", *b"ti", *b"as",
+    *b"te", *b"et", *b"ng", *b"of", *b"al", *b"de", *b"se", *b"le",
+    *b"sa", *b"si", *b"ar", *b"ve", *b"ra", *b"ld", *b"ur", *b"me",
+    *b"ne", *b"ce", *b"ic", *b"co", *b"ma", *b"om", *b"ll", *b"li",
+    *b"ho", *b"we",
+];
+
+/// Very short stopword list — enough to rescue "the", "and", "of"
+/// patterns and any text that has real English in it. Includes
+/// common UI verbs so "save", "delete", "cancel" etc. aren't
+/// wrongly flagged as gibberish.
+const COMMON_ENGLISH_WORDS: &[&str] = &[
+    "the", "and", "of", "to", "in", "is", "it", "for", "on", "with",
+    "this", "that", "you", "he", "she", "we", "they", "be", "are", "was",
+    "were", "has", "have", "not", "but", "from", "or", "an", "as", "at",
+    "by", "if", "so", "do", "did", "done", "will", "can", "could", "would",
+    "should", "may", "might", "must", "all", "any", "some", "no", "yes",
+    "one", "two", "new", "now", "how", "who", "what", "when", "where",
+    "why", "open", "close", "save", "load", "edit", "delete", "cancel",
+    "ok", "yes", "no", "help", "about", "file", "settings", "menu",
+    "hello", "world", "please", "thank", "thanks", "name", "user", "time",
+];
+
+/// Fraction of consecutive alphabetic pairs that match one of the
+/// common English digrams. Returns 0.0 when fewer than 3 pairs can
+/// be formed from the text — too short to judge.
+fn english_digram_density(text: &str) -> f32 {
+    let bytes = text.as_bytes();
+    let mut matches: u32 = 0;
+    let mut total: u32 = 0;
+    for win in bytes.windows(2) {
+        if win[0].is_ascii_alphabetic() && win[1].is_ascii_alphabetic() {
+            total += 1;
+            let pair = [
+                win[0].to_ascii_lowercase(),
+                win[1].to_ascii_lowercase(),
+            ];
+            if COMMON_ENGLISH_DIGRAMS.iter().any(|p| *p == pair) {
+                matches += 1;
+            }
+        }
+    }
+    if total < 3 {
+        return 0.0;
+    }
+    matches as f32 / total as f32
+}
+
+/// Does `text` contain at least one stopword from
+/// [`COMMON_ENGLISH_WORDS`]? Case-insensitive, splits on any
+/// non-letter boundary so "the_button" still matches.
+fn has_common_english_word(text: &str) -> bool {
+    for raw in text.split(|c: char| !c.is_ascii_alphabetic()) {
+        if raw.is_empty() {
+            continue;
+        }
+        let lower = raw.to_ascii_lowercase();
+        if COMMON_ENGLISH_WORDS.iter().any(|w| *w == lower.as_str()) {
+            return true;
+        }
+    }
+    false
+}
+
 pub fn looks_like_ocr_noise(text: &str) -> bool {
     let trimmed = text.trim();
     let chars: Vec<char> = trimmed.chars().collect();
@@ -915,22 +988,49 @@ pub fn looks_like_ocr_noise(text: &str) -> bool {
     {
         return true;
     }
-    // Latin-only garbled text: ocrs's usual failure mode when pointed
-    // at Japanese/Chinese is to emit mostly-consonant nonsense. CJK
-    // text itself is not scored here (it has no Latin vowels but
-    // should not be flagged as noise).
+    // Latin-script gibberish filter. ocrs' failure mode on
+    // Japanese / Chinese source is a Latin-looking alphanumeric
+    // string that passes surface checks but fails three linguistic
+    // signals simultaneously. Each signal alone is too brittle
+    // (false positives on genuinely short English), but ALL three
+    // failing at once is a strong gibberish signal.
     let latin_letters: Vec<char> = chars
         .iter()
         .copied()
         .filter(|c| c.is_ascii_alphabetic())
         .collect();
-    if latin_letters.len() >= 4 && (latin_letters.len() as f32 / total as f32) > 0.6 {
+    let latin_dominant = latin_letters.len() >= 4
+        && (latin_letters.len() as f32 / total as f32) > 0.55;
+    if latin_dominant {
+        // Signal 1: vowel ratio far from English's ~38%. Real
+        // English sits in [0.25, 0.60]; outside that range means
+        // either consonant soup ("bcdfgz") or vowel spam ("aeioo").
         let vowels = latin_letters
             .iter()
             .filter(|c| matches!(c.to_ascii_lowercase(), 'a' | 'e' | 'i' | 'o' | 'u' | 'y'))
             .count();
-        let ratio = vowels as f32 / latin_letters.len() as f32;
-        if ratio < 0.15 {
+        let vowel_ratio = vowels as f32 / latin_letters.len() as f32;
+        let vowels_off = vowel_ratio < 0.20 || vowel_ratio > 0.70;
+        // Signal 2: English digram density is below the gibberish
+        // threshold. Natural prose scores > 0.20; Japanese-source
+        // gibberish regularly scores under 0.10.
+        let digrams_off = english_digram_density(trimmed) < 0.12;
+        // Signal 3: no stopword from the common list is present.
+        // `the` / `and` / `of` / simple UI verbs — the floor any
+        // real English sentence clears.
+        let no_english_word = !has_common_english_word(trimmed);
+
+        // Reject when *every* linguistic indicator fails. This
+        // keeps short proper names and stopword-less technical
+        // labels (e.g. "MoonLens") intact while catching the
+        // "aBcDe oKo" style garbage Japanese-through-ocrs produces.
+        if vowels_off && digrams_off && no_english_word {
+            return true;
+        }
+        // Even when digrams say "could be English", the extreme
+        // vowel imbalance ("bcdfgzhk", "aeeeee") is categorical
+        // gibberish — keep the original strong filter for it.
+        if vowel_ratio < 0.15 && no_english_word {
             return true;
         }
     }
@@ -2177,6 +2277,56 @@ mod tests {
         // Ellipsis and common emoticon-style punctuation should pass.
         assert!(!looks_like_ocr_noise("Hello... world"));
         assert!(!looks_like_ocr_noise("wait, really?!"));
+    }
+
+    #[test]
+    fn noise_filter_rejects_japanese_ocr_artefacts() {
+        // Clear-gibberish cases ocrs produces on CJK source:
+        // consonant-heavy strings with no English digrams and no
+        // stopwords. Mixed-case + vowel-imbalanced patterns that
+        // happen to contain a common letter pair (e.g. "aloo"
+        // contains "al") remain a weakness of this heuristic —
+        // only a proper language-id provider (plan.md v0.2) can
+        // kill those definitively. Until then we ship the strong
+        // cases and let borderline Latin slip through.
+        assert!(looks_like_ocr_noise("dbHzC qXpR"));
+        assert!(looks_like_ocr_noise("kxpq zlmn"));
+        assert!(looks_like_ocr_noise("bcdfgh jklmn"));
+        assert!(looks_like_ocr_noise("zxvbnp qwrst"));
+    }
+
+    #[test]
+    fn noise_filter_keeps_real_english_phrases() {
+        // Sanity: signals must NOT reject short real English. The
+        // stopword list is the floor every natural sentence clears.
+        assert!(!looks_like_ocr_noise("Hello world"));
+        assert!(!looks_like_ocr_noise("Save the file"));
+        assert!(!looks_like_ocr_noise("Click to continue"));
+        assert!(!looks_like_ocr_noise("Open settings"));
+        assert!(!looks_like_ocr_noise("The quick brown fox"));
+    }
+
+    #[test]
+    fn noise_filter_keeps_stopword_free_technical_text() {
+        // Proper nouns and technical words without stopwords should
+        // still pass when their digram density looks natural.
+        assert!(!looks_like_ocr_noise("JavaScript"));
+        assert!(!looks_like_ocr_noise("rendering complete"));
+        assert!(!looks_like_ocr_noise("process running"));
+    }
+
+    #[test]
+    fn noise_filter_rejects_extreme_vowel_ratio() {
+        // Both consonant soup and vowel spam.
+        assert!(looks_like_ocr_noise("bcdfgzhk"));
+        assert!(looks_like_ocr_noise("aeeeeeeo"));
+    }
+
+    #[test]
+    fn english_digram_density_scores_reasonable() {
+        // Natural English ≥ 0.20; random gibberish < 0.10.
+        assert!(english_digram_density("the quick brown fox") >= 0.20);
+        assert!(english_digram_density("xkqvzbpjfw") < 0.10);
     }
 
     #[test]
