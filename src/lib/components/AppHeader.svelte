@@ -1,10 +1,9 @@
 <script lang="ts">
   /**
-   * Shared top bar for non-root pages.
-   *
-   * Provides a visible way back to the home screen. Tauri windows
-   * have no browser chrome, so without this the user is stuck on
-   * whatever page they navigated into until they close the window.
+   * Shared in-page header for sub-route content. The back button is
+   * now opt-in: with the persistent sidebar shell, most pages don't
+   * need it. Kept here for floating windows that still route
+   * independently.
    */
   import type { Snippet } from 'svelte';
   import { ArrowLeft } from 'lucide-svelte';
@@ -13,28 +12,32 @@
   interface Props {
     title: string;
     subtitle?: string;
+    /** Show a back button and ESC-to-home; defaults to false because
+     *  navigation lives in the persistent sidebar. */
+    showBack?: boolean;
     /** Where the back button goes. Defaults to the app home. */
     backTo?: string;
     /** Optional right-aligned actions (save button, search box, etc). */
     actions?: Snippet;
   }
 
-  let { title, subtitle, backTo = '/', actions }: Props = $props();
+  let {
+    title,
+    subtitle,
+    showBack = false,
+    backTo = '/',
+    actions
+  }: Props = $props();
 
   function goBack() {
     goto(backTo);
   }
 
-  // ESC from anywhere on the page sends the user home. Tauri windows
-  // have no browser chrome, so this is the primary keyboard escape
-  // hatch when focus is not on the back button itself.
   function onGlobalKey(e: KeyboardEvent) {
-    if (e.key !== 'Escape') return;
+    if (!showBack || e.key !== 'Escape') return;
     const target = e.target as HTMLElement | null;
     if (target) {
       const tag = target.tagName;
-      // Respect in-flight editing: ESC inside inputs/textareas should
-      // fall through to the control (clear value, close menu, etc).
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
       if (target.isContentEditable) return;
     }
@@ -42,21 +45,24 @@
   }
 
   $effect(() => {
+    if (!showBack) return;
     window.addEventListener('keydown', onGlobalKey);
     return () => window.removeEventListener('keydown', onGlobalKey);
   });
 </script>
 
 <header class="flex items-center gap-3">
-  <button
-    type="button"
-    onclick={goBack}
-    class="inline-flex h-8 w-8 items-center justify-center rounded-ml-sm border border-border bg-surface text-ink-muted transition hover:border-accent/60 hover:text-ink"
-    aria-label="ホームへ戻る"
-    title="ホームへ戻る"
-  >
-    <ArrowLeft class="h-4 w-4" aria-hidden="true" />
-  </button>
+  {#if showBack}
+    <button
+      type="button"
+      onclick={goBack}
+      class="inline-flex h-8 w-8 items-center justify-center rounded-ml-sm border border-border bg-surface text-ink-muted transition hover:border-accent/60 hover:text-ink"
+      aria-label="ホームへ戻る"
+      title="ホームへ戻る"
+    >
+      <ArrowLeft class="h-4 w-4" aria-hidden="true" />
+    </button>
+  {/if}
   <div class="flex-1 min-w-0">
     <h1 class="text-xl font-semibold tracking-tight">{title}</h1>
     {#if subtitle}
