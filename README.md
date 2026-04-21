@@ -1,63 +1,152 @@
 # MoonLens
 
-PC常駐の Google Lens 風ツール。1つのグローバルホットキーで
+> PC 版 Google Lens。1 つのグローバルホットキーで、画面上の外国語テキストを
+> **その場で** OCR + 翻訳し続け、QR・画像検索・ライブ字幕まで 1 箇所にまとめる
+> プライバシーファーストの常駐ツール。
 
-- 画面領域の OCR + ローカル LLM 翻訳 + オーバーレイ表示
-- QR コード認識
-- リバース画像検索
-- 外国語動画のループバック音声からライブ字幕
-- ローカル LLM による要約・説明・対話
+> **English summary**: MoonLens is a privacy-first, keyboard-driven desktop
+> companion that streams the contents of any screen region through OCR +
+> local LLM translation, overlaying the result in place. Beyond OCR it
+> also handles QR codes, reverse image search, and loopback-audio live
+> subtitles. Local-first via Ollama + Gemma 4, with optional cloud fallback.
 
-を統合する。ローカル LLM（Ollama + Gemma4）を第一級に扱い、クラウドは明示的な
-フォールバックとして利用する。音楽認識は運用コストの観点から本体には含めず、
-プラグインとして実装できる余地を確保している。
+- 📷 **Lens ストリーミング**: Lens ウィンドウを対象領域に重ねると、
+  継続的に OCR + 翻訳を in-place で描画し続ける
+- ⚡ **ワンショット領域キャプチャ**: `Ctrl+Alt+Space` → ドラッグ選択 →
+  オーバーレイで結果表示（QR / テキスト / 写真を自動分岐）
+- 🔒 **ローカル優先**: 既定では Ollama + Gemma 4 (`gemma4:e2b`) をローカルで実行。
+  クラウドは明示的な許可時のみ DeepL / Gemini にフォールバック
+- 🎙 **ライブ字幕**: システム音声ループバック → whisper.cpp → 翻訳 → 半透明字幕
+- 🔎 **リバース画像検索**: Google Images / Bing / Yandex をブラウザで、
+  SerpAPI キー設定時はアプリ内で結果表示
+- 🧩 **拡張機構**: WASM Component と JSON-RPC サイドカーの 2 形態、
+  Ed25519 でマニフェスト署名検証
+
+## プロジェクトステータス
+
+| 項目 | 状態 |
+|---|---|
+| 設計仕様 | [`docs/plan.md`](docs/plan.md) に集約 |
+| MVP (S0.5) | ✅ 完了（2026-04-21、ユーザ承認済） |
+| S1 — window chrome + sidebar + schema form 改修 | ✅ 完了 |
+| S2 — DXGI + WDA + Windows OCR 差替 | 予定 |
+| v0.1.0 stable | S5 での golden path 6 シナリオ全 pass 後に tag |
+
+現在のブランチは `claude/moonbit-lens-tool-2FkOu`。release ladder は
+`v0.1.0-beta.1 → beta.2 → beta.3 → rc.1 → v0.1.0` の 5 タグ段階。
+詳細は [`docs/plan.md`](docs/plan.md) の "Release Process" を参照。
+
+## Platform matrix
+
+| OS | v0.1 対応 | 備考 |
+|---|---|---|
+| Windows 11 | **Full support** | DXGI + `WDA_EXCLUDEFROMCAPTURE` で Lens 完全対応（S2） |
+| Linux | Degraded | `xcap` polling ベース、Lens のブリンク残存。残り機能は動作 |
+| macOS | v0.2 以降 | Apple Developer + notarization 要、v0.1 スコープ外 |
 
 ## スタック
 
-- **アプリシェル**: Tauri 2.x (Rust)
-- **UI**: Svelte 5 (runes) + Vite + Tailwind CSS v4
-- **OCR**: [`ocrs`](https://github.com/robertknight/ocrs) crate（追加の OCR エンジンはプラグインで差し替え可）
-- **QR**: `rqrr` crate
-- **翻訳 (local)**: Ollama HTTP ストリーミング, デフォルトモデル `gemma4:7b-instruct-q4_K_M`
+- **アプリシェル**: Tauri 2.x (Rust stable 1.80+)
+- **UI**: Svelte 5 (runes) + Vite + Tailwind CSS v4、Inter + JetBrains Mono
+- **OCR**: [`ocrs`](https://github.com/robertknight/ocrs)（S2 で Windows OCR API への差替検討）
+- **QR**: `rqrr`
+- **翻訳 (local)**: Ollama HTTP ストリーミング、既定モデル `gemma4:e2b` (`think: false` 必須)
 - **翻訳 (cloud)**: DeepL / Gemini API（オプションフォールバック）
-- **ASR**: `whisper.cpp` HTTP サーバ（サイドカー起動）
-- **画面キャプチャ**: `xcap` 0.9、**音声ループバック**: `cpal`
-- **履歴**: `rusqlite`（SQLite、bundled）
-- **プラグイン**: WebAssembly Component Model (`wasmtime`) と JSON-RPC サイドカー
+- **ASR**: `whisper.cpp` サイドカー
+- **画面キャプチャ**: `xcap` 0.9（S2 で DXGI Desktop Duplication 併用へ）
+- **音声ループバック**: `cpal`
+- **履歴**: `rusqlite` (bundled SQLite)
+- **プラグイン**: WebAssembly Component Model (`wasmtime`) + JSON-RPC サイドカー
 - **プラグイン署名**: Ed25519 (`ed25519-dalek`) + SHA-256
+
+## ドキュメント
+
+| ファイル | 用途 |
+|---|---|
+| [`docs/plan.md`](docs/plan.md) | 全ての設計判断・セッション引継ぎ protocol・release ladder |
+| [`docs/USAGE.md`](docs/USAGE.md) | エンドユーザ向け操作ガイド |
+| [`docs/DEV.md`](docs/DEV.md) | 開発者向けセットアップ・ビルド・テスト |
+| [`docs/KNOWN_ISSUES.md`](docs/KNOWN_ISSUES.md) | v0.1 の既知制約一覧 |
+| [`docs/RELEASING.md`](docs/RELEASING.md) | リリースワークフロー |
+| [`docs/benchmarks/`](docs/benchmarks/) | パフォーマンス計測結果の履歴 |
+| [`CHANGELOG.md`](CHANGELOG.md) | 変更履歴（Keep a Changelog） |
+| [`plugin-sdk/docs/README.md`](plugin-sdk/docs/README.md) | プラグイン開発ガイド |
+
+## クイックスタート
+
+### 前提
+
+- Rust stable 1.80+
+- Node.js 20+
+- [Ollama](https://ollama.com/) + `gemma4:e2b` モデル
+
+```bash
+ollama pull gemma4:e2b
+ollama serve
+```
+
+字幕機能を使う場合は `whisper.cpp` サーバを `http://127.0.0.1:9002`
+で起動しておく（[`docs/USAGE.md`](docs/USAGE.md) の字幕セクション参照）。
+
+### 開発モード
+
+```bash
+npm install
+npm run tauri:dev
+```
+
+### リリースビルド
+
+```bash
+npm run tauri:build
+```
+
+Windows 自己署名は v0.2 以降。現状 Win 初回起動時は SmartScreen 警告が出る
+（回避手順は [`docs/USAGE.md`](docs/USAGE.md) 参照）。
 
 ## ディレクトリ
 
 ```
 MoonLens/
-├─ src-tauri/          # Rust バックエンド（Tauri）
+├─ src-tauri/                # Rust バックエンド
 │  └─ src/
-│     ├─ settings/     # 階層型設定、schemars による JSON Schema 自動生成
-│     ├─ providers/    # OCR / Translator / ASR / QR / Search 実装
-│     ├─ plugins/      # WASM + sidecar ホスト、WIT 定義
-│     ├─ pipeline.rs   # チェーン実行、フォールバック、stickiness
-│     └─ ...
-├─ src/                # Svelte 5 + SvelteKit フロント
-│  ├─ routes/          # overlay / subtitle / settings / plugins / history
+│     ├─ settings/           # 階層型設定、schemars による JSON Schema
+│     ├─ providers/          # OCR / Translator / ASR / QR / Search 実装
+│     ├─ plugins/            # WASM + サイドカーホスト、WIT 定義
+│     ├─ pipeline.rs         # チェーン実行、フォールバック、stickiness
+│     ├─ lens_watcher.rs     # Lens streaming 差分検出エンジン
+│     └─ lens.rs             # Lens ウィンドウのライフサイクル
+├─ src/                      # Svelte 5 + SvelteKit フロント
+│  ├─ routes/
+│  │  ├─ +layout.svelte      # 常駐シェル (WindowChrome + AppSidebar)
+│  │  ├─ +page.svelte        # ホーム（ダッシュボード）
+│  │  ├─ settings/           # 自動生成フォーム (auto-save)
+│  │  ├─ plugins/  history/  subtitle/
+│  │  ├─ lens/               # Lens result overlay
+│  │  ├─ overlay/            # one-shot 結果
+│  │  └─ select/             # 領域選択
 │  └─ lib/
-│     ├─ design/       # デザイントークン、モーション
-│     └─ components/   # SchemaForm, CommandPalette, PrivacyBadge, ActionRibbon
-├─ plugin-sdk/         # プラグイン開発キット（WIT + Rust + 例）
-└─ .github/workflows/  # Win/Mac/Linux 3系列ビルド
+│     ├─ components/         # WindowChrome, AppSidebar, SchemaForm, HotkeyInput, ...
+│     ├─ design/tokens.css   # CSS custom properties
+│     └─ ipc.ts              # 型付き Tauri invoke / listen ヘルパ
+├─ plugin-sdk/               # プラグイン開発キット (WIT + Rust + 例)
+├─ docs/                     # 設計・運用ドキュメント
+└─ .github/workflows/        # CI (Linux 中心)
 ```
 
 ## カスタマイズ思想
 
-MoonLens はハードコードされた挙動を極力持たない。UI/挙動/プロバイダに関わる
-すべての定数は `$XDG_CONFIG_HOME/moonlens/config.toml`（およびプロファイル）
-から制御可能で、変更は保存で即時反映される。設定画面は `schemars` が吐く
-JSON Schema から自動生成されるため、新しい provider や plugin を追加して
-もフォームの手書き更新は不要。
+MoonLens はハードコードされた挙動を極力持たない。UI / 挙動 / プロバイダに
+関わる全定数は `$XDG_CONFIG_HOME/moonlens/config.toml`（およびプロファイル）
+から制御可能で、カテゴリごとの戦略で即時反映 or 次サイクル反映される
+([`docs/plan.md`](docs/plan.md) § Hot-reload strategy)。設定画面は
+`schemars` が吐く JSON Schema から自動生成されるため、Rust 側で新しい
+provider や plugin を追加してもフォームの手書き更新は不要。
 
 ### プロバイダチェーン
 
-タスク（`translate` / `ocr` / `asr` / `explain` / `summarize` / ...）ごとに
-独立した順序付きチェーンとフォールバック条件を定義する：
+タスク（`translate` / `ocr` / `asr` / `explain` / `summarize` / …）ごとに
+独立した順序付きチェーンとフォールバック条件を定義する:
 
 ```toml
 [providers.translate]
@@ -68,69 +157,29 @@ timeout_ms = 3000
 allow_cloud = true
 allow_network = true
 sticky_session_ms = 30000
+
+[providers.translate.ollama.gemma4]
+endpoint = "http://127.0.0.1:11434"
+model = "gemma4:e2b"
+think = false                       # 必須: 10× first-token 差
+num_ctx = 4096
+stream = true
 ```
 
-プロバイダごとの設定は `[providers.configs."<id>"]` に任意キーで書ける。
+プロバイダごとの詳細は `[providers.configs."<id>"]` に任意キーで書ける。
 知らないキーはそのまま保存されるため、プラグインは独自スキーマで
 `[providers.configs."plugin.my_translator"]` を参照できる。
 
-## プラグイン
-
-### 2 形態
-
-1. **WebAssembly Component プラグイン**: `wasmtime` サンドボックス内で動作。
-   任意の言語（Rust / Go / TypeScript / Python / MoonBit...）で WIT
-   インターフェース実装すれば可。権限はマニフェストで許可制。
-2. **サイドカープラグイン**: 子プロセスが JSON-RPC 2.0 over stdio で
-   MoonLens と通信。OS 権限・重い ML・GPL 依存などに。
-
-詳細: [`plugin-sdk/docs/README.md`](plugin-sdk/docs/README.md)
-
-### 拡張ポイント
+### プラグイン拡張ポイント (v0.1)
 
 `translator` / `ocr` / `asr` / `explain` / `summarize` /
 `reverse_image_search` / `qr_handler` / `intent_classifier` /
 `action` / `pre_processor` / `post_processor` / `overlay_renderer` /
 `hotkey_handler` / `history_indexer`
 
-## 開発セットアップ
-
-### 前提
-
-- Rust stable (1.80+)
-- Node.js 20+
-- Tauri 2 系列のプラットフォーム依存（`npm run tauri info` で確認）
-- （翻訳用）Ollama + `gemma4` モデル
-
-```bash
-ollama pull gemma4:7b-instruct-q4_K_M
-ollama serve
-```
-
-- （字幕用）`whisper.cpp` サーバを `http://127.0.0.1:9002` で待機させる
-
-### 初回
-
-```bash
-npm install
-npm run tauri:dev
-```
-
-### ビルド
-
-```bash
-npm run tauri:build
-```
-
-### CI
-
-`.github/workflows/build.yml` で Win / macOS / Linux の 3 系列ビルド、
-`cargo fmt` / `cargo test` / `cargo clippy` / Tauri installer 生成を実行。
-
-## 設計ドキュメント
-
-実装方針の全体像は Plan ファイルに集約してある：
-`docs/plan.md`（このリポジトリのスナップショット版）
+v0.2 以降追加予定:
+`frame_stream_processor` / `change_detector` / `lens_overlay_renderer` /
+`translate_stream`。
 
 ## ライセンス
 
