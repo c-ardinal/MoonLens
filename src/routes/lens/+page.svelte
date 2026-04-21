@@ -32,13 +32,14 @@
     done: boolean;
   }
 
-  // Split state: `visibleLines` is what the user sees, `pendingLines`
-  // buffers the in-progress flow. We only swap pending → visible at
-  // flow-done, so the user never sees partial translations or the
-  // blank placeholder between OCR arrival and first token. Combined
-  // with the backend masking the cards briefly (32ms) during capture,
-  // the visual result is: "one card block, period, next block" —
-  // no character-by-character typing animation, no empty frames.
+  // Per-line commit: each line is published to `visibleLines` only
+  // when its translation chunk carries `done=true`. The user never
+  // sees intermediate tokens (no character-by-character typing) or
+  // empty placeholders, and the previous flow's cards stay visible
+  // until they are individually replaced by a newer line at the same
+  // `line_index`. On `lens-flow-done`, any line that never produced
+  // a `done=true` chunk falls back to its original OCR text so the
+  // UI never stalls on a half-translated source.
   let visibleLines = $state<LineCard[]>([]);
   let pendingLines: LineCard[] = [];
   let pendingChunks = new Map<number, { text: string; done: boolean }>();
@@ -101,39 +102,51 @@
     );
   }
 
-  /** Merge the buffered chunks into the pending lines and, if every
-   *  line is complete, swap the result into the visible set in one
-   *  reactive update. Called from `lens-line-chunk` (late-arriving
-   *  `done=true`) and `lens-flow-done` (explicit terminator). */
-  function tryCommit(force: boolean): void {
-    if (pendingLines.length === 0) {
-      if (force) {
-        visibleLines = [];
-        pendingChunks.clear();
-      }
-      return;
+  /** Commit a single line to `visibleLines`. Called when its
+   *  translation chunk carries `done=true`. Replaces an existing
+   *  card with the same `line_index` if any, otherwise appends. The
+   *  previous flow's cards stay put until their slot is taken —
+   *  avoiding the empty-state flash on every new capture. */
+  function commitLine(lineIndex: number): void {
+    const src = pendingLines.find((l) => l.line_index === lineIndex);
+    if (!src) return;
+    const chunk = pendingChunks.get(lineIndex);
+    const raw = chunk?.text ?? '';
+    const translation = raw.trim().length > 0 ? raw.trim() : src.text;
+    const committed: LineCard = {
+      ...src,
+      translation,
+      done: chunk?.done ?? true
+    };
+    const idx = visibleLines.findIndex((l) => l.line_index === lineIndex);
+    if (idx >= 0) {
+      const next = visibleLines.slice();
+      next[idx] = committed;
+      visibleLines = next;
+    } else {
+      visibleLines = [...visibleLines, committed];
     }
-    const allDone = pendingLines.every((l) => {
-      const c = pendingChunks.get(l.line_index);
-      return c?.done === true;
-    });
-    if (!force && !allDone) return;
-    // Assemble the finished snapshot and atomically replace the
-    // visible state. Any line that somehow never got a chunk
-    // (e.g. translate provider error) falls back to the original
-    // OCR text so the card is never empty.
-    const committed: LineCard[] = pendingLines.map((l) => {
-      const chunk = pendingChunks.get(l.line_index);
-      const raw = chunk?.text ?? '';
-      const translation = raw.trim().length > 0 ? raw.trim() : l.text;
-      return {
-        ...l,
-        translation,
-        done: chunk?.done ?? false
-      };
-    });
-    visibleLines = committed;
-    pendingChunks.clear();
+  }
+
+  /** Force remaining pending lines into `visibleLines` using whatever
+   *  text has accumulated (or the original OCR text as fallback).
+   *  Called on `lens-flow-done` to ensure the UI never stalls on a
+   *  translation that silently failed or got truncated. Also prunes
+   *  stale cards whose `line_index` is no longer in the new OCR
+   *  layout. */
+  function forceCommitRemaining(): void {
+    // 1. Prune cards that don't exist in the new layout anymore.
+    const validIndices = new Set(pendingLines.map((l) => l.line_index));
+    const pruned = visibleLines.filter((l) => validIndices.has(l.line_index));
+    if (pruned.length !== visibleLines.length) {
+      visibleLines = pruned;
+    }
+    // 2. Commit any pending line that never got a done chunk.
+    for (const l of pendingLines) {
+      const already = visibleLines.some((v) => v.line_index === l.line_index);
+      if (already) continue;
+      commitLine(l.line_index);
+    }
   }
 
   /** Split the translation on newlines (LLM often preserves the
@@ -158,9 +171,10 @@
         currentFlowId = e.flow_id;
         streaming = true;
         lastError = null;
-        // Reset the buffer for the new flow but keep `visibleLines`
-        // on screen until the new flow completes — this is the key
-        // "no flicker" invariant.
+        // Reset the per-line buffer. `visibleLines` stays put: the
+        // previous flow's cards remain on screen until their slots
+        // are overwritten by the new flow's `done=true` chunks or
+        // pruned by `forceCommitRemaining` on flow-done.
         pendingLines = [];
         pendingChunks.clear();
       })
@@ -199,8 +213,13 @@
           text: existing.text + (e.delta ?? ''),
           done: existing.done || e.done
         });
-        // Only commit once every line is done — see tryCommit.
-        tryCommit(false);
+        // Per-line commit: once this specific line is complete,
+        // push it to visibleLines. Other lines can still be
+        // streaming and the user sees this one pop in as a whole
+        // block, no typing animation, no partial text.
+        if (e.done) {
+          commitLine(e.line_index);
+        }
       })
     );
 
@@ -209,10 +228,10 @@
         if (e.id !== id) return;
         if (currentFlowId !== null && e.flow_id !== currentFlowId) return;
         streaming = false;
-        // flow-done is the authoritative terminator: commit the
-        // buffered result even if a line's `done=true` chunk got
-        // lost en-route so the UI never stays stuck on old state.
-        tryCommit(true);
+        // Safety net: commit any line that never got a done chunk
+        // and prune stale cards whose line_index is no longer in
+        // the new layout.
+        forceCommitRemaining();
       })
     );
 

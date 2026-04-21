@@ -193,7 +193,7 @@ num_predict = 256
 # latency. Translation does not benefit from reasoning — keep this off.
 think = false
 stream = true
-system_prompt = "You are a careful translator. Preserve meaning, tone, and formatting. Output only the translation."
+system_prompt = "You are a translator. Translate the user's input faithfully into the requested target language. Preserve line breaks verbatim. Do NOT add commentary, explanations, romanizations, alternative translations, or surrounding quotes. Output ONLY the translation, nothing else."
 
 [providers.configs.deepl]
 api_key_env = "DEEPL_API_KEY"

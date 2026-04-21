@@ -466,7 +466,11 @@ pub fn text_is_already_target(text: &str, target_language: &str) -> bool {
 #[derive(Debug, Clone)]
 struct Paragraph {
     /// Source line indices (original OcrLine positions) covered by
-    /// this paragraph, sorted top → bottom.
+    /// this paragraph, sorted top → bottom. Kept for diagnostics /
+    /// future UI (render a caret when hovering a merged paragraph)
+    /// even though the translate loop currently only consumes
+    /// `bbox` and `text`.
+    #[allow(dead_code)]
     lines: Vec<usize>,
     /// Union bbox covering every source line, tight enough for the
     /// single card to sit over the whole paragraph.
@@ -476,14 +480,20 @@ struct Paragraph {
     text: String,
 }
 
-/// Group OCR lines into paragraphs. Two consecutive (sorted-by-y)
-/// lines join the same paragraph when:
-///   - Their vertical gap is less than 0.8 × the smaller line's
-///     height (i.e. one line break, not a paragraph break).
-///   - Their horizontal ranges overlap by at least 30% of the smaller
-///     range (left-aligned continuation).
+/// Group OCR lines into paragraphs. Conservative by design: false
+/// positives (merging unrelated lines) corrupt the translation much
+/// more than false negatives (translating one sentence per line) so
+/// we bias toward leaving lines alone. Two consecutive (sorted-by-y)
+/// lines join the same paragraph only when ALL of these hold:
+///   - Vertical gap ≤ 0.5 × the smaller line's height — a real line
+///     break inside a paragraph, not a paragraph / section break.
+///   - Horizontal ranges overlap by ≥ 60% of the smaller range —
+///     same left margin, same column.
 ///   - The upper line does NOT end with sentence-final punctuation
-///     that would mark a hard break.
+///     (`.!?。！？`) — that's a hard break.
+///   - Either line's text is long enough (≥ 6 chars) that a merge
+///     is actually worth the extra LLM context cost; short
+///     standalone phrases (menu items, UI labels) stay per-line.
 fn group_paragraphs(lines: &[OcrLine]) -> Vec<Paragraph> {
     if lines.is_empty() {
         return Vec::new();
@@ -498,7 +508,10 @@ fn group_paragraphs(lines: &[OcrLine]) -> Vec<Paragraph> {
     let ends_paragraph = |text: &str| -> bool {
         let trimmed = text.trim_end();
         let last = trimmed.chars().last();
-        matches!(last, Some('.') | Some('!') | Some('?') | Some('。') | Some('！') | Some('？'))
+        matches!(
+            last,
+            Some('.') | Some('!') | Some('?') | Some('。') | Some('！') | Some('？')
+        )
     };
 
     let mut groups: Vec<Vec<usize>> = Vec::new();
@@ -514,7 +527,7 @@ fn group_paragraphs(lines: &[OcrLine]) -> Vec<Paragraph> {
         let prev_bottom = prev[1] + prev[3];
         let gap = (curr[1] - prev_bottom).max(0.0);
         let min_h = prev[3].min(curr[3]).max(1.0);
-        let close_vertically = gap < 0.8 * min_h;
+        let close_vertically = gap <= 0.5 * min_h;
         let prev_left = prev[0];
         let prev_right = prev[0] + prev[2];
         let curr_left = curr[0];
@@ -522,9 +535,11 @@ fn group_paragraphs(lines: &[OcrLine]) -> Vec<Paragraph> {
         let overlap = (prev_right.min(curr_right) - prev_left.max(curr_left)).max(0.0);
         let min_w = (prev[2]).min(curr[2]).max(1.0);
         let overlap_ratio = overlap / min_w;
-        let horizontally_aligned = overlap_ratio > 0.3;
+        let horizontally_aligned = overlap_ratio >= 0.6;
         let prev_text_finished = ends_paragraph(&lines[prev_idx].text);
-        if close_vertically && horizontally_aligned && !prev_text_finished {
+        let both_substantial = lines[prev_idx].text.chars().count() >= 6
+            && lines[idx].text.chars().count() >= 6;
+        if close_vertically && horizontally_aligned && !prev_text_finished && both_substantial {
             current.push(idx);
         } else {
             groups.push(std::mem::take(&mut current));
@@ -868,6 +883,16 @@ async fn run_capture_loop(
         for t in tasks {
             let _ = t.await;
         }
+
+        // Tauri 2 ships chunk events (`lens-line-chunk`) and the
+        // terminator (`lens-flow-done`) over *different* named
+        // channels, and the runtime does not guarantee ordering
+        // across channels. Without a grace period the terminator
+        // can race ahead of the very last `done=true` chunk and
+        // the frontend commits a truncated translation. 80 ms is
+        // far longer than the inter-channel jitter we've observed
+        // (< 10 ms) and short enough to feel instant.
+        tokio::time::sleep(Duration::from_millis(80)).await;
 
         let _ = app.emit(
             "moonlens://lens-flow-done",
