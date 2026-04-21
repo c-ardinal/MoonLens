@@ -66,7 +66,7 @@ impl OllamaTranslator {
             think: get_bool("think", false),
             system_prompt: get_str(
                 "system_prompt",
-                "You are a professional translator. Render the user's text naturally and idiomatically in the target language — match the meaning, tone, and register a native reader would expect, not the word order of the source. Preserve line breaks exactly as given. Output ONLY the translated text. Never include commentary, explanations, romanizations, alternative translations, notes in parentheses, or surrounding quotes.",
+                "You are a professional translator. Render the user's text naturally and idiomatically in the target language — match the meaning, tone, and register a native reader would expect, not the word order of the source. If the input contains numbered segments like `[1]`, `[2]`, `[3]`, you MUST return exactly the same number of segments in the same order, each still prefixed with its bracketed number (e.g. `[1] translation1\\n[2] translation2`). Without those markers, preserve newlines exactly. Output ONLY the translated text. Never include commentary, explanations, romanizations, alternative translations, notes in parentheses, or surrounding quotes.",
             ),
             http: reqwest::Client::new(),
             chunk_sink: None,

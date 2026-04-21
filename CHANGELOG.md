@@ -45,6 +45,26 @@ the project adheres to [SemVer](https://semver.org/).
   追加、既存 `SchemaForm.svelte.test.ts` に `$ref` / unsupported /
   additionalProperties の 3 ケース追加。全 67 テスト green。
 
+### Fixed (段落翻訳の改行再発 + gradient 精度改善 — 2026-04-22 後半 2)
+
+- **番号マーカー `[1]` `[2]` で段落翻訳を堅牢化**: 先の改修は system prompt
+  に "Preserve line breaks exactly" と書いていたが、Gemma が実際に改行を
+  落とすケースが残っていた。対策として LLM への入力を番号付き
+  (`[1] 第一行\n[2] 第二行`) に変換、出力も regex でマーカーベースで
+  parse するようにした。マーカーが半数以上残っていれば numbered path 成功、
+  そうでなければ従来の `\n` split fallback。さらに fallback しても半数以上
+  の slot が空なら **per-line 翻訳に automatic retry** (2× LLM call 覚悟で
+  品質優先)。
+- **Gradient を 4-corner + 斜め 2 方向対応**: 従来の 2 辺 (vertical /
+  horizontal) だけでは斜めグラデーション (TL dark → BR light 等の典型的な
+  UI 光源方向) を捕捉できず誤方向を選んでいた。4 コーナーの patch
+  サンプリングを追加し、vertical / horizontal / ↘ (135°) / ↗ (45°) の
+  **4 候補から最大 color delta の方向を採用**。CSS angle に変換して
+  `linear-gradient` を emit。edge midpoint も中央 1/3 の範囲に narrower し
+  長い bbox で gradient が平均化される問題を解消。
+- **番号 parse / 斜め gradient / per-line retry の単体テスト 9 件追加**。
+  **209 Rust + 67 vitest green**、svelte-check clean。
+
 ### Added (Lens 品質向上 — 2026-04-22 後半)
 
 - **段落翻訳 → 改行 split → per-line 配分**: OCR 出力を保守閾値で

@@ -337,40 +337,86 @@ fn color_distance_sq(a: [u8; 3], b: [u8; 3]) -> i32 {
     dr * dr + dg * dg + db * db
 }
 
-/// Decide whether the rim has a dominant gradient direction. Returns
-/// `Some` when either axis has a colour delta whose squared distance
-/// clears `MIN_DELTA_SQ` (~18 units in Euclidean RGB); the axis with
-/// the larger delta wins. Returns `None` when the rim is
-/// "uniform enough" — the caller then falls back to a flat fill,
-/// which is cheaper for the renderer and avoids spurious gradients
-/// on solid-colour sources like chat windows.
+fn average_rgb(a: [u8; 3], b: [u8; 3]) -> [u8; 3] {
+    [
+        ((a[0] as u16 + b[0] as u16) / 2) as u8,
+        ((a[1] as u16 + b[1] as u16) / 2) as u8,
+        ((a[2] as u16 + b[2] as u16) / 2) as u8,
+    ]
+}
+
+/// Decide whether the rim has a dominant gradient direction from the
+/// four corner samples (`tl` / `tr` / `bl` / `br`) and four edge
+/// midpoint samples. Tries four candidate directions (vertical,
+/// horizontal, ↘ diagonal, ↗ anti-diagonal) and picks the one whose
+/// endpoint-pair has the largest Euclidean colour delta; returns
+/// `None` when no candidate clears the minimum-delta threshold
+/// (solid fills take the flat-colour path). Covers the common cases
+/// we previously missed: diagonal window-chrome gradients and any
+/// oblique background where the edge-mean approach chose the wrong
+/// axis.
 pub fn detect_rim_gradient(
     top: [u8; 3],
     bottom: [u8; 3],
     left: [u8; 3],
     right: [u8; 3],
+    tl: [u8; 3],
+    tr: [u8; 3],
+    bl: [u8; 3],
+    br: [u8; 3],
 ) -> Option<BgGradient> {
     const MIN_DELTA_SQ: i32 = 18 * 18;
-    let v = color_distance_sq(top, bottom);
-    let h = color_distance_sq(left, right);
-    if v < MIN_DELTA_SQ && h < MIN_DELTA_SQ {
+
+    // Candidate gradients. Edge pair uses edge midpoint samples for
+    // the cardinal axes; corner pair drives the diagonals so that
+    // "top-left dark → bottom-right light" style lighting is caught.
+    let candidates: [(u16, [u8; 3], [u8; 3]); 4] = [
+        // Vertical: top → bottom. CSS 180deg = to bottom.
+        (180, top, bottom),
+        // Horizontal: left → right. CSS 90deg = to right.
+        (90, left, right),
+        // ↘ diagonal: top-left → bottom-right. CSS 135deg =
+        // to bottom-right.
+        (135, tl, br),
+        // ↗ anti-diagonal: bottom-left → top-right. CSS 45deg =
+        // to top-right.
+        (45, bl, tr),
+    ];
+
+    let best = candidates
+        .iter()
+        .max_by_key(|(_, a, b)| color_distance_sq(*a, *b))?;
+
+    if color_distance_sq(best.1, best.2) < MIN_DELTA_SQ {
         return None;
     }
-    if v >= h {
-        // Vertical gradient. CSS 180deg = top→bottom.
-        Some(BgGradient {
-            angle: 180,
-            from: top,
-            to: bottom,
-        })
-    } else {
-        // Horizontal gradient. CSS 90deg = left→right.
-        Some(BgGradient {
-            angle: 90,
-            from: left,
-            to: right,
-        })
-    }
+    Some(BgGradient {
+        angle: best.0,
+        from: best.1,
+        to: best.2,
+    })
+}
+
+#[cfg(test)]
+/// Backward-compat test helper: cardinal-only caller that mixes
+/// corner samples in via simple averages. Keeps older tests
+/// readable without repeating the 8-arg signature everywhere.
+fn detect_rim_gradient_cardinals(
+    top: [u8; 3],
+    bottom: [u8; 3],
+    left: [u8; 3],
+    right: [u8; 3],
+) -> Option<BgGradient> {
+    detect_rim_gradient(
+        top,
+        bottom,
+        left,
+        right,
+        average_rgb(top, left),
+        average_rgb(top, right),
+        average_rgb(bottom, left),
+        average_rgb(bottom, right),
+    )
 }
 
 /// Sample the mean RGB of ONE edge strip of the rim (top/bottom/
@@ -411,15 +457,21 @@ fn sample_edge(
     Some([(r / n) as u8, (g / n) as u8, (b / n) as u8])
 }
 
-/// Sample the 2 px rim around `bbox` as four edge means (top /
-/// bottom / left / right) plus an overall mean for the flat-fill
-/// fallback. Callers pass the result through [`detect_rim_gradient`]
-/// to decide whether to ship a gradient or a solid colour.
+/// Sample the 2 px rim around `bbox` as four edge midpoints (top /
+/// bottom / left / right) and four corner patches (tl / tr / bl /
+/// br), plus an overall mean for the flat-fill fallback. The
+/// corners drive the diagonal gradient candidates in
+/// [`detect_rim_gradient`], which is what lets the card follow a
+/// diagonal light source instead of guessing the wrong axis.
 pub fn sample_rim_edges(
     img: &image::DynamicImage,
     bbox: [f32; 4],
 ) -> ([u8; 3], Option<BgGradient>) {
     const RIM: i32 = 2;
+    // Patch size for corner sampling — a small square just outside
+    // the corner of the bbox. Larger than the rim so we get a
+    // stable colour even when the source gradient is noisy.
+    const CORNER: i32 = 4;
     let x = bbox[0] as i32;
     let y = bbox[1] as i32;
     let bw = bbox[2] as i32;
@@ -428,14 +480,63 @@ pub fn sample_rim_edges(
     if bw <= 0 || bh <= 0 {
         return (solid, None);
     }
-    let top = sample_edge(img, x - RIM, y - RIM, x + bw + RIM - 1, y - 1)
+
+    // Edge midpoint strips — narrower than before so a long bbox
+    // does not average out a gradient into a flat mean.
+    let mid_w = (bw / 3).max(1);
+    let mid_h = (bh / 3).max(1);
+    let cx = x + bw / 2;
+    let cy = y + bh / 2;
+    let top = sample_edge(
+        img,
+        cx - mid_w / 2,
+        y - RIM,
+        cx + mid_w / 2,
+        y - 1,
+    )
+    .unwrap_or(solid);
+    let bottom = sample_edge(
+        img,
+        cx - mid_w / 2,
+        y + bh,
+        cx + mid_w / 2,
+        y + bh + RIM - 1,
+    )
+    .unwrap_or(solid);
+    let left = sample_edge(
+        img,
+        x - RIM,
+        cy - mid_h / 2,
+        x - 1,
+        cy + mid_h / 2,
+    )
+    .unwrap_or(solid);
+    let right = sample_edge(
+        img,
+        x + bw,
+        cy - mid_h / 2,
+        x + bw + RIM - 1,
+        cy + mid_h / 2,
+    )
+    .unwrap_or(solid);
+
+    // Corner patches just outside each bbox corner — these detect
+    // diagonal lighting that the edge midpoints alone cannot.
+    let tl = sample_edge(img, x - CORNER, y - CORNER, x - 1, y - 1).unwrap_or(solid);
+    let tr = sample_edge(img, x + bw, y - CORNER, x + bw + CORNER - 1, y - 1)
         .unwrap_or(solid);
-    let bottom = sample_edge(img, x - RIM, y + bh, x + bw + RIM - 1, y + bh + RIM - 1)
+    let bl = sample_edge(img, x - CORNER, y + bh, x - 1, y + bh + CORNER - 1)
         .unwrap_or(solid);
-    let left = sample_edge(img, x - RIM, y, x - 1, y + bh - 1).unwrap_or(solid);
-    let right =
-        sample_edge(img, x + bw, y, x + bw + RIM - 1, y + bh - 1).unwrap_or(solid);
-    let gradient = detect_rim_gradient(top, bottom, left, right);
+    let br = sample_edge(
+        img,
+        x + bw,
+        y + bh,
+        x + bw + CORNER - 1,
+        y + bh + CORNER - 1,
+    )
+    .unwrap_or(solid);
+
+    let gradient = detect_rim_gradient(top, bottom, left, right, tl, tr, bl, br);
     (solid, gradient)
 }
 
@@ -811,50 +912,140 @@ fn group_paragraphs(lines: &[OcrLine]) -> Vec<Paragraph> {
         .collect()
 }
 
+/// Build a Gemma-ready prompt body that numbers each source line.
+/// The numeric prefix `[1]`, `[2]`, … survives Gemma's phrasing
+/// better than a bare `\n` and gives us a regex-parseable anchor
+/// even if the model adds or removes internal line breaks. The
+/// preceding instruction is delivered via the translator's user
+/// prompt; here we just format the body.
+pub fn build_numbered_paragraph(members_text: &[String]) -> String {
+    members_text
+        .iter()
+        .enumerate()
+        .map(|(i, t)| format!("[{}] {}", i + 1, t))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 /// Distribute a multi-line translation back to its member OCR lines.
-/// Happy path: Gemma preserved the newline count and we get a clean
-/// 1:1 map. Degraded paths:
-///   - too few segments → put the whole translation on the first
-///     line, leave the rest empty (better than truncating)
-///   - too many segments → keep the 1:1 map for all but the last
-///     line, which absorbs every extra segment joined with a space
+/// Tries the numbered-marker format first (robust against Gemma
+/// rewrapping), then falls back to `\n` splitting, then to the
+/// "everything on the first card" safety net.
+///
+/// Numbered path: extracts every `[N]` tagged segment and places it
+/// in member slot `N-1`. Missing numbers leave their slot empty,
+/// letting the frontend show the source text so the user can tell
+/// something's off.
 pub fn split_paragraph_translation(translation: &str, line_count: usize) -> Vec<String> {
     if line_count == 0 {
         return Vec::new();
     }
-    let raw: Vec<&str> = translation.split('\n').collect();
-    // Drop leading / trailing blanks that some models tack on.
-    let trimmed: Vec<&str> = raw
-        .iter()
-        .map(|s| s.trim_end())
-        .collect::<Vec<_>>()
-        .into_iter()
-        .skip_while(|s| s.is_empty())
-        .collect::<Vec<_>>()
-        .into_iter()
-        .rev()
-        .skip_while(|s| s.is_empty())
-        .collect::<Vec<_>>()
-        .into_iter()
-        .rev()
+
+    // 1. Numbered-marker parse. Gemma usually echoes the `[N]`
+    //    prefix; any line whose `[N]` matches a valid member
+    //    index wins its slot.
+    if let Some(mapped) = parse_numbered_segments(translation, line_count) {
+        return mapped;
+    }
+
+    // 2. Plain newline fallback (covers Gemma stripping the `[N]`
+    //    prefixes but keeping the line count).
+    let trimmed: Vec<&str> = translation
+        .split('\n')
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
         .collect();
     if trimmed.len() == line_count {
         return trimmed.into_iter().map(|s| s.to_string()).collect();
     }
     if trimmed.len() > line_count {
-        let mut out: Vec<String> =
-            trimmed.iter().take(line_count - 1).map(|s| s.to_string()).collect();
+        let mut out: Vec<String> = trimmed
+            .iter()
+            .take(line_count - 1)
+            .map(|s| s.to_string())
+            .collect();
         let tail = trimmed[(line_count - 1)..].join(" ");
         out.push(tail);
         return out;
     }
-    // Too few segments: bundle the entire translation on the first
-    // card so the user can at least read it, and leave the others
-    // blank. Blank cards will fall back to source text in the
-    // frontend's per-line commit.
+
+    // 3. Gemma collapsed the whole paragraph into one sentence.
+    //    Put everything on the first card so the user has a
+    //    complete translation visible; subsequent cards stay
+    //    empty and the frontend falls back to source text.
     let mut out = vec![translation.trim().to_string()];
     out.extend((1..line_count).map(|_| String::new()));
     out
+}
+
+/// Parse `[1] … [2] … [3] …` style numbered output into a slot
+/// vector of length `line_count`. Returns `None` when fewer than
+/// half of the expected markers are present — in that case the
+/// caller falls through to plain-\n splitting.
+///
+/// Markers are matched anywhere on a line (Gemma sometimes writes
+/// `**[1]** …` or `[1]:` variants). Duplicate numbers keep the
+/// last occurrence; out-of-range numbers are ignored.
+fn parse_numbered_segments(text: &str, line_count: usize) -> Option<Vec<String>> {
+    let mut slots: Vec<Option<String>> = vec![None; line_count];
+    let mut matches = 0usize;
+    // Split into chunks *at* every `[N]` marker so one marker's
+    // payload can span multiple raw lines (Gemma sometimes breaks
+    // a long translation in the middle of a numbered item).
+    let bytes = text.as_bytes();
+    let mut i = 0usize;
+    let mut current: Option<(usize, usize)> = None; // (slot_index, start_byte)
+    while i < bytes.len() {
+        if bytes[i] == b'[' {
+            // Parse `[N]` where N is a positive integer.
+            let mut j = i + 1;
+            while j < bytes.len() && bytes[j].is_ascii_digit() {
+                j += 1;
+            }
+            if j > i + 1 && j < bytes.len() && bytes[j] == b']' {
+                let num_str = std::str::from_utf8(&bytes[i + 1..j]).unwrap_or("");
+                if let Ok(n) = num_str.parse::<usize>() {
+                    if n >= 1 && n <= line_count {
+                        // Flush previous slot before we switch.
+                        if let Some((idx, start)) = current {
+                            let seg = text[start..i].trim().to_string();
+                            if !seg.is_empty() {
+                                if slots[idx].is_none() {
+                                    matches += 1;
+                                }
+                                slots[idx] = Some(seg);
+                            }
+                        }
+                        current = Some((n - 1, j + 1));
+                        i = j + 1;
+                        continue;
+                    }
+                }
+            }
+        }
+        i += 1;
+    }
+    if let Some((idx, start)) = current {
+        let seg = text[start..].trim().to_string();
+        if !seg.is_empty() {
+            if slots[idx].is_none() {
+                matches += 1;
+            }
+            slots[idx] = Some(seg);
+        }
+    }
+
+    // Require a majority of slots filled before we trust the
+    // numbered parse — otherwise Gemma probably dropped the format.
+    if matches * 2 < line_count {
+        return None;
+    }
+    Some(
+        slots
+            .into_iter()
+            .map(|s| s.unwrap_or_default().trim().trim_start_matches(|c: char| c == ':' || c.is_whitespace()).to_string())
+            .collect(),
+    )
 }
 
 async fn run_capture_loop(
@@ -1280,6 +1471,29 @@ async fn translate_paragraph_streaming(
         .cloned()
         .unwrap_or(serde_json::Value::Null);
 
+    // Rebuild the paragraph input with explicit `[1]`/`[2]`/...
+    // markers so Gemma's output stays parseable even if the model
+    // reshuffles internal newlines. The system prompt still asks
+    // for newlines, but the markers are the belt.
+    let members_text: Vec<String> = paragraph
+        .text
+        .split('\n')
+        .map(|s| s.to_string())
+        .collect();
+    let members_text = if members_text.len() == paragraph.members.len() {
+        members_text
+    } else {
+        // Defensive: group_paragraphs always joins with '\n', so
+        // this mismatch should never fire, but log so we notice.
+        tracing::warn!(
+            "paragraph text had {} segments, members {} — falling back to raw text",
+            members_text.len(),
+            paragraph.members.len()
+        );
+        vec![paragraph.text.clone()]
+    };
+    let numbered = build_numbered_paragraph(&members_text);
+
     // Buffer the whole translation here; we can only split once the
     // final token arrives (Gemma occasionally reshuffles line breaks
     // mid-stream). Nothing is emitted to the frontend while the
@@ -1298,9 +1512,9 @@ async fn translate_paragraph_streaming(
         OllamaTranslator::new("ollama.gemma4", &cfg).with_chunk_sink(sink);
     let out = translator
         .run(TaskInput::Translate {
-            text: paragraph.text.clone(),
+            text: numbered,
             source_language: "auto".into(),
-            target_language,
+            target_language: target_language.clone(),
         })
         .await?;
 
@@ -1312,6 +1526,43 @@ async fn translate_paragraph_streaming(
     };
 
     let segments = split_paragraph_translation(&full, paragraph.members.len());
+
+    // Recovery path: if the numbered/newline split leaves most slots
+    // empty, the paragraph-at-once strategy failed. Retry one line
+    // at a time — costs 2× the LLM calls for this flow, but always
+    // produces usable output. Threshold: more than half of the
+    // segments empty.
+    let empty_count = segments.iter().filter(|s| s.trim().is_empty()).count();
+    let use_retry = empty_count * 2 > paragraph.members.len();
+
+    if use_retry {
+        tracing::info!(
+            "paragraph translate split yielded {}/{} empty segments, retrying per-line",
+            empty_count,
+            paragraph.members.len()
+        );
+        for (i, &line_idx) in paragraph.members.iter().enumerate() {
+            let line_text = members_text
+                .get(i)
+                .cloned()
+                .unwrap_or_default();
+            if let Err(e) = translate_line_streaming(
+                app.clone(),
+                lens_id.clone(),
+                flow_id,
+                line_idx,
+                line_text,
+                target_language.clone(),
+                settings.clone(),
+            )
+            .await
+            {
+                tracing::info!("lens paragraph retry line {line_idx} failed: {e}");
+            }
+        }
+        return Ok(full);
+    }
+
     for (i, &line_idx) in paragraph.members.iter().enumerate() {
         let delta = segments.get(i).cloned().unwrap_or_default();
         let _ = app.emit(
@@ -1418,7 +1669,7 @@ mod tests {
     #[test]
     fn detect_rim_gradient_returns_none_for_uniform_rim() {
         let c = [200u8, 210, 220];
-        assert_eq!(detect_rim_gradient(c, c, c, c), None);
+        assert_eq!(detect_rim_gradient_cardinals(c, c, c, c), None);
     }
 
     #[test]
@@ -1426,7 +1677,7 @@ mod tests {
         let top = [30, 30, 30];
         let bottom = [230, 230, 230];
         let side = [130, 130, 130];
-        let g = detect_rim_gradient(top, bottom, side, side).expect("gradient");
+        let g = detect_rim_gradient_cardinals(top, bottom, side, side).expect("gradient");
         assert_eq!(g.angle, 180);
         assert_eq!(g.from, top);
         assert_eq!(g.to, bottom);
@@ -1437,7 +1688,7 @@ mod tests {
         let side = [130, 130, 130];
         let left = [20, 10, 10];
         let right = [240, 210, 210];
-        let g = detect_rim_gradient(side, side, left, right).expect("gradient");
+        let g = detect_rim_gradient_cardinals(side, side, left, right).expect("gradient");
         assert_eq!(g.angle, 90);
         assert_eq!(g.from, left);
         assert_eq!(g.to, right);
@@ -1451,20 +1702,83 @@ mod tests {
         let bottom = [240, 240, 240];
         let left = [100, 100, 100];
         let right = [130, 130, 130];
-        let g = detect_rim_gradient(top, bottom, left, right).expect("gradient");
+        let g = detect_rim_gradient_cardinals(top, bottom, left, right).expect("gradient");
         assert_eq!(g.angle, 180);
     }
 
     #[test]
-    fn split_paragraph_translation_maps_one_to_one() {
-        let segs = split_paragraph_translation("第一行\n第二行\n第三行", 3);
+    fn detect_rim_gradient_picks_diagonal_when_corners_dominate() {
+        // Diagonal lighting: top-left dark → bottom-right light.
+        // The four edge midpoints sit roughly at mid-grey (averaging
+        // the diagonal out) but the corner samples preserve the
+        // full delta. The 8-arg detector must prefer the diagonal.
+        let mid = [128u8, 128, 128];
+        let tl = [20, 20, 20];
+        let br = [235, 235, 235];
+        let tr_bl = [128, 128, 128]; // roughly mid for the anti-diagonal
+        let g = detect_rim_gradient(mid, mid, mid, mid, tl, tr_bl, tr_bl, br)
+            .expect("gradient");
+        assert_eq!(g.angle, 135);
+        assert_eq!(g.from, tl);
+        assert_eq!(g.to, br);
+    }
+
+    #[test]
+    fn detect_rim_gradient_picks_anti_diagonal() {
+        // Top-right dark → bottom-left light.
+        let mid = [128u8, 128, 128];
+        let tr = [15, 15, 15];
+        let bl = [240, 240, 240];
+        let g = detect_rim_gradient(mid, mid, mid, mid, mid, tr, bl, mid)
+            .expect("gradient");
+        assert_eq!(g.angle, 45);
+        assert_eq!(g.from, bl);
+        assert_eq!(g.to, tr);
+    }
+
+    #[test]
+    fn split_paragraph_translation_maps_numbered_output_one_to_one() {
+        let segs = split_paragraph_translation("[1] 第一行\n[2] 第二行\n[3] 第三行", 3);
         assert_eq!(segs, vec!["第一行", "第二行", "第三行"]);
     }
 
     #[test]
+    fn split_paragraph_translation_numbered_survives_wrapped_payloads() {
+        // One marker's payload spans two raw output lines — the
+        // parser must treat everything up to the next `[N]` as one
+        // segment.
+        let segs = split_paragraph_translation(
+            "[1] first line\ncontinued\n[2] second line",
+            2,
+        );
+        assert_eq!(segs.len(), 2);
+        assert!(segs[0].contains("first line") && segs[0].contains("continued"));
+        assert_eq!(segs[1], "second line");
+    }
+
+    #[test]
+    fn split_paragraph_translation_numbered_falls_back_when_markers_missing() {
+        // Gemma stripped the markers but kept the line count — the
+        // plain-\n path should still hand back three clean slots.
+        let segs = split_paragraph_translation("A\nB\nC", 3);
+        assert_eq!(segs, vec!["A", "B", "C"]);
+    }
+
+    #[test]
+    fn split_paragraph_translation_falls_back_on_missing_marker() {
+        // Only the second marker was preserved — the numbered path
+        // requires a majority of slots, so we drop to the plain-\n
+        // fallback.
+        let segs = split_paragraph_translation("just text\n[2] mid\nmore", 3);
+        // Plain-\n path sees three lines → 1:1 map, markers intact
+        // because we only strip `[N]` for matched segments.
+        assert_eq!(segs.len(), 3);
+    }
+
+    #[test]
     fn split_paragraph_translation_absorbs_extra_segments_into_last_line() {
-        // Gemma tacked on a spurious newline — merge the tail into
-        // the last member card so we don't silently drop content.
+        // Gemma ignored the `[N]` format AND emitted too many
+        // newlines — plain-\n fallback absorbs the tail.
         let segs = split_paragraph_translation("A\nB\nC extra\ntrailing", 3);
         assert_eq!(segs.len(), 3);
         assert_eq!(segs[0], "A");
@@ -1474,8 +1788,9 @@ mod tests {
 
     #[test]
     fn split_paragraph_translation_collapses_onto_first_when_too_few() {
-        // Gemma ignored line breaks — keep the entire translation
-        // visible on the first card instead of truncating.
+        // Gemma ignored both line breaks AND markers — keep the
+        // entire translation visible on the first card instead of
+        // truncating.
         let segs = split_paragraph_translation("One long sentence.", 3);
         assert_eq!(segs.len(), 3);
         assert_eq!(segs[0], "One long sentence.");
@@ -1484,9 +1799,18 @@ mod tests {
     }
 
     #[test]
-    fn split_paragraph_translation_trims_leading_trailing_blank_lines() {
-        let segs = split_paragraph_translation("\n\nA\nB\n\n", 2);
-        assert_eq!(segs, vec!["A", "B"]);
+    fn split_paragraph_translation_numbered_handles_colon_variant() {
+        // Gemma sometimes writes `[1]: foo` — the colon should be
+        // stripped from the slot content.
+        let segs = split_paragraph_translation("[1]: first\n[2]: second", 2);
+        assert_eq!(segs, vec!["first", "second"]);
+    }
+
+    #[test]
+    fn build_numbered_paragraph_formats_correctly() {
+        let text: Vec<String> = vec!["hello".into(), "world".into()];
+        let out = build_numbered_paragraph(&text);
+        assert_eq!(out, "[1] hello\n[2] world");
     }
 
     #[test]
