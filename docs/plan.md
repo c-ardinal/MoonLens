@@ -35,7 +35,8 @@
 - [x] **Live 統合テスト** — `cargo test --test lens_pipeline_live -- --ignored` で tauri 起動不要の OCR+翻訳回帰チェック
 - [x] **Dev build ML crate 最適化** — `[profile.dev.package.*]` opt-level=3 で tauri:dev でも OCR が release 速度
 - [x] **S1 UI shell 実装** (2026-04-21 autonomous) — WindowChrome + AppSidebar + +layout 統合、SchemaForm 全面改修（$ref/additionalProperties/hotkey widget/警告表示）、設定画面自動保存 + SaveIndicator、HotkeyInput recorder widget、ホーム画面リデザイン。全 67 vitest green、svelte-check 0 error、vite build 成功、vite dev 8 route 全 200。
-- [ ] README.md / docs/USAGE.md / docs/DEV.md / docs/KNOWN_ISSUES.md / docs/TECH_CHANGES.md / CONTRIBUTING.md / .github/ISSUE_TEMPLATE/ — **S0.5 繰延続行**
+- [x] **README 整備 + docs/USAGE.md / docs/DEV.md / docs/KNOWN_ISSUES.md** (2026-04-21 autonomous) — S0.5 繰延のうち 4 ドキュメント整備済
+- [ ] docs/TECH_CHANGES.md / CONTRIBUTING.md / .github/ISSUE_TEMPLATE/ — 残存 S0.5 繰延
 - [ ] `CHANGELOG.md` 更新（`v0.1.0-beta.1` 〜 `v0.1.0` の予定 entry） — Unreleased セクション更新済
 - [ ] MVP 成果を分割 commit / push / PR — ユーザ承認時に実施
 

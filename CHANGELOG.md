@@ -45,6 +45,21 @@ the project adheres to [SemVer](https://semver.org/).
   追加、既存 `SchemaForm.svelte.test.ts` に `$ref` / unsupported /
   additionalProperties の 3 ケース追加。全 67 テスト green。
 
+### Docs
+
+- `README.md` を MVP + S1 完了後の姿に reshape — プロジェクト
+  ステータス表、platform matrix、docs 一覧テーブル、S2 以降の
+  差替計画を明示。
+- `docs/USAGE.md` 新規 — Ollama セットアップ、初回キャプチャ、
+  Lens モード、ライブ字幕、キーバインド一覧、設定セクション
+  ガイド、トラブルシュート、プライバシー解説。
+- `docs/DEV.md` 新規 — 必須ツール、主要コマンド、ソースツリー
+  注釈、アーキテクチャ概要、Lens streaming データフロー、
+  テスト戦略、release ladder、プラグイン開発、デバッグ primitives。
+- `docs/KNOWN_ISSUES.md` 新規 — v0.1 の既知制約をプラットフォーム
+  / Lens / 設定 / プライバシー / ホットキー / ストレージ / テスト
+  / ドキュメントでグループ化、各項目に解消予定タグを付与。
+
 ## v0.1.0-rc.1 — first public release candidate
 
 First release-candidate build. All 0.1.0 ship-criteria features are
