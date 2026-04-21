@@ -262,16 +262,28 @@ export interface LensFlowStart {
  * once per flow, immediately after OCR completes and before any
  * translation arrives. The UI renders a positioned card per bbox so
  * tokens can stream into the right place. */
+/** Optional linear gradient detected on the 2px rim of the bbox.
+ * When present, the lens UI renders
+ * `background: linear-gradient(<angle>deg, rgb(from), rgb(to))` so
+ * the card blends into gradient / photo source instead of posting a
+ * flat solid block. `bg_color` is still the safe fallback. */
+export interface LensBgGradient {
+  /** CSS `linear-gradient` angle in degrees (0 = to top, clockwise). */
+  angle: number;
+  from: [number, number, number];
+  to: [number, number, number];
+}
+
 export interface LensOcrLine {
   line_index: number;
   text: string;
   /** [x, y, w, h] in image pixel coordinates. */
   bbox: [number, number, number, number];
-  /** Mean RGB of the 2px rim around the bbox (the source area's
-   * background). Used to colour the translation card so it looks like
-   * an in-place replacement, not a floating overlay. */
+  /** Mean RGB of the 2px rim (solid-fill fallback). */
   bg_color: [number, number, number];
-  /** Contrast text colour chosen from bg luminance. */
+  /** Present when the rim has a dominant gradient axis. */
+  bg_gradient?: LensBgGradient | null;
+  /** Source-text colour sampled from inside the bbox. */
   fg_color: [number, number, number];
 }
 

@@ -27,6 +27,11 @@
     text: string;
     bbox: [number, number, number, number];
     bg_color: [number, number, number];
+    bg_gradient: {
+      angle: number;
+      from: [number, number, number];
+      to: [number, number, number];
+    } | null;
     fg_color: [number, number, number];
     translation: string;
     done: boolean;
@@ -98,14 +103,27 @@
   function cardStyle(line: LineCard): string {
     const [x, y, w, h] = line.bbox;
     if (imageW === 0 || imageH === 0) return 'display:none';
-    const [br, bg, bb] = line.bg_color;
+    const [br, bgc, bb] = line.bg_color;
     const [fr, fg, fb] = line.fg_color;
+    // Prefer a CSS linear-gradient when the rim sampler detected
+    // one — much closer to "the card disappears into the source"
+    // than a flat fill on any non-solid surface. Fall back to
+    // `background-color` otherwise.
+    let background: string;
+    if (line.bg_gradient) {
+      const g = line.bg_gradient;
+      const [ar, ag, ab] = g.from;
+      const [zr, zg, zb] = g.to;
+      background = `background:linear-gradient(${g.angle}deg, rgb(${ar},${ag},${ab}), rgb(${zr},${zg},${zb}));`;
+    } else {
+      background = `background-color:rgb(${br},${bgc},${bb});`;
+    }
     return (
       `left:${(x / imageW) * 100}%;` +
       `top:${(y / imageH) * 100}%;` +
       `width:${(w / imageW) * 100}%;` +
       `height:${(h / imageH) * 100}%;` +
-      `background-color:rgb(${br},${bg},${bb});` +
+      background +
       `color:rgb(${fr},${fg},${fb});`
     );
   }
@@ -167,6 +185,7 @@
           text: l.text,
           bbox: l.bbox,
           bg_color: l.bg_color,
+          bg_gradient: l.bg_gradient ?? null,
           fg_color: l.fg_color,
           translation: '',
           done: false

@@ -267,15 +267,21 @@ pub struct LensOcrLine {
     pub text: String,
     /// `[x, y, w, h]` in image pixel coordinates.
     pub bbox: [f32; 4],
-    /// Mean RGB sampled from a 2 px rim around the bbox — i.e. the
-    /// background colour of the source area the card will sit over.
-    /// Rendering the card with this background makes the translation
-    /// look like an in-place replacement rather than a dark overlay.
+    /// Mean RGB sampled from a 2 px rim around the bbox. Used as a
+    /// flat fill when `bg_gradient` is `None`, and as the fallback
+    /// any time the gradient sampler fails.
     pub bg_color: [u8; 3],
-    /// Contrast text colour chosen from bg luminance: white for dark
-    /// backgrounds, black for light ones. A full WCAG contrast
-    /// optimiser lives in plan.md S3; for MVP the luma flip is
-    /// enough for legibility on real-world screens.
+    /// Optional linear gradient spec. Emitted when the rim has a
+    /// noticeable colour slope along one axis (common for UI cards
+    /// with subtle gradients, content over photos, etc.). The lens
+    /// UI renders it as `linear-gradient` so the card blends into
+    /// the source instead of posting a flat block of solid colour.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bg_gradient: Option<BgGradient>,
+    /// Text colour sampled from the dominant non-bg pixels inside
+    /// the bbox (source text's real colour). Falls back to a WCAG
+    /// contrast black/white pick when the bbox has too few "text"
+    /// pixels to sample reliably.
     pub fg_color: [u8; 3],
 }
 
@@ -309,6 +315,128 @@ pub struct LensFlowDone {
 pub struct LensMask {
     pub id: String,
     pub masked: bool,
+}
+
+/// Gradient specification emitted to the lens UI when the rim of
+/// `bbox` has a noticeable colour slope along one axis. The UI
+/// renders `background: linear-gradient(<angle>deg, from, to)`.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct BgGradient {
+    /// CSS `linear-gradient` angle, where 0° is "to top" and
+    /// rotates clockwise (CSS convention). 180° = vertical
+    /// top-to-bottom, 90° = horizontal left-to-right.
+    pub angle: u16,
+    pub from: [u8; 3],
+    pub to: [u8; 3],
+}
+
+fn color_distance_sq(a: [u8; 3], b: [u8; 3]) -> i32 {
+    let dr = a[0] as i32 - b[0] as i32;
+    let dg = a[1] as i32 - b[1] as i32;
+    let db = a[2] as i32 - b[2] as i32;
+    dr * dr + dg * dg + db * db
+}
+
+/// Decide whether the rim has a dominant gradient direction. Returns
+/// `Some` when either axis has a colour delta whose squared distance
+/// clears `MIN_DELTA_SQ` (~18 units in Euclidean RGB); the axis with
+/// the larger delta wins. Returns `None` when the rim is
+/// "uniform enough" — the caller then falls back to a flat fill,
+/// which is cheaper for the renderer and avoids spurious gradients
+/// on solid-colour sources like chat windows.
+pub fn detect_rim_gradient(
+    top: [u8; 3],
+    bottom: [u8; 3],
+    left: [u8; 3],
+    right: [u8; 3],
+) -> Option<BgGradient> {
+    const MIN_DELTA_SQ: i32 = 18 * 18;
+    let v = color_distance_sq(top, bottom);
+    let h = color_distance_sq(left, right);
+    if v < MIN_DELTA_SQ && h < MIN_DELTA_SQ {
+        return None;
+    }
+    if v >= h {
+        // Vertical gradient. CSS 180deg = top→bottom.
+        Some(BgGradient {
+            angle: 180,
+            from: top,
+            to: bottom,
+        })
+    } else {
+        // Horizontal gradient. CSS 90deg = left→right.
+        Some(BgGradient {
+            angle: 90,
+            from: left,
+            to: right,
+        })
+    }
+}
+
+/// Sample the mean RGB of ONE edge strip of the rim (top/bottom/
+/// left/right of the 2 px border around `bbox`). Small and cheap —
+/// each call iterates ≤ 2 × max(bbox_w, bbox_h) pixels.
+fn sample_edge(
+    img: &image::DynamicImage,
+    x0: i32,
+    y0: i32,
+    x1: i32,
+    y1: i32,
+) -> Option<[u8; 3]> {
+    let rgb = img.to_rgb8();
+    let (w, h) = (rgb.width() as i32, rgb.height() as i32);
+    let x0 = x0.max(0);
+    let y0 = y0.max(0);
+    let x1 = x1.min(w - 1);
+    let y1 = y1.min(h - 1);
+    if x1 < x0 || y1 < y0 {
+        return None;
+    }
+    let mut r: u64 = 0;
+    let mut g: u64 = 0;
+    let mut b: u64 = 0;
+    let mut n: u64 = 0;
+    for py in y0..=y1 {
+        for px in x0..=x1 {
+            let p = rgb.get_pixel(px as u32, py as u32).0;
+            r += p[0] as u64;
+            g += p[1] as u64;
+            b += p[2] as u64;
+            n += 1;
+        }
+    }
+    if n == 0 {
+        return None;
+    }
+    Some([(r / n) as u8, (g / n) as u8, (b / n) as u8])
+}
+
+/// Sample the 2 px rim around `bbox` as four edge means (top /
+/// bottom / left / right) plus an overall mean for the flat-fill
+/// fallback. Callers pass the result through [`detect_rim_gradient`]
+/// to decide whether to ship a gradient or a solid colour.
+pub fn sample_rim_edges(
+    img: &image::DynamicImage,
+    bbox: [f32; 4],
+) -> ([u8; 3], Option<BgGradient>) {
+    const RIM: i32 = 2;
+    let x = bbox[0] as i32;
+    let y = bbox[1] as i32;
+    let bw = bbox[2] as i32;
+    let bh = bbox[3] as i32;
+    let solid = sample_rim_color(img, bbox);
+    if bw <= 0 || bh <= 0 {
+        return (solid, None);
+    }
+    let top = sample_edge(img, x - RIM, y - RIM, x + bw + RIM - 1, y - 1)
+        .unwrap_or(solid);
+    let bottom = sample_edge(img, x - RIM, y + bh, x + bw + RIM - 1, y + bh + RIM - 1)
+        .unwrap_or(solid);
+    let left = sample_edge(img, x - RIM, y, x - 1, y + bh - 1).unwrap_or(solid);
+    let right =
+        sample_edge(img, x + bw, y, x + bw + RIM - 1, y + bh - 1).unwrap_or(solid);
+    let gradient = detect_rim_gradient(top, bottom, left, right);
+    (solid, gradient)
 }
 
 /// Mean RGB of a 2 px rim immediately surrounding `bbox`. Used to
@@ -594,12 +722,140 @@ pub fn text_is_already_target(text: &str, target_language: &str) -> bool {
     }
 }
 
-// Paragraph grouping was attempted 2026-04-21 but reverted: merging
-// OCR lines into a union-bbox card rescaled every card to the
-// combined paragraph height, which made single-line translations of
-// multi-line paragraphs look absurdly small. Cross-line LLM context
-// is a plan.md S3 concern (streaming_translate plugin point). Each
-// OCR line now translates independently, matching MVP behaviour.
+/// A run of OCR lines that belong to the same sentence / paragraph.
+/// We group lines here only for **LLM context** — each member still
+/// gets its own card on screen at its original bbox; the paragraph
+/// only exists so Gemma receives the whole sentence at once and can
+/// resolve cross-line anaphora, carry register, etc.
+#[derive(Debug, Clone)]
+struct Paragraph {
+    /// Ordered indices into the OcrLine Vec this paragraph covers.
+    /// `members.len() == 1` is the default / single-line case.
+    members: Vec<usize>,
+    /// Member line texts joined with `\n`. Sent to the LLM verbatim;
+    /// the system prompt instructs it to preserve line breaks, which
+    /// lets us split the output back to each member card.
+    text: String,
+}
+
+/// Group OCR lines into paragraphs. Conservative by design: merging
+/// unrelated lines corrupts every translation downstream, so every
+/// condition below must hold before two consecutive (sorted-by-y)
+/// lines share a paragraph:
+///   - vertical gap ≤ 0.5 × min line height (real line break)
+///   - horizontal range overlap ≥ 60% of min width (same column)
+///   - upper line does NOT end with `.!?。！？` (no hard break)
+///   - both lines have ≥ 6 characters (avoid grouping UI labels)
+fn group_paragraphs(lines: &[OcrLine]) -> Vec<Paragraph> {
+    if lines.is_empty() {
+        return Vec::new();
+    }
+    let mut order: Vec<usize> = (0..lines.len()).collect();
+    order.sort_by(|&a, &b| {
+        lines[a].bbox[1]
+            .partial_cmp(&lines[b].bbox[1])
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    let ends_paragraph = |text: &str| -> bool {
+        let trimmed = text.trim_end();
+        let last = trimmed.chars().last();
+        matches!(
+            last,
+            Some('.') | Some('!') | Some('?') | Some('。') | Some('！') | Some('？')
+        )
+    };
+    let mut groups: Vec<Vec<usize>> = Vec::new();
+    let mut current: Vec<usize> = Vec::new();
+    for &idx in &order {
+        if current.is_empty() {
+            current.push(idx);
+            continue;
+        }
+        let prev_idx = *current.last().unwrap();
+        let prev = &lines[prev_idx].bbox;
+        let curr = &lines[idx].bbox;
+        let prev_bottom = prev[1] + prev[3];
+        let gap = (curr[1] - prev_bottom).max(0.0);
+        let min_h = prev[3].min(curr[3]).max(1.0);
+        let close_vertically = gap <= 0.5 * min_h;
+        let prev_left = prev[0];
+        let prev_right = prev[0] + prev[2];
+        let curr_left = curr[0];
+        let curr_right = curr[0] + curr[2];
+        let overlap = (prev_right.min(curr_right) - prev_left.max(curr_left)).max(0.0);
+        let min_w = prev[2].min(curr[2]).max(1.0);
+        let horizontally_aligned = overlap / min_w >= 0.6;
+        let prev_finished = ends_paragraph(&lines[prev_idx].text);
+        let both_substantial =
+            lines[prev_idx].text.chars().count() >= 6 && lines[idx].text.chars().count() >= 6;
+        if close_vertically && horizontally_aligned && !prev_finished && both_substantial {
+            current.push(idx);
+        } else {
+            groups.push(std::mem::take(&mut current));
+            current.push(idx);
+        }
+    }
+    if !current.is_empty() {
+        groups.push(current);
+    }
+    groups
+        .into_iter()
+        .map(|members| {
+            let text = members
+                .iter()
+                .map(|&i| lines[i].text.clone())
+                .collect::<Vec<_>>()
+                .join("\n");
+            Paragraph { members, text }
+        })
+        .collect()
+}
+
+/// Distribute a multi-line translation back to its member OCR lines.
+/// Happy path: Gemma preserved the newline count and we get a clean
+/// 1:1 map. Degraded paths:
+///   - too few segments → put the whole translation on the first
+///     line, leave the rest empty (better than truncating)
+///   - too many segments → keep the 1:1 map for all but the last
+///     line, which absorbs every extra segment joined with a space
+pub fn split_paragraph_translation(translation: &str, line_count: usize) -> Vec<String> {
+    if line_count == 0 {
+        return Vec::new();
+    }
+    let raw: Vec<&str> = translation.split('\n').collect();
+    // Drop leading / trailing blanks that some models tack on.
+    let trimmed: Vec<&str> = raw
+        .iter()
+        .map(|s| s.trim_end())
+        .collect::<Vec<_>>()
+        .into_iter()
+        .skip_while(|s| s.is_empty())
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .skip_while(|s| s.is_empty())
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect();
+    if trimmed.len() == line_count {
+        return trimmed.into_iter().map(|s| s.to_string()).collect();
+    }
+    if trimmed.len() > line_count {
+        let mut out: Vec<String> =
+            trimmed.iter().take(line_count - 1).map(|s| s.to_string()).collect();
+        let tail = trimmed[(line_count - 1)..].join(" ");
+        out.push(tail);
+        return out;
+    }
+    // Too few segments: bundle the entire translation on the first
+    // card so the user can at least read it, and leave the others
+    // blank. Blank cards will fall back to source text in the
+    // frontend's per-line commit.
+    let mut out = vec![translation.trim().to_string()];
+    out.extend((1..line_count).map(|_| String::new()));
+    out
+}
 
 async fn run_capture_loop(
     lens_id: String,
@@ -818,9 +1074,14 @@ async fn run_capture_loop(
             .iter()
             .enumerate()
             .map(|(i, l)| {
-                let bg = match &decoded {
-                    Some(img) => sample_rim_color(img, l.bbox),
-                    None => [128, 128, 128],
+                // Sample the rim along all four edges: the solid
+                // mean stays as a safe fallback, and when the rim
+                // actually changes colour across the bbox we emit a
+                // gradient so the card blends into the source
+                // instead of looking like a pasted block.
+                let (bg, bg_gradient) = match &decoded {
+                    Some(img) => sample_rim_edges(img, l.bbox),
+                    None => ([128, 128, 128], None),
                 };
                 // Match the source text colour instead of forcing
                 // black/white. Sampling is scoped to the ORIGINAL
@@ -859,6 +1120,7 @@ async fn run_capture_loop(
                     text: l.text.clone(),
                     bbox: [nx, ny, nw, nh],
                     bg_color: bg,
+                    bg_gradient,
                     fg_color: fg,
                 }
             })
@@ -886,30 +1148,47 @@ async fn run_capture_loop(
             continue;
         }
 
-        // Concurrent translate tasks, bounded by user's
-        // `performance.max_concurrent_translations` (default 4).
+        // Group OCR lines into paragraphs for **LLM context only**.
+        // Each OCR line still owns its own card above — the
+        // paragraph is the translation unit, not the rendering
+        // unit. Gemma sees the full sentence, splits its output
+        // back across the member cards by the preserved line
+        // breaks (see `translate_paragraph_streaming`).
+        let paragraphs = group_paragraphs(&ocr_lines);
+
         let snapshot = settings.snapshot();
         let target = snapshot.subtitle.target_language.clone();
         let max_concurrent = snapshot.performance.max_concurrent_tasks.max(1) as usize;
         let semaphore = Arc::new(Semaphore::new(max_concurrent));
 
-        let mut tasks: Vec<JoinHandle<()>> = Vec::with_capacity(line_count);
-        for (i, line) in ocr_lines.into_iter().enumerate() {
-            if text_is_already_target(&line.text, &target) {
+        // Keep originals around so the skip-same-language path can
+        // echo the source text back into each member line's chunk.
+        let originals: Vec<String> = ocr_lines.iter().map(|l| l.text.clone()).collect();
+
+        let mut tasks: Vec<JoinHandle<()>> = Vec::with_capacity(paragraphs.len());
+        for paragraph in paragraphs.into_iter() {
+            if text_is_already_target(&paragraph.text, &target) {
                 tracing::info!(
-                    "lens line {i}: skipped translation (already {target}) — {:?}",
-                    line.text.chars().take(20).collect::<String>()
+                    "lens paragraph [{:?}]: skipped translation (already {target}) — {:?}",
+                    paragraph.members,
+                    paragraph.text.chars().take(20).collect::<String>()
                 );
-                let _ = app.emit(
-                    "moonlens://lens-line-chunk",
-                    LensLineChunk {
-                        id: lens_id.clone(),
-                        flow_id,
-                        line_index: i,
-                        delta: line.text.clone(),
-                        done: true,
-                    },
-                );
+                for &line_idx in &paragraph.members {
+                    let text = originals
+                        .get(line_idx)
+                        .cloned()
+                        .unwrap_or_default();
+                    let _ = app.emit(
+                        "moonlens://lens-line-chunk",
+                        LensLineChunk {
+                            id: lens_id.clone(),
+                            flow_id,
+                            line_index: line_idx,
+                            delta: text,
+                            done: true,
+                        },
+                    );
+                }
                 continue;
             }
             let sem = semaphore.clone();
@@ -922,18 +1201,17 @@ async fn run_capture_loop(
                     Ok(p) => p,
                     Err(_) => return,
                 };
-                if let Err(e) = translate_line_streaming(
+                if let Err(e) = translate_paragraph_streaming(
                     app_c,
                     id_c,
                     flow_id,
-                    i,
-                    line.text,
+                    paragraph,
                     target_c,
                     settings_c,
                 )
                 .await
                 {
-                    tracing::info!("lens line {i} translate failed: {e}");
+                    tracing::info!("lens paragraph translate failed: {e}");
                 }
             });
             tasks.push(task);
@@ -961,6 +1239,93 @@ async fn run_capture_loop(
             },
         );
     }
+}
+
+/// Translate a paragraph (one or more OCR lines) and route the
+/// result back to each member card. Single-line paragraphs stream
+/// tokens in real time at their member's `line_index`. Multi-line
+/// paragraphs buffer the whole output, split it on `\n`, and emit
+/// exactly one `done=true` chunk per member — the UI then commits
+/// each card atomically (no partial state while we wait for the
+/// final token). This is what lets the LLM translate a sentence
+/// with full context without forcing the frontend to merge cards.
+async fn translate_paragraph_streaming(
+    app: AppHandle,
+    lens_id: String,
+    flow_id: u64,
+    paragraph: Paragraph,
+    target_language: String,
+    settings: Arc<SettingsStore>,
+) -> Result<String, ProviderError> {
+    // Single-line paragraphs keep the MVP streaming path — user sees
+    // tokens accumulate via chunks, no newline-split bookkeeping.
+    if paragraph.members.len() == 1 {
+        return translate_line_streaming(
+            app,
+            lens_id,
+            flow_id,
+            paragraph.members[0],
+            paragraph.text,
+            target_language,
+            settings,
+        )
+        .await;
+    }
+
+    let snap = settings.snapshot();
+    let cfg = snap
+        .providers
+        .configs
+        .get("ollama.gemma4")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
+
+    // Buffer the whole translation here; we can only split once the
+    // final token arrives (Gemma occasionally reshuffles line breaks
+    // mid-stream). Nothing is emitted to the frontend while the
+    // stream is running — previous cards from the last flow keep
+    // showing until we swap in the new paragraph.
+    let buffer = Arc::new(parking_lot::Mutex::new(String::new()));
+    let buffer_for_sink = buffer.clone();
+    let sink: Arc<dyn Fn(String, bool) + Send + Sync> =
+        Arc::new(move |delta, _done| {
+            if !delta.is_empty() {
+                buffer_for_sink.lock().push_str(&delta);
+            }
+        });
+
+    let translator =
+        OllamaTranslator::new("ollama.gemma4", &cfg).with_chunk_sink(sink);
+    let out = translator
+        .run(TaskInput::Translate {
+            text: paragraph.text.clone(),
+            source_language: "auto".into(),
+            target_language,
+        })
+        .await?;
+
+    // Some providers return the aggregated text via `run`; fall back
+    // to the buffer if the sink path delivered more detail.
+    let full = match out {
+        TaskOutput::Text(s) if !s.is_empty() => s,
+        _ => buffer.lock().clone(),
+    };
+
+    let segments = split_paragraph_translation(&full, paragraph.members.len());
+    for (i, &line_idx) in paragraph.members.iter().enumerate() {
+        let delta = segments.get(i).cloned().unwrap_or_default();
+        let _ = app.emit(
+            "moonlens://lens-line-chunk",
+            LensLineChunk {
+                id: lens_id.clone(),
+                flow_id,
+                line_index: line_idx,
+                delta,
+                done: true,
+            },
+        );
+    }
+    Ok(full)
 }
 
 /// Translate a single line and stream tokens through
@@ -1048,6 +1413,138 @@ mod tests {
         let w = LensStreamWatchers::new();
         w.stop_all();
         assert_eq!(w.running_count(), 0);
+    }
+
+    #[test]
+    fn detect_rim_gradient_returns_none_for_uniform_rim() {
+        let c = [200u8, 210, 220];
+        assert_eq!(detect_rim_gradient(c, c, c, c), None);
+    }
+
+    #[test]
+    fn detect_rim_gradient_picks_vertical_when_top_bottom_differ() {
+        let top = [30, 30, 30];
+        let bottom = [230, 230, 230];
+        let side = [130, 130, 130];
+        let g = detect_rim_gradient(top, bottom, side, side).expect("gradient");
+        assert_eq!(g.angle, 180);
+        assert_eq!(g.from, top);
+        assert_eq!(g.to, bottom);
+    }
+
+    #[test]
+    fn detect_rim_gradient_picks_horizontal_when_left_right_differ() {
+        let side = [130, 130, 130];
+        let left = [20, 10, 10];
+        let right = [240, 210, 210];
+        let g = detect_rim_gradient(side, side, left, right).expect("gradient");
+        assert_eq!(g.angle, 90);
+        assert_eq!(g.from, left);
+        assert_eq!(g.to, right);
+    }
+
+    #[test]
+    fn detect_rim_gradient_prefers_larger_delta_axis() {
+        // Vertical delta dwarfs horizontal — even if both exceed the
+        // threshold we should ship the vertical gradient.
+        let top = [10, 10, 10];
+        let bottom = [240, 240, 240];
+        let left = [100, 100, 100];
+        let right = [130, 130, 130];
+        let g = detect_rim_gradient(top, bottom, left, right).expect("gradient");
+        assert_eq!(g.angle, 180);
+    }
+
+    #[test]
+    fn split_paragraph_translation_maps_one_to_one() {
+        let segs = split_paragraph_translation("第一行\n第二行\n第三行", 3);
+        assert_eq!(segs, vec!["第一行", "第二行", "第三行"]);
+    }
+
+    #[test]
+    fn split_paragraph_translation_absorbs_extra_segments_into_last_line() {
+        // Gemma tacked on a spurious newline — merge the tail into
+        // the last member card so we don't silently drop content.
+        let segs = split_paragraph_translation("A\nB\nC extra\ntrailing", 3);
+        assert_eq!(segs.len(), 3);
+        assert_eq!(segs[0], "A");
+        assert_eq!(segs[1], "B");
+        assert!(segs[2].contains("C extra") && segs[2].contains("trailing"));
+    }
+
+    #[test]
+    fn split_paragraph_translation_collapses_onto_first_when_too_few() {
+        // Gemma ignored line breaks — keep the entire translation
+        // visible on the first card instead of truncating.
+        let segs = split_paragraph_translation("One long sentence.", 3);
+        assert_eq!(segs.len(), 3);
+        assert_eq!(segs[0], "One long sentence.");
+        assert_eq!(segs[1], "");
+        assert_eq!(segs[2], "");
+    }
+
+    #[test]
+    fn split_paragraph_translation_trims_leading_trailing_blank_lines() {
+        let segs = split_paragraph_translation("\n\nA\nB\n\n", 2);
+        assert_eq!(segs, vec!["A", "B"]);
+    }
+
+    #[test]
+    fn group_paragraphs_merges_two_wrapped_lines() {
+        let lines = vec![
+            OcrLine {
+                text: "The quick brown fox jumps".into(),
+                bbox: [10.0, 10.0, 200.0, 20.0],
+                confidence: 1.0,
+            },
+            OcrLine {
+                text: "over the lazy dog".into(),
+                bbox: [10.0, 32.0, 180.0, 20.0],
+                confidence: 1.0,
+            },
+        ];
+        let p = group_paragraphs(&lines);
+        assert_eq!(p.len(), 1);
+        assert_eq!(p[0].members, vec![0, 1]);
+        assert!(p[0].text.contains('\n'));
+    }
+
+    #[test]
+    fn group_paragraphs_splits_on_sentence_end() {
+        let lines = vec![
+            OcrLine {
+                text: "Very interesting.".into(),
+                bbox: [10.0, 10.0, 200.0, 20.0],
+                confidence: 1.0,
+            },
+            OcrLine {
+                text: "Indeed it is strongly so".into(),
+                bbox: [10.0, 32.0, 200.0, 20.0],
+                confidence: 1.0,
+            },
+        ];
+        let p = group_paragraphs(&lines);
+        assert_eq!(p.len(), 2);
+    }
+
+    #[test]
+    fn group_paragraphs_keeps_short_ui_labels_separate() {
+        // UI labels (< 6 chars) must stay as per-line cards so that
+        // menu entries never merge into one translation request.
+        let lines = vec![
+            OcrLine {
+                text: "File".into(),
+                bbox: [10.0, 10.0, 60.0, 20.0],
+                confidence: 1.0,
+            },
+            OcrLine {
+                text: "Edit".into(),
+                bbox: [10.0, 32.0, 60.0, 20.0],
+                confidence: 1.0,
+            },
+        ];
+        let p = group_paragraphs(&lines);
+        assert_eq!(p.len(), 2);
     }
 
     #[test]
