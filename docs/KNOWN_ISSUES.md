@@ -22,9 +22,12 @@ v0.1 系で把握済みの制約・既知不具合を一箇所にまとめたも
 | DXGI Desktop Duplication | 未導入。現状は `xcap` 単発キャプチャ | S2 |
 | `WDA_EXCLUDEFROMCAPTURE` | 未導入。自己ウィンドウを capture から除外できないため、S2 まで Lens にはハイド / ショーが必要 | S2 |
 | OCR エンジン | `ocrs` は英数に強いが CJK が弱い。日本語ドキュメントの認識精度は限定的 | S2 で Windows OCR API (`Windows.Media.Ocr`) 差替候補を評価、ラストリゾート PaddleOCR サイドカー |
-| Font auto-shrink / 2 行折返し / ellipsis | MVP では `clamp(7px, min(85cqh, 90cqw/len), 40px)` で簡易 shrink のみ | S3 |
-| WCAG コントラスト最適化 | luma 140 閾値で黒 / 白 flip の簡易ロジック | S3 で自動最適化 |
-| 段落まとまり翻訳 | 行単位独立翻訳のため、文が行をまたぐと文脈がロス（例: "very interesting." が行頭で分断されると "interesting." が単独文扱い） | S3 |
+| Font auto-shrink / 2 行折返し / ellipsis | `clamp(6px, min(90cqh/line_count/1.2, 95cqw/longest_line), 40px)` で多行対応の shrink。ellipsis は未実装 | S3 |
+| WCAG コントラスト最適化 | ✅ sRGB gamma 補正 + 相対輝度 0.179 閾値で黒 / 白 flip（2026-04-21 更新） | - |
+| 段落まとまり翻訳 | ✅ 隣接・横方向重複する連続行を段落化して一括翻訳（2026-04-21 更新）。sentence-final punctuation で段落区切り判定 | - |
+| 翻訳確定前のちらつき | ✅ chunk バッファ + flow-done での atomic swap により partial render は廃止（2026-04-21 更新） | - |
+| 同言語の不要翻訳 | ✅ OCR 結果が target と同じ言語なら翻訳スキップして原文表示（CJK / ASCII heuristic、2026-04-21 更新） | - |
+| 静止時の自動再翻訳 | ✅ `performance.lens_auto_poll_ms`（default 1500ms）で定期的に content hash 変化を検出、動画字幕やチャットで再翻訳（2026-04-21 更新）| - |
 | Cloud fallback | 行単位並列 per-line 翻訳の cloud fallback 未実装、現状は Ollama 直叩きのみ | S3 |
 | Click-through + hover toolbar | per-pixel hit-testing が未実装、現状は hover-only header で代替 | S3 |
 | Lens 台数制限 | `settings.performance.max_active_lenses = 4` で guard 済だが、超過時のトーストが簡素 | S3 |

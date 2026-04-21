@@ -45,6 +45,36 @@ the project adheres to [SemVer](https://semver.org/).
   追加、既存 `SchemaForm.svelte.test.ts` に `$ref` / unsupported /
   additionalProperties の 3 ケース追加。全 67 テスト green。
 
+### Changed (Lens pipeline 品質改善 — 2026-04-21)
+
+- **翻訳確定前の ちらつき廃止** — フロントエンドは chunk を
+  `pendingLines` / `pendingChunks` にバッファし、`flow-done` イベントで
+  `visibleLines` に atomic swap する。文字ごとタイピング風の
+  partial 表示や空 placeholder の閃光が発生せず、前フローの結果が
+  そのまま維持された状態から新フローの結果ブロックに一発で置換。
+- **段落単位翻訳** — OCR 出力の隣接行を「縦方向ギャップ < 0.8 × 行高 +
+  横方向 overlap > 30% + 末尾が句点/ピリオドでない」条件で段落に
+  グルーピング。paragraph ごとに 1 回の Gemma 呼び出し + union bbox
+  の 1 カード描画で文脈ロス（"very interesting." → "Indeed..." の
+  代名詞参照等）を回避。
+- **同言語スキップ** — `text_is_already_target(text, target)` で
+  CJK / Latin heuristic による言語判定、target と一致すれば LLM 呼び
+  出しを完全スキップして原文をそのまま表示（例: ANY → ja で OCR が
+  日本語を拾った時）。カナ存在 / 全 CJK / ASCII 文字の 3 種類で
+  ja / en / zh / ko をサポート。
+- **text color 改善** — BT.601 luma (140 閾値) を廃止し、sRGB → 線形
+  変換 → WCAG 相対輝度 (0.179 閾値) ベースに。中間色の背景でも
+  可読性の高いコントラストを得る。
+- **静止時の自動再翻訳** — `performance.lens_auto_poll_ms`
+  (default 1500ms) を新設。Lens 窓が静止していても定期的に trigger
+  が送出され、既存の content hash 比較で変化があれば再 OCR + 翻訳。
+  動画字幕やチャットメッセージの流動的なテキストが追従される。
+  `0` で periodic polling 無効 (event-driven のみ)。
+- **font-fit 多行対応** — `--text-len` を longest sub-line のみに、
+  `--line-count` を新設し `clamp(6px, min(90cqh/line_count/1.2,
+  95cqw/longest_line), 40px)` に書き換え。段落カードが縦横両軸で
+  自動収まる。
+
 ### Safety
 
 - `stop_all` パニックボタン実装 — 全 Lens ウィンドウ閉鎖・字幕停止・
