@@ -45,6 +45,25 @@ the project adheres to [SemVer](https://semver.org/).
   追加、既存 `SchemaForm.svelte.test.ts` に `$ref` / unsupported /
   additionalProperties の 3 ケース追加。全 67 テスト green。
 
+### Fixed (Lens pipeline 緊急修正 — 2026-04-21 後半)
+
+- **翻訳が出ない / 部分欠落** — Tauri 2 のチャンネル間イベント順序
+  が保証されないため、`lens-flow-done` が最後の `done=true` chunk
+  より先に届いて frontend が途中状態をコミットしてしまうケースが
+  発生していた。Backend: タスク await 後に 80ms grace → `flow-done`。
+  Frontend: atomic swap を廃止し **per-line commit** に変更 — 各行の
+  `done=true` 到着時点でその行だけ `visibleLines` へ反映、`flow-done`
+  は未完了行の強制 fallback + 旧レイアウトの枯葉カード剪定のみ。
+- **段落グルーピングの過剰合併** — 本来別文脈の行を束ねて Gemma に
+  渡してしまい翻訳が崩れる問題。閾値を保守化:
+  縦ギャップ ≤ 0.5 × 行高 (was 0.8)、横 overlap ≥ 60% (was 30%)、
+  両行 6 文字以上という 4 条件すべて満たす時のみ merge。短い UI
+  ラベルや見出しは独立のままになる。
+- **Gemma system prompt 改良** — "Translate faithfully… Preserve
+  line breaks verbatim. Do NOT add commentary, explanations,
+  romanizations, alternative translations, or surrounding quotes"
+  を追加。不要な注釈や複数案併記を防止。
+
 ### Changed (Lens pipeline 品質改善 — 2026-04-21)
 
 - **翻訳確定前の ちらつき廃止** — フロントエンドは chunk を
