@@ -45,6 +45,35 @@ the project adheres to [SemVer](https://semver.org/).
   追加、既存 `SchemaForm.svelte.test.ts` に `$ref` / unsupported /
   additionalProperties の 3 ケース追加。全 67 テスト green。
 
+### Fixed (Lens blink 根絶 — 2026-04-21 後半 3)
+
+- **blink の真因**: OCR 毎に「main に opacity:0 を付与 → 60ms sleep →
+  screen capture → opacity:1 に戻す」を繰り返していたため、カードが
+  物理的に消失と復帰を繰り返していた。「頻度を落とす」ではなく
+  「そもそもマスクしない」が正解。
+- **Windows 解決**: `SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE)`
+  を lens 窓に適用。xcap の screen capture は lens 窓を **「存在しないもの」**
+  として扱い、原文がそのまま撮影される。カードはユーザーから見えたまま。
+  マスク不要 → 100% blink 消滅。これは plan.md S2 の目玉機能だったが、
+  Win 10 2004+ では API 呼び出し 1 行で実現できるので前倒し実装。
+- **非 Windows (Linux) フォールバック**: mask 路は残存、sleep を 60→120ms に
+  延長してフェード完了を確実に。`transition-opacity duration-75` も復活し、
+  MVP の soft fade が効く。
+- **段落グルーピング撤去**: 2026-04-21 に導入した paragraph merging を
+  revert。union bbox へリスケールされ、短い翻訳がカード内で小さく浮く
+  問題を解消。per-line 翻訳 (MVP 同等) に戻した。cross-line LLM 文脈は
+  S3 の `translate_stream` plugin point で再検討。
+- **text color を原文色サンプリング**: bbox 内部の「bg から Euclid 距離 60
+  以上の pixel」の平均色を fg_color として採用。赤文字のソースは赤文字で
+  描画される。bbox 内の 2% 未満しか「text pixel」がない場合は WCAG
+  contrast fallback。
+- **CSS を MVP 同等に restore**: `whitespace-nowrap`, `85cqh`, max `40px`,
+  `line-height: 1`。段落対応で崩していたレイアウト判定ロジックを
+  シンプルな 1 行 per カードに戻した。
+- **auto-poll 維持**: user 要望通り内容変化の自動追従は継続。Windows では
+  マスク不要なので 1500ms tick でも視覚的影響ゼロ。Linux では soft fade で
+  pulse が緩和される。
+
 ### Fixed (Lens visual & capture 回帰修正 — 2026-04-21 後半 2)
 
 - **無限再翻訳ループ** — `transition-opacity duration-75` 中に 32ms

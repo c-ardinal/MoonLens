@@ -20,7 +20,7 @@ v0.1 系で把握済みの制約・既知不具合を一箇所にまとめたも
 |---|---|---|
 | 速度 SLO | E2E small = 684ms (P50) — category **beta** 判定。α (<500ms) には DXGI + Windows OCR 差替が必要 | S2 `v0.1.0-beta.2` |
 | DXGI Desktop Duplication | 未導入。現状は `xcap` 単発キャプチャ | S2 |
-| `WDA_EXCLUDEFROMCAPTURE` | 未導入。自己ウィンドウを capture から除外できないため、S2 まで Lens にはハイド / ショーが必要 | S2 |
+| `WDA_EXCLUDEFROMCAPTURE` | ✅ Win 10 2004+ で適用済（2026-04-21 更新）。lens 窓は xcap の capture から透過されるためマスク不要、blink 完全消滅。非 Windows は従来の opacity:0 mask fallback | - |
 | OCR エンジン | `ocrs` は英数に強いが CJK が弱い。日本語ドキュメントの認識精度は限定的 | S2 で Windows OCR API (`Windows.Media.Ocr`) 差替候補を評価、ラストリゾート PaddleOCR サイドカー |
 | Font auto-shrink / 2 行折返し / ellipsis | `clamp(6px, min(90cqh/line_count/1.2, 95cqw/longest_line), 40px)` で多行対応の shrink。ellipsis は未実装 | S3 |
 | WCAG コントラスト最適化 | ✅ sRGB gamma 補正 + 相対輝度 0.179 閾値で黒 / 白 flip（2026-04-21 更新） | - |
