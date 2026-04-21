@@ -251,6 +251,86 @@ export const listLensWindows = () =>
 export const captureLensNow = (id: string) =>
   safeInvoke<CaptureFlowResult>('capture_lens_now', { id });
 
+/** Start-of-flow signal emitted by the backend lens watcher. Clear the
+ * lens UI's streaming buffer when this arrives for the current lens. */
+export interface LensFlowStart {
+  id: string;
+  flow_id: number;
+}
+
+/** OCR result + axis-aligned bboxes for each detected line. Emitted
+ * once per flow, immediately after OCR completes and before any
+ * translation arrives. The UI renders a positioned card per bbox so
+ * tokens can stream into the right place. */
+export interface LensOcrLine {
+  line_index: number;
+  text: string;
+  /** [x, y, w, h] in image pixel coordinates. */
+  bbox: [number, number, number, number];
+  /** Mean RGB of the 2px rim around the bbox (the source area's
+   * background). Used to colour the translation card so it looks like
+   * an in-place replacement, not a floating overlay. */
+  bg_color: [number, number, number];
+  /** Contrast text colour chosen from bg luminance. */
+  fg_color: [number, number, number];
+}
+
+export interface LensOcrLines {
+  id: string;
+  flow_id: number;
+  image_w: number;
+  image_h: number;
+  lines: LensOcrLine[];
+}
+
+/** A single streaming token for a specific line within a flow. */
+export interface LensLineChunk {
+  id: string;
+  flow_id: number;
+  line_index: number;
+  delta: string;
+  done: boolean;
+}
+
+/** Terminal marker: every line of the flow has finished (or failed). */
+export interface LensFlowDone {
+  id: string;
+  flow_id: number;
+  line_count: number;
+}
+
+/** Pre/post-capture mask signal. When `masked=true`, the lens UI
+ * should hide all cards (opacity 0) so the screen capture can see
+ * through our transparent window to the source underneath. This
+ * replaces window-level hide/show which caused a visible blink. */
+export interface LensMask {
+  id: string;
+  masked: boolean;
+}
+
+export const onLensFlowStart = (
+  handler: (event: LensFlowStart) => void
+): Promise<UnlistenFn> =>
+  listen<LensFlowStart>('moonlens://lens-flow-start', (e) => handler(e.payload));
+
+export const onLensOcrLines = (
+  handler: (event: LensOcrLines) => void
+): Promise<UnlistenFn> =>
+  listen<LensOcrLines>('moonlens://lens-ocr-lines', (e) => handler(e.payload));
+
+export const onLensLineChunk = (
+  handler: (event: LensLineChunk) => void
+): Promise<UnlistenFn> =>
+  listen<LensLineChunk>('moonlens://lens-line-chunk', (e) => handler(e.payload));
+
+export const onLensFlowDone = (
+  handler: (event: LensFlowDone) => void
+): Promise<UnlistenFn> =>
+  listen<LensFlowDone>('moonlens://lens-flow-done', (e) => handler(e.payload));
+
+export const onLensMask = (handler: (event: LensMask) => void): Promise<UnlistenFn> =>
+  listen<LensMask>('moonlens://lens-mask', (e) => handler(e.payload));
+
 export interface HistoryEntry {
   id: number;
   created_at: number;

@@ -11,6 +11,7 @@ pub mod hotkey;
 pub mod intent;
 pub mod ipc;
 pub mod lens;
+pub mod lens_watcher;
 pub mod macos_permissions;
 pub mod overlay;
 pub mod pipeline;

@@ -679,7 +679,46 @@ fn platform_label(os: &str) -> &'static str {
 
 #[tauri::command]
 pub async fn new_lens_window(app: AppHandle, state: State<'_, AppState>) -> Result<String, String> {
-    lens::create(&app, &state.lenses).map_err(|e| e.to_string())
+    let id = lens::create(&app, &state.lenses).map_err(|e| e.to_string())?;
+    // Start the event-driven watcher. The initial capture fires
+    // immediately because `start` pre-notifies the trigger.
+    state.lens_watchers.start(
+        id.clone(),
+        app.clone(),
+        state.pipeline.clone(),
+        state.lenses.clone(),
+        state.settings.clone(),
+    );
+    // Hook window events so moving or resizing the lens re-triggers
+    // a capture automatically — this is the primary UX for "refresh
+    // the translation" in the no-polling MVP. Debouncing lives inside
+    // the watcher loop so a long drag only fires once when it ends.
+    if let Some(win) = app.get_webview_window(&id) {
+        let id_for_events = id.clone();
+        let watchers = state.lens_watchers.clone();
+        win.on_window_event(move |event| {
+            if matches!(
+                event,
+                tauri::WindowEvent::Moved(_) | tauri::WindowEvent::Resized(_)
+            ) {
+                watchers.trigger(&id_for_events);
+            }
+        });
+    }
+    Ok(id)
+}
+
+/// Manual refresh trigger. Lets a hotkey or UI button re-run the
+/// capture/OCR/translate pipeline on demand for use cases where the
+/// source content changes without the lens window moving (live
+/// subtitles, scrolling pages, video frames).
+#[tauri::command]
+pub async fn refresh_lens(
+    id: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    state.lens_watchers.trigger(&id);
+    Ok(())
 }
 
 #[tauri::command]
@@ -688,6 +727,9 @@ pub async fn close_lens_window(
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
+    // Stop the watcher first so in-flight pipeline runs have no
+    // dangling window to emit `moonlens://lens-result` to.
+    state.lens_watchers.stop(&id);
     lens::close(&app, &state.lenses, &id).map_err(|e| e.to_string())
 }
 

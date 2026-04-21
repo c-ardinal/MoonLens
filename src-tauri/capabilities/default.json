@@ -11,6 +11,8 @@
   ],
   "permissions": [
     "core:default",
+    "core:window:allow-start-dragging",
+    "core:window:allow-set-ignore-cursor-events",
     "core:webview:allow-internal-toggle-devtools"
   ]
 }

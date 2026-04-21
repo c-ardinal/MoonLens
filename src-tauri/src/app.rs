@@ -12,6 +12,7 @@ use tauri::{
 use crate::{
     hotkey, ipc,
     lens::{LensRegistry, LensRegistryHandle},
+    lens_watcher::{LensStreamWatchers, LensStreamWatchersHandle},
     pipeline::Pipeline,
     plugins::PluginRegistry,
     region_watcher::RegionWatcher,
@@ -61,6 +62,7 @@ macro_rules! all_commands {
             ipc::set_lens_insets,
             ipc::set_lens_auto_refresh,
             ipc::capture_lens_now,
+            ipc::refresh_lens,
             ipc::list_history,
             ipc::delete_history_entry,
             ipc::clear_history,
@@ -77,6 +79,10 @@ pub struct AppState {
     pub pipeline: Arc<Pipeline>,
     pub subtitle: Arc<SubtitleService>,
     pub lenses: LensRegistryHandle,
+    /// Per-lens streaming change detectors. Each entry is a polling
+    /// task that captures the lens rect, hash-compares, and triggers
+    /// the OCR + per-line translate flow when the content changes.
+    pub lens_watchers: LensStreamWatchersHandle,
     /// Watcher for pinned overlay auto-refresh. Started when the user
     /// pins the overlay on a captured region; idle otherwise.
     pub region_watcher: Arc<RegionWatcher>,
@@ -124,8 +130,12 @@ pub fn build() -> Result<()> {
                 storage.clone(),
                 plugins.clone(),
             ));
-            // Forward Ollama streaming chunks to the overlay webview so
-            // the UI renders tokens in real time.
+            // Forward Ollama streaming chunks to the overlay webview
+            // so the one-shot capture flow can render tokens live.
+            // Lens windows use a different path: the lens_watcher
+            // instantiates its own per-line OllamaTranslator with a
+            // sink that emits `moonlens://lens-line-chunk` tagged by
+            // line_index, so parallel line translations never collide.
             {
                 let emit_handle = handle.clone();
                 pipeline.set_chunk_sink(Some(Arc::new(move |delta, done| {
@@ -136,8 +146,20 @@ pub fn build() -> Result<()> {
                     );
                 })));
             }
+            // Kick off provider warm-up in the background. OCR model
+            // load (~60MB rten files + tensor init) can take several
+            // seconds on first use; doing it at startup means the first
+            // lens capture usually lands on a warm engine.
+            {
+                let pipeline_preload = pipeline.clone();
+                tauri::async_runtime::spawn(async move {
+                    pipeline_preload.preload_all().await;
+                });
+            }
+
             let subtitle = Arc::new(SubtitleService::new(settings.clone(), pipeline.clone()));
             let lenses: LensRegistryHandle = Arc::new(LensRegistry::new());
+            let lens_watchers: LensStreamWatchersHandle = Arc::new(LensStreamWatchers::new());
             let region_watcher = Arc::new(RegionWatcher::new());
 
             // Register hotkeys best-effort: an accelerator held by another
@@ -160,6 +182,7 @@ pub fn build() -> Result<()> {
                 pipeline,
                 subtitle,
                 lenses,
+                lens_watchers,
                 region_watcher,
                 _settings_watcher: settings_watcher,
             });
@@ -210,8 +233,36 @@ fn build_tray(app: &AppHandle) -> Result<()> {
             }
             "new_lens" => {
                 let state = app.state::<AppState>();
-                if let Err(e) = crate::lens::create(app, &state.lenses) {
-                    tracing::warn!("lens create failed: {e:?}");
+                match crate::lens::create(app, &state.lenses) {
+                    Ok(id) => {
+                        // IMPORTANT: every creation path must start
+                        // the watcher AND hook window events so move /
+                        // resize triggers the re-capture flow. The
+                        // position-polling fallback inside the watcher
+                        // is a safety net for compositor paths that
+                        // drop `Moved` events.
+                        state.lens_watchers.start(
+                            id.clone(),
+                            app.clone(),
+                            state.pipeline.clone(),
+                            state.lenses.clone(),
+                            state.settings.clone(),
+                        );
+                        if let Some(win) = app.get_webview_window(&id) {
+                            let id_for_events = id.clone();
+                            let watchers = state.lens_watchers.clone();
+                            win.on_window_event(move |event| {
+                                if matches!(
+                                    event,
+                                    tauri::WindowEvent::Moved(_)
+                                        | tauri::WindowEvent::Resized(_)
+                                ) {
+                                    watchers.trigger(&id_for_events);
+                                }
+                            });
+                        }
+                    }
+                    Err(e) => tracing::warn!("lens create failed: {e:?}"),
                 }
             }
             "subtitle" => {

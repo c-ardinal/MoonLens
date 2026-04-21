@@ -285,9 +285,14 @@ pub fn create(app: &AppHandle, registry: &LensRegistryHandle) -> Result<String> 
         .visible(true)
         .build()
         .context("create lens window")?;
-    // Give the window a fractional opacity fallback for platforms without
-    // true transparency (handled in CSS; the flag here makes intent clear).
     let _ = win.set_always_on_top(true);
+    // NOTE: we tried WDA_EXCLUDEFROMCAPTURE here to remove the
+    // hide/show blink, but Windows kills transparency on any window
+    // with that affinity — the source behind the lens goes invisible
+    // and OCR then captures our own opaque surface. The proper fix is
+    // DXGI Duplication (S2), which can enumerate sources while
+    // ignoring a specific HWND. Until then we keep the transparent
+    // window and pay the 60 ms hide/show cost per poll.
     registry.track(id.clone());
     Ok(id)
 }
@@ -312,26 +317,31 @@ pub fn outer_rect(win: &WebviewWindow) -> Result<geometry::LensOuterRect> {
     })
 }
 
-/// Compute the observed rect, hide the window, capture, then show again.
-/// Returns the captured PNG.
+/// Compute the observed rect and capture. The window itself is NEVER
+/// hidden — Tauri's transparent chrome stays on screen continuously so
+/// there is no perceivable blink. Self-capture is avoided at a layer
+/// up: the watcher emits `moonlens://lens-mask` to the lens UI, which
+/// sets `opacity: 0` on its cards; because the window is transparent,
+/// the capture then sees straight through to the source underneath.
 pub fn capture_lens(app: &AppHandle, registry: &LensRegistryHandle, id: &str) -> Result<Vec<u8>> {
     use crate::capture;
 
-    let win = app
-        .get_webview_window(id)
-        .ok_or_else(|| anyhow!("lens window {id} not found"))?;
-    let outer = outer_rect(&win)?;
-    let insets = registry.insets(id).unwrap_or_default();
-    let observed = geometry::observed_rect(outer, insets)
-        .ok_or_else(|| anyhow!("lens observation rect is empty"))?;
+    let outer_rect_info = {
+        let win = app
+            .get_webview_window(id)
+            .ok_or_else(|| anyhow!("lens window {id} not found"))?;
+        let outer = outer_rect(&win)?;
+        let insets = registry.insets(id).unwrap_or_default();
+        geometry::observed_rect(outer, insets)
+            .ok_or_else(|| anyhow!("lens observation rect is empty"))?
+    };
 
-    // Temporarily hide the window so it does not appear in the capture.
-    win.hide().ok();
-    // Brief pause so the compositor actually unmaps the window before
-    // the screen grab runs; otherwise we capture ourselves.
-    std::thread::sleep(std::time::Duration::from_millis(60));
-    let result = capture::capture_global_rect(observed.x, observed.y, observed.w, observed.h);
-    win.show().ok();
+    let result = capture::capture_global_rect(
+        outer_rect_info.x,
+        outer_rect_info.y,
+        outer_rect_info.w,
+        outer_rect_info.h,
+    );
     let image = result?;
     capture::png_bytes(&image)
 }

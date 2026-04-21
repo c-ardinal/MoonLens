@@ -1,185 +1,289 @@
 <script lang="ts">
-  import { onDestroy, onMount, tick } from 'svelte';
+  import { onDestroy, onMount } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
-  import { listen, type UnlistenFn } from '@tauri-apps/api/event';
+  import { type UnlistenFn } from '@tauri-apps/api/event';
   import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
-  import { Camera, Pin, X, RefreshCw, Clipboard } from 'lucide-svelte';
-  import PrivacyBadge from '$lib/components/PrivacyBadge.svelte';
-  import type { CaptureFlowResult } from '$lib/ipc';
-  import { extractText } from '$lib/result';
+  import { X, Radio, GripHorizontal } from 'lucide-svelte';
+  import {
+    onLensFlowDone,
+    onLensFlowStart,
+    onLensLineChunk,
+    onLensMask,
+    onLensOcrLines,
+    type LensFlowDone,
+    type LensFlowStart,
+    type LensLineChunk,
+    type LensMask,
+    type LensOcrLines
+  } from '$lib/ipc';
 
   const params = new URLSearchParams(
     typeof window !== 'undefined' ? window.location.search : ''
   );
   const id = $derived(params.get('id') ?? '');
 
-  let source = $state<string | null>(null);
-  let translation = $state('');
-  let viaCloud = $state(false);
-  let provider = $state('');
-  let busy = $state(false);
-  let lastError = $state<string | null>(null);
-  let autoRefreshMs = $state(0);
-  let headerEl: HTMLElement;
-  let unlisten: UnlistenFn | undefined;
-  let refreshTimer: ReturnType<typeof setInterval> | undefined;
-  let reportedHeaderHeight = 0;
+  interface LineCard {
+    line_index: number;
+    text: string;
+    bbox: [number, number, number, number];
+    bg_color: [number, number, number];
+    fg_color: [number, number, number];
+    translation: string;
+    done: boolean;
+  }
 
+  let lines = $state<LineCard[]>([]);
+  let imageW = $state(1);
+  let imageH = $state(1);
+  let currentFlowId = $state<number | null>(null);
+  let streaming = $state(false);
+  let hovered = $state(false);
+  let lastError = $state<string | null>(null);
+  // True while the watcher is capturing the screen. The window stays
+  // visible but every card + chrome drops to opacity 0 so the screen
+  // grab sees through the transparent window to the real source.
+  let masked = $state(false);
+
+  const unlisteners: UnlistenFn[] = [];
   const win = getCurrentWebviewWindow();
 
-  async function reportInsets() {
-    await tick();
-    if (!headerEl) return;
-    const top = Math.ceil(headerEl.getBoundingClientRect().height);
-    if (top === reportedHeaderHeight) return;
-    reportedHeaderHeight = top;
-    try {
-      await invoke('set_lens_insets', {
-        id,
-        top,
-        bottom: 0,
-        left: 0,
-        right: 0
-      });
-    } catch {
-      /* Tauri may not be ready in dev */
-    }
+  /**
+   * Force-start a native window drag. `data-tauri-drag-region` alone
+   * is unreliable on Tauri 2 transparent windows; calling
+   * `startDragging()` explicitly from mousedown works every time.
+   * Fire-and-forget so the mouse-down event completes instantly.
+   */
+  function beginDrag(e: MouseEvent): void {
+    if (e.button !== 0) return;
+    const target = e.target as HTMLElement | null;
+    // Don't steal clicks from buttons or cards.
+    if (target && (target.closest('button') || target.closest('.lens-card'))) return;
+    win.startDragging().catch((err: unknown) => {
+      lastError = `drag failed: ${err}`;
+    });
   }
 
-  async function capture() {
-    if (busy) return;
-    busy = true;
-    lastError = null;
+  async function close(): Promise<void> {
     try {
-      const r = (await invoke('capture_lens_now', { id })) as CaptureFlowResult;
-      source = r.source_text;
-      translation = extractText(r.result);
-      viaCloud = r.result.via_cloud;
-      provider = r.result.used_provider;
+      await invoke('close_lens_window', { id });
     } catch (e) {
       lastError = String(e);
-    } finally {
-      busy = false;
     }
   }
 
-  async function close() {
-    await invoke('close_lens_window', { id });
+  function copyAll(): void {
+    if (!lines.length) return;
+    const text = lines.map((l) => l.translation || l.text).join('\n');
+    navigator.clipboard.writeText(text).catch(() => {});
   }
 
-  function copy() {
-    if (translation) navigator.clipboard.writeText(translation).catch(() => {});
-  }
-
-  $effect(() => {
-    // Reset the interval whenever the user changes autoRefreshMs.
-    if (refreshTimer) clearInterval(refreshTimer);
-    if (autoRefreshMs > 0) {
-      refreshTimer = setInterval(() => capture(), autoRefreshMs);
-      invoke('set_lens_auto_refresh', { id, ms: autoRefreshMs }).catch(() => {});
-    } else {
-      invoke('set_lens_auto_refresh', { id, ms: null }).catch(() => {});
+  function handleKey(e: KeyboardEvent): void {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      close();
+    } else if (e.key === 'c' && (e.metaKey || e.ctrlKey)) {
+      copyAll();
     }
-  });
+  }
+
+  /** Bbox → CSS percentage position inside the lens body. */
+  function cardStyle(line: LineCard): string {
+    const [x, y, w, h] = line.bbox;
+    if (imageW === 0 || imageH === 0) return 'display:none';
+    const [br, bg, bb] = line.bg_color;
+    const [fr, fg, fb] = line.fg_color;
+    return (
+      `left:${(x / imageW) * 100}%;` +
+      `top:${(y / imageH) * 100}%;` +
+      `width:${(w / imageW) * 100}%;` +
+      `height:${(h / imageH) * 100}%;` +
+      `background-color:rgb(${br},${bg},${bb});` +
+      `color:rgb(${fr},${fg},${fb});`
+    );
+  }
 
   onMount(async () => {
-    reportInsets();
-    // Listen for the pipeline result in case the backend drives a capture
-    // (e.g. from auto-refresh rules we add later).
-    unlisten = await listen<CaptureFlowResult>('moonlens://lens-result', (e) => {
-      source = e.payload.source_text;
-      translation = extractText(e.payload.result);
-      viaCloud = e.payload.result.via_cloud;
-      provider = e.payload.result.used_provider;
-    });
-    const ro = new ResizeObserver(() => reportInsets());
-    if (headerEl) ro.observe(headerEl);
+    unlisteners.push(
+      await onLensFlowStart((e: LensFlowStart) => {
+        if (e.id !== id) return;
+        currentFlowId = e.flow_id;
+        streaming = true;
+        lastError = null;
+      })
+    );
+
+    unlisteners.push(
+      await onLensOcrLines((e: LensOcrLines) => {
+        if (e.id !== id) return;
+        if (currentFlowId !== null && e.flow_id !== currentFlowId) return;
+        imageW = Math.max(1, e.image_w);
+        imageH = Math.max(1, e.image_h);
+        lines = e.lines.map((l) => ({
+          line_index: l.line_index,
+          text: l.text,
+          bbox: l.bbox,
+          bg_color: l.bg_color,
+          fg_color: l.fg_color,
+          translation: '',
+          done: false
+        }));
+      })
+    );
+
+    unlisteners.push(
+      await onLensLineChunk((e: LensLineChunk) => {
+        if (e.id !== id) return;
+        if (currentFlowId !== null && e.flow_id !== currentFlowId) return;
+        const idx = lines.findIndex((l) => l.line_index === e.line_index);
+        if (idx < 0) return;
+        const next = [...lines];
+        if (e.delta) {
+          next[idx] = { ...next[idx], translation: next[idx].translation + e.delta };
+        }
+        if (e.done) {
+          next[idx] = { ...next[idx], done: true };
+        }
+        lines = next;
+      })
+    );
+
+    unlisteners.push(
+      await onLensFlowDone((e: LensFlowDone) => {
+        if (e.id !== id) return;
+        if (currentFlowId !== null && e.flow_id !== currentFlowId) return;
+        streaming = false;
+      })
+    );
+
+    unlisteners.push(
+      await onLensMask((e: LensMask) => {
+        if (e.id !== id) return;
+        masked = e.masked;
+      })
+    );
+
+    window.addEventListener('keydown', handleKey);
   });
 
   onDestroy(() => {
-    unlisten?.();
-    if (refreshTimer) clearInterval(refreshTimer);
+    for (const u of unlisteners) u();
+    if (typeof window !== 'undefined') {
+      window.removeEventListener('keydown', handleKey);
+    }
   });
 </script>
 
+<!--
+  Lens UX per plan.md Q3 D:
+  - main is FULLY transparent so the source text underneath shows
+    through — no backdrop-blur, no panel background.
+  - Each detected line renders as an opaque card whose fill is the
+    sampled rim colour of its bbox, and whose text is the contrast
+    colour picked from that bg. Google-Lens effect: translation
+    "replaces" the source in place.
+  - Header is hidden by default; cursor-over reveals drag handle +
+    close button so the window remains interactive without a visible
+    chrome during normal use.
+-->
 <main
-  class="pointer-events-auto flex h-screen flex-col overflow-hidden rounded-ml border border-border/70 bg-surface-elevated/70 shadow-ml-lg backdrop-blur-2xl backdrop-saturate-150"
+  class="relative h-screen w-screen overflow-hidden transition-opacity duration-75"
+  class:opacity-0={masked}
+  style="background: transparent;"
+  onmouseenter={() => (hovered = true)}
+  onmouseleave={() => (hovered = false)}
+  onmousedown={beginDrag}
+  role="presentation"
 >
+  <!-- Hover-revealed header. Opacity transitions instead of display
+       toggles so the drag region is stable when the cursor first
+       enters the window. -->
   <header
-    bind:this={headerEl}
-    data-tauri-drag-region
-    class="flex select-none items-center justify-between gap-2 border-b border-border/60 px-3 py-2"
+    class="pointer-events-none absolute inset-x-0 top-0 z-30 flex h-6 select-none items-center justify-between gap-2 border-b border-violet-300/40 bg-black/70 px-2 text-white transition-opacity duration-150"
+    class:opacity-0={!hovered}
+    class:opacity-100={hovered}
   >
-    <span class="pointer-events-none text-[11px] font-mono text-ink-faint"
-      >{id.replace('lens-', '')}</span
+    <span class="flex items-center gap-1 font-mono text-[10px] text-white/80">
+      <GripHorizontal class="h-3 w-3" />
+      lens {id.replace('lens-', '')}
+      {#if streaming}
+        <Radio class="ml-2 h-3 w-3 animate-pulse text-violet-300" />
+        <span class="text-violet-300">受信中</span>
+      {/if}
+    </span>
+    <button
+      class="pointer-events-auto rounded-sm p-0.5 text-white/80 hover:bg-white/20 hover:text-white"
+      onclick={close}
+      title="閉じる (ESC)"
+      aria-label="閉じる"
     >
-    <div class="flex items-center gap-1">
-      <label class="flex items-center gap-1 text-[11px] text-ink-muted">
-        自動
-        <select
-          bind:value={autoRefreshMs}
-          class="rounded-ml-sm border border-border bg-surface px-1 py-0.5 text-[11px]"
-        >
-          <option value={0}>OFF</option>
-          <option value={1500}>1.5s</option>
-          <option value={3000}>3s</option>
-          <option value={10000}>10s</option>
-        </select>
-      </label>
-      <button
-        class="rounded-ml-sm p-1 text-ink-muted hover:bg-surface-muted"
-        onclick={capture}
-        disabled={busy}
-        title="再キャプチャ"
-      >
-        <RefreshCw class="h-4 w-4 {busy ? 'animate-spin' : ''}" />
-      </button>
-      <button
-        class="rounded-ml-sm p-1 text-ink-muted hover:bg-surface-muted"
-        onclick={copy}
-        title="コピー"
-      >
-        <Clipboard class="h-4 w-4" />
-      </button>
-      <button
-        class="rounded-ml-sm p-1 text-ink-muted hover:bg-surface-muted"
-        onclick={close}
-        title="閉じる"
-      >
-        <X class="h-4 w-4" />
-      </button>
-    </div>
+      <X class="h-3.5 w-3.5" />
+    </button>
   </header>
 
-  <section class="flex-1 overflow-auto scrollbar-minimal p-3">
-    {#if !translation && !source && !lastError}
-      <div class="flex h-full flex-col items-center justify-center gap-2 text-ink-muted">
-        <Camera class="h-6 w-6 text-ink-faint" />
-        <p class="text-sm">対象をこのウィンドウで覆い、再キャプチャ ↻</p>
-      </div>
-    {:else}
-      <div class="mb-2 flex items-center justify-between">
-        <PrivacyBadge {viaCloud} {provider} />
-        {#if busy}
-          <span class="text-[11px] text-ink-faint">処理中…</span>
-        {/if}
-      </div>
-      {#if source}
-        <p class="font-mono text-[11px] leading-relaxed text-ink-faint">{source}</p>
-        <hr class="my-2 border-border/60" />
+  <!-- In-place translation cards: each covers one detected line with
+       its sampled background colour, so the original text "becomes"
+       the translation visually. -->
+  {#each lines as line (line.line_index)}
+    <div class="lens-card absolute flex items-center overflow-hidden" style={cardStyle(line)}>
+      {#if line.translation}
+        <p
+          class="line-text w-full overflow-hidden whitespace-nowrap"
+          style="--text-len: {Math.max(1, line.translation.length)}"
+        >
+          {line.translation}{#if !line.done}<span class="animate-pulse">▍</span>{/if}
+        </p>
+      {:else}
+        <span class="line-text opacity-60" style="--text-len: 3">…</span>
       {/if}
-      <p class="whitespace-pre-wrap text-sm leading-relaxed">{translation}</p>
-      {#if lastError}
-        <p class="mt-2 text-xs text-red-500">{lastError}</p>
-      {/if}
-    {/if}
-  </section>
+    </div>
+  {/each}
+
+  <!-- Empty-state hint: only visible on hover so the window stays
+       invisible when the source is rich enough to OCR. -->
+  {#if lines.length === 0 && !streaming && hovered}
+    <div class="pointer-events-none absolute inset-0 flex items-center justify-center text-center">
+      <p class="rounded bg-black/70 px-3 py-2 text-[11px] leading-relaxed text-white">
+        対象テキストの上に重ねると自動で翻訳します
+      </p>
+    </div>
+  {/if}
+
+  {#if lastError}
+    <p class="absolute inset-x-2 bottom-2 z-30 rounded bg-red-500/90 px-2 py-1 text-[11px] text-white">
+      {lastError}
+    </p>
+  {/if}
+
 </main>
 
 <style>
+  /* app.css's `body { background: var(--ml-surface) }` rule ships the
+     opaque surface colour to every route. For the lens window that is
+     the enemy of glass — the window is transparent at the OS level
+     but the webview fills with surface, so nothing behind it shows.
+     Override with !important here so this route's body is truly see
+     through while the other routes keep their normal chrome. */
   :global(html),
   :global(body) {
-    background: transparent;
+    background: transparent !important;
     margin: 0;
+  }
+  .lens-card {
+    container-type: size;
+    line-height: 1;
+  }
+  .line-text {
+    /* Pick the tighter of:
+         - 85% of bbox height (fits source cap height)
+         - 90% of bbox width divided by character count (fits horizontally)
+       This prevents translations that are character-wise longer than
+       the source (common for English → Japanese) from running off the
+       sides of the card. `--text-len` is set per card from Svelte. */
+    font-size: clamp(
+      7px,
+      min(85cqh, calc(90cqw / var(--text-len, 10))),
+      40px
+    );
+    line-height: 1;
   }
 </style>
