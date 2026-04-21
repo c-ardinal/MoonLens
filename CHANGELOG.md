@@ -45,6 +45,24 @@ the project adheres to [SemVer](https://semver.org/).
   追加、既存 `SchemaForm.svelte.test.ts` に `$ref` / unsupported /
   additionalProperties の 3 ケース追加。全 67 テスト green。
 
+### Added (S2 前倒し — Windows Media OCR 導入 — 2026-04-22 夜 2)
+
+- **Windows Media OCR プロバイダ**: `windows` crate で
+  `Windows.Media.Ocr` WinRT バインディングを実装。OS 標準の日本語 /
+  中国語 / 韓国語言語パックを利用できるため、ocrs が生成していた
+  Latin gibberish 問題が根本解決。
+- **Chain 先頭化**: `providers.ocr.chain = ["windows", "ocrs", "paddle"]`。
+  言語パックが未導入の場合は `LowConfidence` を返して ocrs にフォール
+  スルー。ユーザーは `providers.configs.windows.language` で言語 tag
+  (`ja` / `zh-Hans` / `ko` 等) を変更可能、デフォルトは `ja`。
+- **OS gate**: `#[cfg(target_os = "windows")]` でモジュール・プロバイダ
+  登録を分離。非 Windows ビルドでは `"windows"` id が未登録扱いとなり
+  chain が自動で次候補にフォールスルー (`"not registered"` reason)。
+- **plan.md S2 の OCR 差替タスク前倒し完了**。Windows のみ、macOS は
+  v0.2 で Apple Vision、Linux は引き続き ocrs。
+- **テスト**: `WindowsOcrProvider::new` の config parse、capabilities、
+  preferred_language 反映の 3 件。**226 Rust + 67 vitest green**。
+
 ### Changed (OCR gibberish 検知強化 — 2026-04-22 夜)
 
 - **英語 digram 密度 + 頻出語 stopword 検査を追加**: 従来の vowel ratio
