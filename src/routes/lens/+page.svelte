@@ -32,14 +32,18 @@
     done: boolean;
   }
 
-  // Per-line commit: each line is published to `visibleLines` only
-  // when its translation chunk carries `done=true`. The user never
-  // sees intermediate tokens (no character-by-character typing) or
-  // empty placeholders, and the previous flow's cards stay visible
-  // until they are individually replaced by a newer line at the same
-  // `line_index`. On `lens-flow-done`, any line that never produced
-  // a `done=true` chunk falls back to its original OCR text so the
-  // UI never stalls on a half-translated source.
+  // `visibleLines` = cards actually rendered on screen. A card only
+  // moves into this set when its translation chunk reports
+  // `done=true` (or the flow-done terminator sweeps up stragglers),
+  // so the user never sees partial tokens or empty placeholders.
+  //
+  // `pendingLines` buffers the OCR layout for the current flow.
+  // Chunks accumulate in `pendingChunks` keyed by `line_index` and
+  // are promoted into `visibleLines` via `commitLine`.
+  //
+  // Previous flow's cards stay visible until their slot is
+  // overwritten by the new flow's `done=true` chunk, so the lens
+  // never blanks to empty between captures.
   let visibleLines = $state<LineCard[]>([]);
   let pendingLines: LineCard[] = [];
   let pendingChunks = new Map<number, { text: string; done: boolean }>();
@@ -49,6 +53,10 @@
   let streaming = $state(false);
   let hovered = $state(false);
   let lastError = $state<string | null>(null);
+  // `masked` is only driven from the backend on non-Windows builds:
+  // Windows now uses WDA_EXCLUDEFROMCAPTURE to hide the lens window
+  // from screen capture, so the opacity-0 dance is skipped and the
+  // cards stay fully visible through every poll.
   let masked = $state(false);
 
   const unlisteners: UnlistenFn[] = [];
@@ -102,11 +110,6 @@
     );
   }
 
-  /** Commit a single line to `visibleLines`. Called when its
-   *  translation chunk carries `done=true`. Replaces an existing
-   *  card with the same `line_index` if any, otherwise appends. The
-   *  previous flow's cards stay put until their slot is taken —
-   *  avoiding the empty-state flash on every new capture. */
   function commitLine(lineIndex: number): void {
     const src = pendingLines.find((l) => l.line_index === lineIndex);
     if (!src) return;
@@ -128,40 +131,17 @@
     }
   }
 
-  /** Force remaining pending lines into `visibleLines` using whatever
-   *  text has accumulated (or the original OCR text as fallback).
-   *  Called on `lens-flow-done` to ensure the UI never stalls on a
-   *  translation that silently failed or got truncated. Also prunes
-   *  stale cards whose `line_index` is no longer in the new OCR
-   *  layout. */
   function forceCommitRemaining(): void {
-    // 1. Prune cards that don't exist in the new layout anymore.
     const validIndices = new Set(pendingLines.map((l) => l.line_index));
     const pruned = visibleLines.filter((l) => validIndices.has(l.line_index));
     if (pruned.length !== visibleLines.length) {
       visibleLines = pruned;
     }
-    // 2. Commit any pending line that never got a done chunk.
     for (const l of pendingLines) {
       const already = visibleLines.some((v) => v.line_index === l.line_index);
       if (already) continue;
       commitLine(l.line_index);
     }
-  }
-
-  /** Split the translation on newlines (LLM often preserves the
-   *  source's line structure) so we can size the font against the
-   *  longest sub-line AND the total line count, not just the raw
-   *  character length. Keeps multi-line paragraphs readable in a
-   *  single card without overflowing. */
-  function longestSubLine(text: string): number {
-    return text
-      .split(/\r?\n/)
-      .reduce((acc, seg) => Math.max(acc, seg.length), 0) || text.length;
-  }
-
-  function subLineCount(text: string): number {
-    return Math.max(1, text.split(/\r?\n/).length);
   }
 
   onMount(async () => {
@@ -171,10 +151,6 @@
         currentFlowId = e.flow_id;
         streaming = true;
         lastError = null;
-        // Reset the per-line buffer. `visibleLines` stays put: the
-        // previous flow's cards remain on screen until their slots
-        // are overwritten by the new flow's `done=true` chunks or
-        // pruned by `forceCommitRemaining` on flow-done.
         pendingLines = [];
         pendingChunks.clear();
       })
@@ -195,9 +171,6 @@
           translation: '',
           done: false
         }));
-        // If OCR returned no lines, clear the old translations
-        // immediately so a now-empty source frame doesn't keep stale
-        // cards on screen.
         if (pendingLines.length === 0) {
           visibleLines = [];
         }
@@ -213,10 +186,6 @@
           text: existing.text + (e.delta ?? ''),
           done: existing.done || e.done
         });
-        // Per-line commit: once this specific line is complete,
-        // push it to visibleLines. Other lines can still be
-        // streaming and the user sees this one pop in as a whole
-        // block, no typing animation, no partial text.
         if (e.done) {
           commitLine(e.line_index);
         }
@@ -228,9 +197,6 @@
         if (e.id !== id) return;
         if (currentFlowId !== null && e.flow_id !== currentFlowId) return;
         streaming = false;
-        // Safety net: commit any line that never got a done chunk
-        // and prune stale cards whose line_index is no longer in
-        // the new layout.
         forceCommitRemaining();
       })
     );
@@ -254,17 +220,18 @@
 </script>
 
 <!--
-  Lens UX per plan.md Q3 D (refined 2026-04-21):
-  - main is FULLY transparent so source text shows through.
-  - Cards render only after a flow is fully done (no per-chunk
-    repaint, no blank placeholder) so the user sees one stable
-    translation block at a time.
-  - Header is hidden by default; hover reveals the drag handle and
-    close button so the window stays interactive without chrome.
+  Lens UX:
+  - main is fully transparent so source text shows through.
+  - Cards render only after each line's translation is `done`, so
+    the user sees whole blocks, never mid-stream tokens.
+  - On Windows, WDA_EXCLUDEFROMCAPTURE makes the window invisible
+    to screen capture; `masked` stays false and the cards never
+    disappear. On Linux the backend still emits the mask signal as
+    a fallback, and the CSS transition softens the visual pulse.
 -->
 <main
-  class="relative h-screen w-screen overflow-hidden"
-  class:masked
+  class="relative h-screen w-screen overflow-hidden transition-opacity duration-75"
+  class:opacity-0={masked}
   style="background: transparent;"
   onmouseenter={() => (hovered = true)}
   onmouseleave={() => (hovered = false)}
@@ -294,14 +261,11 @@
     </button>
   </header>
 
-  <!-- Committed translation cards. Only updated atomically on
-       flow-done so there is no character-by-character typing or
-       empty-placeholder flash. -->
   {#each visibleLines as line (line.line_index)}
     <div class="lens-card absolute flex items-center overflow-hidden" style={cardStyle(line)}>
       <p
-        class="line-text w-full overflow-hidden whitespace-pre-wrap break-words text-left"
-        style="--text-len: {Math.max(1, longestSubLine(line.translation))}; --line-count: {subLineCount(line.translation)}"
+        class="line-text w-full overflow-hidden whitespace-nowrap"
+        style="--text-len: {Math.max(1, line.translation.length)}"
       >
         {line.translation}
       </p>
@@ -329,37 +293,20 @@
     background: transparent !important;
     margin: 0;
   }
-  /* Mask is applied INSTANTLY — no transition-opacity here. The
-     backend sleeps 60ms after emitting the mask signal; that budget
-     has to cover Svelte's reactive update + browser repaint +
-     compositor, not an animation. A visible fade would both (a) flash
-     the user on every auto-poll tick and (b) leak half-opaque cards
-     into the hash-compare capture, which the backend then mistakes
-     for "source changed" and re-runs translation forever. */
-  :global(main.masked) {
-    opacity: 0;
-  }
   .lens-card {
     container-type: size;
-    line-height: 1.2;
+    line-height: 1;
   }
   .line-text {
-    /* Size the font so the translation looks at home on top of the
-       source, not like a billboard. Max is capped at 22px — real
-       on-screen text is rarely bigger than that, so letting a short
-       translation balloon to 40px made the card feel disconnected
-       from the source layout. The vertical budget uses 75cqh (not
-       90) because `line-height: 1.2` already eats 20% of the
-       allotted height per line. */
+    /* MVP font-fit: tighter of bbox-height-based sizing (85cqh) and
+       character-width-based sizing (90cqw / text-len). Max 40px to
+       accommodate large source text (subtitles, big UI labels).
+       `--text-len` is set per card from Svelte. */
     font-size: clamp(
-      8px,
-      min(
-        calc(75cqh / var(--line-count, 1)),
-        calc(95cqw / var(--text-len, 10))
-      ),
-      22px
+      7px,
+      min(85cqh, calc(90cqw / var(--text-len, 10))),
+      40px
     );
-    line-height: 1.2;
-    padding: 0 2px;
+    line-height: 1;
   }
 </style>

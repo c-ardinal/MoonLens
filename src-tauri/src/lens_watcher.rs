@@ -384,18 +384,95 @@ fn relative_luminance(bg: [u8; 3]) -> f32 {
 
 /// Pick a text colour that contrasts with `bg`. Uses the WCAG
 /// relative-luminance threshold (~0.179 ~ sRGB 128 grey) and falls
-/// back to pure black / white for maximum contrast. Cuts the previous
-/// luma-140 BT.601 formula which under-lit text against mid-grey
-/// backgrounds.
+/// back to pure black / white for maximum contrast. Used as a
+/// fallback when the source-text-color sampler can't find any
+/// non-background pixels to sample (empty bbox, uniform noise).
 fn contrast_text(bg: [u8; 3]) -> [u8; 3] {
-    // The threshold 0.179 is where a mid-grey `#777` sits; backgrounds
-    // brighter than that read better with black text, darker with
-    // white. Matches https://www.w3.org/TR/WCAG20-TECHS/G18.html.
     if relative_luminance(bg) > 0.179 {
         [10, 10, 10]
     } else {
         [245, 245, 245]
     }
+}
+
+/// Sample the dominant non-background colour *inside* the bbox —
+/// i.e. the actual source-text colour. This is what the user sees
+/// on screen; picking it for the card text makes the translation
+/// feel like a swap, not a black/white label pasted on top.
+///
+/// Algorithm: iterate every pixel of the bbox; a pixel counts as
+/// "text" when its distance from `bg` in RGB space is greater than
+/// `text_threshold`. Return the mean of the text pixels. When no
+/// pixel clears the threshold (noise-only bbox, uniform region)
+/// fall back to [`contrast_text`] so the card is never unreadable.
+fn sample_text_color(img: &image::DynamicImage, bbox: [f32; 4], bg: [u8; 3]) -> [u8; 3] {
+    let rgb = img.to_rgb8();
+    let (w, h) = (rgb.width() as i32, rgb.height() as i32);
+    let x = bbox[0] as i32;
+    let y = bbox[1] as i32;
+    let bw = bbox[2] as i32;
+    let bh = bbox[3] as i32;
+    if bw <= 0 || bh <= 0 {
+        return contrast_text(bg);
+    }
+    let x0 = x.max(0);
+    let y0 = y.max(0);
+    let x1 = (x + bw).min(w);
+    let y1 = (y + bh).min(h);
+    if x1 <= x0 || y1 <= y0 {
+        return contrast_text(bg);
+    }
+
+    // Threshold = 60 in Euclidean RGB — picks up antialiased glyph
+    // edges while ignoring JPEG noise or minor gradients in the
+    // background. 60^2 = 3600 lets us compare squared distances and
+    // skip the sqrt per pixel.
+    const TEXT_THRESHOLD_SQ: i32 = 60 * 60;
+    let (br, bgg, bb) = (bg[0] as i32, bg[1] as i32, bg[2] as i32);
+
+    let mut r_sum: u64 = 0;
+    let mut g_sum: u64 = 0;
+    let mut b_sum: u64 = 0;
+    let mut n: u64 = 0;
+    for py in y0..y1 {
+        for px in x0..x1 {
+            let p = rgb.get_pixel(px as u32, py as u32).0;
+            let dr = p[0] as i32 - br;
+            let dg = p[1] as i32 - bgg;
+            let db = p[2] as i32 - bb;
+            if dr * dr + dg * dg + db * db >= TEXT_THRESHOLD_SQ {
+                r_sum += p[0] as u64;
+                g_sum += p[1] as u64;
+                b_sum += p[2] as u64;
+                n += 1;
+            }
+        }
+    }
+
+    // Require at least 2% of the bbox pixels to look like "text"
+    // before we trust the sampled colour. For tiny bboxes where
+    // that floor is unreachable the contrast fallback is safer.
+    let area = ((x1 - x0) as u64) * ((y1 - y0) as u64);
+    let min_text_pixels = (area / 50).max(8);
+    if n < min_text_pixels {
+        return contrast_text(bg);
+    }
+
+    // Check the sampled mean actually reads against bg — pathological
+    // cases (e.g. a gradient bg) can produce a "text" mean that sits
+    // right on top of the bg. Fall back when contrast is insufficient.
+    let mean = [
+        (r_sum / n) as u8,
+        (g_sum / n) as u8,
+        (b_sum / n) as u8,
+    ];
+    let dr = mean[0] as i32 - br;
+    let dg = mean[1] as i32 - bgg;
+    let db = mean[2] as i32 - bb;
+    if dr * dr + dg * dg + db * db < TEXT_THRESHOLD_SQ {
+        return contrast_text(bg);
+    }
+    mean
 }
 
 /// Does `text` appear to already be written in `target_language`? Used
@@ -464,122 +541,12 @@ pub fn text_is_already_target(text: &str, target_language: &str) -> bool {
     }
 }
 
-/// A paragraph is one or more OCR lines that read as a single
-/// sentence. Grouping them before translation gives Gemma the full
-/// context ("Very interesting.\nIndeed it is." → one translation
-/// preserving the pronoun reference) and the UI renders them as one
-/// card spanning the union bbox.
-#[derive(Debug, Clone)]
-struct Paragraph {
-    /// Source line indices (original OcrLine positions) covered by
-    /// this paragraph, sorted top → bottom. Kept for diagnostics /
-    /// future UI (render a caret when hovering a merged paragraph)
-    /// even though the translate loop currently only consumes
-    /// `bbox` and `text`.
-    #[allow(dead_code)]
-    lines: Vec<usize>,
-    /// Union bbox covering every source line, tight enough for the
-    /// single card to sit over the whole paragraph.
-    bbox: [f32; 4],
-    /// Joined original text, newline-separated so the LLM sees the
-    /// original layout.
-    text: String,
-}
-
-/// Group OCR lines into paragraphs. Conservative by design: false
-/// positives (merging unrelated lines) corrupt the translation much
-/// more than false negatives (translating one sentence per line) so
-/// we bias toward leaving lines alone. Two consecutive (sorted-by-y)
-/// lines join the same paragraph only when ALL of these hold:
-///   - Vertical gap ≤ 0.5 × the smaller line's height — a real line
-///     break inside a paragraph, not a paragraph / section break.
-///   - Horizontal ranges overlap by ≥ 60% of the smaller range —
-///     same left margin, same column.
-///   - The upper line does NOT end with sentence-final punctuation
-///     (`.!?。！？`) — that's a hard break.
-///   - Either line's text is long enough (≥ 6 chars) that a merge
-///     is actually worth the extra LLM context cost; short
-///     standalone phrases (menu items, UI labels) stay per-line.
-fn group_paragraphs(lines: &[OcrLine]) -> Vec<Paragraph> {
-    if lines.is_empty() {
-        return Vec::new();
-    }
-    let mut order: Vec<usize> = (0..lines.len()).collect();
-    order.sort_by(|&a, &b| {
-        lines[a].bbox[1]
-            .partial_cmp(&lines[b].bbox[1])
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
-
-    let ends_paragraph = |text: &str| -> bool {
-        let trimmed = text.trim_end();
-        let last = trimmed.chars().last();
-        matches!(
-            last,
-            Some('.') | Some('!') | Some('?') | Some('。') | Some('！') | Some('？')
-        )
-    };
-
-    let mut groups: Vec<Vec<usize>> = Vec::new();
-    let mut current: Vec<usize> = Vec::new();
-    for &idx in &order {
-        if current.is_empty() {
-            current.push(idx);
-            continue;
-        }
-        let prev_idx = *current.last().unwrap();
-        let prev = &lines[prev_idx].bbox;
-        let curr = &lines[idx].bbox;
-        let prev_bottom = prev[1] + prev[3];
-        let gap = (curr[1] - prev_bottom).max(0.0);
-        let min_h = prev[3].min(curr[3]).max(1.0);
-        let close_vertically = gap <= 0.5 * min_h;
-        let prev_left = prev[0];
-        let prev_right = prev[0] + prev[2];
-        let curr_left = curr[0];
-        let curr_right = curr[0] + curr[2];
-        let overlap = (prev_right.min(curr_right) - prev_left.max(curr_left)).max(0.0);
-        let min_w = (prev[2]).min(curr[2]).max(1.0);
-        let overlap_ratio = overlap / min_w;
-        let horizontally_aligned = overlap_ratio >= 0.6;
-        let prev_text_finished = ends_paragraph(&lines[prev_idx].text);
-        let both_substantial = lines[prev_idx].text.chars().count() >= 6
-            && lines[idx].text.chars().count() >= 6;
-        if close_vertically && horizontally_aligned && !prev_text_finished && both_substantial {
-            current.push(idx);
-        } else {
-            groups.push(std::mem::take(&mut current));
-            current.push(idx);
-        }
-    }
-    if !current.is_empty() {
-        groups.push(current);
-    }
-
-    groups
-        .into_iter()
-        .map(|group| {
-            let mut min_x = f32::INFINITY;
-            let mut min_y = f32::INFINITY;
-            let mut max_x = f32::NEG_INFINITY;
-            let mut max_y = f32::NEG_INFINITY;
-            let mut parts: Vec<String> = Vec::with_capacity(group.len());
-            for &idx in &group {
-                let b = &lines[idx].bbox;
-                min_x = min_x.min(b[0]);
-                min_y = min_y.min(b[1]);
-                max_x = max_x.max(b[0] + b[2]);
-                max_y = max_y.max(b[1] + b[3]);
-                parts.push(lines[idx].text.clone());
-            }
-            Paragraph {
-                lines: group,
-                bbox: [min_x, min_y, (max_x - min_x).max(1.0), (max_y - min_y).max(1.0)],
-                text: parts.join("\n"),
-            }
-        })
-        .collect()
-}
+// Paragraph grouping was attempted 2026-04-21 but reverted: merging
+// OCR lines into a union-bbox card rescaled every card to the
+// combined paragraph height, which made single-line translations of
+// multi-line paragraphs look absurdly small. Cross-line LLM context
+// is a plan.md S3 concern (streaming_translate plugin point). Each
+// OCR line now translates independently, matching MVP behaviour.
 
 async fn run_capture_loop(
     lens_id: String,
@@ -609,23 +576,24 @@ async fn run_capture_loop(
             break;
         }
 
-        // Mask the lens UI (opacity 0 on every card) BEFORE the
-        // capture so the screen grab sees through our transparent
-        // window to the real source underneath. 60 ms covers
-        // reactive update + browser paint + compositor + any
-        // Windows DWM frame scheduling, and is the difference
-        // between a clean source capture and half-opaque cards
-        // leaking into the hash — the latter manifested as
-        // "re-translation fires even when nothing moved" because
-        // every capture hashed differently.
-        let _ = app.emit(
-            "moonlens://lens-mask",
-            LensMask {
-                id: lens_id.clone(),
-                masked: true,
-            },
-        );
-        tokio::time::sleep(Duration::from_millis(60)).await;
+        // Windows: `WDA_EXCLUDEFROMCAPTURE` on the lens window means
+        // xcap's screen grab already sees straight through us to the
+        // source — no masking dance required, no blink, ever.
+        //
+        // Other platforms still need the MVP mask fallback: emit the
+        // opacity-0 signal, wait long enough for the compositor to
+        // propagate the CSS class flip, capture, then restore.
+        #[cfg(not(target_os = "windows"))]
+        {
+            let _ = app.emit(
+                "moonlens://lens-mask",
+                LensMask {
+                    id: lens_id.clone(),
+                    masked: true,
+                },
+            );
+            tokio::time::sleep(Duration::from_millis(120)).await;
+        }
 
         let lens_id_c = lens_id.clone();
         let app_c = app.clone();
@@ -639,14 +607,18 @@ async fn run_capture_loop(
             })
             .await;
 
-        // Restore card rendering immediately after the grab.
-        let _ = app.emit(
-            "moonlens://lens-mask",
-            LensMask {
-                id: lens_id.clone(),
-                masked: false,
-            },
-        );
+        // Restore card rendering immediately after the grab. No-op
+        // on Windows where the mask signal is never sent.
+        #[cfg(not(target_os = "windows"))]
+        {
+            let _ = app.emit(
+                "moonlens://lens-mask",
+                LensMask {
+                    id: lens_id.clone(),
+                    masked: false,
+                },
+            );
+        }
 
         let (png, hash, image_w, image_h) = match captured {
             Ok(Ok(tuple)) => tuple,
@@ -749,50 +721,57 @@ async fn run_capture_loop(
             ocr_lines.len()
         );
 
-        // Decode the captured frame so we can sample background
-        // colours around each bbox. Failure here is non-fatal — we
-        // fall back to a neutral grey fill so the card still renders.
+        // Decode the captured frame so we can sample background /
+        // foreground colours around each bbox. Failure here is
+        // non-fatal — we fall back to a neutral grey fill so the
+        // card still renders.
         let decoded = image::load_from_memory(&png_for_colors).ok();
 
-        // Group consecutive, horizontally-aligned, same-paragraph
-        // lines into a single translation unit so the LLM sees the
-        // whole sentence instead of dangling clauses.
-        let paragraphs = group_paragraphs(&ocr_lines);
-
-        // Tile paragraph cards vertically so adjacent rows never
-        // overlap AND never leave a sliver of source peeking through.
-        let mut by_y: Vec<usize> = (0..paragraphs.len()).collect();
+        // Per-line translation (MVP behaviour). Paragraph grouping
+        // was reverted because it rescaled cards to the union bbox
+        // and threw off font-fit for translations shorter than the
+        // source. Cross-line context is a plan.md S3 concern
+        // (`translate_stream` plugin point) — not worth the visual
+        // regression in v0.1.
+        let mut by_y: Vec<usize> = (0..ocr_lines.len()).collect();
         by_y.sort_by(|&a, &b| {
-            paragraphs[a].bbox[1]
-                .partial_cmp(&paragraphs[b].bbox[1])
+            ocr_lines[a].bbox[1]
+                .partial_cmp(&ocr_lines[b].bbox[1])
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
         let position_in_sort: std::collections::HashMap<usize, usize> =
             by_y.iter().enumerate().map(|(pos, &idx)| (idx, pos)).collect();
 
-        let lens_lines: Vec<LensOcrLine> = paragraphs
+        let lens_lines: Vec<LensOcrLine> = ocr_lines
             .iter()
             .enumerate()
-            .map(|(i, p)| {
+            .map(|(i, l)| {
                 let bg = match &decoded {
-                    Some(img) => sample_rim_color(img, p.bbox),
+                    Some(img) => sample_rim_color(img, l.bbox),
                     None => [128, 128, 128],
                 };
-                let [x, _y, w, _h] = p.bbox;
-                let orig_top = p.bbox[1];
-                let orig_bottom = p.bbox[1] + p.bbox[3];
-
+                // Match the source text colour instead of forcing
+                // black/white. Sampling is scoped to the ORIGINAL
+                // bbox (pre-tile) so the card expansion below does
+                // not dilute the sample.
+                let fg = match &decoded {
+                    Some(img) => sample_text_color(img, l.bbox, bg),
+                    None => contrast_text(bg),
+                };
+                let [x, _y, w, _h] = l.bbox;
+                let orig_top = l.bbox[1];
+                let orig_bottom = l.bbox[1] + l.bbox[3];
                 let ex: f32 = 8.0;
                 let pos = position_in_sort.get(&i).copied().unwrap_or(0);
                 let top_divider = if pos > 0 {
-                    let prev = &paragraphs[by_y[pos - 1]].bbox;
+                    let prev = &ocr_lines[by_y[pos - 1]].bbox;
                     let prev_bottom = prev[1] + prev[3];
                     (prev_bottom + orig_top) * 0.5
                 } else {
                     (orig_top - 6.0).max(0.0)
                 };
                 let bot_divider = if pos + 1 < by_y.len() {
-                    let nxt = &paragraphs[by_y[pos + 1]].bbox;
+                    let nxt = &ocr_lines[by_y[pos + 1]].bbox;
                     let next_top = nxt[1];
                     (orig_bottom + next_top) * 0.5
                 } else {
@@ -805,10 +784,10 @@ async fn run_capture_loop(
                 let nw = (w + ex * 2.0).min((image_w as f32) - nx);
                 LensOcrLine {
                     line_index: i,
-                    text: p.text.clone(),
+                    text: l.text.clone(),
                     bbox: [nx, ny, nw, nh],
                     bg_color: bg,
-                    fg_color: contrast_text(bg),
+                    fg_color: fg,
                 }
             })
             .collect();
@@ -823,7 +802,7 @@ async fn run_capture_loop(
         };
         let _ = app.emit("moonlens://lens-ocr-lines", ocr_payload);
 
-        if paragraphs.is_empty() {
+        if ocr_lines.is_empty() {
             let _ = app.emit(
                 "moonlens://lens-flow-done",
                 LensFlowDone {
@@ -843,14 +822,11 @@ async fn run_capture_loop(
         let semaphore = Arc::new(Semaphore::new(max_concurrent));
 
         let mut tasks: Vec<JoinHandle<()>> = Vec::with_capacity(line_count);
-        for (i, para) in paragraphs.into_iter().enumerate() {
-            // Short-circuit if the OCR output is already in the
-            // target language — emit the original text as the final
-            // chunk and skip the LLM call entirely.
-            if text_is_already_target(&para.text, &target) {
+        for (i, line) in ocr_lines.into_iter().enumerate() {
+            if text_is_already_target(&line.text, &target) {
                 tracing::info!(
                     "lens line {i}: skipped translation (already {target}) — {:?}",
-                    para.text.chars().take(20).collect::<String>()
+                    line.text.chars().take(20).collect::<String>()
                 );
                 let _ = app.emit(
                     "moonlens://lens-line-chunk",
@@ -858,7 +834,7 @@ async fn run_capture_loop(
                         id: lens_id.clone(),
                         flow_id,
                         line_index: i,
-                        delta: para.text.clone(),
+                        delta: line.text.clone(),
                         done: true,
                     },
                 );
@@ -879,13 +855,13 @@ async fn run_capture_loop(
                     id_c,
                     flow_id,
                     i,
-                    para.text,
+                    line.text,
                     target_c,
                     settings_c,
                 )
                 .await
                 {
-                    tracing::info!("lens paragraph {i} translate failed: {e}");
+                    tracing::info!("lens line {i} translate failed: {e}");
                 }
             });
             tasks.push(task);
@@ -1062,65 +1038,42 @@ mod tests {
     }
 
     #[test]
-    fn group_paragraphs_merges_adjacent_aligned_lines() {
-        let lines = vec![
-            OcrLine {
-                text: "This is a long".into(),
-                bbox: [10.0, 10.0, 200.0, 20.0],
-                confidence: 0.9,
-            },
-            OcrLine {
-                text: "sentence that wraps".into(),
-                bbox: [10.0, 32.0, 200.0, 20.0],
-                confidence: 0.9,
-            },
-        ];
-        let p = group_paragraphs(&lines);
-        assert_eq!(p.len(), 1, "close aligned lines must merge");
-        assert_eq!(p[0].lines.len(), 2);
-        assert!(p[0].text.contains('\n'));
+    fn sample_text_color_picks_dominant_non_bg_color() {
+        use image::{DynamicImage, Rgb, RgbImage};
+        // 20x20 white image with a vertical red stripe in the middle.
+        let mut img = RgbImage::new(20, 20);
+        for y in 0..20 {
+            for x in 0..20 {
+                let colour = if x >= 8 && x <= 12 {
+                    Rgb([230, 40, 40]) // red glyph
+                } else {
+                    Rgb([250, 250, 250]) // white bg
+                };
+                img.put_pixel(x, y, colour);
+            }
+        }
+        let dynamic = DynamicImage::ImageRgb8(img);
+        let bg = [250u8, 250, 250];
+        let fg = sample_text_color(&dynamic, [0.0, 0.0, 20.0, 20.0], bg);
+        // Sampler should land somewhere in the red ballpark, not the
+        // white bg and not fall back to the contrast pick (#0a0a0a).
+        assert!(fg[0] > 180 && fg[1] < 80 && fg[2] < 80, "expected red-ish, got {fg:?}");
     }
 
     #[test]
-    fn group_paragraphs_splits_on_sentence_end() {
-        let lines = vec![
-            OcrLine {
-                text: "Very interesting.".into(),
-                bbox: [10.0, 10.0, 200.0, 20.0],
-                confidence: 0.9,
-            },
-            OcrLine {
-                text: "Indeed it is.".into(),
-                bbox: [10.0, 32.0, 200.0, 20.0],
-                confidence: 0.9,
-            },
-        ];
-        let p = group_paragraphs(&lines);
-        assert_eq!(p.len(), 2, "sentence-final punctuation breaks a paragraph");
-    }
-
-    #[test]
-    fn group_paragraphs_splits_on_large_vertical_gap() {
-        let lines = vec![
-            OcrLine {
-                text: "Header".into(),
-                bbox: [10.0, 10.0, 100.0, 20.0],
-                confidence: 0.9,
-            },
-            OcrLine {
-                text: "Body text unrelated".into(),
-                bbox: [10.0, 200.0, 100.0, 20.0],
-                confidence: 0.9,
-            },
-        ];
-        let p = group_paragraphs(&lines);
-        assert_eq!(p.len(), 2, "large vertical gap splits paragraphs");
-    }
-
-    #[test]
-    fn group_paragraphs_returns_empty_for_no_lines() {
-        let p = group_paragraphs(&[]);
-        assert!(p.is_empty());
+    fn sample_text_color_falls_back_when_no_text_pixels() {
+        use image::{DynamicImage, Rgb, RgbImage};
+        // Solid white bbox — no "text" pixels to sample.
+        let mut img = RgbImage::new(10, 10);
+        for y in 0..10 {
+            for x in 0..10 {
+                img.put_pixel(x, y, Rgb([240, 240, 240]));
+            }
+        }
+        let dynamic = DynamicImage::ImageRgb8(img);
+        let fg = sample_text_color(&dynamic, [0.0, 0.0, 10.0, 10.0], [240, 240, 240]);
+        // Should use contrast_text for [240,240,240] → dark text.
+        assert_eq!(fg, [10, 10, 10]);
     }
 
     #[test]

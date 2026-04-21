@@ -76,6 +76,17 @@ rusqlite = { version = "0.31", features = ["bundled"] }
 wasmtime = { version = "24", features = ["component-model", "runtime"] }
 wasmtime-wasi = "24"
 
+# Windows-only: exclude the Lens window from screen capture so xcap
+# sees the underlying source instead of our own transparent chrome.
+# This is what eliminates the masking-dance blink that plagued the
+# MVP — cards stay fully visible to the user while the screen grab
+# reads straight through them.
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.58", features = [
+    "Win32_Foundation",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
 [features]
 default = ["audio", "ocrs-engine"]
 audio = ["dep:cpal"]

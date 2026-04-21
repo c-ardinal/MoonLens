@@ -286,15 +286,50 @@ pub fn create(app: &AppHandle, registry: &LensRegistryHandle) -> Result<String> 
         .build()
         .context("create lens window")?;
     let _ = win.set_always_on_top(true);
-    // NOTE: we tried WDA_EXCLUDEFROMCAPTURE here to remove the
-    // hide/show blink, but Windows kills transparency on any window
-    // with that affinity — the source behind the lens goes invisible
-    // and OCR then captures our own opaque surface. The proper fix is
-    // DXGI Duplication (S2), which can enumerate sources while
-    // ignoring a specific HWND. Until then we keep the transparent
-    // window and pay the 60 ms hide/show cost per poll.
+
+    // Windows 10 2004+ (May 2020 Update): marking the window with
+    // `WDA_EXCLUDEFROMCAPTURE` hides it from every screen-capture API
+    // that respects display affinity (xcap's `BitBlt`, DXGI
+    // Duplication, DWM thumbnails). From the user's point of view the
+    // lens window renders normally; from xcap's point of view the
+    // pixels under the window are whatever was behind it. That lets
+    // us keep the cards fully opaque AND capture the source
+    // underneath without any masking dance — no blink.
+    //
+    // Previous tree revisions reported that WDA_EXCLUDEFROMCAPTURE
+    // killed transparency, but that was a Win10-pre-2004 bug; modern
+    // Win10/11 compose the capture correctly. If xcap returns a
+    // black frame on an old build we fall back to the MVP mask
+    // signal automatically (see `lens_watcher::capture_clean`).
+    #[cfg(target_os = "windows")]
+    {
+        if let Err(e) = apply_exclude_from_capture(&win) {
+            tracing::warn!("lens {id}: failed to set WDA_EXCLUDEFROMCAPTURE: {e}");
+        } else {
+            tracing::info!("lens {id}: WDA_EXCLUDEFROMCAPTURE set, mask-free capture enabled");
+        }
+    }
+
     registry.track(id.clone());
     Ok(id)
+}
+
+#[cfg(target_os = "windows")]
+fn apply_exclude_from_capture(win: &WebviewWindow) -> Result<()> {
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        SetWindowDisplayAffinity, WDA_EXCLUDEFROMCAPTURE,
+    };
+    let raw = win.hwnd().context("lens window has no HWND")?;
+    let hwnd = HWND(raw.0 as _);
+    // SAFETY: `hwnd` was just obtained from a live Tauri WebviewWindow
+    // and the API accepts any valid HWND. The call returns a BOOL we
+    // convert into a Result via `.ok()`.
+    unsafe {
+        SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE)
+            .context("SetWindowDisplayAffinity failed")?;
+    }
+    Ok(())
 }
 
 pub fn close(app: &AppHandle, registry: &LensRegistryHandle, id: &str) -> Result<()> {
