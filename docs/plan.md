@@ -34,8 +34,9 @@
 - [x] **行間 midpoint tiling** — 隣接行のカードが overlap もせず source 漏れもせず厳密に接する
 - [x] **Live 統合テスト** — `cargo test --test lens_pipeline_live -- --ignored` で tauri 起動不要の OCR+翻訳回帰チェック
 - [x] **Dev build ML crate 最適化** — `[profile.dev.package.*]` opt-level=3 で tauri:dev でも OCR が release 速度
+- [x] **S1 UI shell 実装** (2026-04-21 autonomous) — WindowChrome + AppSidebar + +layout 統合、SchemaForm 全面改修（$ref/additionalProperties/hotkey widget/警告表示）、設定画面自動保存 + SaveIndicator、HotkeyInput recorder widget、ホーム画面リデザイン。全 67 vitest green、svelte-check 0 error、vite build 成功、vite dev 8 route 全 200。
 - [ ] README.md / docs/USAGE.md / docs/DEV.md / docs/KNOWN_ISSUES.md / docs/TECH_CHANGES.md / CONTRIBUTING.md / .github/ISSUE_TEMPLATE/ — **S0.5 繰延続行**
-- [ ] `CHANGELOG.md` 更新（`v0.1.0-beta.1` 〜 `v0.1.0` の予定 entry）
+- [ ] `CHANGELOG.md` 更新（`v0.1.0-beta.1` 〜 `v0.1.0` の予定 entry） — Unreleased セクション更新済
 - [ ] MVP 成果を分割 commit / push / PR — ユーザ承認時に実施
 
 ### 現在の branch / PR / CI
@@ -47,7 +48,29 @@
 - **Latest commit on branch**: `f31d690 perf(bench): speed feasibility harness + gemma4:e2b default + think:false`
 - **前セッション用タグ案**（破棄）: `v0.1.0-rc.1` を直接打つ計画は Q10-E α で一度決めたが Q18-D β に上書き、beta ladder に変更
 
-### 本セッション未コミット変更（commit 直前状態、2026-04-21）
+### 本セッション S1 未コミット変更（autonomous mode、2026-04-21 後半）
+
+**Frontend (`src/`)**
+- 🆕 `lib/components/WindowChrome.svelte` — 32px カスタムタイトルバー、`data-tauri-drag-region` + lucide `Minus`/`X` アイコン、最小化/閉じるボタン、赤 hover for close
+- 🆕 `lib/components/AppSidebar.svelte` — 240px 常駐 nav（collapse 48px）、localStorage 記憶、`$page` stores で active route ハイライト
+- 🆕 `lib/components/HotkeyInput.svelte` — record mode の accelerator 入力 widget、Ctrl/Alt/Shift/Meta 修飾キー必須、Esc でキャンセル、クリアボタン
+- 🆕 `lib/components/SaveIndicator.svelte` — saved/dirty/saving/error の 4 状態、a11y `aria-live="polite"`
+- 🆕 `lib/components/HotkeyInput.svelte.test.ts` / `SaveIndicator.svelte.test.ts` — 新規テスト計 10 件
+- ✏️ `lib/components/SchemaForm.svelte` — `$ref` 解決、`additionalProperties` マップ編集、section `<details>` 折り畳み、`format: "hotkey"` → HotkeyInput、未サポート型は警告表示
+- ✏️ `lib/components/SchemaForm.svelte.test.ts` — $ref / unsupported / map の 3 ケース追加
+- ✏️ `lib/components/AppHeader.svelte` — `showBack` prop 追加（default false）、サイドバー時代に back ボタンを redundant 化しない
+- ✏️ `routes/+layout.svelte` — WindowChrome + AppSidebar のシェル統合、`/overlay` `/subtitle` `/select` `/lens` `/lens-frame` は従来通り裸描画
+- ✏️ `routes/+page.svelte` — ダッシュボード風リデザイン、重複 nav 削除、primary action をアイコンカードに、ショートカット一覧追加
+- ✏️ `routes/settings/+page.svelte` — 保存ボタン廃止、500ms debounce で `setSettings()`、SaveIndicator 表示、既定に戻す（セッション snapshot restore）
+
+**Rust / capabilities**
+- ✏️ `src-tauri/capabilities/default.json` — `core:window:allow-minimize` / `core:window:allow-close` 追加
+
+**Docs**
+- ✏️ `CHANGELOG.md` — `## Unreleased` に S1 変更を記載
+- ✏️ `docs/plan.md` — 本 section、Session 0.5 / S1 進捗、次 action 更新
+
+### 本セッション S0.5 MVP 変更（commit 済: 32badda〜124bf3c）
 
 **Rust (`src-tauri/`)**
 - 🆕 `src/lens_watcher.rs` — event-driven per-Lens watcher（`Notify` trigger、position polling backup 250ms、card mask event、OCR bbox→tiling/color sampling）

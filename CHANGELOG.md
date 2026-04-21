@@ -6,7 +6,44 @@ the project adheres to [SemVer](https://semver.org/).
 
 ## Unreleased
 
-_No changes yet since v0.1.0-rc.1._
+### Added
+
+- 常駐サイドバー (`AppSidebar.svelte`): 240px 幅の nav、collapse で
+  48px アイコンのみ、現在ルートをアクセントバーでハイライト、
+  localStorage に状態保存。
+- 自作ウィンドウタイトルバー (`WindowChrome.svelte`): 32px 高さ、
+  data-tauri-drag-region によるドラッグ移動、最小化/閉じるアイコン。
+  `decorations: false` 設定のメインウィンドウで必須。
+- `HotkeyInput.svelte`: JSON Schema の `format: "hotkey"` フィールドを
+  record モードで入力可能にする。修飾キー+キーで accelerator 文字列化。
+- `SaveIndicator.svelte`: 設定画面の保存状態 (未保存 / 保存中 / 保存済み /
+  失敗) を右上に表示、保存失敗時はエラーメッセージを tooltip で提供。
+
+### Changed
+
+- 設定画面の「保存」ボタンを廃止、500ms debounce での**自動保存**に変更。
+  右上に保存インジケータを常時表示 (plan.md Q13-B δ)。
+- `SchemaForm.svelte` を全面改修: `$ref` 解決、`additionalProperties`
+  (HashMap) の動的キー/値編集、セクションの `<details>` 折り畳み、
+  `format: "hotkey"` widget hint サポート、未サポート型は JSON 羅列で
+  なく警告表示に。
+- `+layout.svelte` を WindowChrome + AppSidebar の常駐シェルに統合。
+  `/overlay` `/subtitle` `/select` `/lens` `/lens-frame` の浮動ウィンドウは
+  従来どおりシェル無しで描画。
+- `AppHeader.svelte` の back ボタンを opt-in 化 (default: hidden)。
+  サイドバーが永続ナビゲーションを担うため、サブルートには通常不要。
+- `capabilities/default.json` に `core:window:allow-minimize` /
+  `allow-close` を追加 — WindowChrome のボタンが Tauri IPC 経由で動作。
+- ホーム画面 (`/`) をダッシュボード風にリデザイン: 重複していた nav
+  グリッドを削除しサイドバーに一本化、キャプチャ/Lens のプライマリ
+  アクションをアイコン付きカードで強調、ショートカット一覧を
+  フッター代わりに配置。
+
+### Tests
+
+- `HotkeyInput.svelte.test.ts` / `SaveIndicator.svelte.test.ts` 新規
+  追加、既存 `SchemaForm.svelte.test.ts` に `$ref` / unsupported /
+  additionalProperties の 3 ケース追加。全 67 テスト green。
 
 ## v0.1.0-rc.1 — first public release candidate
 
