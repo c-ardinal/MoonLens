@@ -31,6 +31,7 @@
       angle: number;
       from: [number, number, number];
       to: [number, number, number];
+      stops?: [number, number, number][];
     } | null;
     fg_color: [number, number, number];
     translation: string;
@@ -107,14 +108,22 @@
     const [fr, fg, fb] = line.fg_color;
     // Prefer a CSS linear-gradient when the rim sampler detected
     // one — much closer to "the card disappears into the source"
-    // than a flat fill on any non-solid surface. Fall back to
-    // `background-color` otherwise.
+    // than a flat fill on any non-solid surface. Multi-stop
+    // support: the backend may ship 3-5 stops for non-linear
+    // fades; we render every stop the backend sent, falling back
+    // to the 2-colour from/to for older payloads.
     let background: string;
     if (line.bg_gradient) {
       const g = line.bg_gradient;
-      const [ar, ag, ab] = g.from;
-      const [zr, zg, zb] = g.to;
-      background = `background:linear-gradient(${g.angle}deg, rgb(${ar},${ag},${ab}), rgb(${zr},${zg},${zb}));`;
+      const stops = g.stops && g.stops.length >= 2 ? g.stops : [g.from, g.to];
+      const n = stops.length;
+      const stopsCss = stops
+        .map(([r, gg, bv], i) => {
+          const pct = ((i * 100) / (n - 1)).toFixed(1);
+          return `rgb(${r},${gg},${bv}) ${pct}%`;
+        })
+        .join(', ');
+      background = `background:linear-gradient(${g.angle}deg, ${stopsCss});`;
     } else {
       background = `background-color:rgb(${br},${bgc},${bb});`;
     }

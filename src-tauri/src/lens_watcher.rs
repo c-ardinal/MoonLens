@@ -319,15 +319,25 @@ pub struct LensMask {
 
 /// Gradient specification emitted to the lens UI when the rim of
 /// `bbox` has a noticeable colour slope along one axis. The UI
-/// renders `background: linear-gradient(<angle>deg, from, to)`.
+/// renders `background: linear-gradient(<angle>deg, stop0, stop1,
+/// ...)` using however many stops the sampler produces. Keeping
+/// `from` / `to` for backward compatibility — they mirror the first
+/// and last entries of `stops`.
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct BgGradient {
     /// CSS `linear-gradient` angle, where 0° is "to top" and
     /// rotates clockwise (CSS convention). 180° = vertical
     /// top-to-bottom, 90° = horizontal left-to-right.
     pub angle: u16,
+    /// Start colour. Alias of `stops[0]` — kept so older frontends
+    /// continue to render without the `stops` array.
     pub from: [u8; 3],
+    /// End colour. Alias of `stops[n-1]`.
     pub to: [u8; 3],
+    /// Equally-spaced colour stops along the axis (2..=5). First and
+    /// last match `from` / `to`; additional stops capture non-linear
+    /// gradients (spotlights, vignettes, banded backgrounds).
+    pub stops: Vec<[u8; 3]>,
 }
 
 fn color_distance_sq(a: [u8; 3], b: [u8; 3]) -> i32 {
@@ -394,6 +404,7 @@ pub fn detect_rim_gradient(
         angle: best.0,
         from: best.1,
         to: best.2,
+        stops: vec![best.1, best.2],
     })
 }
 
@@ -455,6 +466,131 @@ fn sample_edge(
         return None;
     }
     Some([(r / n) as u8, (g / n) as u8, (b / n) as u8])
+}
+
+/// Refine a detected gradient by **resampling the actual bbox
+/// interior** along the picked axis. Rim samples alone can lie
+/// (adjacent UI chrome, neighbouring OCR lines poison them), so
+/// once we know the direction we pull the stop colours from
+/// pixels that were really under the lens card — excluding glyph
+/// pixels via the distance-from-bg filter. Returns `None` when
+/// the inside sampler can't find enough background pixels; the
+/// caller keeps the rim-based 2-stop gradient in that case.
+fn refine_gradient_from_bbox(
+    img: &image::DynamicImage,
+    bbox: [f32; 4],
+    rim_start: [u8; 3],
+    rim_end: [u8; 3],
+    axis: u16,
+) -> Option<Vec<[u8; 3]>> {
+    // 5 stops gives enough resolution for spotlights / vignettes
+    // without overwhelming CSS. Diagonal axes (45° / 135°) skip
+    // this refinement — the corner-based 2-stop is already accurate
+    // because corners ARE positions, not edge averages.
+    const STOPS: usize = 5;
+    if axis != 90 && axis != 180 {
+        return None;
+    }
+    let rgb = img.to_rgb8();
+    let (iw, ih) = (rgb.width() as i32, rgb.height() as i32);
+    let x = bbox[0] as i32;
+    let y = bbox[1] as i32;
+    let bw = bbox[2] as i32;
+    let bh = bbox[3] as i32;
+    if bw < 10 || bh < 10 {
+        return None;
+    }
+    // Filter width relative to the *local* bg estimate, interpolated
+    // between the two rim samples. Much tighter than a single global
+    // bg_estimate because the bg itself varies along the axis. 70
+    // units tolerates JPEG / compositor noise while still rejecting
+    // glyph strokes (which differ from the local bg by 100+ units).
+    const BG_RADIUS_SQ: i32 = 70 * 70;
+
+    let mut stops: Vec<[u8; 3]> = Vec::with_capacity(STOPS);
+    for i in 0..STOPS {
+        let t = i as f32 / (STOPS as f32 - 1.0);
+        let (sx, sy, ex, ey) = if axis == 180 {
+            // Vertical: horizontal strip at t along y.
+            let band_h = (bh / (STOPS as i32 * 2)).max(1);
+            let cy = y + ((bh as f32 - 1.0) * t) as i32;
+            (x, cy - band_h, x + bw - 1, cy + band_h)
+        } else {
+            // Horizontal: vertical strip at t along x.
+            let band_w = (bw / (STOPS as i32 * 2)).max(1);
+            let cx = x + ((bw as f32 - 1.0) * t) as i32;
+            (cx - band_w, y, cx + band_w, y + bh - 1)
+        };
+        let sx = sx.max(0);
+        let sy = sy.max(0);
+        let ex = ex.min(iw - 1);
+        let ey = ey.min(ih - 1);
+        if sx > ex || sy > ey {
+            return None;
+        }
+
+        // Interpolate a local bg estimate so wide-range gradients
+        // don't collapse under a single global threshold.
+        let local_bg = [
+            (rim_start[0] as f32 + (rim_end[0] as f32 - rim_start[0] as f32) * t) as i32,
+            (rim_start[1] as f32 + (rim_end[1] as f32 - rim_start[1] as f32) * t) as i32,
+            (rim_start[2] as f32 + (rim_end[2] as f32 - rim_start[2] as f32) * t) as i32,
+        ];
+
+        let mut r: u64 = 0;
+        let mut g: u64 = 0;
+        let mut b: u64 = 0;
+        let mut n: u64 = 0;
+        for py in sy..=ey {
+            for px in sx..=ex {
+                let p = rgb.get_pixel(px as u32, py as u32).0;
+                let dr = p[0] as i32 - local_bg[0];
+                let dg = p[1] as i32 - local_bg[1];
+                let db = p[2] as i32 - local_bg[2];
+                if dr * dr + dg * dg + db * db < BG_RADIUS_SQ {
+                    r += p[0] as u64;
+                    g += p[1] as u64;
+                    b += p[2] as u64;
+                    n += 1;
+                }
+            }
+        }
+        // Require at least 8 bg pixels in this band; otherwise the
+        // sample is unreliable (glyph ink dominates the row). Fall
+        // back to the interpolated rim estimate so the gradient is
+        // still smooth across bands.
+        if n < 8 {
+            stops.push([
+                local_bg[0].clamp(0, 255) as u8,
+                local_bg[1].clamp(0, 255) as u8,
+                local_bg[2].clamp(0, 255) as u8,
+            ]);
+        } else {
+            stops.push([(r / n) as u8, (g / n) as u8, (b / n) as u8]);
+        }
+    }
+    Some(stops)
+}
+
+/// Is the bbox surround "clean enough" for a linear gradient? Linear
+/// gradients have the algebraic property `tl + br ≈ tr + bl`; real
+/// photos / patterns violate it wildly, and shipping a linear
+/// gradient over a patterned source produces exactly the
+/// "wrong-colour block" artefact the user reported.
+fn rim_is_clean_linear_gradient(
+    tl: [u8; 3],
+    tr: [u8; 3],
+    bl: [u8; 3],
+    br: [u8; 3],
+) -> bool {
+    // Midpoint predicted by a true linear gradient along either
+    // diagonal should be the average of the opposite corners.
+    let diag_mid = average_rgb(tl, br);
+    let anti_mid = average_rgb(tr, bl);
+    // Allow ~22 units in Euclidean RGB (504 sq) before we call the
+    // surround "complex". Slightly above MIN_DELTA_SQ so cases that
+    // ARE clean but noisy still qualify.
+    color_distance_sq(diag_mid, anti_mid) < 22 * 22
 }
 
 /// Sample the 2 px rim around `bbox` as four edge midpoints (top /
@@ -536,7 +672,37 @@ pub fn sample_rim_edges(
     )
     .unwrap_or(solid);
 
-    let gradient = detect_rim_gradient(top, bottom, left, right, tl, tr, bl, br);
+    // Complex source (photo, pattern, checker) fails the linear-
+    // gradient symmetry test. Shipping a 2-colour gradient over a
+    // textured background makes the card look painted-on at the
+    // wrong colour — a solid fill is the correct downgrade.
+    if !rim_is_clean_linear_gradient(tl, tr, bl, br) {
+        return (solid, None);
+    }
+
+    let mut gradient =
+        detect_rim_gradient(top, bottom, left, right, tl, tr, bl, br);
+    // When the rim detector picked a cardinal axis, we can do
+    // better: resample the inside of the bbox for multi-stop
+    // gradients that capture vignettes and non-linear fades. The
+    // refinement silently no-ops for diagonal axes (corner-based
+    // sampling is already accurate there). Pass the correct pair
+    // of edge-mean samples as the local-bg anchors — 180° runs
+    // top→bottom, 90° runs left→right.
+    if let Some(g) = gradient.as_mut() {
+        let (rim_start, rim_end) = match g.angle {
+            180 => (top, bottom),
+            90 => (left, right),
+            _ => (g.from, g.to),
+        };
+        if let Some(inner_stops) =
+            refine_gradient_from_bbox(img, bbox, rim_start, rim_end, g.angle)
+        {
+            g.from = *inner_stops.first().unwrap();
+            g.to = *inner_stops.last().unwrap();
+            g.stops = inner_stops;
+        }
+    }
     (solid, gradient)
 }
 
@@ -731,8 +897,22 @@ pub fn looks_like_ocr_noise(text: &str) -> bool {
         return true;
     }
     let total = chars.len();
-    let non_letter = chars.iter().filter(|c| !c.is_alphanumeric() && !c.is_whitespace()).count();
+    let non_letter = chars
+        .iter()
+        .filter(|c| !c.is_alphanumeric() && !c.is_whitespace())
+        .count();
     if total > 0 && (non_letter as f32 / total as f32) > 0.6 {
+        return true;
+    }
+    // Long runs of punctuation/symbols (>= 4 consecutive) are the
+    // fingerprint of ocrs misreading UI chrome: rules, separators,
+    // tab characters rendered as `------`, `:::::`, `||||`, etc.
+    // A length-4 window is permissive enough to keep ellipses
+    // (`...`) and common emoticons while rejecting decorative runs.
+    if chars
+        .windows(4)
+        .any(|w| w.iter().all(|c| !c.is_alphanumeric() && !c.is_whitespace()))
+    {
         return true;
     }
     // Latin-only garbled text: ocrs's usual failure mode when pointed
@@ -773,27 +953,44 @@ pub fn text_is_already_target(text: &str, target_language: &str) -> bool {
     if letters.is_empty() {
         return false;
     }
+    // Full character view (before the `is_alphabetic` filter) because
+    // several Japanese signals are punctuation / compat forms that
+    // don't pass the letter filter.
+    let all_chars: Vec<char> = text.chars().collect();
+
     match target.as_str() {
         "ja" | "ja-jp" | "jpn" | "japanese" => {
-            // Any hiragana or katakana is a strong Japanese signal.
-            let has_kana = letters.iter().any(|c| {
+            // Strong Japanese-only signals: hiragana, katakana,
+            // halfwidth katakana, and Japanese-style punctuation
+            // (`、。「」『』…`). Any of these means "leave it alone".
+            let japanese_specific = all_chars.iter().any(|c| {
                 let u = *c as u32;
-                (0x3040..=0x309F).contains(&u) || (0x30A0..=0x30FF).contains(&u)
+                (0x3040..=0x309F).contains(&u) // Hiragana
+                    || (0x30A0..=0x30FF).contains(&u) // Katakana
+                    || (0xFF65..=0xFF9F).contains(&u) // Halfwidth Katakana
+                    || (0x3000..=0x303F).contains(&u) // CJK Symbols + Punctuation
             });
-            if has_kana {
+            if japanese_specific {
                 return true;
             }
-            // Pure-kanji runs are ambiguous (could be Chinese). Treat
-            // as Japanese when the line is ≥ 2 chars and all letters
-            // are CJK — the `never` misclassification bias would strand
-            // Japanese subtitles that happen to be kanji-only.
-            let all_cjk = letters.iter().all(|c| {
-                let u = *c as u32;
-                (0x3400..=0x4DBF).contains(&u)
-                    || (0x4E00..=0x9FFF).contains(&u)
-                    || (0xF900..=0xFAFF).contains(&u)
-            });
-            all_cjk && letters.len() >= 2
+            // Kanji-only strings (including single kanji labels).
+            // Technically ambiguous vs Chinese, but for a JA target
+            // Gemma usually echoes the kanji back verbatim anyway, and
+            // skipping saves a round-trip AND avoids bizarre Gemma
+            // rephrasings of single-kanji UI labels (e.g. "戻",
+            // "次").
+            let kanji_count = all_chars
+                .iter()
+                .filter(|c| {
+                    let u = **c as u32;
+                    (0x3400..=0x4DBF).contains(&u) || (0x4E00..=0x9FFF).contains(&u)
+                })
+                .count();
+            let latin_letter_count = all_chars
+                .iter()
+                .filter(|c| c.is_ascii_alphabetic())
+                .count();
+            kanji_count >= 1 && latin_letter_count == 0
         }
         "en" | "en-us" | "en-gb" | "eng" | "english" => {
             // English = every letter is ASCII. Numbers / punctuation
@@ -1724,6 +1921,72 @@ mod tests {
     }
 
     #[test]
+    fn rim_is_clean_linear_gradient_accepts_uniform_rim() {
+        let c = [180u8, 180, 180];
+        assert!(rim_is_clean_linear_gradient(c, c, c, c));
+    }
+
+    #[test]
+    fn rim_is_clean_linear_gradient_accepts_true_diagonal() {
+        // Linear gradient TL(0) → BR(255) with midpoints at 128.
+        let tl = [0u8, 0, 0];
+        let br = [255u8, 255, 255];
+        let mid = [128u8, 128, 128];
+        assert!(rim_is_clean_linear_gradient(tl, mid, mid, br));
+    }
+
+    #[test]
+    fn rim_is_clean_linear_gradient_rejects_checkered_pattern() {
+        // Two dark + two light corners that do NOT line up as a
+        // linear gradient (e.g. diagonal checker). The sum test
+        // `tl+br ≈ tr+bl` should reject this.
+        let dark = [20u8, 20, 20];
+        let light = [230u8, 230, 230];
+        assert!(!rim_is_clean_linear_gradient(dark, light, light, dark));
+    }
+
+    #[test]
+    fn refine_gradient_from_bbox_produces_multi_stop_for_vertical() {
+        use image::{DynamicImage, Rgb, RgbImage};
+        // Build a 40×80 image with a vertical gradient from dark at
+        // the top to light at the bottom, plus a dark glyph stripe
+        // running horizontally in the middle that must be ignored.
+        let (w, h) = (40u32, 80u32);
+        let mut img = RgbImage::new(w, h);
+        for y in 0..h {
+            let t = y as f32 / (h as f32 - 1.0);
+            let v = (40.0 + t * 200.0) as u8;
+            for x in 0..w {
+                if y >= 35 && y < 45 {
+                    // "glyph" — far from gradient bg, should be
+                    // filtered out by the text threshold.
+                    img.put_pixel(x, y, Rgb([20, 20, 20]));
+                } else {
+                    img.put_pixel(x, y, Rgb([v, v, v]));
+                }
+            }
+        }
+        let dynamic = DynamicImage::ImageRgb8(img);
+        // Simulate the real call path: rim_start at y=0 (darkest),
+        // rim_end at y=max (lightest). These act as per-stop bg
+        // anchors so the filter tolerates a 200-unit gradient span.
+        let rim_start = [40u8, 40, 40];
+        let rim_end = [240u8, 240, 240];
+        let stops = refine_gradient_from_bbox(
+            &dynamic,
+            [0.0, 0.0, 40.0, 80.0],
+            rim_start,
+            rim_end,
+            180,
+        )
+        .expect("stops sampled");
+        assert_eq!(stops.len(), 5);
+        // First stop should be dark, last should be bright.
+        assert!(stops[0][0] < 90, "top stop: {:?}", stops[0]);
+        assert!(stops[4][0] > 200, "bottom stop: {:?}", stops[4]);
+    }
+
+    #[test]
     fn detect_rim_gradient_picks_anti_diagonal() {
         // Top-right dark → bottom-left light.
         let mid = [128u8, 128, 128];
@@ -1901,6 +2164,22 @@ mod tests {
     }
 
     #[test]
+    fn noise_filter_rejects_decorative_separator_runs() {
+        // UI chrome decorations misread as text — long dash / dot
+        // runs embedded in otherwise-alphanumeric content.
+        assert!(looks_like_ocr_noise("abc----def"));
+        assert!(looks_like_ocr_noise("foo::::bar"));
+        assert!(looks_like_ocr_noise("xxx||||yyy"));
+    }
+
+    #[test]
+    fn noise_filter_keeps_short_punctuation_clusters() {
+        // Ellipsis and common emoticon-style punctuation should pass.
+        assert!(!looks_like_ocr_noise("Hello... world"));
+        assert!(!looks_like_ocr_noise("wait, really?!"));
+    }
+
+    #[test]
     fn noise_filter_rejects_consonant_only_latin() {
         // ocrs aimed at Japanese often emits consonant-heavy garbage.
         assert!(looks_like_ocr_noise("bcdfgzhk"));
@@ -1931,11 +2210,39 @@ mod tests {
     }
 
     #[test]
-    fn text_is_already_target_requires_min_length_for_kanji_only() {
-        // A single kanji is too ambiguous (could be a Chinese word)
-        // to short-circuit on. Need at least two CJK chars.
-        assert!(!text_is_already_target("日", "ja"));
+    fn text_is_already_target_single_kanji_ja_label_skips() {
+        // Single-kanji UI labels (戻 / 次 / 始 / 終 / ...) are
+        // meaningful in Japanese and should NOT be force-translated
+        // into bizarre Gemma rewordings.
+        assert!(text_is_already_target("日", "ja"));
+        assert!(text_is_already_target("戻", "ja"));
         assert!(text_is_already_target("日本", "ja"));
+    }
+
+    #[test]
+    fn text_is_already_target_halfwidth_katakana_skips() {
+        // Halfwidth katakana is unambiguously Japanese.
+        assert!(text_is_already_target("ｶﾀｶﾅ", "ja"));
+    }
+
+    #[test]
+    fn text_is_already_target_japanese_punctuation_skips() {
+        // Mixed Japanese punctuation + kanji.
+        assert!(text_is_already_target("「日本語」", "ja"));
+        assert!(text_is_already_target("これは、テスト。", "ja"));
+    }
+
+    #[test]
+    fn text_is_already_target_mixed_jp_and_latin_translates() {
+        // Pure kanji + any Latin → probably English content needing
+        // translation (e.g. "JavaScriptは面白い" is English branded
+        // as Japanese — but for a JA target we want the surrounding
+        // Japanese preserved, which is only possible when the whole
+        // line goes through the LLM). Stay with translate-it here
+        // because the alternative (skip) leaves English untranslated.
+        // Note: the Japanese-specific signal (は) DOES skip via the
+        // hiragana branch; this case tests pure kanji + Latin only.
+        assert!(!text_is_already_target("JavaScript五", "ja"));
     }
 
     #[test]

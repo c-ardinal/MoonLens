@@ -270,8 +270,16 @@ export interface LensFlowStart {
 export interface LensBgGradient {
   /** CSS `linear-gradient` angle in degrees (0 = to top, clockwise). */
   angle: number;
+  /** Alias of `stops[0]`. Kept for legacy frontends that render a
+   *  two-colour gradient only. */
   from: [number, number, number];
+  /** Alias of `stops[n-1]`. */
   to: [number, number, number];
+  /** Equally-spaced colour stops along the axis (2..=5). Render
+   *  `linear-gradient(<angle>deg, rgb(stops[0]) 0%, rgb(stops[1]) X%,
+   *  …, rgb(stops[n-1]) 100%)` to capture multi-stop fades like
+   *  vignettes. */
+  stops?: [number, number, number][];
 }
 
 export interface LensOcrLine {

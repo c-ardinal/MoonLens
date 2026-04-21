@@ -45,6 +45,31 @@ the project adheres to [SemVer](https://semver.org/).
   追加、既存 `SchemaForm.svelte.test.ts` に `$ref` / unsupported /
   additionalProperties の 3 ケース追加。全 67 テスト green。
 
+### Fixed (gradient 精度・日本語判定・OCR ノイズ — 2026-04-22 後半 3)
+
+- **Multi-stop gradient + bbox 内部サンプリング**: 従来は rim 2 点のみで
+  線形補間 → 非線形グラデや不均一な光源で実色と噛み合わなかった。
+  vertical / horizontal 方向が選ばれた場合、**bbox 内部を 5 等分した
+  帯でピクセル実サンプリング**し、glyph を local-bg 推定値 (rim の線形
+  補間) で filter して除外。得られた 5 色を CSS multi-stop として送信
+  (`linear-gradient(...deg, c0 0%, c1 25%, c2 50%, c3 75%, c4 100%)`)。
+  対角 gradient は corner サンプルがそもそも位置依存なので 2 stop 維持。
+- **Clean-linear-gradient 健全性チェック**: 写真 / 模様 / checker-board
+  等の複雑背景で無理に gradient を emit すると「オリジナルと違う色で塗られた」
+  不自然な見た目になる。線形グラデの性質 `tl+br ≈ tr+bl` を使い、
+  対角和の距離が閾値を超えたら gradient を諦めて solid fill にフォールバック。
+- **日本語判定の漏れ補修**:
+  - **halfwidth katakana** (U+FF65-FF9F) と **CJK 句読点**
+    (U+3000-303F, 「」、。…) を強 JA signal に追加
+  - **単独漢字** (`戻` / `次` / `日` 等の UI ラベル) の skip を許可
+    (従来は len>=2 要求で translate されていた)
+  - "pure kanji + 0 Latin letters" を JA 判定に拡張
+- **OCR ノイズ filter 強化**: **4 文字連続非 alnum run** を検知して reject。
+  `----` / `::::` / `||||` 等の装飾 UI を ocrs が glyph 誤読した case を
+  排除。3 文字の ellipsis (`...`) は通過。
+
+**Rust 218 / vitest 67 green、+9 unit test 追加**。
+
 ### Fixed (段落翻訳の改行再発 + gradient 精度改善 — 2026-04-22 後半 2)
 
 - **番号マーカー `[1]` `[2]` で段落翻訳を堅牢化**: 先の改修は system prompt
