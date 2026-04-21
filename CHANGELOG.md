@@ -45,6 +45,22 @@ the project adheres to [SemVer](https://semver.org/).
   追加、既存 `SchemaForm.svelte.test.ts` に `$ref` / unsupported /
   additionalProperties の 3 ケース追加。全 67 テスト green。
 
+### Added (Lens 品質向上 — 2026-04-22 後半)
+
+- **段落翻訳 → 改行 split → per-line 配分**: OCR 出力を保守閾値で
+  段落化（縦ギャップ ≤ 0.5 × 行高、横 overlap ≥ 60%、両行 6 文字以上、
+  末尾非句点）。段落全体を 1 回の LLM 呼び出しで翻訳し、system prompt の
+  "Preserve line breaks exactly" を信頼して返答を `\n` で split、各 OCR 行の
+  カードに配分。**レイアウトは 1 カード = 1 OCR 行を維持**しつつ、文脈ロスを
+  解消（前行が "Very interesting." を含む場合など）。改行数が一致しない時の
+  fallback: 多すぎたら末尾行に吸収、少なすぎたら先頭行にまとめて以降は空欄。
+- **Gradient 背景 (Phase 1 inpainting 相当)**: 2 px rim の 4 辺を個別
+  サンプリング、vertical / horizontal どちらの color delta が大きいかで
+  `linear-gradient` 方向を決定。閾値未満なら従来通り solid。`LensOcrLine.bg_gradient`
+  として optional で配信、フロントは `background: linear-gradient(<angle>deg,
+  from, to)` で描画。グラデ背景や軽い写真上のテキストで境目が目立たなくなる。
+  Phase 2（ONNX inpainter）は v0.2 plugin point として後回し。
+
 ### Changed (翻訳品質改善 — 2026-04-22)
 
 - **OCR ノイズフィルタ** — `looks_like_ocr_noise(text)` 導入。3 文字未満

@@ -24,7 +24,8 @@ v0.1 系で把握済みの制約・既知不具合を一箇所にまとめたも
 | OCR エンジン | `ocrs` は英数に強いが CJK が弱い。日本語ドキュメントの認識精度は限定的 | S2 で Windows OCR API (`Windows.Media.Ocr`) 差替候補を評価、ラストリゾート PaddleOCR サイドカー |
 | Font auto-shrink / 2 行折返し / ellipsis | `clamp(6px, min(90cqh/line_count/1.2, 95cqw/longest_line), 40px)` で多行対応の shrink。ellipsis は未実装 | S3 |
 | WCAG コントラスト最適化 | ✅ sRGB gamma 補正 + 相対輝度 0.179 閾値で黒 / 白 flip（2026-04-21 更新） | - |
-| 段落まとまり翻訳 | ✅ 隣接・横方向重複する連続行を段落化して一括翻訳（2026-04-21 更新）。sentence-final punctuation で段落区切り判定 | - |
+| 段落まとまり翻訳 | ✅ 隣接・横方向重複する連続行を段落化して LLM に一括投入、返答を `\n` で split して per-line カードに配分（2026-04-22 更新）。レイアウトは 1 カード = 1 OCR 行を維持しつつ文脈ロス解消 | - |
+| 複雑背景への溶け込み | ✅ Phase 1: 4 辺 rim サンプリング → `linear-gradient` 判定（2026-04-22 更新）。Phase 2 (ONNX inpainter) は v0.2 plugin point として保留 | v0.2+ |
 | 翻訳確定前のちらつき | ✅ chunk バッファ + flow-done での atomic swap により partial render は廃止（2026-04-21 更新） | - |
 | 同言語の不要翻訳 | ✅ OCR 結果が target と同じ言語なら翻訳スキップして原文表示（CJK / ASCII heuristic、2026-04-21 更新） | - |
 | 静止時の自動再翻訳 | ✅ `performance.lens_auto_poll_ms`（default 1500ms）で定期的に content hash 変化を検出、動画字幕やチャットで再翻訳（2026-04-21 更新）| - |
