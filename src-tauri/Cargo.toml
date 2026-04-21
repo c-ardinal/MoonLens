@@ -91,3 +91,26 @@ lto = true
 opt-level = 3
 panic = "abort"
 strip = true
+
+# Optimise ML inference crates even in debug builds. Tauri's default
+# `npm run tauri:dev` uses `cargo build` (debug), which makes every
+# `rten` tensor op 60-100x slower than release — enough to push a
+# trivial 476x301 OCR from ~250ms to >15s and trip the chain timeout.
+# Only ocrs/rten are flagged, so Tauri / Svelte hot-reload stays fast.
+[profile.dev.package.ocrs]
+opt-level = 3
+[profile.dev.package.rten]
+opt-level = 3
+[profile.dev.package.rten-imageproc]
+opt-level = 3
+[profile.dev.package.rten-tensor]
+opt-level = 3
+[profile.dev.package.rten-simd]
+opt-level = 3
+[profile.dev.package.rten-vecmath]
+opt-level = 3
+# Image decode/encode is also hit per poll; keep it fast in dev.
+[profile.dev.package.image]
+opt-level = 3
+[profile.dev.package.png]
+opt-level = 3
