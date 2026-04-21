@@ -119,4 +119,74 @@ describe('<SchemaForm>', () => {
     await fireEvent.input(text!, { target: { value: 'fr' } });
     expect(callCount).toBeGreaterThanOrEqual(1);
   });
+
+  it('resolves $ref into the referenced definition', () => {
+    const refSchema = {
+      definitions: {
+        Settings: {
+          type: 'object',
+          properties: {
+            providers: { $ref: '#/definitions/Providers' }
+          }
+        },
+        Providers: {
+          type: 'object',
+          properties: {
+            translate: { type: 'string' }
+          }
+        }
+      }
+    };
+    const { getByText } = render(SchemaForm, {
+      props: { schema: refSchema, value: { providers: { translate: 'deepl' } } }
+    });
+    // The inner property "translate" should appear as a label since the
+    // $ref expansion reveals the nested object's properties.
+    expect(getByText('translate')).toBeInTheDocument();
+  });
+
+  it('shows a warning for schema shapes the form cannot render', () => {
+    const oddSchema = {
+      definitions: {
+        Settings: {
+          type: 'object',
+          properties: {
+            weird: { type: 'array', items: { type: 'number' } }
+          }
+        }
+      }
+    };
+    const { getByText } = render(SchemaForm, {
+      props: { schema: oddSchema, value: { weird: [1, 2, 3] } }
+    });
+    expect(
+      getByText('このフィールドはまだ GUI 編集に対応していません')
+    ).toBeInTheDocument();
+  });
+
+  it('renders a dynamic key/value editor for additionalProperties maps', () => {
+    const mapSchema = {
+      definitions: {
+        Settings: {
+          type: 'object',
+          properties: {
+            aliases: {
+              type: 'object',
+              additionalProperties: { type: 'string' }
+            }
+          }
+        }
+      }
+    };
+    const { getByText, container } = render(SchemaForm, {
+      props: {
+        schema: mapSchema,
+        value: { aliases: { foo: 'bar', baz: 'qux' } }
+      }
+    });
+    expect(getByText('キーを追加')).toBeInTheDocument();
+    const rows = container.querySelectorAll('input[type="text"]');
+    // Two rows × 2 inputs each = 4 text inputs.
+    expect(rows.length).toBeGreaterThanOrEqual(4);
+  });
 });
