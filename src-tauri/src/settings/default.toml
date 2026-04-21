@@ -91,7 +91,13 @@ sticky_session_ms = 30000
 chain = ["ocrs", "paddle"]
 parallel_race = false
 fallback_on = ["low_confidence", "error"]
-timeout_ms = 5000
+# First OCR call after a cold start has to load ~60MB of rten models
+# from disk and initialise tensor allocators — that can take 5-8 s on
+# a fresh file-system cache. App startup spawns a preload task so the
+# first USER-FACING capture usually sees a warm engine, but this
+# timeout still has to cover the pathological case where the user
+# creates a lens immediately after launching.
+timeout_ms = 15000
 allow_cloud = false
 allow_network = false
 max_cost_per_request = 0.0

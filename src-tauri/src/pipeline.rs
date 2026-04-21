@@ -101,6 +101,21 @@ impl Pipeline {
         self.rebuild_providers();
     }
 
+    /// Fire-and-forget preload hook. Walks the current provider map and
+    /// invokes each provider's `preload` — which is a noop for most of
+    /// them but triggers the ocrs model load so the first lens capture
+    /// does not pay the multi-second cold-start cost inline. Errors are
+    /// logged and swallowed; a provider that cannot preload will still
+    /// be tried on its first real call.
+    pub async fn preload_all(&self) {
+        let providers = self.providers.read().clone();
+        for (id, handle) in providers.iter() {
+            if let Err(e) = handle.preload().await {
+                tracing::debug!("provider {id} preload skipped: {e}");
+            }
+        }
+    }
+
     /// Rebuild the in-memory provider map from the current settings. Called
     /// on startup and whenever settings hot-reload.
     pub fn rebuild_providers(&self) {

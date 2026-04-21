@@ -136,6 +136,14 @@ pub trait Provider: Send + Sync {
     /// indicator and `allow_cloud`/`allow_network` gates.
     fn is_local(&self) -> bool;
     async fn run(&self, input: TaskInput) -> Result<TaskOutput, ProviderError>;
+
+    /// Optional warm-up hook. Providers that need heavy first-call
+    /// initialisation (OCR model load, LLM context allocation) should
+    /// populate their caches here so the user does not wait inline.
+    /// Default: noop. Called at app startup from [`crate::pipeline::Pipeline::preload_all`].
+    async fn preload(&self) -> Result<(), ProviderError> {
+        Ok(())
+    }
 }
 
 pub type ProviderHandle = Arc<dyn Provider>;

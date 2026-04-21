@@ -8,7 +8,7 @@
 //! wired up through a Tauri command so the UI can offer a one-click setup.
 
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use parking_lot::Mutex;
@@ -44,10 +44,14 @@ fn dirs_like(suffix: &str) -> Option<PathBuf> {
 pub struct OcrsProvider {
     id: String,
     models_dir: PathBuf,
-    /// Cached engine once the models have been loaded. The engine is not
-    /// `Send + Sync` friendly in older versions, so we guard with a mutex.
+    /// Shared cached engine. Arc<Mutex<Option<OcrEngine>>> so a clone
+    /// of the Arc can be moved into the `spawn_blocking` closure and
+    /// the engine loaded exactly once per process — the previous
+    /// OnceLock design kept a cache the inference path never looked
+    /// at, which caused a fresh `rten::Model::load_file` call on
+    /// every OCR (~1-3s per call, blowing the 5 s chain timeout).
     #[cfg(feature = "ocrs-engine")]
-    engine: OnceLock<Mutex<Option<ocrs::OcrEngine>>>,
+    engine: Arc<Mutex<Option<ocrs::OcrEngine>>>,
 }
 
 impl OcrsProvider {
@@ -57,7 +61,7 @@ impl OcrsProvider {
             id: id.into(),
             models_dir,
             #[cfg(feature = "ocrs-engine")]
-            engine: OnceLock::new(),
+            engine: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -97,6 +101,40 @@ impl Provider for OcrsProvider {
         true
     }
 
+    async fn preload(&self) -> Result<(), ProviderError> {
+        #[cfg(feature = "ocrs-engine")]
+        {
+            let engine_cache = self.engine.clone();
+            let models_dir = self.models_dir.clone();
+            tokio::task::spawn_blocking(move || -> Result<(), ProviderError> {
+                let mut guard = engine_cache.lock();
+                if guard.is_none() {
+                    let start = std::time::Instant::now();
+                    tracing::info!("ocrs engine preload starting from {}", models_dir.display());
+                    match try_load_engine(&models_dir) {
+                        Ok(e) => {
+                            *guard = Some(e);
+                            tracing::info!(
+                                "ocrs engine preloaded in {}ms",
+                                start.elapsed().as_millis()
+                            );
+                        }
+                        Err(e) => {
+                            tracing::warn!("ocrs preload failed: {e}");
+                            return Err(ProviderError::Other(e.to_string()));
+                        }
+                    }
+                } else {
+                    tracing::debug!("ocrs engine already cached, skipping preload");
+                }
+                Ok(())
+            })
+            .await
+            .map_err(|e| ProviderError::Other(e.to_string()))??;
+        }
+        Ok(())
+    }
+
     async fn run(&self, input: TaskInput) -> Result<TaskOutput, ProviderError> {
         let TaskInput::Ocr { image_png, .. } = input else {
             return Err(ProviderError::Other("OcrsProvider handles Ocr only".into()));
@@ -104,27 +142,38 @@ impl Provider for OcrsProvider {
 
         #[cfg(feature = "ocrs-engine")]
         {
-            // Get or lazily initialize the engine.
-            let cell = self.engine.get_or_init(|| Mutex::new(None));
-            {
-                let mut guard = cell.lock();
-                if guard.is_none() {
-                    match try_load_engine(&self.models_dir) {
-                        Ok(e) => *guard = Some(e),
-                        Err(e) => {
-                            tracing::warn!("ocrs models unavailable: {e}");
-                            return Err(ProviderError::LowConfidence);
-                        }
-                    }
-                }
-            }
-
             // Inference is CPU-bound; move off the async runtime thread.
+            // The engine mutex is shared, so the first OCR pays the
+            // model-load cost once and every subsequent call reuses
+            // the already-loaded engine.
+            let engine_cache = self.engine.clone();
             let models_dir = self.models_dir.clone();
             let image_png_owned = image_png.clone();
             let lines = tokio::task::spawn_blocking(move || -> anyhow::Result<Vec<OcrLine>> {
-                let engine = try_load_engine(&models_dir)?;
+                let lock_start = std::time::Instant::now();
+                let mut guard = engine_cache.lock();
+                let lock_ms = lock_start.elapsed().as_millis();
+                if guard.is_none() {
+                    let load_start = std::time::Instant::now();
+                    tracing::info!("ocrs engine cold load in run() from {}", models_dir.display());
+                    *guard = Some(try_load_engine(&models_dir)?);
+                    tracing::info!(
+                        "ocrs engine loaded (in run) in {}ms",
+                        load_start.elapsed().as_millis()
+                    );
+                } else if lock_ms > 100 {
+                    tracing::info!("ocrs engine mutex wait: {lock_ms}ms");
+                }
+                let engine = guard.as_ref().expect("engine just ensured above");
+                let decode_start = std::time::Instant::now();
                 let img = image::load_from_memory(&image_png_owned)?;
+                tracing::debug!(
+                    "ocrs: decoded {}x{} PNG ({} bytes) in {}ms",
+                    img.width(),
+                    img.height(),
+                    image_png_owned.len(),
+                    decode_start.elapsed().as_millis()
+                );
                 let rgb = img.to_rgb8();
                 let (w, h) = (rgb.width() as usize, rgb.height() as usize);
                 let source = ocrs::ImageSource::from_bytes(rgb.as_raw(), (w as u32, h as u32))
@@ -139,21 +188,43 @@ impl Provider for OcrsProvider {
                 let line_texts = engine
                     .recognize_text(&input, &line_rects)
                     .map_err(|e| anyhow::anyhow!("ocrs recognize: {e}"))?;
+                let infer_start = std::time::Instant::now();
+                tracing::debug!("ocrs: detect_words start on {}x{}", w, h);
+                // Scope re-entry marker so any infer panic is visible
+                let _ = infer_start;
                 Ok(line_texts
                     .into_iter()
-                    .filter_map(|line_opt| {
+                    .zip(line_rects.into_iter())
+                    .filter_map(|(line_opt, word_rects)| {
                         let line = line_opt?;
                         let text = line.to_string();
                         if text.trim().is_empty() {
                             return None;
                         }
-                        // The detector rotated-rects do not expose an axis
-                        // aligned bbox through a stable trait in the version
-                        // we pin to. The overlay only needs rects for layout
-                        // hints, so a zeroed placeholder is fine for now.
+                        // Axis-aligned bbox = union of every rotated-rect
+                        // corner across the line's word rects. The overlay
+                        // maps bbox back to its CSS cell on render, so the
+                        // numbers here are image-pixel space.
+                        let mut min_x = f32::MAX;
+                        let mut min_y = f32::MAX;
+                        let mut max_x = f32::MIN;
+                        let mut max_y = f32::MIN;
+                        for rr in &word_rects {
+                            for c in rr.corners() {
+                                min_x = min_x.min(c.x);
+                                min_y = min_y.min(c.y);
+                                max_x = max_x.max(c.x);
+                                max_y = max_y.max(c.y);
+                            }
+                        }
+                        let bbox = if min_x > max_x {
+                            [0.0, 0.0, 0.0, 0.0]
+                        } else {
+                            [min_x, min_y, max_x - min_x, max_y - min_y]
+                        };
                         Some(OcrLine {
                             text,
-                            bbox: [0.0, 0.0, 0.0, 0.0],
+                            bbox,
                             confidence: 1.0,
                         })
                     })
