@@ -1545,21 +1545,16 @@ async fn run_capture_loop(
             ocr_lines.len()
         );
 
-        // Drop lines that are already in the target language — they
-        // should disappear from the Lens overlay entirely: no card
-        // painted, no LLM round-trip, the source shows through.
-        // This is the behaviour the user wants for native text: stop
-        // covering it up with "translations" that repeat it back.
-        //
-        // Filtering before paragraph grouping also prevents the
-        // previous regression where a Japanese line merged into an
-        // English paragraph marked the whole paragraph as "already
-        // target", stranding the English part untranslated.
+        // Classify each OCR line: target-native lines ("skip") are
+        // kept in the full list for tiling-neighbour purposes but
+        // never rendered or translated — the source shows through.
+        // Filtering before paragraph grouping (below) also prevents
+        // the old "any kana in paragraph → skip whole paragraph"
+        // regression.
         let target_filter = settings.snapshot().subtitle.target_language.clone();
-        let pre_filter_count = ocr_lines.len();
-        let ocr_lines: Vec<OcrLine> = ocr_lines
-            .into_iter()
-            .filter(|line| {
+        let skip_flags: Vec<bool> = ocr_lines
+            .iter()
+            .map(|line| {
                 let skip = text_is_already_target(&line.text, &target_filter);
                 if skip {
                     tracing::debug!(
@@ -1568,14 +1563,17 @@ async fn run_capture_loop(
                         line.text.chars().take(30).collect::<String>()
                     );
                 }
-                !skip
+                skip
             })
             .collect();
-        if ocr_lines.len() != pre_filter_count {
+        let rendered_count = skip_flags.iter().filter(|s| !**s).count();
+        let skipped_count = skip_flags.len() - rendered_count;
+        if skipped_count > 0 {
             tracing::info!(
-                "lens {lens_id}: {} line(s) after target-language filter ({} dropped)",
-                ocr_lines.len(),
-                pre_filter_count - ocr_lines.len()
+                "lens {lens_id}: {} line(s) to render, {} dropped as {}-native",
+                rendered_count,
+                skipped_count,
+                target_filter
             );
         }
 
@@ -1585,12 +1583,13 @@ async fn run_capture_loop(
         // card still renders.
         let decoded = image::load_from_memory(&png_for_colors).ok();
 
-        // Per-line translation (MVP behaviour). Paragraph grouping
-        // was reverted because it rescaled cards to the union bbox
-        // and threw off font-fit for translations shorter than the
-        // source. Cross-line context is a plan.md S3 concern
-        // (`translate_stream` plugin point) — not worth the visual
-        // regression in v0.1.
+        // Tile every card vertically to the midpoint between its
+        // bbox and the NEAREST OCR LINE — including lines that are
+        // being skipped (target-native). That way a pure-Japanese
+        // line sitting between an English line above and a mixed
+        // line below keeps its space clear: the cards above/below
+        // stop at the midpoint with the skipped line, not at the
+        // midpoint with each other.
         let mut by_y: Vec<usize> = (0..ocr_lines.len()).collect();
         by_y.sort_by(|&a, &b| {
             ocr_lines[a].bbox[1]
@@ -1600,61 +1599,54 @@ async fn run_capture_loop(
         let position_in_sort: std::collections::HashMap<usize, usize> =
             by_y.iter().enumerate().map(|(pos, &idx)| (idx, pos)).collect();
 
-        let lens_lines: Vec<LensOcrLine> = ocr_lines
-            .iter()
-            .enumerate()
-            .map(|(i, l)| {
-                // Sample the rim along all four edges: the solid
-                // mean stays as a safe fallback, and when the rim
-                // actually changes colour across the bbox we emit a
-                // gradient so the card blends into the source
-                // instead of looking like a pasted block.
-                let (bg, bg_gradient) = match &decoded {
-                    Some(img) => sample_rim_edges(img, l.bbox),
-                    None => ([128, 128, 128], None),
-                };
-                // Match the source text colour instead of forcing
-                // black/white. Sampling is scoped to the ORIGINAL
-                // bbox (pre-tile) so the card expansion below does
-                // not dilute the sample.
-                let fg = match &decoded {
-                    Some(img) => sample_text_color(img, l.bbox, bg),
-                    None => contrast_text(bg),
-                };
-                let [x, _y, w, _h] = l.bbox;
-                let orig_top = l.bbox[1];
-                let orig_bottom = l.bbox[1] + l.bbox[3];
-                let ex: f32 = 8.0;
-                let pos = position_in_sort.get(&i).copied().unwrap_or(0);
-                let top_divider = if pos > 0 {
-                    let prev = &ocr_lines[by_y[pos - 1]].bbox;
-                    let prev_bottom = prev[1] + prev[3];
-                    (prev_bottom + orig_top) * 0.5
-                } else {
-                    (orig_top - 6.0).max(0.0)
-                };
-                let bot_divider = if pos + 1 < by_y.len() {
-                    let nxt = &ocr_lines[by_y[pos + 1]].bbox;
-                    let next_top = nxt[1];
-                    (orig_bottom + next_top) * 0.5
-                } else {
-                    (orig_bottom + 6.0).min(image_h as f32)
-                };
-                let ny = top_divider.clamp(0.0, image_h as f32);
-                let bottom = bot_divider.clamp(ny + 1.0, image_h as f32);
-                let nh = bottom - ny;
-                let nx = (x - ex).max(0.0);
-                let nw = (w + ex * 2.0).min((image_w as f32) - nx);
-                LensOcrLine {
-                    line_index: i,
-                    text: l.text.clone(),
-                    bbox: [nx, ny, nw, nh],
-                    bg_color: bg,
-                    bg_gradient,
-                    fg_color: fg,
-                }
-            })
-            .collect();
+        // Iterate in ORIGINAL OCR order so paragraph member indices
+        // (produced below) match `line_index` positions sequentially.
+        let mut lens_lines: Vec<LensOcrLine> = Vec::with_capacity(rendered_count);
+        for (orig_i, l) in ocr_lines.iter().enumerate() {
+            if skip_flags[orig_i] {
+                continue;
+            }
+            let (bg, bg_gradient) = match &decoded {
+                Some(img) => sample_rim_edges(img, l.bbox),
+                None => ([128, 128, 128], None),
+            };
+            let fg = match &decoded {
+                Some(img) => sample_text_color(img, l.bbox, bg),
+                None => contrast_text(bg),
+            };
+            let [x, _y, w, _h] = l.bbox;
+            let orig_top = l.bbox[1];
+            let orig_bottom = l.bbox[1] + l.bbox[3];
+            let ex: f32 = 8.0;
+            let pos = position_in_sort.get(&orig_i).copied().unwrap_or(0);
+            let top_divider = if pos > 0 {
+                let prev = &ocr_lines[by_y[pos - 1]].bbox;
+                let prev_bottom = prev[1] + prev[3];
+                (prev_bottom + orig_top) * 0.5
+            } else {
+                (orig_top - 6.0).max(0.0)
+            };
+            let bot_divider = if pos + 1 < by_y.len() {
+                let nxt = &ocr_lines[by_y[pos + 1]].bbox;
+                let next_top = nxt[1];
+                (orig_bottom + next_top) * 0.5
+            } else {
+                (orig_bottom + 6.0).min(image_h as f32)
+            };
+            let ny = top_divider.clamp(0.0, image_h as f32);
+            let bottom = bot_divider.clamp(ny + 1.0, image_h as f32);
+            let nh = bottom - ny;
+            let nx = (x - ex).max(0.0);
+            let nw = (w + ex * 2.0).min((image_w as f32) - nx);
+            lens_lines.push(LensOcrLine {
+                line_index: lens_lines.len(),
+                text: l.text.clone(),
+                bbox: [nx, ny, nw, nh],
+                bg_color: bg,
+                bg_gradient,
+                fg_color: fg,
+            });
+        }
 
         let line_count = lens_lines.len();
         let ocr_payload = LensOcrLines {
@@ -1666,7 +1658,7 @@ async fn run_capture_loop(
         };
         let _ = app.emit("moonlens://lens-ocr-lines", ocr_payload);
 
-        if ocr_lines.is_empty() {
+        if rendered_count == 0 {
             let _ = app.emit(
                 "moonlens://lens-flow-done",
                 LensFlowDone {
@@ -1678,13 +1670,16 @@ async fn run_capture_loop(
             continue;
         }
 
-        // Group OCR lines into paragraphs for **LLM context only**.
-        // Each OCR line still owns its own card above — the
-        // paragraph is the translation unit, not the rendering
-        // unit. Gemma sees the full sentence, splits its output
-        // back across the member cards by the preserved line
-        // breaks (see `translate_paragraph_streaming`).
-        let paragraphs = group_paragraphs(&ocr_lines);
+        // Paragraph grouping + translation run on the non-skipped
+        // subset. Preserve the ORIGINAL order (skipping dropped
+        // entries) so member indices line up with `line_index`.
+        let rendered_lines: Vec<OcrLine> = ocr_lines
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| !skip_flags[*i])
+            .map(|(_, l)| l.clone())
+            .collect();
+        let paragraphs = group_paragraphs(&rendered_lines);
 
         let snapshot = settings.snapshot();
         let target = snapshot.subtitle.target_language.clone();

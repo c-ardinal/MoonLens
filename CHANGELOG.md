@@ -45,6 +45,27 @@ the project adheres to [SemVer](https://semver.org/).
   追加、既存 `SchemaForm.svelte.test.ts` に `$ref` / unsupported /
   additionalProperties の 3 ケース追加。全 67 テスト green。
 
+### Fixed (日英混在行・skip 行領域被覆 — 2026-04-23 早朝 2)
+
+- **混在 line の word-level 分割**: WinRT OCR から返される `OcrLine` は
+  単一の line bbox しか持たなかったため、`Hello こんにちは world` の
+  ような日英混在行は全体を 1 枚カードで覆ってしまい、日本語部分が
+  カードに隠されていた。`ocr_windows.rs` で
+  `OcrLine::Words()` の結果を **連続する同言語 run に分割**、各 run を
+  独立 `OcrLine` として返すように変更。結果: 英語 run だけにカードが出て、
+  日本語 run は filter で drop されて素通しで見える。
+- **Tiling の skip 行 blocker 化**: skip された行 (target 言語で
+  drop された行) を無視して直接の前後カード同士で midpoint 計算して
+  いたため、間の日本語行領域もカードに覆われていた。skip 行を
+  `ocr_lines` に残したまま `skip_flags` で記録、**tiling は全 OCR 行
+  (skip 含む) を neighbor として参照**するように変更。skip 行の bbox が
+  "blocker" となり、前後カードは skip 行の手前で midpoint を決める。
+- **Paragraph grouping は非-skip subset に対して実行**: `rendered_lines`
+  (skip 除外、元の順序を保持) を `group_paragraphs` に渡す。member index が
+  `lens_lines.line_index` と一致するよう順序も sequential 化。
+- **テスト**: `ocr_windows::classify_word` の 3 ケース (JA 文字列 / Latin /
+  混在)。**230 Rust + 67 vitest green**。
+
 ### Fixed (target 言語の行も表示 / 英語が翻訳されない — 2026-04-23 早朝)
 
 - **target 言語行は完全に非表示**: 従来は target 一致行でも original

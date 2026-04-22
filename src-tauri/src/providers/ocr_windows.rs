@@ -136,46 +136,115 @@ fn run_ocr(image_png: &[u8], preferred: Option<&str>) -> Result<Vec<OcrLine>, Pr
             Ok(l) => l,
             Err(_) => continue,
         };
-        let text = line
+        let line_text = line
             .Text()
             .map(|h| h.to_string_lossy())
             .unwrap_or_default();
-        if text.trim().is_empty() {
+        if line_text.trim().is_empty() {
             continue;
         }
-        // Per-line bbox = union of every word's BoundingRect. The
-        // OcrLine API doesn't expose a line-level rect directly, so
-        // we aggregate its word rects.
         let words = match line.Words() {
             Ok(w) => w,
             Err(_) => continue,
         };
         let word_count = words.Size().unwrap_or(0) as u32;
-        let mut min_x = f32::INFINITY;
-        let mut min_y = f32::INFINITY;
-        let mut max_x = f32::NEG_INFINITY;
-        let mut max_y = f32::NEG_INFINITY;
+        if word_count == 0 {
+            continue;
+        }
+
+        // Collect (text, rect, class) per word so we can split the
+        // visual line into contiguous same-language runs. Without
+        // this, a mixed "日本語 Hello" line becomes one card that
+        // covers the Japanese glyphs with a translation — hiding the
+        // source text the user explicitly wanted left alone.
+        let mut word_infos: Vec<(String, windows::Foundation::Rect, WordClass)> =
+            Vec::with_capacity(word_count as usize);
         for wi in 0..word_count {
             if let Ok(word) = words.GetAt(wi) {
-                if let Ok(rect) = word.BoundingRect() {
+                let wt = word.Text().map(|h| h.to_string_lossy()).unwrap_or_default();
+                if wt.is_empty() {
+                    continue;
+                }
+                let Ok(rect) = word.BoundingRect() else {
+                    continue;
+                };
+                let class = classify_word(&wt);
+                word_infos.push((wt, rect, class));
+            }
+        }
+        if word_infos.is_empty() {
+            continue;
+        }
+
+        // Group contiguous words of the same language class. Each
+        // group becomes its own `OcrLine` — downstream filtering
+        // can then drop the Japanese runs while keeping English
+        // runs for translation.
+        let mut i_run = 0;
+        while i_run < word_infos.len() {
+            let class = word_infos[i_run].2;
+            let mut j = i_run + 1;
+            while j < word_infos.len() && word_infos[j].2 == class {
+                j += 1;
+            }
+            let run = &word_infos[i_run..j];
+            let texts: Vec<&str> = run.iter().map(|(t, _, _)| t.as_str()).collect();
+            let text = texts.join(" ");
+            if !text.trim().is_empty() {
+                let mut min_x = f32::INFINITY;
+                let mut min_y = f32::INFINITY;
+                let mut max_x = f32::NEG_INFINITY;
+                let mut max_y = f32::NEG_INFINITY;
+                for (_, rect, _) in run {
                     min_x = min_x.min(rect.X);
                     min_y = min_y.min(rect.Y);
                     max_x = max_x.max(rect.X + rect.Width);
                     max_y = max_y.max(rect.Y + rect.Height);
                 }
+                if min_x.is_finite() && max_x > min_x && max_y > min_y {
+                    out.push(OcrLine {
+                        text,
+                        bbox: [min_x, min_y, max_x - min_x, max_y - min_y],
+                        confidence: 1.0,
+                    });
+                }
             }
-        }
-        if min_x.is_finite() && max_x > min_x && max_y > min_y {
-            out.push(OcrLine {
-                text,
-                bbox: [min_x, min_y, max_x - min_x, max_y - min_y],
-                // WinRT does not expose per-line confidence; 1.0 keeps
-                // the downstream surface happy (same as ocrs today).
-                confidence: 1.0,
-            });
+            i_run = j;
         }
     }
     Ok(out)
+}
+
+/// Per-word language class for grouping. A run of `Japanese` words
+/// stays together so the filter can drop the whole run; a run of
+/// `Other` (Latin, digits, punctuation-only) gets translated as a
+/// unit. Distinguishing finer than this (Chinese vs Korean, etc.)
+/// is not worth the added surface for the only target MoonLens
+/// ships today (`ja`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WordClass {
+    Japanese,
+    Other,
+}
+
+fn classify_word(text: &str) -> WordClass {
+    // Any Japanese-specific character in the word classifies the
+    // whole word as Japanese. Halfwidth katakana + CJK punct +
+    // hiragana + katakana + kanji ranges mirror the detector
+    // `text_is_already_target` uses downstream.
+    for c in text.chars() {
+        let u = c as u32;
+        if (0x3040..=0x309F).contains(&u)
+            || (0x30A0..=0x30FF).contains(&u)
+            || (0xFF65..=0xFF9F).contains(&u)
+            || (0x3000..=0x303F).contains(&u)
+            || (0x3400..=0x4DBF).contains(&u)
+            || (0x4E00..=0x9FFF).contains(&u)
+        {
+            return WordClass::Japanese;
+        }
+    }
+    WordClass::Other
 }
 
 /// Construct an `OcrEngine` for `preferred`, falling back to the
@@ -315,6 +384,30 @@ mod tests {
         let p = WindowsOcrProvider::new("windows", &serde_json::Value::Null);
         assert_eq!(p.capabilities(), &[Capability::Ocr]);
         assert!(p.is_local());
+    }
+
+    #[test]
+    fn classify_word_tags_japanese_strings() {
+        assert_eq!(classify_word("こんにちは"), WordClass::Japanese);
+        assert_eq!(classify_word("テスト"), WordClass::Japanese);
+        assert_eq!(classify_word("日本語"), WordClass::Japanese);
+        assert_eq!(classify_word("ｶﾀｶﾅ"), WordClass::Japanese);
+        assert_eq!(classify_word("「日本語」"), WordClass::Japanese);
+    }
+
+    #[test]
+    fn classify_word_tags_latin_and_numbers_as_other() {
+        assert_eq!(classify_word("Hello"), WordClass::Other);
+        assert_eq!(classify_word("world"), WordClass::Other);
+        assert_eq!(classify_word("123"), WordClass::Other);
+        assert_eq!(classify_word("OK"), WordClass::Other);
+    }
+
+    #[test]
+    fn classify_word_tags_any_japanese_char_as_japanese() {
+        // Mixed single-token (unlikely from a real OCR but defensive):
+        // the presence of any Japanese char classifies it as JA.
+        assert_eq!(classify_word("Hi日"), WordClass::Japanese);
     }
 }
 
