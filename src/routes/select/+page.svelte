@@ -1,8 +1,8 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
-  import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
-  import { hideOverlay } from '$lib/ipc';
+  import { X } from 'lucide-svelte';
+  import { cancelRegionSelection, hideOverlay } from '$lib/ipc';
 
   // Drag-to-select implemented entirely in the renderer; backend receives
   // only the resulting rect via `capture_and_process`. The selector window
@@ -16,8 +16,6 @@
   let dpr = $state(1);
   let busy = $state(false);
 
-  const win = getCurrentWebviewWindow();
-
   onMount(() => {
     dpr = window.devicePixelRatio || 1;
   });
@@ -30,8 +28,29 @@
     return { x, y, w, h };
   }
 
+  async function dismiss() {
+    // Backend path: always works even if the webview's own
+    // `window.hide()` is denied a permission or the show/hide
+    // transition swallowed the call. The Rust `cancel_region_selection`
+    // command ultimately calls the same `WebviewWindow::hide()` but
+    // inside the privileged Tauri runtime.
+    busy = true;
+    try {
+      await hideOverlay().catch(() => {});
+      await cancelRegionSelection().catch(() => {});
+    } finally {
+      busy = false;
+    }
+  }
+
   function pointerdown(e: PointerEvent) {
     if (busy) return;
+    // Right-click / middle-click = immediate cancel.
+    if (e.button !== 0) {
+      e.preventDefault();
+      dismiss();
+      return;
+    }
     dragging = true;
     startX = e.clientX;
     startY = e.clientY;
@@ -49,8 +68,9 @@
     dragging = false;
     const r = rect();
     if (r.w < 8 || r.h < 8) {
-      // Treat tiny drags as a cancel.
-      await win.hide();
+      // Tiny drags count as cancel — clicks without real drag
+      // intent dismiss the selector instead of capturing a 0×0 area.
+      await dismiss();
       return;
     }
     busy = true;
@@ -63,22 +83,33 @@
         h: Math.round(r.h * dpr)
       };
       // Hide first so the captured frame does not include our overlay.
-      await win.hide();
+      await cancelRegionSelection().catch(() => {});
       await invoke('capture_and_process', { args: region });
     } finally {
       busy = false;
     }
   }
-  async function cancel(e: KeyboardEvent) {
+
+  async function onKey(e: KeyboardEvent) {
     if (e.key === 'Escape') {
-      await hideOverlay();
-      await win.hide();
+      e.preventDefault();
+      e.stopPropagation();
+      await dismiss();
     }
   }
 
+  // Context menu would otherwise show the browser right-click menu.
+  function onContextMenu(e: Event) {
+    e.preventDefault();
+  }
+
   $effect(() => {
-    window.addEventListener('keydown', cancel);
-    return () => window.removeEventListener('keydown', cancel);
+    window.addEventListener('keydown', onKey, { capture: true });
+    window.addEventListener('contextmenu', onContextMenu);
+    return () => {
+      window.removeEventListener('keydown', onKey, { capture: true });
+      window.removeEventListener('contextmenu', onContextMenu);
+    };
   });
 </script>
 
@@ -119,17 +150,39 @@
     </div>
   {:else}
     <div
-      class="pointer-events-none absolute inset-x-0 top-6 mx-auto w-fit rounded-full bg-black/60 px-4 py-1.5 text-sm text-white shadow-ml"
+      class="pointer-events-none absolute inset-x-0 top-6 mx-auto w-fit rounded-full bg-black/80 px-4 py-1.5 text-sm text-white shadow-ml"
     >
-      ドラッグで領域選択 · ESC でキャンセル
+      ドラッグで領域選択 · ESC / 右クリックでキャンセル
     </div>
   {/if}
+
+  <!--
+    Explicit Cancel button — always visible in the top-right corner.
+    Separate z-layer and pointer-events-auto so it receives the click
+    even while a drag is technically in progress (the drag pointer
+    capture keeps the first pointerdown on the background; clicks on
+    this button are a fresh pointer sequence).
+  -->
+  <button
+    type="button"
+    class="absolute right-6 top-6 z-20 inline-flex items-center gap-1.5 rounded-full border border-white/30 bg-black/70 px-3 py-1.5 text-xs font-medium text-white shadow-ml backdrop-blur transition hover:bg-red-500/80 hover:border-red-500"
+    onclick={dismiss}
+    onpointerdown={(e) => e.stopPropagation()}
+    aria-label="キャンセル"
+  >
+    <X class="h-3.5 w-3.5" aria-hidden="true" />
+    キャンセル (Esc)
+  </button>
 </div>
 
 <style>
+  /* `!important` required: `app.css` imported by the shared layout
+     sets `body { background: var(--ml-surface) }` (dark-theme black)
+     which would otherwise paint the entire transparent selector
+     window opaque black. The lens page has the same guard. */
   :global(html),
   :global(body) {
-    background: transparent;
+    background: transparent !important;
     margin: 0;
     padding: 0;
     overflow: hidden;

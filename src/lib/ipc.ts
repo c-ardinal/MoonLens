@@ -101,6 +101,12 @@ export const pickAndInstallPlugin = () =>
 export const installOcrModels = () => safeInvoke<string>('install_ocr_models');
 export const showMain = () => safeInvoke<void>('show_main');
 export const hideOverlay = () => safeInvoke<void>('hide_overlay');
+/** Close the region-selection overlay. Backend-side path, always
+ *  resolves even if the webview's `window.hide()` call path is
+ *  permission-blocked or the window is in a partly-initialised
+ *  state during show/hide transitions. */
+export const cancelRegionSelection = () =>
+  safeInvoke<void>('cancel_region_selection');
 
 export const pinOverlay = (args: CaptureFlowRect) =>
   safeInvoke<void>('pin_overlay', { args });

@@ -45,6 +45,31 @@ the project adheres to [SemVer](https://semver.org/).
   追加、既存 `SchemaForm.svelte.test.ts` に `$ref` / unsupported /
   additionalProperties の 3 ケース追加。全 67 テスト green。
 
+### Fixed (キャプチャ画面が真っ暗 / Esc キャンセル不能 — 2026-04-23 昼 2)
+
+- **画面が真っ暗になる**: `select/+page.svelte` の `:global(body)`
+  透明化に `!important` が抜けていたため、`app.css` の
+  `body { background: var(--ml-surface) }` (dark theme で `#0a0a0a`)
+  が勝って全画面ほぼ黒に。lens page と同じパターン
+  (`!important` 付与) で対処。
+- **Esc がキャンセルとして機能しない**:
+  - `core:window:allow-hide` / `allow-show` permission を capabilities に
+    追加 — 従来は `window.hide()` が silently deny されていた可能性
+  - cancel ハンドラを robust 化 (try/catch 別々、
+    `capture: true` で bubbling 前に拾う、`preventDefault + stopPropagation`)
+  - **backend-side `cancel_region_selection`** を呼ぶフォールバック経路追加。
+    webview 側 `window.hide()` が何らかの理由で fail しても Rust 側が
+    代わりに閉じる
+  - Windows: `SetForegroundWindow` を selector::show 後に明示呼び出し
+    (グローバルホットキー直後は Windows の foreground 窃取ルール的に
+    allowed)。初回 Esc が source app に吸われる問題を回避
+- **代替キャンセル経路を追加**:
+  - 右クリック / 中クリックで即キャンセル
+  - ヒントテキスト "ESC / 右クリックでキャンセル" に更新
+  - 画面右上に**明示的な [× キャンセル (Esc)] ボタン**を常時表示、
+    Esc が効かない環境でも UI 操作で抜けられる
+- **検証**: Rust 230 / vitest 67 green, cargo check clean。
+
 ### Fixed (font-size が原文無視 / カード右上ずれ — 2026-04-23 昼)
 
 - **Font-size を原文 bbox 基準に**: カードの `bbox` は tiling で vertical

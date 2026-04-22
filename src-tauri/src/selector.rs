@@ -30,6 +30,26 @@ pub fn show(app: &AppHandle) -> Result<()> {
     win.show()?;
     win.set_always_on_top(true)?;
     win.set_focus()?;
+
+    // On Windows the webview sometimes needs an extra nudge to take
+    // keyboard focus after the global-shortcut-triggered `set_focus`
+    // — without this, the very first Escape keypress goes to the
+    // source app instead of our selector window. `SetForegroundWindow`
+    // is allowed here because we just received user input (the
+    // hotkey), satisfying Windows' foreground-activation rules.
+    #[cfg(target_os = "windows")]
+    {
+        use windows::Win32::Foundation::HWND;
+        use windows::Win32::UI::WindowsAndMessaging::SetForegroundWindow;
+        if let Ok(raw) = win.hwnd() {
+            let hwnd = HWND(raw.0 as _);
+            // SAFETY: `hwnd` is a live Tauri window handle; the API
+            // accepts any valid HWND and returns a BOOL.
+            unsafe {
+                let _ = SetForegroundWindow(hwnd);
+            }
+        }
+    }
     Ok(())
 }
 
