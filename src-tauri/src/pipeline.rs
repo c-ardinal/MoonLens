@@ -161,6 +161,25 @@ impl Pipeline {
                 map.insert(id, handle);
             }
         }
+        // Auto-register the Windows Media OCR provider even when the
+        // user's `user.toml` lacks a `[providers.configs.windows]`
+        // section. Without this, every pre-S2 user keeps the old
+        // config shape after upgrade and the new engine never gets
+        // a chance to run — the chain's "windows" id resolves to
+        // "not registered" and falls through to the Latin-only
+        // `ocrs` path on Japanese source.
+        #[cfg(target_os = "windows")]
+        if !map.contains_key("windows") {
+            let default_cfg = serde_json::json!({ "language": "ja" });
+            map.insert(
+                "windows".into(),
+                Arc::new(crate::providers::ocr_windows::WindowsOcrProvider::new(
+                    "windows",
+                    &default_cfg,
+                )),
+            );
+            tracing::info!("pipeline: auto-registered `windows` OCR provider (user.toml lacked the section)");
+        }
         // Ensure any id referenced in a chain without a configs entry still
         // has a sane default (e.g. `ollama.gemma4` without explicit config).
         for id in s.providers.translate.chain.iter().chain(
@@ -195,7 +214,28 @@ impl Pipeline {
         let mut reasons = Vec::new();
         let started = Instant::now();
 
-        let ordered = apply_stickiness(&self.sticky, capability, &chain.chain);
+        // Auto-migrate: on Windows, always give the native OCR engine
+        // a first shot even if the user's `user.toml` still has the
+        // pre-WinRT chain (`["ocrs", "paddle"]`). Without this, every
+        // upgrade would require the user to hand-edit their config to
+        // see the Japanese / CJK improvements.
+        let mut effective_chain: Vec<String> = chain.chain.clone();
+        #[cfg(target_os = "windows")]
+        if matches!(capability, Capability::Ocr)
+            && !effective_chain.iter().any(|id| id == "windows")
+        {
+            tracing::info!(
+                "pipeline: prepending `windows` OCR provider to chain (auto-migration)"
+            );
+            effective_chain.insert(0, "windows".into());
+        }
+
+        let ordered = apply_stickiness(&self.sticky, capability, &effective_chain);
+        tracing::debug!(
+            "pipeline: {capability:?} chain ordered {:?} (registered: {:?})",
+            ordered,
+            providers.keys().collect::<Vec<_>>()
+        );
 
         for id in ordered {
             let Some(prov) = providers.get(&id).cloned() else {
@@ -217,6 +257,10 @@ impl Pipeline {
             match res {
                 Ok(Ok(out)) => {
                     self.remember_sticky(capability, &id, chain.sticky_session_ms);
+                    tracing::info!(
+                        "pipeline: {capability:?} served by `{id}` in {}ms (skipped: {reasons:?})",
+                        started.elapsed().as_millis()
+                    );
                     return Ok(TaskResult {
                         task: format!("{capability:?}").to_lowercase(),
                         output: out,

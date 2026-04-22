@@ -63,6 +63,12 @@ impl Provider for WindowsOcrProvider {
             ));
         };
         let preferred = self.preferred_language.read().clone();
+        let started = std::time::Instant::now();
+        tracing::info!(
+            "WindowsOcr: run start (language={:?}, image {} bytes)",
+            preferred,
+            image_png.len()
+        );
         // WinRT calls are blocking w.r.t. the Rust thread (they go
         // through COM apartments), so hop off the async runtime.
         let lines = tokio::task::spawn_blocking(
@@ -71,16 +77,28 @@ impl Provider for WindowsOcrProvider {
             },
         )
         .await
-        .map_err(|e| ProviderError::Other(format!("join error: {e}")))??;
+        .map_err(|e| ProviderError::Other(format!("join error: {e}")))?;
 
-        if lines.is_empty() {
-            // Let the chain try the next provider (ocrs) instead of
-            // returning an empty success — `Windows.Media.Ocr` returns
-            // zero lines on some solid-color backgrounds that ocrs
-            // still manages to parse.
-            return Err(ProviderError::LowConfidence);
+        match lines {
+            Ok(lines) => {
+                tracing::info!(
+                    "WindowsOcr: run ok ({} lines, {}ms)",
+                    lines.len(),
+                    started.elapsed().as_millis()
+                );
+                if lines.is_empty() {
+                    return Err(ProviderError::LowConfidence);
+                }
+                Ok(TaskOutput::Ocr { lines })
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "WindowsOcr: run failed in {}ms: {e}",
+                    started.elapsed().as_millis()
+                );
+                Err(e)
+            }
         }
-        Ok(TaskOutput::Ocr { lines })
     }
 }
 
@@ -166,19 +184,30 @@ fn run_ocr(image_png: &[u8], preferred: Option<&str>) -> Result<Vec<OcrLine>, Pr
 /// can also be `None` on locked-down systems — surface that as a
 /// `LowConfidence` error so the chain falls through to `ocrs`.
 fn try_create_engine(preferred: Option<&str>) -> Result<OcrEngine, ProviderError> {
+    // Log once per process which languages WinRT is willing to OCR.
+    // Helps users diagnose "Japanese installed as input method but not
+    // as language pack" — a real and silent failure mode.
+    log_available_languages_once();
+
     if let Some(tag) = preferred {
         let lang = Language::CreateLanguage(&HSTRING::from(tag))
             .map_err(|e| ProviderError::Other(format!("Language create {tag}: {e}")))?;
-        if let Ok(engine) = OcrEngine::TryCreateFromLanguage(&lang) {
-            // Some WinRT builds return a null COM interface instead
-            // of an error when the language pack is missing. The
-            // `.as_raw().is_null()` check covers that path too.
-            if !engine.as_raw().is_null() {
-                return Ok(engine);
+        // Check availability explicitly — some WinRT builds return
+        // a null COM interface from `TryCreateFromLanguage` when the
+        // pack is missing, which the `if let Ok` path alone misses.
+        let supported = OcrEngine::IsLanguageSupported(&lang).unwrap_or(false);
+        if supported {
+            if let Ok(engine) = OcrEngine::TryCreateFromLanguage(&lang) {
+                if !engine.as_raw().is_null() {
+                    tracing::info!("WindowsOcr: engine created for language '{tag}'");
+                    return Ok(engine);
+                }
             }
         }
-        tracing::debug!(
-            "WindowsOcr: language '{tag}' not available, falling back to user profile default"
+        tracing::warn!(
+            "WindowsOcr: language '{tag}' NOT supported on this machine — \
+             OCR for that language requires installing the '{tag}' language pack \
+             via Settings > Time & Language > Language. Falling back to profile default."
         );
     }
     let engine = OcrEngine::TryCreateFromUserProfileLanguages().map_err(|e| {
@@ -187,9 +216,42 @@ fn try_create_engine(preferred: Option<&str>) -> Result<OcrEngine, ProviderError
         ))
     })?;
     if engine.as_raw().is_null() {
+        tracing::warn!("WindowsOcr: profile-default engine is null, no OCR language pack installed");
         return Err(ProviderError::LowConfidence);
     }
+    tracing::info!("WindowsOcr: engine created from profile default");
     Ok(engine)
+}
+
+/// One-time snapshot of the OCR language packs WinRT reports as
+/// installed. Uses a Once latch so the log line fires only on the
+/// first call per process.
+fn log_available_languages_once() {
+    use std::sync::Once;
+    static ONCE: Once = Once::new();
+    ONCE.call_once(|| {
+        match OcrEngine::AvailableRecognizerLanguages() {
+            Ok(langs) => {
+                let count = langs.Size().unwrap_or(0);
+                let mut names: Vec<String> = Vec::with_capacity(count as usize);
+                for i in 0..count {
+                    if let Ok(lang) = langs.GetAt(i) {
+                        if let Ok(tag) = lang.LanguageTag() {
+                            names.push(tag.to_string_lossy());
+                        }
+                    }
+                }
+                tracing::info!(
+                    "WindowsOcr: {} OCR language pack(s) available: {:?}",
+                    count,
+                    names
+                );
+            }
+            Err(e) => {
+                tracing::warn!("WindowsOcr: AvailableRecognizerLanguages failed: {e}");
+            }
+        }
+    });
 }
 
 /// Decode PNG bytes into a `SoftwareBitmap` in the 8-bpc BGRA

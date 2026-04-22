@@ -45,6 +45,31 @@ the project adheres to [SemVer](https://semver.org/).
   追加、既存 `SchemaForm.svelte.test.ts` に `$ref` / unsupported /
   additionalProperties の 3 ケース追加。全 67 テスト green。
 
+### Fixed (Windows OCR が効かない問題 — 2026-04-22 深夜)
+
+- **user.toml が windows provider を登録しない問題を解消**: 既存の
+  `settings::store::merge` は `*base = user` で user 設定を丸ごと上書き
+  していたため、upgrade 後も user.toml に
+  `[providers.configs.windows]` が無いと provider 未登録 → chain から
+  skip → ocrs フォールバック → Latin gibberish、というループに陥って
+  いた。`pipeline::rebuild_providers` 末尾で **Windows target かつ map に
+  "windows" 不在なら自動登録** するように修正（config 未指定でも
+  `language = "ja"` がデフォルト）。
+- **Chain auto-prepend**: user.toml の `providers.ocr.chain` に
+  "windows" が無くても、Windows 実行時は OCR 呼び出し直前に先頭
+  prepend する。`pipeline::run` 内で cfg gated。
+- **診断ログ強化**: `pipeline: Ocr served by 'X' in Yms` で実際に使われた
+  provider が一目瞭然に。WinRT OCR 側でも:
+  - 起動時に `AvailableRecognizerLanguages` をダンプ (インストール
+    済み言語パックを列挙)
+  - `IsLanguageSupported('ja')` を明示チェック、未対応時は warning
+    ログで "言語パック未インストール" を示唆
+  - run 開始/終了/失敗の info ログ
+- **言語パック未対応の扱い改善**: `IsLanguageSupported` が false の時
+  は profile default に fallback しない (英語パックで日本語を無理やり
+  OCR してもゴミになるだけ) — LowConfidence で chain を抜けて ocrs
+  に委ねる経路に統一。
+
 ### Added (S2 前倒し — Windows Media OCR 導入 — 2026-04-22 夜 2)
 
 - **Windows Media OCR プロバイダ**: `windows` crate で
