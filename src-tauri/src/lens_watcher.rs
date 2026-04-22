@@ -1060,37 +1060,45 @@ pub fn text_is_already_target(text: &str, target_language: &str) -> bool {
 
     match target.as_str() {
         "ja" | "ja-jp" | "jpn" | "japanese" => {
-            // Strong Japanese-only signals: hiragana, katakana,
-            // halfwidth katakana, and Japanese-style punctuation
-            // (`、。「」『』…`). Any of these means "leave it alone".
-            let japanese_specific = all_chars.iter().any(|c| {
-                let u = *c as u32;
-                (0x3040..=0x309F).contains(&u) // Hiragana
-                    || (0x30A0..=0x30FF).contains(&u) // Katakana
-                    || (0xFF65..=0xFF9F).contains(&u) // Halfwidth Katakana
-                    || (0x3000..=0x303F).contains(&u) // CJK Symbols + Punctuation
-            });
-            if japanese_specific {
-                return true;
-            }
-            // Kanji-only strings (including single kanji labels).
-            // Technically ambiguous vs Chinese, but for a JA target
-            // Gemma usually echoes the kanji back verbatim anyway, and
-            // skipping saves a round-trip AND avoids bizarre Gemma
-            // rephrasings of single-kanji UI labels (e.g. "戻",
-            // "次").
-            let kanji_count = all_chars
+            // Count Japanese-signal characters anywhere in Unicode:
+            //   hiragana / katakana / halfwidth katakana / CJK
+            //   symbols-and-punct / kanji.
+            let jp_chars = all_chars
                 .iter()
                 .filter(|c| {
                     let u = **c as u32;
-                    (0x3400..=0x4DBF).contains(&u) || (0x4E00..=0x9FFF).contains(&u)
+                    (0x3040..=0x309F).contains(&u)       // Hiragana
+                        || (0x30A0..=0x30FF).contains(&u) // Katakana
+                        || (0xFF65..=0xFF9F).contains(&u) // Halfwidth Katakana
+                        || (0x3000..=0x303F).contains(&u) // CJK Symbols + Punct
+                        || (0x3400..=0x4DBF).contains(&u) // CJK Ext-A
+                        || (0x4E00..=0x9FFF).contains(&u) // CJK Unified
                 })
                 .count();
-            let latin_letter_count = all_chars
+            let latin_letters = all_chars
                 .iter()
                 .filter(|c| c.is_ascii_alphabetic())
                 .count();
-            kanji_count >= 1 && latin_letter_count == 0
+            // No Japanese at all → definitely needs translation.
+            if jp_chars == 0 {
+                return false;
+            }
+            // Pure Japanese (no Latin letters) → already target.
+            // Covers single-kanji UI labels (`戻`, `次`), kana
+            // strings, and Japanese-punctuation-only sequences
+            // (`「」`).
+            if latin_letters == 0 {
+                return true;
+            }
+            // Mixed input: only treat as already-target when
+            // Japanese dominates (≥ 70% of meaningful chars).
+            // Under that threshold the Latin portion is substantive
+            // enough that the user expects it translated — the old
+            // "any kana → skip" rule dropped English translations
+            // whenever an English line was paragraph-merged with a
+            // Japanese line.
+            let total = jp_chars + latin_letters;
+            (jp_chars as f32) / (total as f32) >= 0.70
         }
         "en" | "en-us" | "en-gb" | "eng" | "english" => {
             // English = every letter is ASCII. Numbers / punctuation
@@ -1537,6 +1545,40 @@ async fn run_capture_loop(
             ocr_lines.len()
         );
 
+        // Drop lines that are already in the target language — they
+        // should disappear from the Lens overlay entirely: no card
+        // painted, no LLM round-trip, the source shows through.
+        // This is the behaviour the user wants for native text: stop
+        // covering it up with "translations" that repeat it back.
+        //
+        // Filtering before paragraph grouping also prevents the
+        // previous regression where a Japanese line merged into an
+        // English paragraph marked the whole paragraph as "already
+        // target", stranding the English part untranslated.
+        let target_filter = settings.snapshot().subtitle.target_language.clone();
+        let pre_filter_count = ocr_lines.len();
+        let ocr_lines: Vec<OcrLine> = ocr_lines
+            .into_iter()
+            .filter(|line| {
+                let skip = text_is_already_target(&line.text, &target_filter);
+                if skip {
+                    tracing::debug!(
+                        "lens {lens_id}: drop {}-native line {:?}",
+                        target_filter,
+                        line.text.chars().take(30).collect::<String>()
+                    );
+                }
+                !skip
+            })
+            .collect();
+        if ocr_lines.len() != pre_filter_count {
+            tracing::info!(
+                "lens {lens_id}: {} line(s) after target-language filter ({} dropped)",
+                ocr_lines.len(),
+                pre_filter_count - ocr_lines.len()
+            );
+        }
+
         // Decode the captured frame so we can sample background /
         // foreground colours around each bbox. Failure here is
         // non-fatal — we fall back to a neutral grey fill so the
@@ -1649,36 +1691,11 @@ async fn run_capture_loop(
         let max_concurrent = snapshot.performance.max_concurrent_tasks.max(1) as usize;
         let semaphore = Arc::new(Semaphore::new(max_concurrent));
 
-        // Keep originals around so the skip-same-language path can
-        // echo the source text back into each member line's chunk.
-        let originals: Vec<String> = ocr_lines.iter().map(|l| l.text.clone()).collect();
-
+        // Target-language lines were already removed from `ocr_lines`
+        // before paragraph grouping, so every paragraph here needs a
+        // real translation. No in-loop skip branch any more.
         let mut tasks: Vec<JoinHandle<()>> = Vec::with_capacity(paragraphs.len());
         for paragraph in paragraphs.into_iter() {
-            if text_is_already_target(&paragraph.text, &target) {
-                tracing::info!(
-                    "lens paragraph [{:?}]: skipped translation (already {target}) — {:?}",
-                    paragraph.members,
-                    paragraph.text.chars().take(20).collect::<String>()
-                );
-                for &line_idx in &paragraph.members {
-                    let text = originals
-                        .get(line_idx)
-                        .cloned()
-                        .unwrap_or_default();
-                    let _ = app.emit(
-                        "moonlens://lens-line-chunk",
-                        LensLineChunk {
-                            id: lens_id.clone(),
-                            flow_id,
-                            line_index: line_idx,
-                            delta: text,
-                            done: true,
-                        },
-                    );
-                }
-                continue;
-            }
             let sem = semaphore.clone();
             let app_c = app.clone();
             let id_c = lens_id.clone();
@@ -2384,15 +2401,27 @@ mod tests {
 
     #[test]
     fn text_is_already_target_mixed_jp_and_latin_translates() {
-        // Pure kanji + any Latin → probably English content needing
-        // translation (e.g. "JavaScriptは面白い" is English branded
-        // as Japanese — but for a JA target we want the surrounding
-        // Japanese preserved, which is only possible when the whole
-        // line goes through the LLM). Stay with translate-it here
-        // because the alternative (skip) leaves English untranslated.
-        // Note: the Japanese-specific signal (は) DOES skip via the
-        // hiragana branch; this case tests pure kanji + Latin only.
+        // Mixed content: latin dominates so treat as "needs
+        // translation" — this prevents the regression where a
+        // Japanese line merged into an English paragraph caused the
+        // whole paragraph to be skipped, leaving English
+        // untranslated.
         assert!(!text_is_already_target("JavaScript五", "ja"));
+        // Hello (5 latin) + こんにちは (5 kana) = 50% each, below
+        // the 70% JP dominance threshold → translate.
+        assert!(!text_is_already_target("Hello こんにちは", "ja"));
+        // Short English mixed with a single kanji — translate so
+        // the English part actually gets rendered in JA.
+        assert!(!text_is_already_target("Open the 窓", "ja"));
+    }
+
+    #[test]
+    fn text_is_already_target_ja_dominant_mix_skips() {
+        // Mostly Japanese with a trailing English loanword: treat
+        // as already-target so we don't paraphrase the JP part.
+        // 長い日本語の文章 (8 JP chars) + OK (2 latin) = 80% JP
+        // → skip.
+        assert!(text_is_already_target("長い日本語の文章OK", "ja"));
     }
 
     #[test]

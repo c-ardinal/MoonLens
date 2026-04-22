@@ -45,6 +45,30 @@ the project adheres to [SemVer](https://semver.org/).
   追加、既存 `SchemaForm.svelte.test.ts` に `$ref` / unsupported /
   additionalProperties の 3 ケース追加。全 67 テスト green。
 
+### Fixed (target 言語の行も表示 / 英語が翻訳されない — 2026-04-23 早朝)
+
+- **target 言語行は完全に非表示**: 従来は target 一致行でも original
+  を emit してカードを描画していた。日本語 target 下で日本語原文に
+  カードが載り、"翻訳" が元のまま表示される違和感あり。OCR 結果を
+  paragraph 化前に filter、`text_is_already_target` が true の行は
+  ocr_lines から drop する方式に変更 — **card も LLM 呼び出しも発生
+  しない**、原文そのものが素通しで見える。
+- **混在パラグラフの英語が翻訳されない regression 修正**:
+  `text_is_already_target` が "any kana present" でただちに true を
+  返していたため、日本語 1 行 + 英語 1 行がパラグラフに merge される
+  と段落全体が skip され、英語部分も翻訳されなかった。判定を
+  **ドミナンス比率ベース**に変更: `jp_chars / (jp_chars + latin_letters)
+  >= 0.70` の場合のみ "already target"。純粋 JA (latin=0) や単独漢字
+  ラベル (戻/次 等) は従来通り skip、`Hello こんにちは` のような
+  50/50 mixed は translate にフォールスルー。
+- **paragraph-level skip ロジックを削除**: line-level filter で
+  全行が非-target になるため、paragraph レベルの skip 分岐は
+  redundant。translate_paragraph_streaming へ直接流す経路のみに簡素化。
+- **テスト 3 件追加**: `text_is_already_target_ja_dominant_mix_skips`
+  ("長い日本語の文章OK" → skip)、`text_is_already_target_mixed_jp_and_latin_translates`
+  に 3 ケース追加 (Hello こんにちは 50/50 → translate, Open the 窓 → translate)。
+  **227 Rust + 67 vitest green**。
+
 ### Fixed (Windows OCR が効かない問題 — 2026-04-22 深夜)
 
 - **user.toml が windows provider を登録しない問題を解消**: 既存の
