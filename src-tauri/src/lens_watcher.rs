@@ -265,8 +265,17 @@ pub struct LensOcrLines {
 pub struct LensOcrLine {
     pub line_index: usize,
     pub text: String,
-    /// `[x, y, w, h]` in image pixel coordinates.
+    /// `[x, y, w, h]` in image pixel coordinates. This is the **tiled**
+    /// bbox — expanded vertically to the midpoint with adjacent lines
+    /// and horizontally by a small padding so adjacent cards meet
+    /// exactly without gap or overlap.
     pub bbox: [f32; 4],
+    /// Original OCR bbox **before** tile expansion, also in image
+    /// pixel coordinates. The frontend uses the height of this rect
+    /// to size the translation font to match the source glyph height
+    /// — without it, card height (which includes the tile padding)
+    /// makes short translations look absurdly large over small source.
+    pub source_bbox: [f32; 4],
     /// Mean RGB sampled from a 2 px rim around the bbox. Used as a
     /// flat fill when `bg_gradient` is `None`, and as the fallback
     /// any time the gradient sampler fails.
@@ -1642,6 +1651,7 @@ async fn run_capture_loop(
                 line_index: lens_lines.len(),
                 text: l.text.clone(),
                 bbox: [nx, ny, nw, nh],
+                source_bbox: l.bbox,
                 bg_color: bg,
                 bg_gradient,
                 fg_color: fg,

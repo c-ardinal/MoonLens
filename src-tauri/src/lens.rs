@@ -352,6 +352,26 @@ pub fn outer_rect(win: &WebviewWindow) -> Result<geometry::LensOuterRect> {
     })
 }
 
+/// Resolve the *inner* (client / webview) rect of a lens window.
+/// Matches exactly the pixels the Svelte lens page renders into,
+/// so when the watcher captures this rect the OCR bbox coordinates
+/// align 1:1 with the CSS percentage positioning the lens page
+/// uses. With `decorations: false` on Windows 11 the outer rect
+/// can include an invisible resize frame + DWM shadow that's
+/// several pixels larger than the client area — using outer for
+/// capture then positioning cards in inner space shifts every
+/// card by that offset.
+pub fn inner_rect(win: &WebviewWindow) -> Result<geometry::LensOuterRect> {
+    let pos = win.inner_position()?;
+    let size = win.inner_size()?;
+    Ok(geometry::LensOuterRect {
+        x: pos.x,
+        y: pos.y,
+        w: size.width,
+        h: size.height,
+    })
+}
+
 /// Compute the observed rect and capture. The window itself is NEVER
 /// hidden — Tauri's transparent chrome stays on screen continuously so
 /// there is no perceivable blink. Self-capture is avoided at a layer
@@ -361,21 +381,41 @@ pub fn outer_rect(win: &WebviewWindow) -> Result<geometry::LensOuterRect> {
 pub fn capture_lens(app: &AppHandle, registry: &LensRegistryHandle, id: &str) -> Result<Vec<u8>> {
     use crate::capture;
 
-    let outer_rect_info = {
+    let rect_info = {
         let win = app
             .get_webview_window(id)
             .ok_or_else(|| anyhow!("lens window {id} not found"))?;
-        let outer = outer_rect(&win)?;
+        // Use the *inner* (webview client) rect, not the outer
+        // rect. On Windows 11 with `decorations: false` + transparent,
+        // the outer rect can include an invisible resize frame so
+        // capturing outer and positioning cards against inner-sized
+        // viewport shifted every card by a handful of pixels up and
+        // to the right — exactly the "card offset" the user saw.
+        let inner = inner_rect(&win)?;
+        #[cfg(debug_assertions)]
+        {
+            if let Ok(outer) = outer_rect(&win) {
+                if outer.x != inner.x || outer.y != inner.y
+                    || outer.w != inner.w || outer.h != inner.h
+                {
+                    tracing::debug!(
+                        "lens {id}: outer={:?} vs inner={:?} (using inner for capture)",
+                        outer,
+                        inner
+                    );
+                }
+            }
+        }
         let insets = registry.insets(id).unwrap_or_default();
-        geometry::observed_rect(outer, insets)
+        geometry::observed_rect(inner, insets)
             .ok_or_else(|| anyhow!("lens observation rect is empty"))?
     };
 
     let result = capture::capture_global_rect(
-        outer_rect_info.x,
-        outer_rect_info.y,
-        outer_rect_info.w,
-        outer_rect_info.h,
+        rect_info.x,
+        rect_info.y,
+        rect_info.w,
+        rect_info.h,
     );
     let image = result?;
     capture::png_bytes(&image)

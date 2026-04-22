@@ -285,8 +285,14 @@ export interface LensBgGradient {
 export interface LensOcrLine {
   line_index: number;
   text: string;
-  /** [x, y, w, h] in image pixel coordinates. */
+  /** [x, y, w, h] in image pixel coordinates — the **tiled** card
+   *  bbox (expanded vertically to adjacent-line midpoints plus
+   *  small horizontal padding). This is where the card renders. */
   bbox: [number, number, number, number];
+  /** Original OCR bbox before tile expansion, in image pixel
+   *  coordinates. Used by the frontend to size the font to the
+   *  source glyph height rather than the inflated card height. */
+  source_bbox: [number, number, number, number];
   /** Mean RGB of the 2px rim (solid-fill fallback). */
   bg_color: [number, number, number];
   /** Present when the rim has a dominant gradient axis. */

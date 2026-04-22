@@ -45,6 +45,27 @@ the project adheres to [SemVer](https://semver.org/).
   追加、既存 `SchemaForm.svelte.test.ts` に `$ref` / unsupported /
   additionalProperties の 3 ケース追加。全 67 テスト green。
 
+### Fixed (font-size が原文無視 / カード右上ずれ — 2026-04-23 昼)
+
+- **Font-size を原文 bbox 基準に**: カードの `bbox` は tiling で vertical
+  に拡張されるため、CSS `85cqh` (card height) を font size の基準に
+  していたフォーミュラは原文のグリフ高を無視して過大になっていた。
+  `LensOcrLine` に **`source_bbox`** (pre-tile 原文 bbox) を追加、
+  frontend は `source_bbox[3] / imageH` を vh 単位で CSS 変数
+  `--source-h-vh` として渡し、font-size 計算の第一優先に使用
+  (`calc(--source-h-vh * 0.9 * 1vh)`)。card height と char-width は
+  cap としてのみ残る。
+- **カードの右上ずれ**: `capture_lens` が `outer_position` +
+  `outer_size` を使っていたため、Windows 11 の `decorations: false` +
+  `transparent: true` 窓に DWM が拡張する不可視 resize frame / shadow
+  を含み、outer 座標で OCR したピクセルを inner サイズの viewport で
+  positioning → 全カードが定数分 upper-right にずれていた。
+  **`inner_position` + `inner_size`** に切替、webview client area と
+  OCR 座標系を一致させて解消。outer と inner の差分が出たら debug ログ
+  で記録。
+
+**Rust 230 / vitest 67 green**。
+
 ### Fixed (日英混在行・skip 行領域被覆 — 2026-04-23 早朝 2)
 
 - **混在 line の word-level 分割**: WinRT OCR から返される `OcrLine` は

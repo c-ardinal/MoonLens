@@ -26,6 +26,7 @@
     line_index: number;
     text: string;
     bbox: [number, number, number, number];
+    source_bbox: [number, number, number, number];
     bg_color: [number, number, number];
     bg_gradient: {
       angle: number;
@@ -106,6 +107,12 @@
     if (imageW === 0 || imageH === 0) return 'display:none';
     const [br, bgc, bb] = line.bg_color;
     const [fr, fg, fb] = line.fg_color;
+    // Source glyph height as a fraction of the captured image height
+    // (= the lens window's inner height in CSS terms). Frontend uses
+    // it to size the translation font to match the source glyph,
+    // ignoring the card's tiled padding.
+    const sourceH = Math.max(1, line.source_bbox[3]);
+    const sourceHvh = (sourceH / imageH) * 100;
     // Prefer a CSS linear-gradient when the rim sampler detected
     // one — much closer to "the card disappears into the source"
     // than a flat fill on any non-solid surface. Multi-stop
@@ -132,6 +139,7 @@
       `top:${(y / imageH) * 100}%;` +
       `width:${(w / imageW) * 100}%;` +
       `height:${(h / imageH) * 100}%;` +
+      `--source-h-vh:${sourceHvh.toFixed(3)};` +
       background +
       `color:rgb(${fr},${fg},${fb});`
     );
@@ -193,6 +201,7 @@
           line_index: l.line_index,
           text: l.text,
           bbox: l.bbox,
+          source_bbox: l.source_bbox ?? l.bbox,
           bg_color: l.bg_color,
           bg_gradient: l.bg_gradient ?? null,
           fg_color: l.fg_color,
@@ -326,13 +335,24 @@
     line-height: 1;
   }
   .line-text {
-    /* MVP font-fit: tighter of bbox-height-based sizing (85cqh) and
-       character-width-based sizing (90cqw / text-len). Max 40px to
-       accommodate large source text (subtitles, big UI labels).
-       `--text-len` is set per card from Svelte. */
+    /* Font-size strategy:
+       1. `--source-h-vh` is the source glyph height expressed as a
+          percentage of the lens window's inner height — set per
+          card from the backend's `source_bbox[3] / imageH`. Using
+          `1vh` to multiply gives actual CSS pixels matching the
+          source glyph.
+       2. Horizontal cap: `95cqw / text-len` keeps long
+          translations from overflowing the card's width.
+       3. Vertical cap: `85cqh` caps at 85% of the tiled card
+          height so we never overshoot the card box itself.
+       4. Global floor 7px / ceiling 40px keeps extremes sane. */
     font-size: clamp(
       7px,
-      min(85cqh, calc(90cqw / var(--text-len, 10))),
+      min(
+        calc(var(--source-h-vh, 4) * 0.9 * 1vh),
+        85cqh,
+        calc(95cqw / var(--text-len, 10))
+      ),
       40px
     );
     line-height: 1;
