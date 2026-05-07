@@ -194,27 +194,54 @@ model = "gemma4:e2b"
 # system prompt below, the tradeoff favours natural phrasing.
 temperature = 0.4
 top_p = 0.95
-# Translation rarely needs >4K context; prefill time scales with num_ctx
-# so we keep it tight by default. Users can override for long-document
-# translation workflows.
-num_ctx = 4096
-num_predict = 256
+# Bumped 4096 → 8192: Lens's per-block translation model sends an
+# entire paragraph in a single /api/chat call, so the prefill
+# token count grows with paragraph length. The Rainbow Passage
+# (english0003) is ~1400 source chars (~1100 tokens) and yields
+# a ~2500-token Japanese translation; 4096 left no room and Ollama
+# rolled the prefill window mid-generation, truncating the output.
+# 8192 covers any single screen-paragraph cleanly while gemma4:e2b
+# still stays well within its 8 K supported context.
+num_ctx = 8192
+# Bumped 2048 → 4096 after a Lens user reported truncation on
+# english0003-class paragraphs (Rainbow Passage, ~1400 source
+# chars). Gemma's tokenizer averages 1.5-2 tokens per Japanese
+# glyph, so a 1500-char Japanese translation needs ~3000 tokens
+# of generation budget alone — 2048 silently capped Gemma
+# mid-sentence and the frontend committed the truncated string.
+# 4096 gives ample headroom for any single paragraph block while
+# fitting comfortably in the new 8 K num_ctx.
+num_predict = 4096
 # CRITICAL: Gemma 4 / Qwen 3 / DeepSeek have reasoning capability and
 # run a silent "thinking" pass that costs several seconds of first-token
 # latency. Translation does not benefit from reasoning — keep this off.
 think = false
 stream = true
-# Prompt engineered for natural, idiomatic output — the earlier
-# "translate faithfully" phrasing bullied Gemma into word-for-word
-# renderings that read like machine output. Key shifts:
-#   - "professional translator" sets register expectation
-#   - "render meaning and tone" vs "translate faithfully" opens the
-#     door to idiomatic rewording
-#   - explicit call-outs against the most common failure modes
-#     (alternatives, commentary, romanization, quoting the input)
-# If the user needs strict word-for-word output they can override
-# this prompt via `settings.providers.configs."ollama.gemma4".system_prompt`.
-system_prompt = "You are a professional translator. Render the user's text naturally and idiomatically in the target language — match the meaning, tone, and register a native reader would expect, not the word order of the source. If the input contains numbered segments like `[1]`, `[2]`, `[3]`, you MUST return exactly the same number of segments in the same order, each still prefixed with its bracketed number (e.g. `[1] 翻訳1\\n[2] 翻訳2`). Without those markers, preserve newlines exactly. Output ONLY the translated text. Never include commentary, explanations, romanizations, alternative translations, notes in parentheses, or surrounding quotes."
+# System prompt engineered for natural, idiomatic output. The previous
+# `[1]` / `[2]` marker instructions were dropped when the card model
+# switched to block-level /api/chat translation: each block is now a
+# self-contained conversation turn, and distribution across per-line
+# cards happens post-hoc via char-proportional splitting, so the
+# prompt no longer needs to round-trip bracketed indices.
+system_prompt = "You are a professional translator. Render the user's text naturally and idiomatically in the target language — match the meaning, tone, and register a native reader would expect, not the word order of the source. Preserve newlines exactly. Output ONLY the translated text. Never include commentary, explanations, romanizations, alternative translations, notes in parentheses, surrounding quotes, or bracketed markers like `[1]` / `[2]`."
+# Few-shot examples bias Gemma4:e2b toward natural target-language
+# phrasing without pinning it to specific vocabulary. Examples are
+# delivered as real user/assistant turns via /api/chat, so the model
+# treats them as closed conversations (not as input to translate).
+# Three examples at different lengths cover: idiomatic counter words
+# (6さじ for scoopful portions, 5枚 for flat slices, 3つ for loose
+# items), omitted subjects ("三つの赤い袋に詰めてくれるでしょう" for
+# "scoop these things into three red bags"), and direct noun translation
+# (snow peas → スナップエンドウ, toy frog → カエルのおもちゃ).
+[[providers.configs."ollama.gemma4".examples]]
+source = "Please call Stella. Ask her to bring these things with her from the store: Six spoons of fresh snow peas, five thick slabs of blue cheese, and maybe a snack for her brother Bob."
+target = "ステラに電話してください。これらのものをお店で買ってきてもらうように頼んでください。新鮮なスナップエンドウを6さじ、厚切りのブルーチーズを5枚、それから弟のボブのおやつも。"
+[[providers.configs."ollama.gemma4".examples]]
+source = "We also need a small plastic snake and a big toy frog for the kids."
+target = "子供たちのために、小さなプラスチック製のヘビと大きなカエルのおもちゃも必要です。"
+[[providers.configs."ollama.gemma4".examples]]
+source = "She can scoop these things into three red bags, and we will go meet her Wednesday at the train station."
+target = "彼女はこれらを赤い袋3つに詰めてくれるでしょう。水曜日に駅で待ち合わせましょう。"
 
 [providers.configs.deepl]
 api_key_env = "DEEPL_API_KEY"
@@ -242,7 +269,17 @@ recognition_threshold = 0.5
 # preferred. When the requested pack is missing the provider
 # returns LowConfidence so the chain falls through to `ocrs`.
 [providers.configs.windows]
-language = "ja"
+# `language` intentionally unset → WinRT falls through to
+# `TryCreateFromUserProfileLanguages`, which builds an engine
+# that recognises every language installed in the user's profile
+# (e.g. both English AND Japanese). Forcing `language = "ja"`
+# here made WinRT spawn a Japanese-only engine whose English word
+# bboxes were imprecise — mixed "出典：Wikipediaページ" lines then
+# returned a single Latin bbox spanning the whole row, and the
+# downstream card inpaint ate the surrounding Japanese even though
+# the skip filter correctly flagged it. The offline evaluator has
+# always called `run_ocr(.., None)` (profile default); pinning the
+# runtime to the same default keeps the two paths aligned.
 
 [providers.configs.paddle]
 endpoint = "http://127.0.0.1:9003"

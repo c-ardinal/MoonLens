@@ -105,7 +105,7 @@ impl Provider for WindowsOcrProvider {
 /// Run OCR end-to-end for one PNG blob. Returns the detected lines
 /// as axis-aligned bboxes in **image pixel coordinates**, matching
 /// the shape `ocrs` produces so downstream code is engine-agnostic.
-fn run_ocr(image_png: &[u8], preferred: Option<&str>) -> Result<Vec<OcrLine>, ProviderError> {
+pub fn run_ocr(image_png: &[u8], preferred: Option<&str>) -> Result<Vec<OcrLine>, ProviderError> {
     // WinRT runtime initialisation is idempotent and cheap; calling
     // per-run is simpler than threading an init through the whole
     // provider lifecycle and the perf cost is negligible vs. the OCR
@@ -176,6 +176,14 @@ fn run_ocr(image_png: &[u8], preferred: Option<&str>) -> Result<Vec<OcrLine>, Pr
             continue;
         }
 
+        // Resolve pure-symbol words to the class of their nearest
+        // non-symbol neighbour before grouping. Without this step,
+        // `(日本語)` splits into three separate runs (`(` Other,
+        // `日本語` Japanese, `)` Other) and the parens each spawn
+        // their own micro-card; with it, the parens inherit the
+        // Japanese class and tuck into the run that skips cleanly.
+        resolve_symbol_classes(&mut word_infos);
+
         // Group contiguous words of the same language class. Each
         // group becomes its own `OcrLine` — downstream filtering
         // can then drop the Japanese runs while keeping English
@@ -217,34 +225,72 @@ fn run_ocr(image_png: &[u8], preferred: Option<&str>) -> Result<Vec<OcrLine>, Pr
 
 /// Per-word language class for grouping. A run of `Japanese` words
 /// stays together so the filter can drop the whole run; a run of
-/// `Other` (Latin, digits, punctuation-only) gets translated as a
-/// unit. Distinguishing finer than this (Chinese vs Korean, etc.)
-/// is not worth the added surface for the only target MoonLens
-/// ships today (`ja`).
+/// `Other` (Latin, digits) gets translated as a unit. `Symbol`
+/// (pure punctuation / brackets / dashes with no letters or digits)
+/// has no language on its own — it inherits the class of its
+/// nearest non-Symbol neighbour, so `(日本語)` groups with the
+/// Japanese run and `(English)` groups with the Latin run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum WordClass {
     Japanese,
     Other,
+    Symbol,
 }
 
 fn classify_word(text: &str) -> WordClass {
-    // Any Japanese-specific character in the word classifies the
-    // whole word as Japanese. Halfwidth katakana + CJK punct +
-    // hiragana + katakana + kanji ranges mirror the detector
-    // `text_is_already_target` uses downstream.
+    // Any Japanese-specific character (hiragana / katakana / kanji /
+    // halfwidth katakana) wins — kanji-bearing text is always
+    // Japanese regardless of surrounding punctuation.
     for c in text.chars() {
         let u = c as u32;
         if (0x3040..=0x309F).contains(&u)
             || (0x30A0..=0x30FF).contains(&u)
             || (0xFF65..=0xFF9F).contains(&u)
-            || (0x3000..=0x303F).contains(&u)
             || (0x3400..=0x4DBF).contains(&u)
             || (0x4E00..=0x9FFF).contains(&u)
         {
             return WordClass::Japanese;
         }
     }
+    // Pure-symbol word (every char is non-alphanumeric). This covers
+    // "(" ")" "「」" "。" "—" and the like. A post-processing pass
+    // promotes these to the class of whatever non-Symbol word sits
+    // next to them — left-first with right-fallback — so parens
+    // inherit the language they contain rather than always defaulting
+    // to Other and carving out stray single-char cards.
+    if !text.is_empty() && text.chars().all(|c| !c.is_alphanumeric()) {
+        return WordClass::Symbol;
+    }
     WordClass::Other
+}
+
+/// Replace every `Symbol` entry in `words` with the class of its
+/// nearest non-Symbol neighbour — left first, right as a fallback.
+/// When the entire line is symbols (no language context), keep them
+/// as `Other` so downstream grouping still produces a card.
+fn resolve_symbol_classes(words: &mut [(String, windows::Foundation::Rect, WordClass)]) {
+    let n = words.len();
+    for i in 0..n {
+        if words[i].2 != WordClass::Symbol {
+            continue;
+        }
+        let mut resolved = None;
+        for j in (0..i).rev() {
+            if words[j].2 != WordClass::Symbol {
+                resolved = Some(words[j].2);
+                break;
+            }
+        }
+        if resolved.is_none() {
+            for j in (i + 1)..n {
+                if words[j].2 != WordClass::Symbol {
+                    resolved = Some(words[j].2);
+                    break;
+                }
+            }
+        }
+        words[i].2 = resolved.unwrap_or(WordClass::Other);
+    }
 }
 
 /// Construct an `OcrEngine` for `preferred`, falling back to the
@@ -408,6 +454,82 @@ mod tests {
         // Mixed single-token (unlikely from a real OCR but defensive):
         // the presence of any Japanese char classifies it as JA.
         assert_eq!(classify_word("Hi日"), WordClass::Japanese);
+    }
+
+    #[test]
+    fn classify_word_tags_pure_punctuation_as_symbol() {
+        assert_eq!(classify_word("("), WordClass::Symbol);
+        assert_eq!(classify_word(")"), WordClass::Symbol);
+        assert_eq!(classify_word("—"), WordClass::Symbol);
+        assert_eq!(classify_word("!!!"), WordClass::Symbol);
+        assert_eq!(classify_word("、。"), WordClass::Symbol);
+        assert_eq!(classify_word("「」"), WordClass::Symbol);
+    }
+
+    #[test]
+    fn classify_word_does_not_tag_alphanumeric_as_symbol() {
+        // Digits / letters are Other, never Symbol.
+        assert_eq!(classify_word("123"), WordClass::Other);
+        assert_eq!(classify_word("A1"), WordClass::Other);
+    }
+
+    fn rect(x: f32, y: f32, w: f32, h: f32) -> windows::Foundation::Rect {
+        windows::Foundation::Rect {
+            X: x,
+            Y: y,
+            Width: w,
+            Height: h,
+        }
+    }
+
+    #[test]
+    fn resolve_symbol_inherits_from_left_neighbour() {
+        let mut words = vec![
+            ("本文ページ".into(), rect(0.0, 0.0, 10.0, 10.0), WordClass::Japanese),
+            ("(".into(), rect(10.0, 0.0, 2.0, 10.0), WordClass::Symbol),
+            ("ページ最下部".into(), rect(12.0, 0.0, 20.0, 10.0), WordClass::Japanese),
+            (")".into(), rect(32.0, 0.0, 2.0, 10.0), WordClass::Symbol),
+        ];
+        resolve_symbol_classes(&mut words);
+        assert_eq!(words[1].2, WordClass::Japanese);
+        assert_eq!(words[3].2, WordClass::Japanese);
+    }
+
+    #[test]
+    fn resolve_symbol_inherits_from_english_neighbour() {
+        let mut words = vec![
+            ("(".into(), rect(0.0, 0.0, 2.0, 10.0), WordClass::Symbol),
+            ("Hello".into(), rect(2.0, 0.0, 10.0, 10.0), WordClass::Other),
+            (")".into(), rect(12.0, 0.0, 2.0, 10.0), WordClass::Symbol),
+        ];
+        resolve_symbol_classes(&mut words);
+        assert_eq!(words[0].2, WordClass::Other);
+        assert_eq!(words[2].2, WordClass::Other);
+    }
+
+    #[test]
+    fn resolve_symbol_prefers_left_when_both_sides_available() {
+        // "English (日本語)" — left of the paren is English, right is
+        // Japanese. Left-first policy keeps the paren in the Latin run,
+        // so "English (" is translated but "日本語 )" is skipped.
+        let mut words = vec![
+            ("English".into(), rect(0.0, 0.0, 10.0, 10.0), WordClass::Other),
+            ("(".into(), rect(10.0, 0.0, 2.0, 10.0), WordClass::Symbol),
+            ("日本語".into(), rect(12.0, 0.0, 10.0, 10.0), WordClass::Japanese),
+            (")".into(), rect(22.0, 0.0, 2.0, 10.0), WordClass::Symbol),
+        ];
+        resolve_symbol_classes(&mut words);
+        assert_eq!(words[1].2, WordClass::Other);
+        assert_eq!(words[3].2, WordClass::Japanese);
+    }
+
+    #[test]
+    fn resolve_symbol_defaults_to_other_when_no_neighbour() {
+        let mut words = vec![
+            ("---".into(), rect(0.0, 0.0, 10.0, 10.0), WordClass::Symbol),
+        ];
+        resolve_symbol_classes(&mut words);
+        assert_eq!(words[0].2, WordClass::Other);
     }
 }
 

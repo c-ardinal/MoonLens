@@ -8,6 +8,12 @@ use serde::{Deserialize, Serialize};
 
 use super::{Capability, Provider, ProviderError, TaskInput, TaskOutput};
 
+#[derive(Debug, Clone)]
+pub struct FewShotExample {
+    pub source: String,
+    pub target: String,
+}
+
 pub struct OllamaTranslator {
     id: String,
     endpoint: String,
@@ -16,6 +22,13 @@ pub struct OllamaTranslator {
     top_p: f32,
     num_ctx: u32,
     num_predict: Option<u32>,
+    /// Few-shot example pairs prepended to every translate call.
+    /// Supplying 2-4 high-quality examples biases Gemma toward the
+    /// target style (idiomatic phrasing, proper counter words,
+    /// omitted subjects, natural sentence order) without
+    /// constraining the output to exact words in the examples.
+    /// Configure via `"examples": [{"source": "...", "target": "..."}]`.
+    examples: Vec<FewShotExample>,
     /// Reasoning-capable models (gemma4, qwen3, deepseek, ...) run a
     /// silent "thinking" pass before emitting visible tokens, adding
     /// seconds to first-token latency. We default to `false` because
@@ -47,6 +60,22 @@ impl OllamaTranslator {
         let get_bool =
             |k: &str, d: bool| config.get(k).and_then(|v| v.as_bool()).unwrap_or(d);
         let get_opt_u = |k: &str| config.get(k).and_then(|v| v.as_u64()).map(|v| v as u32);
+        let examples: Vec<FewShotExample> = config
+            .get("examples")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|ex| {
+                        let src = ex.get("source").and_then(|v| v.as_str())?;
+                        let tgt = ex.get("target").and_then(|v| v.as_str())?;
+                        Some(FewShotExample {
+                            source: src.to_string(),
+                            target: tgt.to_string(),
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
         Self {
             id: id.into(),
             endpoint: get_str("endpoint", "http://127.0.0.1:11434"),
@@ -66,8 +95,9 @@ impl OllamaTranslator {
             think: get_bool("think", false),
             system_prompt: get_str(
                 "system_prompt",
-                "You are a professional translator. Render the user's text naturally and idiomatically in the target language — match the meaning, tone, and register a native reader would expect, not the word order of the source. If the input contains numbered segments like `[1]`, `[2]`, `[3]`, you MUST return exactly the same number of segments in the same order, each still prefixed with its bracketed number (e.g. `[1] translation1\\n[2] translation2`). Without those markers, preserve newlines exactly. Output ONLY the translated text. Never include commentary, explanations, romanizations, alternative translations, notes in parentheses, or surrounding quotes.",
+                "You are a professional translator. Render the user's text naturally and idiomatically in the target language — match the meaning, tone, and register a native reader would expect, not the word order of the source. Preserve newlines exactly. Output ONLY the translated text. Never include commentary, explanations, romanizations, alternative translations, notes in parentheses, surrounding quotes, or bracketed markers like `[1]` / `[2]`.",
             ),
+            examples,
             http: reqwest::Client::new(),
             chunk_sink: None,
         }
@@ -81,11 +111,16 @@ impl OllamaTranslator {
     }
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct ChatMessage {
+    pub role: String,
+    pub content: String,
+}
+
 #[derive(Serialize)]
-struct GenerateRequest<'a> {
+struct ChatRequest<'a> {
     model: &'a str,
-    prompt: String,
-    system: &'a str,
+    messages: Vec<ChatMessage>,
     stream: bool,
     /// Disables reasoning pass on models that support it. Serialised
     /// unconditionally — older Ollama versions ignore unknown fields.
@@ -103,24 +138,91 @@ struct Options {
 }
 
 #[derive(Deserialize)]
-struct StreamChunk {
+struct ChatStreamChunk {
     #[serde(default)]
-    response: String,
+    message: Option<ChatMessageContent>,
     #[serde(default)]
     done: bool,
 }
 
-/// Iteratively fold streaming JSON chunks into a single response.
-/// Extracted so the parsing can be unit-tested without an HTTP stack.
-pub fn merge_stream_chunks<I: IntoIterator<Item = String>>(lines: I) -> String {
+#[derive(Deserialize, Default)]
+struct ChatMessageContent {
+    #[serde(default)]
+    content: String,
+}
+
+/// Build the ordered `messages` list that `/api/chat` expects.
+///
+/// Few-shot examples are serialised as alternating `user` /
+/// `assistant` turns instead of being dumped into a single giant
+/// user prompt. That matters because the previous `/api/generate`
+/// approach mixed examples + instructions + source into one blob,
+/// and Gemma occasionally "translated" the instruction block itself
+/// when the source text was trivially short (regression: english0004
+/// produced the entire prompt as Japanese output for a stray "0").
+/// Splitting on role turns each example into a closed conversation
+/// turn the model can attend to without confusing it with live
+/// input.
+pub fn build_chat_messages(
+    system_prompt: &str,
+    examples: &[FewShotExample],
+    source_language: &str,
+    target_language: &str,
+    text: &str,
+) -> Vec<ChatMessage> {
+    let mut messages = Vec::with_capacity(2 + examples.len() * 2);
+    messages.push(ChatMessage {
+        role: "system".into(),
+        content: system_prompt.to_string(),
+    });
+    let from_clause = if source_language.trim().is_empty()
+        || source_language.eq_ignore_ascii_case("auto")
+    {
+        String::new()
+    } else {
+        format!(" from {source_language}")
+    };
+    for ex in examples {
+        messages.push(ChatMessage {
+            role: "user".into(),
+            content: format!(
+                "Target language: {tgt}. Rewrite the following{from_clause} naturally in {tgt}:\n\n{src}",
+                tgt = target_language,
+                from_clause = from_clause,
+                src = ex.source,
+            ),
+        });
+        messages.push(ChatMessage {
+            role: "assistant".into(),
+            content: ex.target.clone(),
+        });
+    }
+    messages.push(ChatMessage {
+        role: "user".into(),
+        content: format!(
+            "Target language: {tgt}. Rewrite the following{from_clause} naturally in {tgt}:\n\n{txt}",
+            tgt = target_language,
+            from_clause = from_clause,
+            txt = text,
+        ),
+    });
+    messages
+}
+
+/// Iteratively fold streaming JSON chunks from `/api/chat` into a
+/// single aggregated response. Extracted so the parsing can be
+/// unit-tested without an HTTP stack.
+pub fn merge_chat_stream_chunks<I: IntoIterator<Item = String>>(lines: I) -> String {
     let mut out = String::new();
     for line in lines {
         let trimmed = line.trim();
         if trimmed.is_empty() {
             continue;
         }
-        if let Ok(chunk) = serde_json::from_str::<StreamChunk>(trimmed) {
-            out.push_str(&chunk.response);
+        if let Ok(chunk) = serde_json::from_str::<ChatStreamChunk>(trimmed) {
+            if let Some(msg) = chunk.message {
+                out.push_str(&msg.content);
+            }
             if chunk.done {
                 break;
             }
@@ -146,33 +248,38 @@ impl Provider for OllamaTranslator {
     }
 
     async fn run(&self, input: TaskInput) -> Result<TaskOutput, ProviderError> {
-        let prompt = match input {
+        let messages = match input {
             TaskInput::Translate {
                 text,
                 source_language,
                 target_language,
-            } => {
-                // Minimal user prompt — the system prompt already
-                // instructs the model to produce natural, idiomatic
-                // output. Avoid the verb "translate" here too: it
-                // primes Gemma toward word-for-word mode even when
-                // the system asks for naturalisation.
-                let from_clause = if source_language.trim().is_empty()
-                    || source_language.eq_ignore_ascii_case("auto")
-                {
-                    String::new()
-                } else {
-                    format!(" from {source_language}")
-                };
-                format!(
-                    "Target language: {tgt}. Rewrite the following{from_clause} naturally in {tgt}:\n\n{txt}",
-                    tgt = target_language,
-                    from_clause = from_clause,
-                    txt = text
-                )
-            }
-            TaskInput::Explain { prompt, .. } => prompt,
-            TaskInput::Summarize { text } => format!("Summarize concisely:\n\n{text}"),
+            } => build_chat_messages(
+                &self.system_prompt,
+                &self.examples,
+                &source_language,
+                &target_language,
+                &text,
+            ),
+            TaskInput::Explain { prompt, .. } => vec![
+                ChatMessage {
+                    role: "system".into(),
+                    content: self.system_prompt.clone(),
+                },
+                ChatMessage {
+                    role: "user".into(),
+                    content: prompt,
+                },
+            ],
+            TaskInput::Summarize { text } => vec![
+                ChatMessage {
+                    role: "system".into(),
+                    content: self.system_prompt.clone(),
+                },
+                ChatMessage {
+                    role: "user".into(),
+                    content: format!("Summarize concisely:\n\n{text}"),
+                },
+            ],
             _ => {
                 return Err(ProviderError::Other(
                     "OllamaTranslator cannot handle this input".into(),
@@ -180,13 +287,11 @@ impl Provider for OllamaTranslator {
             }
         };
 
-        let url = format!("{}/api/generate", self.endpoint.trim_end_matches('/'));
-        let stream = true;
-        let req = GenerateRequest {
+        let url = format!("{}/api/chat", self.endpoint.trim_end_matches('/'));
+        let req = ChatRequest {
             model: &self.model,
-            prompt,
-            system: &self.system_prompt,
-            stream,
+            messages,
+            stream: true,
             think: self.think,
             options: Options {
                 temperature: self.temperature,
@@ -206,17 +311,17 @@ impl Provider for OllamaTranslator {
             }
         })?;
 
-        // Parse line-delimited JSON chunks; each one contains `response`
-        // plus a `done` flag. The sink fires per chunk so the UI can
-        // render tokens live, while we aggregate into a single Text
-        // output so existing call sites keep working unchanged.
+        // Parse line-delimited JSON chunks; `/api/chat` wraps each
+        // delta under `message.content`. The sink fires per chunk so
+        // the UI can render tokens live, while we aggregate into a
+        // single Text output so existing call sites keep working
+        // unchanged.
         let mut aggregated = String::new();
         let mut buffer = Vec::<u8>::new();
         let mut bytes = resp.bytes_stream();
         while let Some(chunk) = bytes.next().await {
             let chunk = chunk.map_err(|e| ProviderError::Other(e.to_string()))?;
             buffer.extend_from_slice(&chunk);
-            // Flush every complete line (newline-delimited JSON).
             while let Some(nl) = buffer.iter().position(|b| *b == b'\n') {
                 let line: Vec<u8> = buffer.drain(..=nl).collect();
                 let line_str = match std::str::from_utf8(&line) {
@@ -226,11 +331,15 @@ impl Provider for OllamaTranslator {
                 if line_str.is_empty() {
                     continue;
                 }
-                if let Ok(c) = serde_json::from_str::<StreamChunk>(&line_str) {
-                    if !c.response.is_empty() {
-                        aggregated.push_str(&c.response);
+                if let Ok(c) = serde_json::from_str::<ChatStreamChunk>(&line_str) {
+                    let delta = c
+                        .message
+                        .map(|m| m.content)
+                        .unwrap_or_default();
+                    if !delta.is_empty() {
+                        aggregated.push_str(&delta);
                         if let Some(sink) = &self.chunk_sink {
-                            sink(c.response, c.done);
+                            sink(delta, c.done);
                         }
                     } else if c.done {
                         if let Some(sink) = &self.chunk_sink {
@@ -240,11 +349,12 @@ impl Provider for OllamaTranslator {
                 }
             }
         }
-        // Any trailing bytes without a newline (rare) can still parse.
         if !buffer.is_empty() {
             if let Ok(line) = std::str::from_utf8(&buffer) {
-                if let Ok(c) = serde_json::from_str::<StreamChunk>(line.trim()) {
-                    aggregated.push_str(&c.response);
+                if let Ok(c) = serde_json::from_str::<ChatStreamChunk>(line.trim()) {
+                    if let Some(msg) = c.message {
+                        aggregated.push_str(&msg.content);
+                    }
                 }
             }
         }
@@ -330,44 +440,138 @@ mod tests {
     }
 
     #[test]
-    fn merge_stream_chunks_concatenates_response_fields() {
+    fn merge_chat_stream_chunks_concatenates_content_fields() {
         let lines = vec![
-            "{\"response\":\"Hel\",\"done\":false}".to_string(),
-            "{\"response\":\"lo\",\"done\":false}".to_string(),
-            "{\"response\":\" world\",\"done\":true}".to_string(),
+            "{\"message\":{\"role\":\"assistant\",\"content\":\"Hel\"},\"done\":false}".to_string(),
+            "{\"message\":{\"role\":\"assistant\",\"content\":\"lo\"},\"done\":false}".to_string(),
+            "{\"message\":{\"role\":\"assistant\",\"content\":\" world\"},\"done\":true}".to_string(),
         ];
-        assert_eq!(merge_stream_chunks(lines), "Hello world");
+        assert_eq!(merge_chat_stream_chunks(lines), "Hello world");
     }
 
     #[test]
-    fn merge_stream_chunks_stops_at_done_marker() {
+    fn merge_chat_stream_chunks_stops_at_done_marker() {
         // Late chunks after `done:true` are ignored to match Ollama
         // semantics.
         let lines = vec![
-            "{\"response\":\"abc\",\"done\":true}".to_string(),
-            "{\"response\":\"should not appear\",\"done\":false}".to_string(),
+            "{\"message\":{\"role\":\"assistant\",\"content\":\"abc\"},\"done\":true}".to_string(),
+            "{\"message\":{\"role\":\"assistant\",\"content\":\"should not appear\"},\"done\":false}".to_string(),
         ];
-        assert_eq!(merge_stream_chunks(lines), "abc");
+        assert_eq!(merge_chat_stream_chunks(lines), "abc");
     }
 
     #[test]
-    fn merge_stream_chunks_ignores_blank_and_invalid_lines() {
+    fn merge_chat_stream_chunks_ignores_blank_and_invalid_lines() {
         let lines = vec![
             "".to_string(),
             "   ".to_string(),
             "not json".to_string(),
-            "{\"response\":\"ok\",\"done\":true}".to_string(),
+            "{\"message\":{\"role\":\"assistant\",\"content\":\"ok\"},\"done\":true}".to_string(),
         ];
-        assert_eq!(merge_stream_chunks(lines), "ok");
+        assert_eq!(merge_chat_stream_chunks(lines), "ok");
     }
 
     #[test]
-    fn merge_stream_chunks_tolerates_empty_response_field() {
+    fn merge_chat_stream_chunks_tolerates_missing_message_field() {
+        // Final "done" chunks from Ollama arrive without a `message`
+        // body in some versions — treat that as empty delta.
         let lines = vec![
             "{\"done\":false}".to_string(),
-            "{\"response\":\"\",\"done\":false}".to_string(),
-            "{\"response\":\"x\",\"done\":true}".to_string(),
+            "{\"message\":{\"role\":\"assistant\",\"content\":\"\"},\"done\":false}".to_string(),
+            "{\"message\":{\"role\":\"assistant\",\"content\":\"x\"},\"done\":true}".to_string(),
         ];
-        assert_eq!(merge_stream_chunks(lines), "x");
+        assert_eq!(merge_chat_stream_chunks(lines), "x");
+    }
+
+    #[test]
+    fn build_chat_messages_places_system_first_then_user_for_simple_input() {
+        let msgs = build_chat_messages(
+            "You are a translator.",
+            &[],
+            "en",
+            "ja",
+            "Hello world",
+        );
+        assert_eq!(msgs.len(), 2, "no examples → [system, user]");
+        assert_eq!(msgs[0].role, "system");
+        assert_eq!(msgs[0].content, "You are a translator.");
+        assert_eq!(msgs[1].role, "user");
+        assert!(msgs[1].content.contains("Target language: ja"));
+        assert!(msgs[1].content.contains("from en"));
+        assert!(msgs[1].content.ends_with("Hello world"));
+    }
+
+    #[test]
+    fn build_chat_messages_interleaves_examples_as_user_assistant_turns() {
+        // CRITICAL: the regression that motivated the /api/chat move
+        // was Gemma echoing the entire few-shot block as the
+        // "translation" of a trivially short source ("0"). Splitting
+        // examples into distinct turns prevents that — the model sees
+        // each example as a closed conversation, not as live input to
+        // echo back.
+        let examples = vec![
+            FewShotExample {
+                source: "Hello".into(),
+                target: "こんにちは".into(),
+            },
+            FewShotExample {
+                source: "Thank you".into(),
+                target: "ありがとう".into(),
+            },
+        ];
+        let msgs = build_chat_messages(
+            "SYS",
+            &examples,
+            "en",
+            "ja",
+            "Goodbye",
+        );
+        assert_eq!(msgs.len(), 6, "system + 2*(user+assistant) + final user");
+        assert_eq!(msgs[0].role, "system");
+        assert_eq!(msgs[1].role, "user");
+        assert!(msgs[1].content.contains("Hello"));
+        assert_eq!(msgs[2].role, "assistant");
+        assert_eq!(msgs[2].content, "こんにちは");
+        assert_eq!(msgs[3].role, "user");
+        assert!(msgs[3].content.contains("Thank you"));
+        assert_eq!(msgs[4].role, "assistant");
+        assert_eq!(msgs[4].content, "ありがとう");
+        assert_eq!(msgs[5].role, "user");
+        assert!(msgs[5].content.contains("Goodbye"));
+    }
+
+    #[test]
+    fn build_chat_messages_omits_from_clause_when_language_is_auto() {
+        let msgs = build_chat_messages("SYS", &[], "auto", "ja", "hi");
+        let user_turn = msgs.last().expect("final user turn");
+        assert!(
+            !user_turn.content.contains("from "),
+            "auto source → no `from <lang>` hint"
+        );
+    }
+
+    #[test]
+    fn build_chat_messages_trivial_source_still_gets_scoped_prompt() {
+        // Regression guard: previously "0" caused the model to
+        // translate the instruction block because the instructions
+        // were inline. With role separation, even a trivial source
+        // lands as a dedicated user turn whose content is ONLY the
+        // target-language hint + the source text.
+        let examples = vec![FewShotExample {
+            source: "Thank you".into(),
+            target: "ありがとう".into(),
+        }];
+        let msgs = build_chat_messages("SYS", &examples, "en", "ja", "0");
+        let final_user = msgs.last().expect("final user turn");
+        assert_eq!(final_user.role, "user");
+        assert!(final_user.content.ends_with("0"));
+        assert!(
+            !final_user.content.contains("SOURCE:"),
+            "examples must not leak into the final user turn"
+        );
+        assert!(
+            !final_user.content.contains("Thank you"),
+            "example source must stay scoped to its own turn"
+        );
     }
 }

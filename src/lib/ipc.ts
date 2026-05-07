@@ -305,6 +305,44 @@ export interface LensOcrLine {
   bg_gradient?: LensBgGradient | null;
   /** Source-text colour sampled from inside the bbox. */
   fg_color: [number, number, number];
+  /** CSS `font-weight` (400 / 600 / 700) estimated from the source
+   *  glyph's stroke thickness. Older backends may omit this; the
+   *  frontend falls back to 400. */
+  font_weight?: number;
+  /** Source-derived font size in image pixels — median height of
+   *  the OCR member bboxes assigned to this card. No cap-height
+   *  reduction: translation glyphs render at the same visible
+   *  height as the source. */
+  font_size_px?: number;
+  /** Source-derived CSS `line-height` ratio (baseline-to-baseline
+   *  distance ÷ glyph height). Frontend uses this directly for the
+   *  translation's line-height so wrapped lines occupy the same
+   *  vertical rhythm as the source. Fallback 1.25 when only a
+   *  single source line is present. */
+  line_height?: number;
+  /** Number of source OCR lines this card covers. Frontend uses
+   *  this as the target line count: if the wrapped translation
+   *  would exceed it, horizontal compression (`transform:
+   *  scaleX(<1)`) shrinks the text to fit without resizing or
+   *  adding rows — strict source fidelity for size and stroke. */
+  source_line_count?: number;
+  /** Detected horizontal alignment of the SOURCE text: `"left"`,
+   *  `"center"`, or `"right"`. Frontend maps this to CSS
+   *  `text-align` so a centred heading or right-aligned status
+   *  strip stays aligned the same way after translation. */
+  text_align?: 'left' | 'center' | 'right';
+  /** Tight rectangle the bg_patch covers, in image pixels. The
+   *  card's `bbox` is widened toward the layout block so
+   *  text-align has room to operate, but the inpaint bg_patch
+   *  needs to stay anchored to the source text region.
+   *  Frontend places the patch image at `(inpaint_bbox - bbox)`
+   *  offset, sized to inpaint_bbox dimensions. */
+  inpaint_bbox?: [number, number, number, number];
+  /** Base64-encoded PNG of the inpainted source region at `bbox`
+   *  (tiled) dimensions. When present, the frontend draws it as the
+   *  card background instead of the flat `bg_color` / `bg_gradient`,
+   *  so the card blends into the surrounding image. */
+  bg_patch?: string;
 }
 
 export interface LensOcrLines {

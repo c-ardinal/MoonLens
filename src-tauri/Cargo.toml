@@ -103,6 +103,17 @@ ocrs-engine = ["dep:ocrs", "dep:rten"]
 [dev-dependencies]
 tempfile = "3"
 wat = "1"
+# Offline Lens-pipeline evaluator (examples/lens_eval.rs) renders
+# OCR-derived cards on top of a source image and annotates each with
+# computed font-size / weight so the user can compare visually with
+# the original source. ab_glyph handles TTF glyph rasterisation,
+# imageproc does the fills / outlines / text composites.
+ab_glyph = "0.2"
+imageproc = { version = "0.25", default-features = false }
+# Pure-Rust PaddleOCR PP-OCRv5 (DBNet detection + SVTR recognition)
+# via `tract-onnx`. No C++ / ONNX Runtime dependency — the binary
+# stays pure-Rust buildable. Models live under tests/models/ppocrv5/.
+pure-onnx-ocr = "0.1"
 
 [profile.release]
 codegen-units = 1
