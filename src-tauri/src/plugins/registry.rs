@@ -115,6 +115,49 @@ impl PluginRegistry {
             .collect()
     }
 
+    /// Filesystem path of the on-disk directory backing a plugin id.
+    /// Used by IPC commands that need to reveal or remove the plugin
+    /// without leaking storage layout to the frontend.
+    pub fn path_of(&self, id: &str) -> Option<PathBuf> {
+        self.plugins
+            .read()
+            .iter()
+            .find(|l| l.manifest.plugin.id == id)
+            .map(|l| l.path.clone())
+    }
+
+    /// Drop the plugin instance, delete its directory, and clear it
+    /// from the registry + settings. Returns an error only when the
+    /// directory removal fails — a missing plugin id is treated as
+    /// already-gone (no-op).
+    pub fn uninstall(&self, id: &str) -> Result<()> {
+        let path: Option<PathBuf> = {
+            let mut guard = self.plugins.write();
+            let pos = guard.iter().position(|l| l.manifest.plugin.id == id);
+            match pos {
+                Some(i) => {
+                    let removed = guard.swap_remove(i);
+                    Some(removed.path)
+                }
+                None => None,
+            }
+        };
+        if let Some(p) = path {
+            if p.exists() {
+                std::fs::remove_dir_all(&p)
+                    .with_context(|| format!("remove plugin dir {}", p.display()))?;
+            }
+        }
+        // Drop the enabled flag from settings so a future scan doesn't
+        // resurrect the entry as "enabled by default".
+        let snapshot = self.settings.snapshot();
+        let mut s = (*snapshot).clone();
+        if s.plugins.enabled.remove(id).is_some() {
+            self.settings.save(s)?;
+        }
+        Ok(())
+    }
+
     pub fn set_enabled(&self, id: &str, enabled: bool) -> Result<()> {
         let snapshot = self.settings.snapshot();
         if enabled && snapshot.plugins.require_signature {

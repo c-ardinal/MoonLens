@@ -272,7 +272,11 @@ pub type LensRegistryHandle = Arc<LensRegistry>;
 pub fn create(app: &AppHandle, registry: &LensRegistryHandle) -> Result<String> {
     let id = ids::next();
     let label = id.clone();
-    let url = format!("/lens/?id={id}");
+    // The floating-window content lives at `/lens-frame/`. The
+    // `/lens/` route inside the main app is the management page that
+    // lists, creates, and closes lens windows; loading it here would
+    // turn the floating overlay into the manager itself.
+    let url = format!("/lens-frame/?id={id}");
     let win = WebviewWindowBuilder::new(app, &label, WebviewUrl::App(url.into()))
         .title(format!("MoonLens Lens {}", short(&id)))
         .inner_size(460.0, 320.0)

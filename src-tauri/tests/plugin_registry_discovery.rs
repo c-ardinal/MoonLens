@@ -108,3 +108,66 @@ fn enabled_flag_is_per_plugin_and_persists_across_rescan() {
         .collect();
     assert_eq!(enabled, vec!["a".to_string()]);
 }
+
+#[test]
+fn path_of_returns_directory_for_known_plugin() {
+    let tmp = tempfile::tempdir().unwrap();
+    let plugins_dir = tmp.path().join("plugins");
+    fs::create_dir_all(&plugins_dir).unwrap();
+    write_plugin(&plugins_dir, "alpha", "sidecar");
+
+    let settings = Arc::new(SettingsStore::load_from(tmp.path().join("config.toml")).unwrap());
+    let registry = PluginRegistry::load_from(plugins_dir.clone(), settings).unwrap();
+
+    let p = registry.path_of("alpha").expect("alpha is loaded");
+    assert!(p.ends_with("plugins/alpha") || p.ends_with("plugins\\alpha"));
+    assert!(registry.path_of("missing").is_none());
+}
+
+#[test]
+fn uninstall_removes_directory_and_drops_settings_entry() {
+    let tmp = tempfile::tempdir().unwrap();
+    let plugins_dir = tmp.path().join("plugins");
+    fs::create_dir_all(&plugins_dir).unwrap();
+    write_plugin(&plugins_dir, "doomed", "sidecar");
+    write_plugin(&plugins_dir, "kept", "sidecar");
+
+    let settings = Arc::new(SettingsStore::load_from(tmp.path().join("config.toml")).unwrap());
+    let registry = PluginRegistry::load_from(plugins_dir.clone(), settings.clone()).unwrap();
+
+    // Mark `doomed` as enabled so we can confirm uninstall scrubs it
+    // out of the on-disk settings, not just the in-memory registry.
+    registry.set_enabled("doomed", true).unwrap();
+    assert!(settings.snapshot().plugins.enabled.contains_key("doomed"));
+
+    registry.uninstall("doomed").unwrap();
+
+    // Directory is gone; the other plugin survives untouched.
+    assert!(!plugins_dir.join("doomed").exists());
+    assert!(plugins_dir.join("kept").exists());
+
+    // Listing reflects the removal immediately.
+    let ids: Vec<String> = registry.list().into_iter().map(|d| d.id).collect();
+    assert_eq!(ids, vec!["kept".to_string()]);
+
+    // Settings no longer carry an entry for the uninstalled plugin.
+    assert!(!settings.snapshot().plugins.enabled.contains_key("doomed"));
+}
+
+#[test]
+fn uninstall_unknown_id_is_a_noop() {
+    let tmp = tempfile::tempdir().unwrap();
+    let plugins_dir = tmp.path().join("plugins");
+    fs::create_dir_all(&plugins_dir).unwrap();
+    write_plugin(&plugins_dir, "alpha", "sidecar");
+
+    let settings = Arc::new(SettingsStore::load_from(tmp.path().join("config.toml")).unwrap());
+    let registry = PluginRegistry::load_from(plugins_dir.clone(), settings).unwrap();
+
+    registry.uninstall("does-not-exist").unwrap();
+
+    // Existing plugin must still be present and the directory intact.
+    let ids: Vec<String> = registry.list().into_iter().map(|d| d.id).collect();
+    assert_eq!(ids, vec!["alpha".to_string()]);
+    assert!(plugins_dir.join("alpha").exists());
+}

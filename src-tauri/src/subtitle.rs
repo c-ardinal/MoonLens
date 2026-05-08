@@ -167,6 +167,8 @@ async fn run_loop(
             .await
         {
             Ok(res) => {
+                let asr_provider = res.used_provider.clone();
+                let asr_via_cloud = res.via_cloud;
                 let original = match &res.output {
                     TaskOutput::Transcript { segments } => segments
                         .iter()
@@ -179,7 +181,7 @@ async fn run_loop(
                 if original.trim().is_empty() {
                     continue;
                 }
-                let translated = match pipeline
+                let (translated, translate_provider, translate_via_cloud) = match pipeline
                     .run(
                         Capability::Translate,
                         TaskInput::Translate {
@@ -190,12 +192,36 @@ async fn run_loop(
                     )
                     .await
                 {
-                    Ok(t) => match t.output {
-                        TaskOutput::Text(s) => s,
-                        _ => String::new(),
-                    },
-                    Err(_) => String::new(),
+                    Ok(t) => {
+                        let provider = t.used_provider.clone();
+                        let via_cloud = t.via_cloud;
+                        match t.output {
+                            TaskOutput::Text(s) => (s, Some(provider), via_cloud),
+                            _ => (String::new(), Some(provider), via_cloud),
+                        }
+                    }
+                    Err(_) => (String::new(), None, false),
                 };
+
+                // Record the segment into history so the audio filter on
+                // the history page actually has something to show. The
+                // provider tag prefers the translation engine when it
+                // ran (that's the more user-meaningful attribution);
+                // falls back to the ASR provider when translation was
+                // skipped or failed.
+                let history_provider = translate_provider.as_deref().unwrap_or(&asr_provider);
+                let history_via_cloud = translate_via_cloud || asr_via_cloud;
+                pipeline.record_external_history(
+                    "audio",
+                    Some(&original),
+                    if translated.is_empty() {
+                        None
+                    } else {
+                        Some(translated.as_str())
+                    },
+                    Some(history_provider),
+                    history_via_cloud,
+                );
                 let clipboard_cfg = settings.snapshot().clipboard.clone();
                 let copy_text = if !translated.is_empty() {
                     translated.as_str()

@@ -2746,19 +2746,87 @@ fn parse_numbered_segments(text: &str, line_count: usize) -> Option<Vec<String>>
 /// (`moonlens://...`) are coupled to the Lens frontend; putting
 /// them next to the only struct that uses them makes the coupling
 /// obvious and keeps `lens_pipeline.rs` UI-framework-agnostic.
+///
+/// Also persists each completed flow into the translation history so
+/// the Lens management page can list "最近の翻訳" without needing the
+/// frontend to listen on the lens streaming channels itself. Flows
+/// produce one history row per run (joined source + translation) with
+/// `kind = "lens"`, attributed to the Lens-internal `ollama.gemma4`
+/// translator since that's the only translator the watcher uses.
 pub struct TauriLensSink {
     app: AppHandle,
     lens_id: String,
+    pipeline: Arc<Pipeline>,
+    flows: parking_lot::Mutex<std::collections::HashMap<u64, FlowAccumulator>>,
+}
+
+#[derive(Default, Debug, PartialEq, Eq)]
+pub(crate) struct FlowAccumulator {
+    /// Source-text per OCR line, indexed by `line_index`.
+    sources: std::collections::BTreeMap<usize, String>,
+    /// Translated text per OCR line. Streaming chunks append; the
+    /// final committed value lands when `done=true` arrives.
+    translations: std::collections::BTreeMap<usize, String>,
+}
+
+impl FlowAccumulator {
+    /// Record (or overwrite) the source-text per OCR line. Called
+    /// once per flow when the OCR cards arrive, so we wipe whatever
+    /// stale sources were buffered first.
+    pub(crate) fn record_sources(&mut self, lines: &[(usize, String)]) {
+        self.sources.clear();
+        for (idx, text) in lines {
+            self.sources.insert(*idx, text.clone());
+        }
+    }
+
+    /// Append a translation chunk for a line. Empty deltas are
+    /// ignored so streaming heartbeats don't pollute the buffer.
+    pub(crate) fn append_translation_chunk(&mut self, line_index: usize, delta: &str) {
+        if delta.is_empty() {
+            return;
+        }
+        self.translations
+            .entry(line_index)
+            .or_default()
+            .push_str(delta);
+    }
+
+    /// Drain into a `(joined_source, joined_translation)` pair. Lines
+    /// are joined in `line_index` order and separated by newlines so
+    /// the history detail pane can display them as paragraphs.
+    pub(crate) fn finalize(self) -> (String, String) {
+        let source = self
+            .sources
+            .into_values()
+            .collect::<Vec<_>>()
+            .join("\n");
+        let translation = self
+            .translations
+            .into_values()
+            .collect::<Vec<_>>()
+            .join("\n");
+        (source, translation)
+    }
 }
 
 impl TauriLensSink {
-    pub fn new(app: AppHandle, lens_id: String) -> Self {
-        Self { app, lens_id }
+    pub fn new(app: AppHandle, lens_id: String, pipeline: Arc<Pipeline>) -> Self {
+        Self {
+            app,
+            lens_id,
+            pipeline,
+            flows: parking_lot::Mutex::new(std::collections::HashMap::new()),
+        }
     }
 }
 
 impl LensSink for TauriLensSink {
     fn on_flow_start(&self, flow_id: u64) {
+        // Reset any stale accumulator for this flow_id (defensive: the
+        // watcher reuses ids only across distinct lens windows but a
+        // hot-reload during dev can leave residue).
+        self.flows.lock().insert(flow_id, FlowAccumulator::default());
         let _ = self.app.emit(
             "moonlens://lens-flow-start",
             LensFlowStart {
@@ -2774,6 +2842,15 @@ impl LensSink for TauriLensSink {
         image_h: u32,
         cards: &[LensOcrLine],
     ) {
+        {
+            let mut guard = self.flows.lock();
+            let acc = guard.entry(flow_id).or_default();
+            let pairs: Vec<(usize, String)> = cards
+                .iter()
+                .map(|c| (c.line_index, c.text.clone()))
+                .collect();
+            acc.record_sources(&pairs);
+        }
         let _ = self.app.emit(
             "moonlens://lens-ocr-lines",
             LensOcrLines {
@@ -2786,6 +2863,11 @@ impl LensSink for TauriLensSink {
         );
     }
     fn on_line_chunk(&self, flow_id: u64, line_index: usize, delta: String, done: bool) {
+        {
+            let mut guard = self.flows.lock();
+            let acc = guard.entry(flow_id).or_default();
+            acc.append_translation_chunk(line_index, &delta);
+        }
         let _ = self.app.emit(
             "moonlens://lens-line-chunk",
             LensLineChunk {
@@ -2798,6 +2880,25 @@ impl LensSink for TauriLensSink {
         );
     }
     fn on_flow_done(&self, flow_id: u64, line_count: usize) {
+        let acc = self.flows.lock().remove(&flow_id).unwrap_or_default();
+        let (source, translation) = acc.finalize();
+        if !source.trim().is_empty() || !translation.trim().is_empty() {
+            self.pipeline.record_external_history(
+                "lens",
+                if source.trim().is_empty() {
+                    None
+                } else {
+                    Some(source.as_str())
+                },
+                if translation.trim().is_empty() {
+                    None
+                } else {
+                    Some(translation.as_str())
+                },
+                Some("ollama.gemma4"),
+                false,
+            );
+        }
         let _ = self.app.emit(
             "moonlens://lens-flow-done",
             LensFlowDone {
@@ -2949,8 +3050,11 @@ async fn run_capture_loop(
             width: image_w,
             height: image_h,
         });
-        let sink: Arc<dyn LensSink> =
-            Arc::new(TauriLensSink::new(app.clone(), lens_id.clone()));
+        let sink: Arc<dyn LensSink> = Arc::new(TauriLensSink::new(
+            app.clone(),
+            lens_id.clone(),
+            pipeline.clone(),
+        ));
         let ocr = Arc::new(PipelineLensOcr::new(pipeline.clone()));
         let translator = Arc::new(OllamaLensTranslator::new(translator_cfg));
 
@@ -3220,6 +3324,65 @@ mod tests {
         let w = LensStreamWatchers::new();
         w.stop_all();
         assert_eq!(w.running_count(), 0);
+    }
+
+    #[test]
+    fn flow_accumulator_records_sources_in_line_index_order() {
+        let mut acc = FlowAccumulator::default();
+        // Provide lines out of order — the BTreeMap normalises sort.
+        acc.record_sources(&[
+            (2, "second".into()),
+            (0, "first".into()),
+            (1, "middle".into()),
+        ]);
+        let (src, translation) = acc.finalize();
+        assert_eq!(src, "first\nmiddle\nsecond");
+        assert_eq!(translation, "");
+    }
+
+    #[test]
+    fn flow_accumulator_record_sources_overwrites_stale_buffer() {
+        let mut acc = FlowAccumulator::default();
+        acc.record_sources(&[(0, "stale".into())]);
+        // Re-recording wipes whatever was there (e.g. a previous flow's
+        // sources surviving an early termination).
+        acc.record_sources(&[(0, "fresh".into())]);
+        assert_eq!(acc.finalize().0, "fresh");
+    }
+
+    #[test]
+    fn flow_accumulator_appends_translation_chunks() {
+        let mut acc = FlowAccumulator::default();
+        acc.record_sources(&[(0, "hello".into()), (1, "world".into())]);
+        // Streaming arrives as repeated deltas; non-empty chunks
+        // concatenate into the per-line buffer.
+        acc.append_translation_chunk(0, "こん");
+        acc.append_translation_chunk(0, "にちは");
+        acc.append_translation_chunk(1, "");
+        acc.append_translation_chunk(1, "世界");
+        let (_src, translation) = acc.finalize();
+        assert_eq!(translation, "こんにちは\n世界");
+    }
+
+    #[test]
+    fn flow_accumulator_keeps_partial_translations_on_missing_lines() {
+        let mut acc = FlowAccumulator::default();
+        acc.record_sources(&[(0, "a".into()), (1, "b".into()), (2, "c".into())]);
+        // Only line 1 streams a translation; the other lines stay
+        // empty in the joined output (single newline between non-
+        // empty entries instead of three blank lines).
+        acc.append_translation_chunk(1, "ビー");
+        let (src, translation) = acc.finalize();
+        assert_eq!(src, "a\nb\nc");
+        assert_eq!(translation, "ビー");
+    }
+
+    #[test]
+    fn flow_accumulator_empty_after_default() {
+        let acc = FlowAccumulator::default();
+        let (src, translation) = acc.finalize();
+        assert!(src.is_empty());
+        assert!(translation.is_empty());
     }
 
     #[test]

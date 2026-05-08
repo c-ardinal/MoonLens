@@ -419,6 +419,20 @@ pub fn capture_primary_full() -> Result<DynamicImage> {
     Ok(DynamicImage::ImageRgba8(full))
 }
 
+/// Capture a specific OS window by its xcap window id. The id is the
+/// platform-native window handle (HWND on Windows, WindowID on macOS,
+/// XID on Linux), surfaced via [`xcap::Window::id`]. Returns an error
+/// if the window has been closed since the id was issued.
+pub fn capture_window_by_id(id: u32) -> Result<DynamicImage> {
+    let windows = xcap::Window::all().context("list windows")?;
+    let target = windows
+        .iter()
+        .find(|w| w.id().ok() == Some(id))
+        .with_context(|| format!("window {id} not found"))?;
+    let img = target.capture_image().context("capture window")?;
+    Ok(DynamicImage::ImageRgba8(img))
+}
+
 pub fn png_bytes(img: &DynamicImage) -> Result<Vec<u8>> {
     let mut out = Vec::new();
     img.write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png)?;

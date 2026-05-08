@@ -438,6 +438,21 @@ impl Pipeline {
             tracing::warn!("history append failed: {e}");
         }
     }
+
+    /// Public history-recording entry point for callers outside the
+    /// capture flow (subtitle service, lens watcher). Kind values are
+    /// the same string tags the history list filter consumes:
+    /// `"translate"`, `"qr"`, `"audio"`, `"lens"`.
+    pub fn record_external_history(
+        &self,
+        kind: &str,
+        source_text: Option<&str>,
+        result_text: Option<&str>,
+        provider: Option<&str>,
+        via_cloud: bool,
+    ) {
+        self.record_history(kind, source_text, result_text, provider, via_cloud);
+    }
 }
 
 /// Output of [`Pipeline::run_capture_flow`]. The frontend renders `result`
