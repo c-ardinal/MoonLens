@@ -15,6 +15,7 @@
 use std::sync::Arc;
 
 use anyhow::Result;
+use parking_lot::Mutex;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
@@ -27,6 +28,19 @@ use crate::{
     settings::SettingsStore,
     subtitle::SubtitleService,
 };
+
+/// Cache of the last hotkey-failure report we surfaced to the UI.
+/// `notify_failures` consults this so the frontend toast doesn't fire
+/// every time the user touches an unrelated setting — repeated saves
+/// that produce identical failures are deduplicated to a single toast.
+static LAST_FAILURE_REPORT: Mutex<Option<HotkeyRegistrationReport>> = Mutex::new(None);
+
+/// True when an accelerator string is meaningfully bindable. Empty or
+/// whitespace-only strings represent "the user cleared this hotkey",
+/// which is a deliberate choice rather than a registration failure.
+fn is_bindable(accel: &str) -> bool {
+    !accel.trim().is_empty()
+}
 
 /// One shortcut that could not be registered. The `id` is the logical
 /// action name (e.g. `"capture_region"`) so the frontend can map the
@@ -82,28 +96,30 @@ pub fn register_all(
     let app_c = app.clone();
     let _pipeline_c = pipeline.clone();
     let capture_region_accel = s.hotkeys.capture_region.clone();
-    if let Err(e) =
-        shortcut_mgr.on_shortcut(capture_region_accel.as_str(), move |_app, _sc, event| {
-            if !matches!(event.state(), ShortcutState::Pressed) {
-                return;
-            }
-            let app = app_c.clone();
-            if let Err(e) = selector::show(&app) {
-                tracing::error!("selector show failed: {e:?}");
-                overlay::emit(
-                    &app,
-                    OverlayEvent::Error {
-                        message: e.to_string(),
-                    },
-                )
-                .ok();
-            }
-        })
-    {
-        tracing::warn!(
-            "hotkey 'capture_region' registration failed: accel='{capture_region_accel}' error={e:?}"
-        );
-        report.push("capture_region", capture_region_accel, e.to_string());
+    if is_bindable(&capture_region_accel) {
+        if let Err(e) =
+            shortcut_mgr.on_shortcut(capture_region_accel.as_str(), move |_app, _sc, event| {
+                if !matches!(event.state(), ShortcutState::Pressed) {
+                    return;
+                }
+                let app = app_c.clone();
+                if let Err(e) = selector::show(&app) {
+                    tracing::error!("selector show failed: {e:?}");
+                    overlay::emit(
+                        &app,
+                        OverlayEvent::Error {
+                            message: e.to_string(),
+                        },
+                    )
+                    .ok();
+                }
+            })
+        {
+            tracing::warn!(
+                "hotkey 'capture_region' registration failed: accel='{capture_region_accel}' error={e:?}"
+            );
+            report.push("capture_region", capture_region_accel, e.to_string());
+        }
     }
 
     // Capture window (whole primary monitor) – mirrors the pre-selector
@@ -111,67 +127,73 @@ pub fn register_all(
     let app_w = app.clone();
     let pipeline_w = pipeline.clone();
     let capture_window_accel = s.hotkeys.capture_window.clone();
-    if let Err(e) = shortcut_mgr.on_shortcut(capture_window_accel.as_str(), move |_a, _s, e| {
-        if !matches!(e.state(), ShortcutState::Pressed) {
-            return;
-        }
-        let app = app_w.clone();
-        let pipeline = pipeline_w.clone();
-        tauri::async_runtime::spawn(async move {
-            if let Err(e) = run_full_capture(&app, pipeline).await {
-                tracing::error!("full capture failed: {e:?}");
-                overlay::emit(
-                    &app,
-                    OverlayEvent::Error {
-                        message: e.to_string(),
-                    },
-                )
-                .ok();
+    if is_bindable(&capture_window_accel) {
+        if let Err(e) = shortcut_mgr.on_shortcut(capture_window_accel.as_str(), move |_a, _s, e| {
+            if !matches!(e.state(), ShortcutState::Pressed) {
+                return;
             }
-        });
-    }) {
-        tracing::warn!(
-            "hotkey 'capture_window' registration failed: accel='{capture_window_accel}' error={e:?}"
-        );
-        report.push("capture_window", capture_window_accel, e.to_string());
+            let app = app_w.clone();
+            let pipeline = pipeline_w.clone();
+            tauri::async_runtime::spawn(async move {
+                if let Err(e) = run_full_capture(&app, pipeline).await {
+                    tracing::error!("full capture failed: {e:?}");
+                    overlay::emit(
+                        &app,
+                        OverlayEvent::Error {
+                            message: e.to_string(),
+                        },
+                    )
+                    .ok();
+                }
+            });
+        }) {
+            tracing::warn!(
+                "hotkey 'capture_window' registration failed: accel='{capture_window_accel}' error={e:?}"
+            );
+            report.push("capture_window", capture_window_accel, e.to_string());
+        }
     }
 
     // Pin overlay toggle.
     let app_p = app.clone();
     let toggle_pin_accel = s.hotkeys.toggle_pin_overlay.clone();
-    if let Err(e) = shortcut_mgr.on_shortcut(toggle_pin_accel.as_str(), move |_a, _s, e| {
-        if matches!(e.state(), ShortcutState::Pressed) {
-            let _ = app_p.emit("moonlens://hotkey", "toggle_pin_overlay");
+    if is_bindable(&toggle_pin_accel) {
+        if let Err(e) = shortcut_mgr.on_shortcut(toggle_pin_accel.as_str(), move |_a, _s, e| {
+            if matches!(e.state(), ShortcutState::Pressed) {
+                let _ = app_p.emit("moonlens://hotkey", "toggle_pin_overlay");
+            }
+        }) {
+            tracing::warn!(
+                "hotkey 'toggle_pin_overlay' registration failed: accel='{toggle_pin_accel}' error={e:?}"
+            );
+            report.push("toggle_pin_overlay", toggle_pin_accel, e.to_string());
         }
-    }) {
-        tracing::warn!(
-            "hotkey 'toggle_pin_overlay' registration failed: accel='{toggle_pin_accel}' error={e:?}"
-        );
-        report.push("toggle_pin_overlay", toggle_pin_accel, e.to_string());
     }
 
     // Subtitle: toggle the live subtitle service.
     let app_s = app.clone();
     let subtitle_s = subtitle.clone();
     let toggle_subtitle_accel = s.hotkeys.toggle_subtitle.clone();
-    if let Err(e) = shortcut_mgr.on_shortcut(toggle_subtitle_accel.as_str(), move |_a, _s, e| {
-        if !matches!(e.state(), ShortcutState::Pressed) {
-            return;
-        }
-        match subtitle_s.toggle(&app_s) {
-            Ok(running) => {
-                tracing::info!("subtitle running={running}");
+    if is_bindable(&toggle_subtitle_accel) {
+        if let Err(e) = shortcut_mgr.on_shortcut(toggle_subtitle_accel.as_str(), move |_a, _s, e| {
+            if !matches!(e.state(), ShortcutState::Pressed) {
+                return;
             }
-            Err(err) => {
-                tracing::warn!("subtitle toggle failed: {err:?}");
-                let _ = app_s.emit("moonlens://hotkey", "toggle_subtitle_failed");
+            match subtitle_s.toggle(&app_s) {
+                Ok(running) => {
+                    tracing::info!("subtitle running={running}");
+                }
+                Err(err) => {
+                    tracing::warn!("subtitle toggle failed: {err:?}");
+                    let _ = app_s.emit("moonlens://hotkey", "toggle_subtitle_failed");
+                }
             }
+        }) {
+            tracing::warn!(
+                "hotkey 'toggle_subtitle' registration failed: accel='{toggle_subtitle_accel}' error={e:?}"
+            );
+            report.push("toggle_subtitle", toggle_subtitle_accel, e.to_string());
         }
-    }) {
-        tracing::warn!(
-            "hotkey 'toggle_subtitle' registration failed: accel='{toggle_subtitle_accel}' error={e:?}"
-        );
-        report.push("toggle_subtitle", toggle_subtitle_accel, e.to_string());
     }
 
     // Stop-all panic button: drives the full shutdown cascade inline
@@ -181,6 +203,7 @@ pub fn register_all(
     // entry point (this path just reuses AppState handles directly).
     let app_stop = app.clone();
     let stop_all_accel = s.hotkeys.stop_all.clone();
+    if is_bindable(&stop_all_accel) {
     if let Err(e) = shortcut_mgr.on_shortcut(stop_all_accel.as_str(), move |_a, _s, e| {
         if !matches!(e.state(), ShortcutState::Pressed) {
             return;
@@ -227,6 +250,7 @@ pub fn register_all(
         );
         report.push("stop_all", stop_all_accel, e.to_string());
     }
+    }
 
     // All other hotkeys just surface an intent; the frontend routes them.
     let remaining: Vec<(&str, String)> = vec![
@@ -241,6 +265,9 @@ pub fn register_all(
         ),
     ];
     for (action, accel) in remaining {
+        if !is_bindable(&accel) {
+            continue;
+        }
         let app_x = app.clone();
         let action_id = action.to_string();
         let action_for_closure = action_id.clone();
@@ -255,6 +282,9 @@ pub fn register_all(
     }
 
     for (id, accel) in &s.hotkeys.custom {
+        if !is_bindable(accel) {
+            continue;
+        }
         let app_x = app.clone();
         let id_owned = id.clone();
         let id_for_closure = id_owned.clone();
@@ -345,16 +375,38 @@ pub fn reapply(app: &AppHandle) -> Result<HotkeyRegistrationReport> {
     )
 }
 
-/// Emit [`HOTKEY_FAILURE_EVENT`] if the report contains any failures.
-/// No-op when the report is empty so callers can pipe `reapply` output
-/// through this helper unconditionally.
+/// Emit [`HOTKEY_FAILURE_EVENT`] when the failure set has actually
+/// changed since the last call. Settings saves on unrelated keys
+/// re-run `register_all` and reproduce the same failures; we used to
+/// fire the toast on every save, which made the popup feel like spam.
+/// Now the event only fires when:
+///   1. A new failure appears, or
+///   2. The previously-reported failure clears.
+///
+/// An empty report after a non-empty one emits a clearing event so
+/// the toast can dismiss itself; this also acts as the "your rebind
+/// resolved the conflict" success signal.
 pub fn notify_failures(app: &AppHandle, report: &HotkeyRegistrationReport) {
-    if report.is_empty() {
+    let mut last = LAST_FAILURE_REPORT.lock();
+    let changed = match last.as_ref() {
+        Some(prev) => prev != report,
+        None => !report.is_empty(),
+    };
+    if !changed {
         return;
     }
+    *last = Some(report.clone());
     if let Err(e) = app.emit(HOTKEY_FAILURE_EVENT, report) {
         tracing::warn!("failed to emit hotkey-failure event: {e:?}");
     }
+}
+
+/// Test-only reset for the dedup cache. Kept private to the crate so
+/// integration tests can clear state between runs without exposing the
+/// mutex itself.
+#[cfg(test)]
+pub(crate) fn reset_failure_cache_for_test() {
+    *LAST_FAILURE_REPORT.lock() = None;
 }
 
 #[cfg(test)]
@@ -414,5 +466,23 @@ mod tests {
     fn hotkey_failure_event_name_is_stable() {
         // Frontend listens on this exact string; guard against typos.
         assert_eq!(HOTKEY_FAILURE_EVENT, "moonlens://hotkey-failure");
+    }
+
+    #[test]
+    fn is_bindable_rejects_empty_and_whitespace() {
+        // Empty / whitespace-only accelerators represent "user
+        // cleared the hotkey", not a registration failure. The
+        // production path skips these so the toast doesn't fire on
+        // intentional unbinds.
+        assert!(!is_bindable(""));
+        assert!(!is_bindable("   "));
+        assert!(!is_bindable("\t\n"));
+    }
+
+    #[test]
+    fn is_bindable_accepts_normal_accelerators() {
+        assert!(is_bindable("Ctrl+Shift+Space"));
+        assert!(is_bindable("CommandOrControl+K"));
+        assert!(is_bindable("F1"));
     }
 }

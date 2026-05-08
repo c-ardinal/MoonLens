@@ -31,6 +31,8 @@ macro_rules! all_commands {
             ipc::set_plugin_enabled,
             ipc::install_plugin_from_path,
             ipc::pick_and_install_plugin,
+            ipc::uninstall_plugin,
+            ipc::reveal_plugin_folder,
             ipc::check_plugin_updates,
             ipc::run_translate,
             ipc::run_ocr,
@@ -40,10 +42,15 @@ macro_rules! all_commands {
             ipc::run_reverse_image_search,
             ipc::capture_region_cmd,
             ipc::capture_and_process,
+            ipc::capture_file,
+            ipc::pick_and_capture_file,
+            ipc::list_windows,
+            ipc::capture_window_by_id,
             ipc::pin_overlay,
             ipc::unpin_overlay,
             ipc::install_ocr_models,
             ipc::show_main,
+            ipc::restart_app,
             ipc::hide_overlay,
             ipc::start_region_selection,
             ipc::cancel_region_selection,
@@ -51,6 +58,7 @@ macro_rules! all_commands {
             ipc::subtitle_state,
             ipc::stop_subtitle,
             ipc::start_subtitle,
+            ipc::test_asr_endpoint,
             ipc::get_onboarding_status,
             ipc::mark_macos_permissions_reviewed,
             ipc::open_macos_privacy_pane,
@@ -175,6 +183,7 @@ pub fn build() -> Result<()> {
             )?;
             hotkey::notify_failures(&handle, &hotkey_report);
             build_tray(&handle)?;
+            install_main_window_close_to_tray(&handle);
 
             app.manage(AppState {
                 settings,
@@ -293,8 +302,33 @@ fn build_tray(app: &AppHandle) -> Result<()> {
 fn show_main_window(app: &AppHandle) {
     if let Some(w) = app.get_webview_window("main") {
         let _ = w.show();
+        let _ = w.unminimize();
         let _ = w.set_focus();
     }
+}
+
+/// Convert the main window's close button into "hide to tray".
+///
+/// The main window is created with `decorations: false`, and the
+/// chromeless close button on the frontend calls `window.close()`. By
+/// default that destroys the window — after which the tray menu's
+/// "MoonLens を開く" silently no-ops because `get_webview_window("main")`
+/// returns `None`. Intercepting `CloseRequested` here keeps the window
+/// alive (just hidden) so subsequent tray clicks can re-show it.
+///
+/// The "終了" tray item still exits cleanly via `app.exit(0)`, which is
+/// the only path that actually tears the process down.
+fn install_main_window_close_to_tray(app: &AppHandle) {
+    let Some(main) = app.get_webview_window("main") else {
+        return;
+    };
+    let hidden = main.clone();
+    main.on_window_event(move |event| {
+        if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+            api.prevent_close();
+            let _ = hidden.hide();
+        }
+    });
 }
 
 fn route_main(app: &AppHandle, path: &str) {

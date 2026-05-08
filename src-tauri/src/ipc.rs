@@ -67,6 +67,38 @@ pub async fn set_plugin_enabled(
     Ok(())
 }
 
+#[tauri::command]
+pub async fn uninstall_plugin(id: String, state: State<'_, AppState>) -> Result<(), String> {
+    state
+        .plugins
+        .uninstall(&id)
+        .map_err(|e| e.to_string())?;
+    // Removing a plugin can drop providers that the active chains
+    // referenced; refresh the pipeline so the next request resolves to
+    // whatever is still installed.
+    state.pipeline.rebuild_providers();
+    Ok(())
+}
+
+/// Open the on-disk directory backing a plugin in the OS file
+/// manager. We delegate to `tauri-plugin-opener` so the same call
+/// works on macOS (Finder), Windows (Explorer), and Linux (xdg-open).
+#[tauri::command]
+pub async fn reveal_plugin_folder(
+    id: String,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+    let path = state
+        .plugins
+        .path_of(&id)
+        .ok_or_else(|| format!("plugin {id} not found"))?;
+    app.opener()
+        .open_path(path.to_string_lossy().to_string(), None::<&str>)
+        .map_err(|e| e.to_string())
+}
+
 #[derive(Deserialize)]
 pub struct TranslateArgs {
     pub text: String,
@@ -248,6 +280,24 @@ pub async fn unpin_overlay(state: State<'_, AppState>) -> Result<(), String> {
     Ok(())
 }
 
+/// Surface a backend failure on the overlay event stream so every
+/// page that subscribes (capture, overlay window) can show it. The
+/// error is also returned to the caller so the original `invoke`
+/// promise rejects cleanly. Centralising this here means new capture
+/// entry points only need to wrap their fallible body in `?` after
+/// calling this.
+fn emit_capture_error(app: &AppHandle, message: impl Into<String>) -> String {
+    let msg = message.into();
+    overlay::emit(
+        app,
+        overlay::OverlayEvent::Error {
+            message: msg.clone(),
+        },
+    )
+    .ok();
+    msg
+}
+
 #[tauri::command]
 pub async fn capture_and_process(
     args: Option<RegionArgs>,
@@ -263,7 +313,7 @@ pub async fn capture_and_process(
     .ok();
 
     let args_for_capture = args.clone();
-    let png = tokio::task::spawn_blocking(move || -> anyhow::Result<Vec<u8>> {
+    let png = match tokio::task::spawn_blocking(move || -> anyhow::Result<Vec<u8>> {
         let img = match args_for_capture {
             Some(a) => capture::capture_rect(CaptureRect {
                 monitor_index: a.monitor_index,
@@ -277,14 +327,22 @@ pub async fn capture_and_process(
         capture::png_bytes(&img)
     })
     .await
-    .map_err(|e| e.to_string())?
-    .map_err(|e| e.to_string())?;
+    {
+        Ok(Ok(bytes)) => bytes,
+        Ok(Err(e)) => {
+            return Err(emit_capture_error(&app, format!("キャプチャ失敗: {e}")));
+        }
+        Err(e) => {
+            return Err(emit_capture_error(&app, format!("キャプチャタスク失敗: {e}")));
+        }
+    };
 
-    let mut bundle = state
-        .pipeline
-        .run_capture_flow(png)
-        .await
-        .map_err(|e| e.to_string())?;
+    let mut bundle = match state.pipeline.run_capture_flow(png).await {
+        Ok(b) => b,
+        Err(e) => {
+            return Err(emit_capture_error(&app, format!("解析失敗: {e}")));
+        }
+    };
     // Record the rect we actually captured so the overlay can pin the
     // region watcher onto it. Full-monitor captures resolve to the
     // primary monitor's bounds.
@@ -344,6 +402,333 @@ pub async fn capture_and_process(
             intent: Some(bundle.intent),
             result: bundle.result.clone(),
             source_rect: bundle.source_rect.clone(),
+        },
+    )
+    .ok();
+    Ok(bundle)
+}
+
+/// Outcome of a probe against the configured ASR endpoint. Reported
+/// back to the audio page so the user can diagnose "no transcription"
+/// without diving into logs or settings.
+#[derive(Debug, Clone, Serialize)]
+pub struct AsrEndpointReport {
+    /// `true` when the HTTP probe completed (any status code, even 4xx).
+    /// `false` when the connection itself failed (DNS / refused / timeout).
+    pub reachable: bool,
+    /// HTTP status code returned by the probe, when one was received.
+    pub status: Option<u16>,
+    /// The URL we attempted to reach (so the user can copy it).
+    pub url: String,
+    /// Provider id picked from the active asr chain (e.g. `whisper_cpp.large_v3_turbo`).
+    pub provider: String,
+    /// Free-form error / status message displayed alongside the result.
+    pub message: String,
+}
+
+/// Probe the active ASR provider's endpoint with a short HEAD/GET.
+/// Designed to be cheap and side-effect-free — never sends audio data
+/// or initialises a model.
+#[tauri::command]
+pub async fn test_asr_endpoint(state: State<'_, AppState>) -> Result<AsrEndpointReport, String> {
+    let snap = state.settings.snapshot();
+    let provider = snap
+        .providers
+        .asr
+        .chain
+        .first()
+        .cloned()
+        .unwrap_or_default();
+    if provider.is_empty() {
+        return Ok(AsrEndpointReport {
+            reachable: false,
+            status: None,
+            url: String::new(),
+            provider: String::new(),
+            message: "ASR プロバイダのチェーンが空です。設定 → プロバイダ → asr で provider id を追加してください。".into(),
+        });
+    }
+
+    let url = snap
+        .providers
+        .configs
+        .get(&provider)
+        .and_then(|cfg| cfg.get("endpoint"))
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+
+    let Some(url) = url else {
+        return Ok(AsrEndpointReport {
+            reachable: false,
+            status: None,
+            url: String::new(),
+            provider,
+            message:
+                "プロバイダの endpoint 設定が見当たりません。providers.configs.<provider>.endpoint を構成してください。"
+                    .into(),
+        });
+    };
+
+    let probe_url = url.trim_end_matches('/').to_string();
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(2))
+        .build()
+        .map_err(|e| e.to_string())?;
+    match client.get(&probe_url).send().await {
+        Ok(resp) => Ok(AsrEndpointReport {
+            reachable: true,
+            status: Some(resp.status().as_u16()),
+            url: probe_url,
+            provider,
+            message: format!(
+                "接続成功 (HTTP {}). 実際の文字起こしには /inference エンドポイントが応答する必要があります。",
+                resp.status().as_u16()
+            ),
+        }),
+        Err(e) => Ok(AsrEndpointReport {
+            reachable: false,
+            status: None,
+            url: probe_url,
+            provider,
+            message: format!(
+                "接続失敗: {}. ASRサーバが起動していない可能性があります。",
+                e
+            ),
+        }),
+    }
+}
+
+/// Lightweight description of a capturable OS window. Returned by
+/// `list_windows` so the frontend can render a picker without
+/// each row needing a synchronous backend call.
+#[derive(Debug, Clone, Serialize)]
+pub struct WindowDescriptor {
+    pub id: u32,
+    pub title: String,
+    pub app_name: String,
+    pub x: i32,
+    pub y: i32,
+    pub w: u32,
+    pub h: u32,
+    pub is_minimized: bool,
+}
+
+/// Enumerate every visible top-level window in z-order. Minimised
+/// windows are included so the user can still choose them and we will
+/// capture whatever pixels the OS reports (most platforms still keep a
+/// snapshot for the taskbar preview). Windows whose title and
+/// app_name are both empty are filtered — those tend to be invisible
+/// helper windows that cannot be meaningfully captured.
+#[tauri::command]
+pub async fn list_windows() -> Result<Vec<WindowDescriptor>, String> {
+    let descriptors = tokio::task::spawn_blocking(|| -> Result<Vec<WindowDescriptor>, String> {
+        let windows = xcap::Window::all().map_err(|e| e.to_string())?;
+        let mut out: Vec<WindowDescriptor> = Vec::with_capacity(windows.len());
+        for w in &windows {
+            let title = w.title().unwrap_or_default();
+            let app_name = w.app_name().unwrap_or_default();
+            if title.trim().is_empty() && app_name.trim().is_empty() {
+                continue;
+            }
+            let id = match w.id() {
+                Ok(id) => id,
+                Err(_) => continue,
+            };
+            out.push(WindowDescriptor {
+                id,
+                title,
+                app_name,
+                x: w.x().unwrap_or(0),
+                y: w.y().unwrap_or(0),
+                w: w.width().unwrap_or(0),
+                h: w.height().unwrap_or(0),
+                is_minimized: w.is_minimized().unwrap_or(false),
+            });
+        }
+        Ok(out)
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+    Ok(descriptors)
+}
+
+/// Capture a specific OS window by id and run the same OCR/translate
+/// flow as a region capture. Mirrors `capture_and_process`'s overlay
+/// event emission so the capture page UI lights up identically.
+#[tauri::command]
+pub async fn capture_window_by_id(
+    id: u32,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<crate::pipeline::CaptureFlowResult, String> {
+    overlay::emit(
+        &app,
+        overlay::OverlayEvent::Processing {
+            message: "ウィンドウをキャプチャ中…".into(),
+        },
+    )
+    .ok();
+
+    let png = match tokio::task::spawn_blocking(move || -> anyhow::Result<Vec<u8>> {
+        let img = capture::capture_window_by_id(id)?;
+        capture::png_bytes(&img)
+    })
+    .await
+    {
+        Ok(Ok(bytes)) => bytes,
+        Ok(Err(e)) => {
+            return Err(emit_capture_error(
+                &app,
+                format!("ウィンドウキャプチャ失敗: {e}"),
+            ));
+        }
+        Err(e) => {
+            return Err(emit_capture_error(
+                &app,
+                format!("キャプチャタスク失敗: {e}"),
+            ));
+        }
+    };
+
+    let bundle = match state.pipeline.run_capture_flow(png).await {
+        Ok(b) => b,
+        Err(e) => {
+            return Err(emit_capture_error(&app, format!("解析失敗: {e}")));
+        }
+    };
+
+    let clipboard_cfg = state.settings.snapshot().clipboard.clone();
+    if let Some(src) = &bundle.source_text {
+        clipboard::auto_copy(&app, clipboard::Kind::Source, src, &clipboard_cfg);
+    }
+    if let crate::providers::TaskOutput::Text(t) = &bundle.result.output {
+        let kind = match bundle.intent {
+            crate::providers::Intent::Qr => clipboard::Kind::Qr,
+            _ => clipboard::Kind::Translation,
+        };
+        clipboard::auto_copy(&app, kind, t, &clipboard_cfg);
+    }
+
+    overlay::emit(
+        &app,
+        overlay::OverlayEvent::Result {
+            source_text: bundle.source_text.clone(),
+            intent: Some(bundle.intent),
+            result: bundle.result.clone(),
+            source_rect: None,
+        },
+    )
+    .ok();
+    Ok(bundle)
+}
+
+/// Open the platform file picker, then process the chosen image file.
+/// Returns `Ok(None)` if the user cancels the dialog. Mirrors
+/// `pick_and_install_plugin`'s shape so the frontend doesn't need the
+/// JS dialog plugin.
+#[tauri::command]
+pub async fn pick_and_capture_file(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<Option<crate::pipeline::CaptureFlowResult>, String> {
+    use tauri_plugin_dialog::DialogExt;
+    let dialog = app.dialog().clone();
+    let chosen = tokio::task::spawn_blocking(move || {
+        dialog
+            .file()
+            .add_filter("Image", &["png", "jpg", "jpeg", "webp", "bmp", "gif"])
+            .blocking_pick_file()
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+    let Some(file) = chosen else { return Ok(None) };
+    let path = file
+        .into_path()
+        .map_err(|e| e.to_string())?
+        .to_string_lossy()
+        .to_string();
+    let bundle = capture_file(path, app, state).await?;
+    Ok(Some(bundle))
+}
+
+/// Read an image file off disk and run it through the same flow as a
+/// live capture. Used by the main window's "ファイル" mode so users
+/// can re-OCR an existing screenshot without using the region selector.
+///
+/// The file is decoded to PNG bytes (matching what the capture path
+/// produces) and handed to `Pipeline::run_capture_flow`. Overlay
+/// events are emitted exactly like `capture_and_process` so the
+/// capture page UI lights up identically.
+#[tauri::command]
+pub async fn capture_file(
+    path: String,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<crate::pipeline::CaptureFlowResult, String> {
+    overlay::emit(
+        &app,
+        overlay::OverlayEvent::Processing {
+            message: "ファイルを読み込み中…".into(),
+        },
+    )
+    .ok();
+
+    let png = match tokio::task::spawn_blocking(move || -> anyhow::Result<Vec<u8>> {
+        let img = image::open(&path)?;
+        let mut buf: Vec<u8> = Vec::new();
+        img.write_to(
+            &mut std::io::Cursor::new(&mut buf),
+            image::ImageFormat::Png,
+        )?;
+        Ok(buf)
+    })
+    .await
+    {
+        Ok(Ok(bytes)) => bytes,
+        Ok(Err(e)) => {
+            return Err(emit_capture_error(
+                &app,
+                format!("ファイル読み込み失敗: {e}"),
+            ));
+        }
+        Err(e) => {
+            return Err(emit_capture_error(
+                &app,
+                format!("ファイル処理タスク失敗: {e}"),
+            ));
+        }
+    };
+
+    let bundle = match state.pipeline.run_capture_flow(png).await {
+        Ok(b) => b,
+        Err(e) => {
+            return Err(emit_capture_error(&app, format!("解析失敗: {e}")));
+        }
+    };
+
+    let clipboard_cfg = state.settings.snapshot().clipboard.clone();
+    if let Some(src) = &bundle.source_text {
+        clipboard::auto_copy(&app, clipboard::Kind::Source, src, &clipboard_cfg);
+    }
+    if let crate::providers::TaskOutput::Text(t) = &bundle.result.output {
+        let kind = match bundle.intent {
+            crate::providers::Intent::Qr => clipboard::Kind::Qr,
+            _ => clipboard::Kind::Translation,
+        };
+        clipboard::auto_copy(&app, kind, t, &clipboard_cfg);
+    }
+
+    // The main window capture page subscribes to this event stream, so
+    // emitting `Result` is enough to drive the UI even though we don't
+    // pop the floating overlay (the user is already in the capture
+    // page when they pick a file).
+    overlay::emit(
+        &app,
+        overlay::OverlayEvent::Result {
+            source_text: bundle.source_text.clone(),
+            intent: Some(bundle.intent),
+            result: bundle.result.clone(),
+            source_rect: None,
         },
     )
     .ok();
@@ -499,6 +884,15 @@ pub async fn show_main(app: AppHandle) -> Result<(), String> {
         w.set_focus().map_err(|e| e.to_string())?;
     }
     Ok(())
+}
+
+/// Relaunch the application. Used when the user toggled a setting
+/// (encrypt-at-rest, log level, etc.) that takes effect only at boot.
+/// Tauri 2's `app.restart()` spawns a fresh process and exits the
+/// current one in a single transaction.
+#[tauri::command]
+pub async fn restart_app(app: AppHandle) -> Result<(), String> {
+    app.restart();
 }
 
 #[tauri::command]
