@@ -1,56 +1,169 @@
 /**
- * MoonLens design tokens.
- * Tokens are CSS custom properties so the theme can switch without a
- * rebuild and plugins can read them for consistent look.
+ * MoonLens design tokens — Claude Design v2026.05 (slate-blue moonlight).
+ *
+ * Two parallel naming schemes are exposed:
+ * - The primary `--bg-*` / `--ink-*` / `--accent-*` scale matches the
+ *   design bundle one-to-one and is what new components consume.
+ * - The legacy `--ml-*` names are aliased to the new scale so existing
+ *   components that style via Tailwind (`bg-surface`, `text-ink`, …) keep
+ *   working — they automatically pick up the new palette.
  */
 
 :root {
-  --ml-font-ui: 'Inter Variable', 'Inter', system-ui, -apple-system,
-    'Hiragino Kaku Gothic ProN', 'Yu Gothic UI', sans-serif;
-  --ml-font-mono: 'JetBrains Mono', ui-monospace, 'SFMono-Regular', monospace;
+  /* Type */
+  --font-sans:
+    'Geist', 'Inter Variable', 'Inter', 'Noto Sans JP', -apple-system,
+    BlinkMacSystemFont, 'Hiragino Kaku Gothic ProN', 'Yu Gothic UI', sans-serif;
+  --font-mono:
+    'Geist Mono', 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace;
 
-  --ml-radius: 12px;
-  --ml-radius-sm: 8px;
-  --ml-shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
-  --ml-shadow-lg: 0 16px 48px rgba(0, 0, 0, 0.18);
+  /* Accent — soft moonlight blue (option 0 from picker) */
+  --accent: #a8c5da;
+  --accent-soft: rgba(168, 197, 218, 0.14);
+  --accent-strong: #88aec8;
+  --accent-ink: #2c3e4a;
+
+  /* Spacing scale (4-px grid) */
+  --s-1: 4px;
+  --s-2: 8px;
+  --s-3: 12px;
+  --s-4: 16px;
+  --s-5: 20px;
+  --s-6: 24px;
+  --s-8: 32px;
+  --s-10: 40px;
+  --s-12: 48px;
+
+  /* Radius */
+  --r-sm: 6px;
+  --r-md: 10px;
+  --r-lg: 14px;
+  --r-xl: 20px;
+  --r-pill: 999px;
+
+  /* Motion */
+  --ease-out: cubic-bezier(0.22, 0.61, 0.36, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --dur-fast: 140ms;
+  --dur-base: 220ms;
+  --dur-slow: 380ms;
+
+  /* Legacy aliases consumed by existing Tailwind utilities. */
+  --ml-font-ui: var(--font-sans);
+  --ml-font-mono: var(--font-mono);
+  --ml-radius: var(--r-lg);
+  --ml-radius-sm: var(--r-sm);
   --ml-border-width: 1px;
-
-  --ml-accent: #8b5cf6;
-  --ml-accent-soft: color-mix(in oklch, var(--ml-accent) 24%, transparent);
+  --ml-accent: var(--accent);
+  --ml-accent-soft: var(--accent-soft);
+  --ml-ease: var(--ease-out);
+  --ml-duration-fast: var(--dur-fast);
+  --ml-duration: var(--dur-base);
+  --ml-duration-slow: var(--dur-slow);
 }
 
-/* Light */
+/* ------------ Dark theme (default) ------------- */
 :root,
-[data-theme='light'] {
-  --ml-surface: #fafafa;
-  --ml-surface-elevated: #ffffff;
-  --ml-surface-muted: #f3f3f3;
-  --ml-border: rgba(10, 10, 10, 0.08);
-  --ml-ink: #0a0a0a;
-  --ml-ink-muted: rgba(10, 10, 10, 0.68);
-  --ml-ink-faint: rgba(10, 10, 10, 0.44);
-}
-
-/* Dark */
 [data-theme='dark'] {
-  --ml-surface: #0a0a0a;
-  --ml-surface-elevated: #141414;
-  --ml-surface-muted: #1a1a1a;
-  --ml-border: rgba(250, 250, 250, 0.08);
-  --ml-ink: #fafafa;
-  --ml-ink-muted: rgba(250, 250, 250, 0.72);
-  --ml-ink-faint: rgba(250, 250, 250, 0.48);
+  --bg-0: #0d0e10; /* app bg */
+  --bg-1: #131418; /* sidebar / panels */
+  --bg-2: #1a1c20; /* cards */
+  --bg-3: #232529; /* hover */
+  --bg-4: #2d2f34; /* active */
+  --bg-overlay: rgba(13, 14, 16, 0.78);
+
+  --line: rgba(255, 255, 255, 0.07);
+  --line-strong: rgba(255, 255, 255, 0.14);
+
+  --ink-0: #f4f5f6;
+  --ink-1: #c8cacd;
+  --ink-2: #8a8d92;
+  --ink-3: #5a5d62;
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-md:
+    0 4px 16px rgba(0, 0, 0, 0.45), 0 0 0 1px rgba(255, 255, 255, 0.04);
+  --shadow-lg:
+    0 20px 48px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 255, 255, 0.05);
+
+  --gauge-track: rgba(255, 255, 255, 0.07);
+  --scan-glow: rgba(168, 197, 218, 0.6);
+
+  /* Legacy aliases */
+  --ml-surface: var(--bg-0);
+  --ml-surface-elevated: var(--bg-1);
+  --ml-surface-muted: var(--bg-2);
+  --ml-border: var(--line);
+  --ml-ink: var(--ink-0);
+  --ml-ink-muted: var(--ink-1);
+  --ml-ink-faint: var(--ink-2);
+  --ml-shadow: var(--shadow-md);
+  --ml-shadow-lg: var(--shadow-lg);
 }
 
-@media (prefers-color-scheme: dark) {
+/* ------------ Light theme ------------- */
+[data-theme='light'] {
+  --bg-0: #f7f6f3;
+  --bg-1: #fdfcfa;
+  --bg-2: #ffffff;
+  --bg-3: #f0eeea;
+  --bg-4: #e6e3dd;
+  --bg-overlay: rgba(247, 246, 243, 0.82);
+
+  --line: rgba(20, 18, 14, 0.08);
+  --line-strong: rgba(20, 18, 14, 0.16);
+
+  --ink-0: #16181b;
+  --ink-1: #43474d;
+  --ink-2: #71757b;
+  --ink-3: #a4a8ae;
+
+  --shadow-sm: 0 1px 2px rgba(20, 18, 14, 0.06);
+  --shadow-md:
+    0 4px 14px rgba(20, 18, 14, 0.07), 0 0 0 1px rgba(20, 18, 14, 0.04);
+  --shadow-lg:
+    0 18px 40px rgba(20, 18, 14, 0.1), 0 0 0 1px rgba(20, 18, 14, 0.05);
+
+  --gauge-track: rgba(20, 18, 14, 0.07);
+  --scan-glow: rgba(136, 174, 200, 0.55);
+
+  --accent-ink: #f7f6f3;
+
+  --ml-surface: var(--bg-0);
+  --ml-surface-elevated: var(--bg-1);
+  --ml-surface-muted: var(--bg-2);
+  --ml-border: var(--line);
+  --ml-ink: var(--ink-0);
+  --ml-ink-muted: var(--ink-1);
+  --ml-ink-faint: var(--ink-2);
+  --ml-shadow: var(--shadow-md);
+  --ml-shadow-lg: var(--shadow-lg);
+}
+
+/* `system` follows the OS preference. */
+@media (prefers-color-scheme: light) {
   [data-theme='system'] {
-    --ml-surface: #0a0a0a;
-    --ml-surface-elevated: #141414;
-    --ml-surface-muted: #1a1a1a;
-    --ml-border: rgba(250, 250, 250, 0.08);
-    --ml-ink: #fafafa;
-    --ml-ink-muted: rgba(250, 250, 250, 0.72);
-    --ml-ink-faint: rgba(250, 250, 250, 0.48);
+    --bg-0: #f7f6f3;
+    --bg-1: #fdfcfa;
+    --bg-2: #ffffff;
+    --bg-3: #f0eeea;
+    --bg-4: #e6e3dd;
+    --bg-overlay: rgba(247, 246, 243, 0.82);
+    --line: rgba(20, 18, 14, 0.08);
+    --line-strong: rgba(20, 18, 14, 0.16);
+    --ink-0: #16181b;
+    --ink-1: #43474d;
+    --ink-2: #71757b;
+    --ink-3: #a4a8ae;
+    --shadow-sm: 0 1px 2px rgba(20, 18, 14, 0.06);
+    --shadow-md:
+      0 4px 14px rgba(20, 18, 14, 0.07), 0 0 0 1px rgba(20, 18, 14, 0.04);
+    --shadow-lg:
+      0 18px 40px rgba(20, 18, 14, 0.1), 0 0 0 1px rgba(20, 18, 14, 0.05);
+    --gauge-track: rgba(20, 18, 14, 0.07);
+    --scan-glow: rgba(136, 174, 200, 0.55);
+    --accent-ink: #f7f6f3;
   }
 }
 
@@ -63,10 +176,10 @@
 }
 [data-density='normal'],
 :root {
-  --ml-gap-1: 8px;
-  --ml-gap-2: 12px;
-  --ml-gap-3: 16px;
-  --ml-gap-4: 24px;
+  --ml-gap-1: var(--s-2);
+  --ml-gap-2: var(--s-3);
+  --ml-gap-3: var(--s-4);
+  --ml-gap-4: var(--s-6);
 }
 [data-density='comfortable'] {
   --ml-gap-1: 10px;
@@ -75,15 +188,11 @@
   --ml-gap-4: 32px;
 }
 
-/* Motion */
-:root {
-  --ml-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
-  --ml-duration-fast: 120ms;
-  --ml-duration: 200ms;
-  --ml-duration-slow: 320ms;
-}
 @media (prefers-reduced-motion: reduce) {
   :root {
+    --dur-fast: 0ms;
+    --dur-base: 0ms;
+    --dur-slow: 0ms;
     --ml-duration-fast: 0ms;
     --ml-duration: 0ms;
     --ml-duration-slow: 0ms;

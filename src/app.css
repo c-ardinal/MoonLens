@@ -1,12 +1,15 @@
 @import 'tailwindcss';
+@import url('https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&family=Noto+Sans+JP:wght@300;400;500;600;700&family=Geist+Mono:wght@400;500&display=swap');
 @import './lib/design/tokens.css';
+@import './lib/design/components.css';
 
 :root {
   color-scheme: light dark;
-  font-family: var(--ml-font-ui);
+  font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
-  font-feature-settings: 'cv11', 'ss01', 'ss03';
+  font-feature-settings: 'ss01', 'cv11';
+  letter-spacing: -0.005em;
 }
 
 html,
@@ -15,16 +18,16 @@ body,
   height: 100%;
   margin: 0;
   background: transparent;
-  color: var(--ml-ink);
+  color: var(--ink-0);
 }
 
 body {
-  background: var(--ml-surface);
+  background: var(--bg-0);
 }
 
 ::selection {
-  background: var(--ml-accent-soft);
-  color: var(--ml-ink);
+  background: var(--accent-soft);
+  color: var(--ink-0);
 }
 
 button {
@@ -45,9 +48,9 @@ select {
 
 /* Keyboard focus ring only; mouse focus stays quiet. */
 :focus-visible {
-  outline: 2px solid var(--ml-accent);
+  outline: 2px solid var(--accent);
   outline-offset: 2px;
-  border-radius: var(--ml-radius-sm);
+  border-radius: var(--r-sm);
 }
 
 .scrollbar-minimal::-webkit-scrollbar {
@@ -55,6 +58,6 @@ select {
   height: 8px;
 }
 .scrollbar-minimal::-webkit-scrollbar-thumb {
-  background: var(--ml-border);
+  background: var(--line);
   border-radius: 999px;
 }
