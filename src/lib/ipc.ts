@@ -98,8 +98,13 @@ export const installPluginFromPath = (archivePath: string) =>
   safeInvoke<string>('install_plugin_from_path', { archivePath });
 export const pickAndInstallPlugin = () =>
   safeInvoke<string | null>('pick_and_install_plugin');
+export const uninstallPlugin = (id: string) =>
+  safeInvoke<void>('uninstall_plugin', { id });
+export const revealPluginFolder = (id: string) =>
+  safeInvoke<void>('reveal_plugin_folder', { id });
 export const installOcrModels = () => safeInvoke<string>('install_ocr_models');
 export const showMain = () => safeInvoke<void>('show_main');
+export const restartApp = () => safeInvoke<void>('restart_app');
 export const hideOverlay = () => safeInvoke<void>('hide_overlay');
 /** Close the region-selection overlay. Backend-side path, always
  *  resolves even if the webview's `window.hide()` call path is
@@ -136,6 +141,32 @@ export const captureAndProcess = (region?: {
   w: number;
   h: number;
 }) => safeInvoke<CaptureFlowResult>('capture_and_process', { args: region ?? null });
+
+export const captureFile = (path: string) =>
+  safeInvoke<CaptureFlowResult>('capture_file', { path });
+
+export const pickAndCaptureFile = () =>
+  safeInvoke<CaptureFlowResult | null>('pick_and_capture_file');
+
+export const startRegionSelection = () =>
+  safeInvoke<void>('start_region_selection');
+
+export interface WindowDescriptor {
+  id: number;
+  title: string;
+  app_name: string;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  is_minimized: boolean;
+}
+
+export const listWindows = () =>
+  safeInvoke<WindowDescriptor[]>('list_windows', undefined, []);
+
+export const captureWindowById = (id: number) =>
+  safeInvoke<CaptureFlowResult>('capture_window_by_id', { id });
 
 export const onOverlay = (handler: (event: OverlayEvent) => void): Promise<UnlistenFn> =>
   listen<OverlayEvent>('moonlens://overlay', (e) => handler(e.payload));
@@ -175,6 +206,17 @@ export const toggleSubtitle = () => safeInvoke<boolean>('toggle_subtitle');
 export const subtitleState = () => safeInvoke<boolean>('subtitle_state', undefined, false);
 export const stopSubtitle = () => safeInvoke<void>('stop_subtitle');
 export const startSubtitle = () => safeInvoke<void>('start_subtitle');
+
+export interface AsrEndpointReport {
+  reachable: boolean;
+  status: number | null;
+  url: string;
+  provider: string;
+  message: string;
+}
+
+export const testAsrEndpoint = () =>
+  safeInvoke<AsrEndpointReport>('test_asr_endpoint');
 export const onSubtitle = (handler: (event: SubtitleEvent) => void): Promise<UnlistenFn> =>
   listen<SubtitleEvent>('moonlens://subtitle', (e) => handler(e.payload));
 
