@@ -12,8 +12,31 @@ const DEFAULT_TOML: &str = include_str!("default.toml");
 fn bundled_default_toml_parses() {
     let s: Settings = toml::from_str(DEFAULT_TOML).expect("default.toml parses");
     assert_eq!(s.subtitle.target_language, "ja");
-    assert!(!s.providers.translate.chain.is_empty());
-    assert_eq!(s.providers.translate.chain[0], "ollama.gemma4");
+    // Translate / ASR chains are intentionally EMPTY in the shipped
+    // defaults: the product is local-first and asks the user to opt
+    // into Ollama or cloud APIs explicitly via Settings → Providers.
+    assert!(s.providers.translate.chain.is_empty());
+    assert!(s.providers.asr.chain.is_empty());
+}
+
+#[test]
+fn default_chains_do_not_require_external_servers() {
+    // Local-first contract: built-in OCR / QR / intent classifier
+    // chains stay populated because they have embedded providers
+    // (windows, ocrs, rqrr, builtin.heuristic). The translation and
+    // audio chains intentionally start empty.
+    let s: Settings = toml::from_str(DEFAULT_TOML).expect("default.toml parses");
+    assert!(!s.providers.ocr.chain.is_empty(), "OCR has built-in providers");
+    assert!(
+        !s.providers.qr_handler.chain.is_empty(),
+        "QR handler has rqrr"
+    );
+    assert!(
+        !s.providers.intent_classifier.chain.is_empty(),
+        "Intent classifier has builtin.heuristic"
+    );
+    assert!(s.providers.translate.chain.is_empty());
+    assert!(s.providers.asr.chain.is_empty());
 }
 
 #[test]

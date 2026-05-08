@@ -82,16 +82,28 @@ lens_auto_poll_ms = 1500
 # Each task declares an ordered chain and fallback policy. Provider ids of the
 # form "vendor.model" or "plugin.<id>" are resolved at runtime against the
 # registered providers (built-in or loaded from plugins).
+#
+# Defaults are LOCAL-FIRST. Ollama, DeepL, Gemini and similar external
+# servers / cloud APIs are explicitly OPTIONAL. The user opts in by adding
+# their provider id to the chain in Settings → Providers; we never ship a
+# chain that depends on an external daemon being already running.
 # ---------------------------------------------------------------------------
 
 [providers.translate]
-chain = ["ollama.gemma4", "deepl", "gemini"]
+# Empty by default — translation requires the user to choose either an
+# embedded provider (loaded as a plugin) or to opt into Ollama / cloud
+# APIs from Settings → Providers. Earlier builds shipped an `ollama.gemma4`
+# default, but that turned a fresh install into "translation silently
+# fails until you also run Ollama", which violates the local-first
+# product spec. The settings UI surfaces an explicit "プロバイダ未設定"
+# state when the chain is empty so the user is guided to configure one.
+chain = []
 parallel_race = false
 fallback_on = ["timeout", "error", "offline"]
 timeout_ms = 3000
-allow_cloud = true
-allow_network = true
-max_cost_per_request = 0.01
+allow_cloud = false
+allow_network = false
+max_cost_per_request = 0.0
 sticky_session_ms = 30000
 
 # OCR chain. On Windows we prefer the built-in `Windows.Media.Ocr`
@@ -119,7 +131,11 @@ max_cost_per_request = 0.0
 sticky_session_ms = 0
 
 [providers.asr]
-chain = ["whisper_cpp.large_v3_turbo"]
+# Empty by default; ASR is opt-in via Settings → Providers. Adding
+# `whisper_cpp.large_v3_turbo` requires the user to run a local
+# whisper.cpp HTTP server — that's a deployment choice, not an
+# install-time requirement.
+chain = []
 parallel_race = false
 fallback_on = ["error"]
 timeout_ms = 15000
@@ -129,31 +145,35 @@ max_cost_per_request = 0.0
 sticky_session_ms = 0
 
 [providers.explain]
-chain = ["ollama.gemma4", "gemini"]
+chain = []
 parallel_race = false
 fallback_on = ["timeout", "error", "offline"]
 timeout_ms = 10000
-allow_cloud = true
-allow_network = true
-max_cost_per_request = 0.02
+allow_cloud = false
+allow_network = false
+max_cost_per_request = 0.0
 sticky_session_ms = 60000
 
 [providers.summarize]
-chain = ["ollama.gemma4", "gemini"]
+chain = []
 parallel_race = false
 fallback_on = ["timeout", "error", "offline"]
 timeout_ms = 10000
-allow_cloud = true
-allow_network = true
-max_cost_per_request = 0.02
+allow_cloud = false
+allow_network = false
+max_cost_per_request = 0.0
 sticky_session_ms = 60000
 
 [providers.reverse_image_search]
-chain = ["browser.google_images", "browser.bing", "browser.yandex"]
+# Browser handlers do not require an external server: they just open
+# the user's default browser to a search URL. They DO leak the image
+# URL outside the device though, so they remain disabled until the
+# user explicitly enables this feature.
+chain = []
 parallel_race = false
 fallback_on = ["error"]
 timeout_ms = 3000
-allow_cloud = true
+allow_cloud = false
 allow_network = true
 max_cost_per_request = 0.0
 sticky_session_ms = 0
