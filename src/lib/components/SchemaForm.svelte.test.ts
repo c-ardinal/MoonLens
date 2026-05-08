@@ -145,8 +145,8 @@ describe('<SchemaForm>', () => {
     expect(getByText('translate')).toBeInTheDocument();
   });
 
-  it('shows a warning for schema shapes the form cannot render', () => {
-    const oddSchema = {
+  it('renders a number array as an add/remove list editor', () => {
+    const arrSchema = {
       definitions: {
         Settings: {
           type: 'object',
@@ -156,12 +156,107 @@ describe('<SchemaForm>', () => {
         }
       }
     };
-    const { getByText } = render(SchemaForm, {
-      props: { schema: oddSchema, value: { weird: [1, 2, 3] } }
+    const { container, getByText } = render(SchemaForm, {
+      props: { schema: arrSchema, value: { weird: [1, 2, 3] } }
     });
-    expect(
-      getByText('このフィールドはまだ GUI 編集に対応していません')
-    ).toBeInTheDocument();
+    // The fallback warning must be gone: the form now ships a proper
+    // editor for primitive-array fields. A "項目を追加" button
+    // (plus per-row inputs) is always rendered.
+    expect(getByText('項目を追加')).toBeInTheDocument();
+    const numberInputs = container.querySelectorAll<HTMLInputElement>(
+      'input[type="number"]'
+    );
+    expect(numberInputs.length).toBe(3);
+  });
+
+  it('renders an enum array as a multi-select chip list', async () => {
+    const arrSchema = {
+      definitions: {
+        Settings: {
+          type: 'object',
+          properties: {
+            modes: {
+              type: 'array',
+              items: {
+                type: 'string',
+                enum: ['timeout', 'error', 'offline']
+              }
+            }
+          }
+        }
+      }
+    };
+    let received: unknown[] | null = null;
+    const { getByText } = render(SchemaForm, {
+      props: {
+        schema: arrSchema,
+        value: { modes: ['timeout'] },
+        onChange: () => {
+          /* the value bind handles state; we only verify the wire-up */
+          received = ['observed'];
+        }
+      }
+    });
+    expect(getByText('timeout')).toBeInTheDocument();
+    expect(getByText('error')).toBeInTheDocument();
+    expect(getByText('offline')).toBeInTheDocument();
+    // Hush the unused warning — the test asserts presence, not edit.
+    expect(received).toBeNull();
+  });
+
+  it('flattens an Option<T> anyOf into a renderable T control', () => {
+    const optSchema = {
+      definitions: {
+        Settings: {
+          type: 'object',
+          properties: {
+            timeout_ms: {
+              anyOf: [{ type: 'integer' }, { type: 'null' }]
+            }
+          }
+        }
+      }
+    };
+    const { container } = render(SchemaForm, {
+      props: { schema: optSchema, value: { timeout_ms: 1500 } }
+    });
+    // The unwrap step should pick the integer branch, so a number
+    // input renders rather than the "unsupported" fallback warning.
+    const number = container.querySelector<HTMLInputElement>(
+      'input[type="number"]'
+    );
+    expect(number).not.toBeNull();
+    expect(number!.value).toBe('1500');
+  });
+
+  it('topic restricts the rendered tree to a single root section', () => {
+    const { getByText, queryByText } = render(SchemaForm, {
+      props: {
+        schema,
+        value: {
+          appearance: { theme: 'system', reduced_motion: false },
+          subtitle: { target_language: 'ja', font_size_px: 22 }
+        },
+        topic: 'subtitle'
+      }
+    });
+    expect(getByText('subtitle')).toBeInTheDocument();
+    expect(queryByText('appearance')).not.toBeInTheDocument();
+  });
+
+  it('an empty topic falls back to rendering every section', () => {
+    const { getByText } = render(SchemaForm, {
+      props: {
+        schema,
+        value: {
+          appearance: { theme: 'system', reduced_motion: false },
+          subtitle: { target_language: 'ja', font_size_px: 22 }
+        },
+        topic: ''
+      }
+    });
+    expect(getByText('appearance')).toBeInTheDocument();
+    expect(getByText('subtitle')).toBeInTheDocument();
   });
 
   it('renders a dynamic key/value editor for additionalProperties maps', () => {

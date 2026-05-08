@@ -1,15 +1,30 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { Puzzle, Shield, Check } from 'lucide-svelte';
+  import {
+    Search,
+    Upload,
+    RefreshCw,
+    Download,
+    Shield,
+    Trash2,
+    Folder,
+    Puzzle
+  } from 'lucide-svelte';
   import {
     checkPluginUpdates,
     listPlugins,
     setPluginEnabled,
     pickAndInstallPlugin,
+    revealPluginFolder,
+    uninstallPlugin,
     type PluginDescriptor
   } from '$lib/ipc';
-  import { RefreshCw, Download } from 'lucide-svelte';
-  import AppHeader from '$lib/components/AppHeader.svelte';
+  import PageHeader from '$lib/components/PageHeader.svelte';
+  import Pill from '$lib/components/Pill.svelte';
+  import Toggle from '$lib/components/Toggle.svelte';
+  import Segmented from '$lib/components/Segmented.svelte';
+
+  type Tab = 'installed' | 'marketplace';
 
   type PluginUpdate = {
     plugin_id: string;
@@ -27,29 +42,24 @@
   let checkingUpdates = $state(false);
   let updates = $state<PluginUpdate[]>([]);
   let updatesChecked = $state(false);
+  let tab = $state<Tab>('installed');
+  let selectedId = $state<string | null>(null);
+  let query = $state('');
+  let confirmUninstall = $state(false);
+  let uninstalling = $state(false);
 
-  async function checkUpdates() {
-    if (checkingUpdates) return;
-    checkingUpdates = true;
-    try {
-      updates = await checkPluginUpdates();
-      updatesChecked = true;
-    } catch (e) {
-      installError = `更新チェック失敗: ${e}`;
-    } finally {
-      checkingUpdates = false;
-    }
-  }
+  onMount(refresh);
 
   async function refresh() {
     try {
       plugins = await listPlugins();
+      if (plugins.length > 0 && (selectedId === null || !plugins.find((p) => p.id === selectedId))) {
+        selectedId = plugins[0].id;
+      }
     } finally {
       loading = false;
     }
   }
-
-  onMount(refresh);
 
   async function toggle(p: PluginDescriptor, enabled: boolean) {
     await setPluginEnabled(p.id, enabled);
@@ -75,68 +85,120 @@
       installing = false;
     }
   }
+
+  async function reveal(id: string) {
+    try {
+      await revealPluginFolder(id);
+    } catch (e) {
+      installError = `フォルダを開けませんでした: ${e}`;
+    }
+  }
+
+  async function uninstall(id: string) {
+    if (uninstalling) return;
+    uninstalling = true;
+    installError = null;
+    try {
+      await uninstallPlugin(id);
+      confirmUninstall = false;
+      // Drop the selection so the detail pane doesn't render the
+      // ghost of a plugin we just removed.
+      if (selectedId === id) selectedId = null;
+      await refresh();
+    } catch (e) {
+      installError = String(e);
+    } finally {
+      uninstalling = false;
+    }
+  }
+
+  async function checkUpdates() {
+    if (checkingUpdates) return;
+    checkingUpdates = true;
+    try {
+      updates = await checkPluginUpdates();
+      updatesChecked = true;
+    } catch (e) {
+      installError = `更新チェック失敗: ${e}`;
+    } finally {
+      checkingUpdates = false;
+    }
+  }
+
+  const filtered = $derived(
+    plugins.filter((p) => {
+      if (!query.trim()) return true;
+      const q = query.toLowerCase();
+      return (
+        p.name.toLowerCase().includes(q) ||
+        p.id.toLowerCase().includes(q) ||
+        p.author.toLowerCase().includes(q)
+      );
+    })
+  );
+
+  const current = $derived(plugins.find((p) => p.id === selectedId) ?? null);
+
+  const permLabel: Record<string, string> = {
+    network: 'ネットワーク通信',
+    'history.read': '翻訳履歴の読み取り',
+    'filesystem.write': 'ファイルへの書き込み',
+    'translation.hook': '翻訳パイプラインへの介入',
+    'audio.subscribe': '音声ストリームの受信'
+  };
 </script>
 
-<main class="mx-auto flex max-w-4xl flex-col gap-6 p-8">
-  <AppHeader title="プラグイン" subtitle="ユーザ拡張の有効化・権限確認・設定編集。">
-    {#snippet actions()}
-      <button
-        class="inline-flex items-center gap-1.5 rounded-ml-sm border border-border bg-surface px-3 py-1.5 text-sm text-ink-muted hover:border-accent/60 hover:text-ink disabled:opacity-40"
-        onclick={checkUpdates}
-        disabled={checkingUpdates}
-      >
-        <RefreshCw class="h-4 w-4 {checkingUpdates ? 'animate-spin' : ''}" />
-        更新を確認
-      </button>
-      <button
-        class="rounded-ml-sm bg-accent px-3 py-1.5 text-sm font-medium text-white disabled:opacity-40"
-        onclick={install}
-        disabled={installing}
-      >
-        {installing ? 'インストール中…' : '追加'}
-      </button>
-    {/snippet}
-  </AppHeader>
+<PageHeader title="プラグイン" subtitle="ユーザ拡張の有効化・権限確認・設定編集">
+  {#snippet actions()}
+    <button
+      class="btn ghost"
+      type="button"
+      onclick={checkUpdates}
+      disabled={checkingUpdates}
+    >
+      <RefreshCw
+        class="h-3.5 w-3.5 {checkingUpdates ? 'animate-spin' : ''}"
+        aria-hidden="true"
+      />
+      更新を確認
+    </button>
+    <button
+      class="btn primary"
+      type="button"
+      onclick={install}
+      disabled={installing}
+    >
+      <Upload class="h-3.5 w-3.5" aria-hidden="true" />
+      {installing ? 'インストール中…' : '追加'}
+    </button>
+  {/snippet}
+</PageHeader>
 
+<div class="ml-content plugins">
   {#if installMsg}
-    <p class="rounded-ml border border-accent/40 bg-accent-soft p-2 text-sm text-accent">
-      {installMsg}
-    </p>
+    <p class="banner accent">{installMsg}</p>
+  {/if}
+  {#if installError}
+    <p class="banner error" role="alert">エラー: {installError}</p>
   {/if}
 
   {#if updatesChecked}
     {#if updates.length === 0}
-      <p
-        class="rounded-ml border border-border bg-surface-elevated p-2 text-xs text-ink-muted"
-      >
-        全てのプラグインが最新です。
-      </p>
+      <p class="banner muted">全てのプラグインが最新です。</p>
     {:else}
-      <section class="rounded-ml border border-accent/40 bg-accent-soft p-3">
-        <h3 class="text-sm font-semibold text-accent">
-          {updates.length} 件の更新が利用可能
-        </h3>
-        <ul class="mt-2 space-y-2">
+      <section class="card update-banner">
+        <h3>{updates.length} 件の更新が利用可能</h3>
+        <ul>
           {#each updates as u (u.plugin_id)}
-            <li class="flex items-center justify-between gap-3 text-sm">
-              <div>
-                <span class="font-mono">{u.plugin_id}</span>
-                <span class="ml-2 text-ink-muted">
-                  {u.installed_version} → <span class="text-accent">{u.latest_version}</span>
-                </span>
-                {#if u.notes}
-                  <p class="mt-0.5 text-xs text-ink-muted">{u.notes}</p>
-                {/if}
-              </div>
+            <li>
+              <span class="mono">{u.plugin_id}</span>
+              <span class="muted">
+                {u.installed_version} → <span class="accent-text">{u.latest_version}</span>
+              </span>
+              {#if u.notes}<p class="muted small">{u.notes}</p>{/if}
               {#if u.download_url}
-                <a
-                  href={u.download_url}
-                  target="_blank"
-                  rel="noreferrer"
-                  class="inline-flex items-center gap-1 rounded-ml-sm border border-border bg-surface-elevated px-2 py-1 text-xs text-ink-muted hover:border-accent/60 hover:text-ink"
-                >
-                  <Download class="h-3.5 w-3.5" />
-                  ダウンロード
+                <a class="btn" href={u.download_url} target="_blank" rel="noreferrer">
+                  <Download class="h-3.5 w-3.5" aria-hidden="true" /> ダウンロード
                 </a>
               {/if}
             </li>
@@ -145,71 +207,506 @@
       </section>
     {/if}
   {/if}
-  {#if installError}
-    <p class="rounded-ml border border-red-500/50 bg-red-500/10 p-2 text-sm text-red-500">
-      エラー: {installError}
-    </p>
-  {/if}
 
-  {#if loading}
-    <p class="text-ink-faint">読み込み中…</p>
-  {:else if plugins.length === 0}
-    <div
-      class="rounded-ml border border-dashed border-border bg-surface-elevated p-8 text-center text-ink-muted"
-    >
-      まだプラグインがインストールされていません。
-      <br />
-      <code class="font-mono text-xs">$APPDATA/plugins/&lt;id&gt;/plugin.toml</code>
-      に配置するか、上の「追加」から.moonlens-pluginファイルを読み込んでください。
-    </div>
-  {:else}
-    <ul class="flex flex-col gap-3">
-      {#each plugins as p}
-        <li
-          class="flex items-start justify-between gap-4 rounded-ml border border-border bg-surface-elevated p-4 shadow-ml"
-        >
-          <div class="flex items-start gap-3">
-            <Puzzle class="mt-0.5 h-5 w-5 text-ink-muted" />
-            <div>
-              <div class="flex items-center gap-2">
-                <h2 class="font-medium">{p.name}</h2>
-                <code class="font-mono text-xs text-ink-faint">{p.id}</code>
-                <span class="rounded-full bg-surface-muted px-2 py-0.5 text-[10px] uppercase tracking-wide text-ink-faint">
-                  {p.kind}
-                </span>
+  <div class="plugins-grid fadein">
+    <!-- List pane -->
+    <div class="list-pane">
+      <Segmented
+        value={tab}
+        onChange={(v) => {
+          tab = v;
+        }}
+        options={[
+          { value: 'installed', label: `インストール済み (${plugins.length})` },
+          { value: 'marketplace', label: 'マーケットプレイス' }
+        ]}
+        aria-label="プラグインタブ"
+      />
+
+      <div class="list-search">
+        <div class="search-wrap">
+          <Search class="search-ico h-3.5 w-3.5" aria-hidden="true" />
+          <input
+            class="input search-input"
+            placeholder="プラグインを検索…"
+            bind:value={query}
+          />
+        </div>
+        <button class="btn" type="button" onclick={install}>
+          <Upload class="h-3.5 w-3.5" aria-hidden="true" />
+          ローカルから追加
+        </button>
+      </div>
+
+      <div class="scroll list-scroll">
+        {#if loading}
+          <p class="muted">読み込み中…</p>
+        {:else if tab === 'installed' && filtered.length === 0}
+          <div class="empty">
+            まだプラグインがインストールされていません。<br />
+            <code class="mono small"
+              >$APPDATA/plugins/&lt;id&gt;/plugin.toml</code
+            > に配置するか「追加」から読み込んでください。
+          </div>
+        {:else if tab === 'marketplace'}
+          <div class="empty">
+            マーケットプレイスは準備中です。<br />
+            ローカルパッケージのインストールには「追加」をご利用ください。
+          </div>
+        {:else}
+          {#each filtered as p (p.id)}
+            <button
+              class="card-soft list-row"
+              class:active={selectedId === p.id}
+              type="button"
+              onclick={() => (selectedId = p.id)}
+            >
+              <div class="row-icon">
+                <Puzzle class="h-4 w-4" aria-hidden="true" />
               </div>
-              <p class="text-xs text-ink-muted">
-                v{p.version} · {p.author} · {p.license}
-              </p>
-              {#if p.provides.length}
-                <p class="mt-1 text-xs text-ink-muted">
-                  提供: {p.provides.join(', ')}
-                </p>
-              {/if}
-              {#if p.permissions_summary.length}
-                <p class="mt-1 flex items-center gap-1 text-xs text-ink-muted">
-                  <Shield class="h-3 w-3" />
-                  {p.permissions_summary.join(' / ')}
-                </p>
-              {/if}
+              <div class="row-body">
+                <div class="row-head">
+                  <span class="row-name">{p.name}</span>
+                  {#if p.enabled}
+                    <Pill accent dot>有効</Pill>
+                  {:else}
+                    <Pill dot>無効</Pill>
+                  {/if}
+                </div>
+                <div class="row-author">
+                  {p.author} · v{p.version} · <span class="mono small">{p.kind}</span>
+                </div>
+                <div class="row-desc">{p.id}</div>
+              </div>
+            </button>
+          {/each}
+        {/if}
+      </div>
+    </div>
+
+    <!-- Detail pane -->
+    <div class="card detail-pane">
+      {#if current}
+        <div class="detail-head">
+          <div class="detail-row">
+            <div class="detail-icon">
+              <Puzzle class="h-6 w-6" aria-hidden="true" />
+            </div>
+            <div style="flex: 1">
+              <div class="detail-name">{current.name}</div>
+              <div class="muted small">{current.author} · v{current.version}</div>
+            </div>
+            <div class="detail-toggle">
+              <span class="muted small">{current.enabled ? '有効' : '無効'}</span>
+              <Toggle
+                checked={current.enabled}
+                onChange={(next) => toggle(current!, next)}
+                aria-label="プラグインを有効化"
+              />
             </div>
           </div>
-          <label class="relative inline-flex cursor-pointer items-center">
-            <input
-              type="checkbox"
-              class="peer sr-only"
-              checked={p.enabled}
-              onchange={(e) => toggle(p, (e.target as HTMLInputElement).checked)}
-            />
-            <div
-              class="h-5 w-9 rounded-full bg-surface-muted transition peer-checked:bg-accent"
-            ></div>
-            <div
-              class="absolute left-0.5 top-0.5 h-4 w-4 rounded-full bg-white shadow transition peer-checked:translate-x-4"
-            ></div>
-          </label>
-        </li>
-      {/each}
-    </ul>
-  {/if}
-</main>
+          <p class="detail-id muted">
+            <span class="mono small">{current.id}</span>
+          </p>
+        </div>
+
+        <div class="scroll detail-body">
+          <div>
+            <div class="kicker">提供する機能</div>
+            {#if current.provides.length === 0}
+              <p class="muted small">特になし</p>
+            {:else}
+              <div class="provides">
+                {#each current.provides as p}
+                  <Pill>{p}</Pill>
+                {/each}
+              </div>
+            {/if}
+          </div>
+
+          <div>
+            <div class="kicker">アクセス権限</div>
+            {#if current.permissions_summary.length === 0}
+              <p class="muted small">権限なし</p>
+            {:else}
+              <div class="perms">
+                {#each current.permissions_summary as p}
+                  <div class="perm-row">
+                    <Shield class="h-3.5 w-3.5 accent-text" aria-hidden="true" />
+                    <span class="mono small">{p}</span>
+                    <span class="muted small">{permLabel[p] ?? p}</span>
+                  </div>
+                {/each}
+              </div>
+            {/if}
+          </div>
+
+          <div>
+            <div class="kicker">パス</div>
+            <code class="path mono small">{current.path}</code>
+          </div>
+        </div>
+
+        <div class="detail-foot">
+          <button class="btn" type="button" onclick={() => refresh()}>
+            <RefreshCw class="h-3.5 w-3.5" aria-hidden="true" /> 再読込
+          </button>
+          <button class="btn" type="button" onclick={() => reveal(current!.id)}>
+            <Folder class="h-3.5 w-3.5" aria-hidden="true" /> フォルダを開く
+          </button>
+          <div style="flex: 1"></div>
+          <button
+            class="btn danger"
+            type="button"
+            onclick={() => (confirmUninstall = true)}
+          >
+            <Trash2 class="h-3.5 w-3.5" aria-hidden="true" /> アンインストール
+          </button>
+        </div>
+      {:else}
+        <div class="detail-empty">
+          <p>プラグインを選択すると詳細が表示されます。</p>
+        </div>
+      {/if}
+    </div>
+  </div>
+</div>
+
+{#if confirmUninstall && current}
+  <div
+    class="modal-backdrop"
+    role="presentation"
+    onclick={() => (confirmUninstall = false)}
+  >
+    <div
+      class="card modal"
+      role="dialog"
+      aria-modal="true"
+      tabindex="-1"
+      onclick={(e) => e.stopPropagation()}
+      onkeydown={(e) => e.stopPropagation()}
+    >
+      <h2>{current.name} をアンインストール</h2>
+      <p class="muted">
+        プラグインのファイル一式が削除されます。設定や履歴データは保持されます。
+      </p>
+      <div class="modal-actions">
+        <button
+          class="btn"
+          type="button"
+          onclick={() => (confirmUninstall = false)}
+          disabled={uninstalling}
+        >
+          キャンセル
+        </button>
+        <button
+          class="btn danger"
+          type="button"
+          onclick={() => uninstall(current!.id)}
+          disabled={uninstalling}
+        >
+          {uninstalling ? '削除中…' : 'アンインストール'}
+        </button>
+      </div>
+    </div>
+  </div>
+{/if}
+
+<style>
+  .plugins {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+  }
+  .plugins-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr);
+    gap: 16px;
+    height: 100%;
+    min-height: 0;
+  }
+
+  .banner {
+    margin: 0 0 12px;
+    padding: 8px 12px;
+    border-radius: var(--r-sm);
+    border: 1px solid var(--line);
+    font-size: 12px;
+    color: var(--ink-1);
+  }
+  .banner.accent {
+    background: var(--accent-soft);
+    color: var(--accent-strong);
+    border-color: transparent;
+  }
+  .banner.error {
+    background: rgba(216, 122, 122, 0.1);
+    color: #d87a7a;
+    border-color: rgba(216, 122, 122, 0.3);
+  }
+  .banner.muted {
+    color: var(--ink-2);
+    background: var(--bg-2);
+  }
+
+  .update-banner {
+    margin-bottom: 16px;
+    background: var(--accent-soft);
+    border-color: transparent;
+  }
+  .update-banner h3 {
+    margin: 0 0 12px;
+    font-size: 13px;
+    color: var(--accent-strong);
+  }
+  .update-banner ul {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .update-banner li {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+  }
+
+  .list-pane {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    min-height: 0;
+    min-width: 0;
+  }
+  .list-search {
+    display: flex;
+    gap: 8px;
+  }
+  .search-wrap {
+    position: relative;
+    flex: 1;
+  }
+  :global(.search-ico) {
+    position: absolute;
+    left: 10px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: var(--ink-3);
+  }
+  .search-input {
+    padding-left: 30px;
+  }
+  .list-scroll {
+    flex: 1;
+    overflow: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .list-row {
+    padding: 12px 14px;
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    cursor: pointer;
+    text-align: left;
+    transition: all var(--dur-fast);
+  }
+  .list-row.active {
+    border-color: var(--accent);
+    background: var(--accent-soft);
+  }
+  .row-icon {
+    width: 36px;
+    height: 36px;
+    border-radius: 9px;
+    background: var(--bg-3);
+    color: var(--ink-1);
+    display: grid;
+    place-items: center;
+    flex: 0 0 36px;
+  }
+  .list-row.active .row-icon {
+    background: var(--accent);
+    color: var(--accent-ink);
+  }
+  .row-body {
+    flex: 1;
+    min-width: 0;
+  }
+  .row-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 2px;
+  }
+  .row-name {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--ink-0);
+  }
+  .row-author {
+    font-size: 11px;
+    color: var(--ink-2);
+    margin-bottom: 3px;
+  }
+  .row-desc {
+    font-size: 11.5px;
+    color: var(--ink-1);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .empty {
+    padding: 24px;
+    border: 1px dashed var(--line);
+    border-radius: var(--r-md);
+    color: var(--ink-2);
+    font-size: 12px;
+    text-align: center;
+    line-height: 1.7;
+  }
+
+  .detail-pane {
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    min-width: 0;
+    overflow: hidden;
+  }
+  .detail-head {
+    padding: 20px;
+    border-bottom: 1px solid var(--line);
+  }
+  .detail-row {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    margin-bottom: 8px;
+  }
+  .detail-icon {
+    width: 56px;
+    height: 56px;
+    border-radius: 14px;
+    background: var(--bg-3);
+    color: var(--accent);
+    display: grid;
+    place-items: center;
+    border: 1px solid var(--line);
+    flex: 0 0 56px;
+  }
+  .detail-name {
+    font-size: 18px;
+    font-weight: 600;
+    margin-bottom: 3px;
+  }
+  .detail-toggle {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .detail-id {
+    margin: 8px 0 0;
+    font-size: 12px;
+  }
+  .detail-body {
+    flex: 1;
+    overflow: auto;
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+  }
+  .kicker {
+    font-size: 10.5px;
+    color: var(--ink-3);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    margin-bottom: 8px;
+    font-weight: 500;
+  }
+  .provides {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .perms {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .perm-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    background: var(--bg-2);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    font-size: 11.5px;
+    color: var(--ink-1);
+  }
+  .perm-row span:last-child {
+    margin-left: auto;
+    color: var(--ink-2);
+  }
+  .accent-text {
+    color: var(--accent);
+  }
+  .path {
+    display: block;
+    padding: 10px 12px;
+    background: var(--bg-2);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    color: var(--ink-1);
+    word-break: break-all;
+  }
+  .small {
+    font-size: 11px;
+  }
+  .detail-foot {
+    padding: 14px;
+    border-top: 1px solid var(--line);
+    display: flex;
+    gap: 8px;
+  }
+  .detail-empty {
+    flex: 1;
+    display: grid;
+    place-items: center;
+    color: var(--ink-2);
+    font-size: 13px;
+  }
+
+  .modal-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 50;
+    display: grid;
+    place-items: center;
+    padding: 24px;
+    background: rgba(0, 0, 0, 0.4);
+  }
+  .modal {
+    width: 100%;
+    max-width: 360px;
+  }
+  .modal h2 {
+    font-size: 14px;
+    font-weight: 600;
+    margin: 0 0 4px;
+  }
+  .modal-actions {
+    margin-top: 16px;
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+  }
+</style>

@@ -22,9 +22,15 @@
     schema: any;
     value: any;
     query?: string;
+    /**
+     * Restrict the rendered tree to a single top-level property key
+     * (e.g. `"appearance"` or `"providers"`). Empty string ("") shows
+     * every section as before.
+     */
+    topic?: string;
     onChange?: () => void;
   }
-  let { schema, value = $bindable(), query = '', onChange }: Props = $props();
+  let { schema, value = $bindable(), query = '', topic = '', onChange }: Props = $props();
 
   const root = $derived(resolveRoot(schema));
 
@@ -73,6 +79,69 @@
     onChange?.();
   }
 
+  /**
+   * Resolve $ref + flatten common schemars wrappers like
+   * `anyOf: [T, {type:"null"}]` (Option<T>) and `oneOf` with a single
+   * non-null variant. Returns `null` for genuinely unknown shapes so
+   * the renderer can fall back to a JSON textarea or warning.
+   */
+  function unwrap(prop: any): any {
+    let p = resolve(prop);
+    if (!p || typeof p !== 'object') return p;
+    // Some schemas use `type: ["integer", "null"]` instead of anyOf.
+    if (Array.isArray(p.type)) {
+      const concrete = p.type.find((t: string) => t !== 'null');
+      if (concrete) {
+        p = { ...p, type: concrete };
+      }
+    }
+    // anyOf / oneOf with a "nullable" partner — pick the non-null branch.
+    const variants: any[] = p.anyOf ?? p.oneOf ?? [];
+    if (variants.length > 0) {
+      const concrete = variants
+        .map((x) => resolve(x))
+        .find((x) => x && x.type !== 'null');
+      if (concrete) {
+        p = { ...concrete, ...stripVariantKeys(p) };
+      }
+    }
+    return p;
+  }
+
+  function stripVariantKeys(o: Record<string, unknown>): Record<string, unknown> {
+    const out: Record<string, unknown> = {};
+    for (const [k, val] of Object.entries(o)) {
+      if (k !== 'anyOf' && k !== 'oneOf') out[k] = val;
+    }
+    return out;
+  }
+
+  /**
+   * `additionalProperties: true` or a missing `properties` block on an
+   * unconstrained `serde_json::Value` lets any JSON through. We render
+   * those as a JSON textarea so the user at least has a way to edit
+   * them, even if the structure isn't known up front.
+   */
+  function isAnyJson(p: any): boolean {
+    if (!p || typeof p !== 'object') return false;
+    if (p.type === undefined && !p.properties && !p.enum && !p.items) {
+      return true;
+    }
+    if (p.additionalProperties === true) return true;
+    return false;
+  }
+
+  function defaultFor(items: any): unknown {
+    if (!items) return '';
+    if (items.default !== undefined) return items.default;
+    if (items.enum) return items.enum[0];
+    if (items.type === 'boolean') return false;
+    if (items.type === 'number' || items.type === 'integer') return 0;
+    if (items.type === 'array') return [];
+    if (items.type === 'object') return {};
+    return '';
+  }
+
   function isMap(prop: any): boolean {
     return (
       prop?.type === 'object' &&
@@ -87,7 +156,7 @@
   {#if root?.properties}
     {#each Object.entries(root.properties) as [key, rawProp] (key)}
       {@const prop = resolve(rawProp)}
-      {#if matchesQuery(key, query)}
+      {#if (topic === '' || key === topic) && matchesQuery(key, query)}
         <details
           class="group rounded-ml border border-border bg-surface-elevated shadow-ml transition-colors open:border-accent/30"
           open
@@ -117,7 +186,7 @@
 </div>
 
 {#snippet node(prop: any, v: any, set: (v: any) => void, path: string, depth: number)}
-  {@const p = resolve(prop)}
+  {@const p = unwrap(prop)}
   {#if !p}
     <code class="text-xs text-ink-faint">{JSON.stringify(v)}</code>
   {:else if isMap(p)}
@@ -144,28 +213,9 @@
       <span class="text-xs text-ink-muted">{v ? '有効' : '無効'}</span>
     </label>
   {:else if p.type === 'number' || p.type === 'integer'}
-    <input
-      type="number"
-      class="w-28 rounded-ml-sm border border-border bg-surface px-2 py-1 text-sm transition-colors focus-visible:border-accent"
-      value={v ?? ''}
-      oninput={(e) => {
-        const raw = (e.target as HTMLInputElement).value;
-        set(raw === '' ? undefined : Number(raw));
-      }}
-    />
-  {:else if p.type === 'array' && p.items?.type === 'string'}
-    <input
-      type="text"
-      class="w-full rounded-ml-sm border border-border bg-surface px-2 py-1 text-sm font-mono transition-colors focus-visible:border-accent"
-      value={Array.isArray(v) ? v.join(', ') : ''}
-      oninput={(e) =>
-        set(
-          (e.target as HTMLInputElement).value
-            .split(',')
-            .map((s) => s.trim())
-            .filter(Boolean)
-        )}
-    />
+    {@render numberControl(p, v, set)}
+  {:else if p.type === 'array'}
+    {@render arrayEditor(p, v, set, path)}
   {:else if p.type === 'string' && p.format === 'hotkey'}
     <HotkeyInput value={v ?? ''} onChange={(next) => set(next)} />
   {:else if p.type === 'string'}
@@ -175,9 +225,156 @@
       value={v ?? ''}
       oninput={(e) => set((e.target as HTMLInputElement).value)}
     />
+  {:else if isAnyJson(p)}
+    {@render jsonEditor(v, set)}
   {:else}
     {@render unsupported(p, v)}
   {/if}
+{/snippet}
+
+{#snippet numberControl(p: any, v: any, set: (next: number | undefined) => void)}
+  {@const min = typeof p.minimum === 'number' ? p.minimum : undefined}
+  {@const max = typeof p.maximum === 'number' ? p.maximum : undefined}
+  {@const step = p.type === 'integer' ? 1 : (max !== undefined && min !== undefined && max - min <= 1 ? 0.01 : 'any')}
+  {#if min !== undefined && max !== undefined && max > min}
+    <div class="flex items-center gap-3">
+      <input
+        type="range"
+        min={min}
+        max={max}
+        step={step}
+        value={v ?? p.default ?? min}
+        class="flex-1"
+        oninput={(e) => set(Number((e.target as HTMLInputElement).value))}
+      />
+      <input
+        type="number"
+        min={min}
+        max={max}
+        step={step}
+        value={v ?? ''}
+        class="w-24 rounded-ml-sm border border-border bg-surface px-2 py-1 text-sm font-mono transition-colors focus-visible:border-accent"
+        oninput={(e) => {
+          const raw = (e.target as HTMLInputElement).value;
+          set(raw === '' ? undefined : Number(raw));
+        }}
+      />
+    </div>
+  {:else}
+    <input
+      type="number"
+      min={min}
+      max={max}
+      step={step}
+      value={v ?? ''}
+      class="w-32 rounded-ml-sm border border-border bg-surface px-2 py-1 text-sm transition-colors focus-visible:border-accent"
+      oninput={(e) => {
+        const raw = (e.target as HTMLInputElement).value;
+        set(raw === '' ? undefined : Number(raw));
+      }}
+    />
+  {/if}
+{/snippet}
+
+{#snippet arrayEditor(p: any, v: any, set: (next: unknown[]) => void, path: string)}
+  {@const items = resolve(p.items) ?? {}}
+  {@const list: unknown[] = Array.isArray(v) ? v : []}
+  {#if items.type === 'string' && !items.enum && !items.format}
+    <input
+      type="text"
+      class="w-full rounded-ml-sm border border-border bg-surface px-2 py-1 text-sm font-mono transition-colors focus-visible:border-accent"
+      value={list.join(', ')}
+      oninput={(e) =>
+        set(
+          (e.target as HTMLInputElement).value
+            .split(',')
+            .map((s) => s.trim())
+            .filter(Boolean)
+        )}
+    />
+  {:else if items.enum}
+    <div class="flex flex-wrap gap-1.5">
+      {#each items.enum as opt (opt)}
+        {@const checked = list.includes(opt)}
+        <label
+          class="inline-flex cursor-pointer items-center gap-1.5 rounded-full border border-border bg-surface px-2.5 py-0.5 text-xs transition-colors hover:border-accent/60"
+          class:bg-accent-soft={checked}
+          class:text-accent={checked}
+          class:border-transparent={checked}
+        >
+          <input
+            type="checkbox"
+            class="sr-only"
+            checked={checked}
+            onchange={(e) => {
+              const want = (e.target as HTMLInputElement).checked;
+              const next = want
+                ? [...list, opt]
+                : list.filter((x) => x !== opt);
+              set(next);
+            }}
+          />
+          {opt}
+        </label>
+      {/each}
+    </div>
+  {:else}
+    <div class="flex flex-col gap-1.5">
+      {#each list as item, i (i)}
+        <div class="flex items-center gap-2">
+          <div class="flex-1">
+            {@render node(
+              items,
+              item,
+              (next: any) => {
+                const copy = list.slice();
+                copy[i] = next;
+                set(copy);
+              },
+              `${path}[${i}]`,
+              99
+            )}
+          </div>
+          <button
+            type="button"
+            class="rounded-ml-sm p-1 text-ink-faint transition-colors hover:bg-red-500/10 hover:text-red-500"
+            aria-label="削除"
+            onclick={() => set(list.filter((_, j) => j !== i))}
+          >
+            <Trash2 class="h-3.5 w-3.5" />
+          </button>
+        </div>
+      {/each}
+      <button
+        type="button"
+        class="inline-flex items-center gap-1 self-start rounded-ml-sm border border-border bg-surface px-2 py-1 text-xs text-ink-muted transition-colors hover:border-accent/60 hover:text-ink"
+        onclick={() => set([...list, defaultFor(items)])}
+      >
+        <Plus class="h-3 w-3" /> 項目を追加
+      </button>
+    </div>
+  {/if}
+{/snippet}
+
+{#snippet jsonEditor(v: any, set: (next: any) => void)}
+  <textarea
+    class="w-full min-h-[80px] rounded-ml-sm border border-border bg-surface px-2 py-1 text-xs font-mono transition-colors focus-visible:border-accent"
+    value={v === undefined ? '' : JSON.stringify(v, null, 2)}
+    oninput={(e) => {
+      const raw = (e.target as HTMLTextAreaElement).value;
+      if (raw.trim() === '') {
+        set(undefined);
+        return;
+      }
+      try {
+        set(JSON.parse(raw));
+      } catch {
+        // Keep typing — invalid JSON is normal mid-edit. The textarea
+        // doesn't get cleared; the user just sees no `change()` until
+        // they finish.
+      }
+    }}
+  ></textarea>
 {/snippet}
 
 {#snippet objectEditor(

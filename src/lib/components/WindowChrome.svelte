@@ -2,17 +2,23 @@
   /**
    * Custom window chrome for Tauri windows with `decorations: false`.
    *
-   * Provides the only way to move/minimize/close the main window. The
-   * top 32px strip is the drag region (data-tauri-drag-region); the
-   * trailing icons are explicit buttons with their own hit targets.
+   * Lays out three regions:
+   *   • left  — three traffic-light buttons (close / minimise / zoom)
+   *   • mid   — brand mark + product name (drag region)
+   *   • right — quick actions (capture / lens / notifications)
+   *
+   * Only the close / minimise / zoom hits actually invoke Tauri APIs;
+   * the right-side icons emit events the page above can listen for so
+   * the chrome stays presentation-only here.
    */
-  import { Minus, X } from 'lucide-svelte';
+  import MoonLensMark from './MoonLensMark.svelte';
+  import { Camera, Focus } from 'lucide-svelte';
   import { getCurrentWindow } from '@tauri-apps/api/window';
+  import { goto } from '$lib/navigation';
+  import { newLensWindow } from '$lib/ipc';
 
   interface Props {
-    /** Optional title text shown at left. Defaults to "MoonLens". */
     title?: string;
-    /** Hide min/close when shown on lens/overlay frames. */
     actionsVisible?: boolean;
   }
 
@@ -20,17 +26,8 @@
 
   const hasTauri = () =>
     typeof window !== 'undefined' &&
-    typeof (window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ !==
-      'undefined';
-
-  async function minimize() {
-    if (!hasTauri()) return;
-    try {
-      await getCurrentWindow().minimize();
-    } catch {
-      /* best-effort: fall through silently when IPC is unavailable */
-    }
-  }
+    typeof (window as unknown as { __TAURI_INTERNALS__?: unknown })
+      .__TAURI_INTERNALS__ !== 'undefined';
 
   async function close() {
     if (!hasTauri()) return;
@@ -40,52 +37,174 @@
       /* best-effort */
     }
   }
+
+  async function minimize() {
+    if (!hasTauri()) return;
+    try {
+      await getCurrentWindow().minimize();
+    } catch {
+      /* best-effort */
+    }
+  }
+
+  async function toggleMaximize() {
+    if (!hasTauri()) return;
+    try {
+      await getCurrentWindow().toggleMaximize();
+    } catch {
+      /* best-effort */
+    }
+  }
+
+  function quickCapture() {
+    goto('/capture/');
+  }
+
+  async function quickLens() {
+    try {
+      await newLensWindow();
+    } catch {
+      /* swallow — surfacing this requires the page-level error toast */
+    }
+  }
 </script>
 
-<div
-  class="window-chrome flex h-8 select-none items-center justify-between gap-3 border-b border-border bg-surface/80 px-3 backdrop-blur"
-  data-tauri-drag-region
->
-  <div
-    class="pointer-events-none flex items-center gap-2 text-[11px] font-medium tracking-wide text-ink-muted"
-    data-tauri-drag-region
-  >
-    <span
-      class="inline-block h-2 w-2 rounded-full bg-accent"
-      aria-hidden="true"
-      data-tauri-drag-region
-    ></span>
+<div class="ml-titlebar" data-tauri-drag-region>
+  <div class="ml-tb-traffic" aria-label="Window controls">
+    <button
+      type="button"
+      class="traffic close"
+      title="閉じる"
+      aria-label="閉じる"
+      onclick={close}
+    ></button>
+    <button
+      type="button"
+      class="traffic min"
+      title="最小化"
+      aria-label="最小化"
+      onclick={minimize}
+    ></button>
+    <button
+      type="button"
+      class="traffic max"
+      title="最大化"
+      aria-label="最大化"
+      onclick={toggleMaximize}
+    ></button>
+  </div>
+
+  <div class="ml-tb-title" data-tauri-drag-region>
+    <MoonLensMark size={13} />
     <span data-tauri-drag-region>{title}</span>
   </div>
 
+  <div class="ml-tb-spacer" data-tauri-drag-region></div>
+
   {#if actionsVisible}
-    <div class="flex items-center gap-1">
+    <div class="ml-tb-actions">
       <button
         type="button"
-        onclick={minimize}
-        aria-label="最小化"
-        title="最小化"
-        class="inline-flex h-6 w-6 items-center justify-center rounded-ml-sm text-ink-faint transition-colors hover:bg-surface-muted hover:text-ink"
+        class="ml-tb-icon"
+        title="クイックキャプチャ"
+        aria-label="クイックキャプチャ"
+        onclick={quickCapture}
       >
-        <Minus class="h-3.5 w-3.5" aria-hidden="true" />
+        <Camera class="h-3.5 w-3.5" aria-hidden="true" />
       </button>
       <button
         type="button"
-        onclick={close}
-        aria-label="閉じる"
-        title="閉じる"
-        class="close-btn inline-flex h-6 w-6 items-center justify-center rounded-ml-sm text-ink-faint transition-colors hover:bg-red-500 hover:text-white"
+        class="ml-tb-icon"
+        title="Lens起動"
+        aria-label="Lens起動"
+        onclick={quickLens}
       >
-        <X class="h-3.5 w-3.5" aria-hidden="true" />
+        <Focus class="h-3.5 w-3.5" aria-hidden="true" />
       </button>
     </div>
   {/if}
 </div>
 
 <style>
-  /* Double-click the drag strip to maximize on Windows feels native;
-     Tauri already handles this via data-tauri-drag-region. */
-  .window-chrome {
+  .ml-titlebar {
+    display: flex;
+    align-items: center;
+    height: 36px;
+    padding: 0 var(--s-3);
+    gap: var(--s-3);
+    background: var(--bg-1);
+    border-bottom: 1px solid var(--line);
+    -webkit-app-region: drag;
+    user-select: none;
+    font-size: 12px;
+    color: var(--ink-2);
+    letter-spacing: 0.02em;
     flex: 0 0 auto;
+  }
+
+  .ml-tb-traffic {
+    display: flex;
+    gap: 6px;
+    -webkit-app-region: no-drag;
+  }
+
+  .traffic {
+    width: 11px;
+    height: 11px;
+    border-radius: 50%;
+    background: var(--bg-3);
+    border: 0;
+    padding: 0;
+    cursor: pointer;
+    transition: background var(--dur-fast);
+  }
+  .traffic:hover {
+    background: var(--ink-3);
+  }
+  .traffic.close:hover {
+    background: #ed6a5e;
+  }
+  .traffic.min:hover {
+    background: #f5bd4f;
+  }
+  .traffic.max:hover {
+    background: #61c454;
+  }
+
+  .ml-tb-title {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-weight: 500;
+    color: var(--ink-1);
+  }
+
+  .ml-tb-spacer {
+    flex: 1;
+  }
+
+  .ml-tb-actions {
+    display: flex;
+    gap: 2px;
+    -webkit-app-region: no-drag;
+  }
+
+  .ml-tb-icon {
+    width: 26px;
+    height: 24px;
+    display: grid;
+    place-items: center;
+    border-radius: 6px;
+    cursor: pointer;
+    color: var(--ink-2);
+    background: transparent;
+    border: 0;
+    transition:
+      background var(--dur-fast),
+      color var(--dur-fast);
+  }
+  .ml-tb-icon:hover {
+    background: var(--bg-3);
+    color: var(--ink-0);
   }
 </style>
