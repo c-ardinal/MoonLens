@@ -54,10 +54,17 @@ notify = { version = "6", default-features = false, features = ["macos_fsevent"]
 
 # http
 reqwest = { version = "0.12", features = ["json", "rustls-tls", "stream"], default-features = false }
+bytes = "1"
 
 # logging
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Cross-platform hardware probe (RAM, CPU cores). Used by the
+# embedded-model onboarding to recommend a tier without making the
+# user guess. `default-features = false` skips the disk / network /
+# user kits we do not need for a one-shot RAM read.
+sysinfo = { version = "0.30", default-features = false }
 
 # image / capture / ocr / qr
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
@@ -65,6 +72,27 @@ xcap = "0.9"
 ocrs = { version = "0.8", optional = true }
 rten = { version = "0.13", optional = true }
 rqrr = "0.7"
+
+# Embedded local LLM inference. Switched 2026-05-09 from mistralrs
+# (Pure Rust) to llama-cpp-2 (FFI to llama.cpp) after the in-app
+# benchmark consistently showed mistralrs CPU paths under 30% of
+# the llama.cpp baseline on user hardware. The trade-off:
+# llama-cpp-2 needs a C++ toolchain at BUILD time (Visual Studio
+# 2022 Build Tools on Windows / Xcode CLI on macOS / gcc-ish on
+# Linux) but the resulting binary is what's distributed to end
+# users — they never need C++ themselves.
+#
+# Both crates kept feature-gated so:
+#   - `cargo check --no-default-features` skips heavy ML deps in CI
+#   - the `MistralRsEngine` impl is preserved for fallback / A/B
+llama-cpp-2 = { version = "0.1", optional = true }
+# `token_to_piece` requires a stateful UTF-8 decoder so multi-byte
+# tokens (CJK punctuation, emoji, …) are not split. The crate is
+# already pulled in transitively via `llama-cpp-2` — declaring it
+# here so we can use it directly in the inference loop without an
+# extra version pin.
+encoding_rs = "0.8"
+mistralrs = { version = "0.8", optional = true, default-features = false }
 
 # audio
 cpal = { version = "0.15", optional = true }
@@ -96,9 +124,24 @@ windows = { version = "0.58", features = [
 ] }
 
 [features]
-default = ["audio", "ocrs-engine"]
+# `embedded-llm` is in the default set as of 2026-05-09. The
+# embedded LLM is the standard built-in translation engine — without
+# it the app advertises a translator that returns
+# "feature disabled at compile time" on every Lens line, which the
+# user reasonably reads as "the app is broken". The feature flag
+# itself is kept so `cargo check --no-default-features` still works
+# in CI smoke builds (the LLM crate has a long compile tail; CI
+# does not need to pay it for type-only checks).
+#
+# Backend split (20.x): `embedded-llm` now means "the llama.cpp
+# backend via llama-cpp-2" — the production runtime. The legacy
+# mistralrs backend is kept behind `embedded-llm-mistralrs` for
+# A/B comparison only; it is NOT in the default set.
+default = ["audio", "ocrs-engine", "embedded-llm"]
 audio = ["dep:cpal"]
 ocrs-engine = ["dep:ocrs", "dep:rten"]
+embedded-llm = ["dep:llama-cpp-2"]
+embedded-llm-mistralrs = ["dep:mistralrs"]
 
 [dev-dependencies]
 tempfile = "3"
@@ -143,4 +186,22 @@ opt-level = 3
 [profile.dev.package.image]
 opt-level = 3
 [profile.dev.package.png]
+opt-level = 3
+# llama.cpp itself is built as Release C++ via the cmake feature,
+# but the Rust wrapper (`llama-cpp-2`) and the FFI bindings
+# (`llama-cpp-sys-2`) sit in front of every per-token call:
+# `LlamaSampler::sample`, `LlamaBatch::add`, `token_to_piece` (with
+# its `encoding_rs::Decoder` state machine), and the `LlamaContext`
+# wrappers all run as Rust. In a debug `cargo run` build those
+# layers add real overhead per token — measurably enough to push
+# 0.5B Q4 from ~50 tok/s to ~10 tok/s, which masks the runtime
+# swap entirely. Keeping them at opt-level 3 in dev mode mirrors
+# the existing rten / ocrs treatment.
+[profile.dev.package.llama-cpp-2]
+opt-level = 3
+[profile.dev.package.llama-cpp-sys-2]
+opt-level = 3
+# encoding_rs's stateful UTF-8 decoder runs once per generated
+# token via `token_to_piece`; same reasoning as above.
+[profile.dev.package.encoding_rs]
 opt-level = 3

@@ -772,6 +772,431 @@ pub async fn install_ocr_models(app: AppHandle) -> Result<String, String> {
     Ok(dir.display().to_string())
 }
 
+/// Status snapshot for the embedded LLM model file. Used by the
+/// settings UI to decide whether to surface the "ダウンロード" CTA
+/// or the "準備済み" badge without round-tripping the path through
+/// the frontend on every render.
+#[derive(serde::Serialize, Clone)]
+pub struct EmbeddedModelStatus {
+    /// Absolute path on disk where MoonLens expects the GGUF model.
+    pub path: String,
+    /// True when the file exists. Does NOT verify the file is a
+    /// valid GGUF — the inference call validates the format on
+    /// load and surfaces a friendlier error if the file is corrupt.
+    pub present: bool,
+    /// Bytes already on disk. Lets the UI render "準備済み 770MB"
+    /// or a partial state if a previous download was interrupted.
+    pub size_bytes: Option<u64>,
+    /// Resolved model identifier (`repo:filename_remote`) so the
+    /// settings UI can show which variant the user has installed.
+    pub model_id: String,
+    /// Human-readable license advert (e.g. "Apache-2.0") + URL.
+    /// Surfaced so corporate deployments can audit the bundle
+    /// without leaving the app.
+    pub license: Option<String>,
+    pub license_url: Option<String>,
+}
+
+#[tauri::command]
+pub async fn embedded_model_status(
+    state: State<'_, AppState>,
+) -> Result<EmbeddedModelStatus, String> {
+    let s = state
+        .models
+        .status()
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(EmbeddedModelStatus {
+        path: s.path.display().to_string(),
+        present: s.present,
+        size_bytes: if s.present { Some(s.size_bytes) } else { None },
+        model_id: s.model_id,
+        license: Some(s.license),
+        license_url: Some(s.license_url),
+    })
+}
+
+/// All shipped model tiers, returned to the settings dropdown so
+/// the user can pick a Compact / Standard / Quality build that
+/// matches their hardware. The list mirrors `model_registry::TIERS`
+/// — the registry is the source of truth.
+#[tauri::command]
+pub async fn list_model_tiers(
+) -> Result<Vec<crate::model_registry::ModelTier>, String> {
+    Ok(crate::model_registry::TIERS.to_vec())
+}
+
+/// Result of [`get_model_tier`] — the tier the user has currently
+/// selected (resolved from the saved repo+filename in user.toml,
+/// falling back to the default if the saved coord predates the
+/// registry). Includes the recommended tier separately so the UI
+/// can surface "現在: Standard / 推奨: Compact" alongside.
+#[derive(serde::Serialize, Clone)]
+pub struct ModelTierStatus {
+    /// Currently-installed tier. `None` when the user has hand-edited
+    /// `user.toml` to point at a coord we do not ship — the UI
+    /// renders that as "カスタム" and lets them pick a registered
+    /// tier or keep the override.
+    pub current: Option<crate::model_registry::ModelTier>,
+    /// Tier the HW detector recommends. Used by the onboarding modal
+    /// and by the picker's "おすすめ" badge.
+    pub recommended: crate::model_registry::ModelTier,
+    /// Class label for the recommendation, exposed so the UI can
+    /// render localized rationale ("RAM 8GB なので Standard 推奨").
+    pub recommended_reason: String,
+    /// Total installed RAM (GB), rounded to one decimal place. Shown
+    /// in the recommendation tooltip so users can sanity-check the
+    /// detector.
+    pub total_ram_gb: f64,
+    /// Logical CPU count.
+    pub cpu_cores: usize,
+    /// True when the user's currently-selected tier requires more
+    /// RAM than the host has. UI renders a prominent "性能不足"
+    /// warning with a one-click switch to the recommended tier
+    /// so the user is steered away from configurations that will
+    /// time out under real translation load.
+    pub current_underpowered: bool,
+}
+
+#[tauri::command]
+pub async fn model_tier_status(state: State<'_, AppState>) -> Result<ModelTierStatus, String> {
+    let snap = state.models.tier_snapshot();
+    Ok(ModelTierStatus {
+        current: snap.current,
+        recommended: snap.recommended,
+        recommended_reason: snap.recommended_reason,
+        total_ram_gb: snap.host.total_ram_gb,
+        cpu_cores: snap.host.cpu_cores,
+        current_underpowered: snap.current_underpowered,
+    })
+}
+
+#[tauri::command]
+pub async fn set_model_tier(
+    state: State<'_, AppState>,
+    tier_id: String,
+) -> Result<(), String> {
+    state
+        .models
+        .set_tier(&tier_id)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// One bench sample, mirrored to JSON for the UI.
+#[derive(serde::Serialize, Clone)]
+pub struct BenchSampleResult {
+    pub index: u32,
+    pub total_ms: u64,
+    pub output_tokens: u32,
+    pub tokens_per_second: f64,
+    pub translated_preview: String,
+}
+
+/// Aggregate of [`bench_embedded_translate`]. The settings UI binds
+/// against this struct directly.
+#[derive(serde::Serialize, Clone)]
+pub struct BenchOutcomeResult {
+    pub tier_display_name: String,
+    pub model_path: String,
+    pub samples: Vec<BenchSampleResult>,
+    pub p50_tokens_per_second: f64,
+    pub p95_tokens_per_second: f64,
+    pub mean_tokens_per_second: f64,
+    pub p50_latency_ms: u64,
+    pub p95_latency_ms: u64,
+    pub host_total_ram_gb: f64,
+    pub host_cpu_cores: usize,
+    pub total_run_ms: u64,
+}
+
+/// Run a representative-translation benchmark against the embedded
+/// LLM. Heavy work (the actual inferences) happens in the
+/// `ModelService::bench_embedded` call which the IPC simply forwards
+/// — keeping the benchmarking harness in services lets unit tests
+/// validate the percentile math without driving a real model.
+///
+/// Live progress is emitted via the `moonlens://embedded-bench-progress`
+/// event channel so the UI can show "サンプル X/N 実行中… YY tokens
+/// (Z 秒経過)" instead of an opaque spinner. Tokens are throttled
+/// to ~4 Hz inside the service.
+#[tauri::command]
+pub async fn bench_embedded_translate(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    samples: Option<u32>,
+) -> Result<BenchOutcomeResult, String> {
+    use crate::services::model_service::BenchProgressEvent;
+    let n = samples.unwrap_or(5);
+
+    let app_for_cb = app.clone();
+    let cb: crate::services::model_service::BenchProgressCallback =
+        std::sync::Arc::new(move |event| {
+            // Translate the typed Rust event into the JSON shape
+            // the frontend listens for. Variant tag is `phase` so
+            // the TS code can `switch` on a string.
+            let payload = match event {
+                BenchProgressEvent::Started {
+                    total_samples,
+                    tier_display_name,
+                } => serde_json::json!({
+                    "phase": "started",
+                    "total_samples": total_samples,
+                    "tier_display_name": tier_display_name,
+                }),
+                BenchProgressEvent::SampleStarted {
+                    index,
+                    total,
+                    fixture_text,
+                } => serde_json::json!({
+                    "phase": "sample_started",
+                    "index": index,
+                    "total": total,
+                    "fixture_text": fixture_text,
+                }),
+                BenchProgressEvent::SampleProgress {
+                    index,
+                    total,
+                    tokens_so_far,
+                    elapsed_ms,
+                } => serde_json::json!({
+                    "phase": "sample_progress",
+                    "index": index,
+                    "total": total,
+                    "tokens_so_far": tokens_so_far,
+                    "elapsed_ms": elapsed_ms,
+                }),
+                BenchProgressEvent::SampleCompleted { sample } => serde_json::json!({
+                    "phase": "sample_completed",
+                    "sample": {
+                        "index": sample.index,
+                        "total_ms": sample.total_ms,
+                        "output_tokens": sample.output_tokens,
+                        "tokens_per_second": sample.tokens_per_second,
+                        "translated_preview": sample.translated_preview,
+                    },
+                }),
+                BenchProgressEvent::Completed { outcome: _ } => serde_json::json!({
+                    "phase": "completed",
+                }),
+            };
+            let _ = app_for_cb.emit("moonlens://embedded-bench-progress", payload);
+        });
+
+    let outcome = state
+        .models
+        .bench_embedded(n, Some(cb))
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(BenchOutcomeResult {
+        tier_display_name: outcome.tier_display_name,
+        model_path: outcome.model_path,
+        samples: outcome
+            .samples
+            .into_iter()
+            .map(|s| BenchSampleResult {
+                index: s.index,
+                total_ms: s.total_ms,
+                output_tokens: s.output_tokens,
+                tokens_per_second: s.tokens_per_second,
+                translated_preview: s.translated_preview,
+            })
+            .collect(),
+        p50_tokens_per_second: outcome.p50_tokens_per_second,
+        p95_tokens_per_second: outcome.p95_tokens_per_second,
+        mean_tokens_per_second: outcome.mean_tokens_per_second,
+        p50_latency_ms: outcome.p50_latency_ms,
+        p95_latency_ms: outcome.p95_latency_ms,
+        host_total_ram_gb: outcome.host_total_ram_gb,
+        host_cpu_cores: outcome.host_cpu_cores,
+        total_run_ms: outcome.total_run_ms,
+    })
+}
+
+/// Result of [`package_embedded_model`] — the path the package
+/// landed at + the manifest the importer will see. Returned to the
+/// frontend so the UI can show "C:\\... に書き出しました (Apache-2.0,
+/// 1.1 GB)" without re-reading the package off disk.
+#[derive(serde::Serialize, Clone)]
+pub struct EmbeddedModelPackageResult {
+    pub path: String,
+    pub model_id: String,
+    pub size_bytes: u64,
+    pub sha256: String,
+    pub license: Option<String>,
+}
+
+/// Wrap the currently-installed embedded model into a single
+/// `.moonlens-model` file the user can drop on a fileserver and
+/// distribute to PCs without internet access. The bundle includes
+/// a manifest with sha256, license, and exporter version so the
+/// importing PC verifies + audits without re-downloading.
+#[tauri::command]
+pub async fn package_embedded_model(
+    state: State<'_, AppState>,
+    target_path: String,
+    note: Option<String>,
+) -> Result<EmbeddedModelPackageResult, String> {
+    let outcome = state
+        .models
+        .package_current(PathBuf::from(target_path), note)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(EmbeddedModelPackageResult {
+        path: outcome.path.display().to_string(),
+        model_id: outcome.manifest.model_id,
+        size_bytes: outcome.manifest.size_bytes,
+        sha256: outcome.manifest.sha256,
+        license: outcome.manifest.license,
+    })
+}
+
+/// Open a "save as" dialog and package the embedded model into the
+/// chosen path. Mirrors the `pick_and_install_plugin` pattern: the
+/// frontend calls one command, the Rust side handles the dialog so
+/// we do not have to add `@tauri-apps/plugin-dialog` to the JS deps.
+#[tauri::command]
+pub async fn pick_and_package_embedded_model(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    note: Option<String>,
+) -> Result<Option<EmbeddedModelPackageResult>, String> {
+    use crate::embedded_model_package::PACKAGE_EXTENSION;
+    use tauri_plugin_dialog::DialogExt;
+
+    let dialog = app.dialog().clone();
+    let chosen = tokio::task::spawn_blocking(move || {
+        dialog
+            .file()
+            .add_filter("MoonLens Model Package", &[PACKAGE_EXTENSION, "zip"])
+            .set_file_name("moonlens-embedded-model.moonlens-model")
+            .blocking_save_file()
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+    let Some(path) = chosen else { return Ok(None) };
+    let target = path.into_path().map_err(|e| e.to_string())?;
+    let result =
+        package_embedded_model(state, target.to_string_lossy().to_string(), note).await?;
+    Ok(Some(result))
+}
+
+/// Open an "open file" dialog and import the chosen package.
+/// Returns the on-disk path of the imported GGUF, or `None` if the
+/// user cancels. Mirrors the `pick_and_install_plugin` flow.
+#[tauri::command]
+pub async fn pick_and_apply_embedded_model_package(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<Option<String>, String> {
+    use crate::embedded_model_package::PACKAGE_EXTENSION;
+    use tauri_plugin_dialog::DialogExt;
+
+    let dialog = app.dialog().clone();
+    let chosen = tokio::task::spawn_blocking(move || {
+        dialog
+            .file()
+            .add_filter("MoonLens Model Package", &[PACKAGE_EXTENSION, "zip"])
+            .blocking_pick_file()
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+    let Some(path) = chosen else { return Ok(None) };
+    let pkg = path.into_path().map_err(|e| e.to_string())?;
+    let imported =
+        apply_embedded_model_package(state, pkg.to_string_lossy().to_string()).await?;
+    Ok(Some(imported))
+}
+
+/// Manifest preview for the import confirmation dialog. The UI calls
+/// this BEFORE [`apply_embedded_model_package`] so the user sees
+/// model id + license + size before the GGUF lands on disk.
+#[tauri::command]
+pub async fn inspect_embedded_model_package(
+    package_path: String,
+) -> Result<serde_json::Value, String> {
+    use crate::embedded_model_package::inspect_package;
+    let path = PathBuf::from(package_path);
+    let manifest = tokio::task::spawn_blocking(move || inspect_package(&path))
+        .await
+        .map_err(|e| format!("inspect task panicked: {e}"))?
+        .map_err(|e| e.to_string())?;
+    serde_json::to_value(manifest).map_err(|e| e.to_string())
+}
+
+/// Apply a `.moonlens-model` package. Verifies the GGUF sha256
+/// against the manifest before atomically swapping it into the
+/// models directory; on mismatch the existing model is preserved.
+/// Returns the final path of the imported GGUF.
+#[tauri::command]
+pub async fn apply_embedded_model_package(
+    state: State<'_, AppState>,
+    package_path: String,
+) -> Result<String, String> {
+    let outcome = state
+        .models
+        .import_package(PathBuf::from(package_path))
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(outcome.path.display().to_string())
+}
+
+/// Download the embedded LLM GGUF model. Streams `moonlens://embedded-model-progress`
+/// events tagged with the same `ModelProgress` shape used by the OCR
+/// flow so the frontend can reuse its progress component.
+///
+/// Idempotent: when the file is already present and `force=false`,
+/// the underlying `ModelService` short-circuits without touching the
+/// network. On `force=true` the file is re-downloaded.
+#[tauri::command]
+pub async fn download_embedded_model(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    force: bool,
+) -> Result<String, String> {
+    let resolved = state.models.resolved();
+    let display_filename = resolved.filename_remote.clone();
+
+    // Wire the progress callback to the existing Tauri event channel
+    // so the frontend's progress bar continues to work unchanged.
+    // Throttling moved into the service's HTTP impl (~10 Hz emit cadence).
+    let app_for_cb = app.clone();
+    let cb: crate::services::ProgressCallback = std::sync::Arc::new(move |p| {
+        let fraction = p.total.and_then(|t| {
+            if t == 0 {
+                None
+            } else {
+                Some((p.downloaded as f32 / t as f32).clamp(0.0, 1.0))
+            }
+        });
+        let payload = ModelProgress {
+            filename: display_filename.clone(),
+            downloaded: p.downloaded,
+            total: p.total,
+            fraction,
+        };
+        let _ = app_for_cb.emit("moonlens://embedded-model-progress", payload);
+    });
+
+    let outcome = state
+        .models
+        .download_current(force, Some(cb))
+        .await
+        .map_err(|e| e.to_string())?;
+
+    // Final 100% event so the UI can flip to "準備完了" cleanly even
+    // when no chunks fired (e.g. the file was already present).
+    let payload = ModelProgress {
+        filename: resolved.filename_remote.clone(),
+        downloaded: outcome.size_bytes,
+        total: Some(outcome.size_bytes),
+        fraction: Some(1.0),
+    };
+    let _ = app.emit("moonlens://embedded-model-progress", payload);
+
+    Ok(outcome.path.display().to_string())
+}
+
 /// Pick a `.moonlens-plugin` archive (or a plugin directory) with the
 /// platform's native file picker and install it. Returns the new plugin
 /// root on success; returns Ok(None) when the user cancels the dialog.
@@ -988,10 +1413,28 @@ pub struct OnboardingStatus {
     /// Live per-permission snapshot. The modal renders each status as
     /// a badge next to its System Settings link.
     pub macos_permissions: crate::macos_permissions::PermissionReport,
+    /// True when the user has not yet been shown the embedded model
+    /// setup prompt AND the GGUF file does not exist on disk. The
+    /// frontend's first-run modal uses this to decide whether to
+    /// pop "ローカル LLM をダウンロードして開始する" before the
+    /// user reaches any translation feature.
+    pub needs_embedded_model_setup: bool,
+    /// Resolved on-disk path of the embedded model. Surfaced so the
+    /// onboarding modal can show the user where the download will
+    /// land before they accept.
+    pub embedded_model_path: String,
+    /// True when the embedded provider is in the user's translate
+    /// chain — without this, prompting for the download would be
+    /// pointless because the chain ignores it. Power users who
+    /// removed `embedded.llm` from their chain (e.g. went pure
+    /// cloud) skip the modal entirely.
+    pub embedded_in_translate_chain: bool,
 }
 
 #[tauri::command]
 pub async fn get_onboarding_status(state: State<'_, AppState>) -> Result<OnboardingStatus, String> {
+    use crate::providers::translate_embedded_llm::default_model_path;
+
     let snapshot = state.settings.snapshot();
     let platform = std::env::consts::OS;
     let perms = crate::macos_permissions::snapshot();
@@ -1007,11 +1450,55 @@ pub async fn get_onboarding_status(state: State<'_, AppState>) -> Result<Onboard
             perms.accessibility,
             crate::macos_permissions::PermissionStatus::Denied
         ));
+
+    let embedded_path = snapshot
+        .providers
+        .configs
+        .get("embedded.llm")
+        .and_then(|cfg| cfg.get("model_path"))
+        .and_then(|v| v.as_str())
+        .map(PathBuf::from)
+        .or_else(|| {
+            state
+                .pipeline
+                .app_data_dir()
+                .as_ref()
+                .map(|p| default_model_path(p))
+        })
+        .unwrap_or_default();
+    let embedded_model_present = embedded_path.is_file();
+    let embedded_in_translate_chain = snapshot
+        .providers
+        .translate
+        .chain
+        .iter()
+        .any(|id| id == "embedded.llm" || id.starts_with("embedded."));
+    let needs_embedded_model_setup = !snapshot.onboarding.embedded_model_setup_seen
+        && !embedded_model_present
+        && embedded_in_translate_chain;
+
     Ok(OnboardingStatus {
         platform: platform_label(platform),
         needs_macos_permissions_review,
         macos_permissions: perms,
+        needs_embedded_model_setup,
+        embedded_model_path: embedded_path.display().to_string(),
+        embedded_in_translate_chain,
     })
+}
+
+/// Mark the embedded-model first-run prompt as seen. Called from the
+/// onboarding modal whether the user clicks "ダウンロード" (after
+/// success) or "後で". The modal does NOT reappear afterwards; users
+/// who change their mind work through the normal Settings → Providers
+/// card.
+#[tauri::command]
+pub async fn mark_embedded_model_setup_seen(
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let mut s = (*state.settings.snapshot()).clone();
+    s.onboarding.embedded_model_setup_seen = true;
+    state.settings.save(s).map_err(|e| e.to_string())
 }
 
 /// Re-query the live permission snapshot. The onboarding UI calls this

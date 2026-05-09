@@ -12,19 +12,29 @@ const DEFAULT_TOML: &str = include_str!("default.toml");
 fn bundled_default_toml_parses() {
     let s: Settings = toml::from_str(DEFAULT_TOML).expect("default.toml parses");
     assert_eq!(s.subtitle.target_language, "ja");
-    // Translate / ASR chains are intentionally EMPTY in the shipped
-    // defaults: the product is local-first and asks the user to opt
-    // into Ollama or cloud APIs explicitly via Settings → Providers.
-    assert!(s.providers.translate.chain.is_empty());
+    // Local-first contract: the translate chain ships with the
+    // in-process embedded LLM runtime. That keeps the install
+    // truly self-contained — no Ollama daemon, no cloud API key —
+    // while the provider's "model not downloaded" gate falls
+    // through cleanly until the first-run download completes.
+    // The ASR chain remains empty because audio capture is opt-in
+    // (whisper.cpp is a separate sidecar the user explicitly runs).
+    assert_eq!(
+        s.providers.translate.chain,
+        vec!["embedded.llm".to_string()],
+        "translate chain must default to the embedded LLM provider"
+    );
     assert!(s.providers.asr.chain.is_empty());
 }
 
 #[test]
 fn default_chains_do_not_require_external_servers() {
-    // Local-first contract: built-in OCR / QR / intent classifier
-    // chains stay populated because they have embedded providers
-    // (windows, ocrs, rqrr, builtin.heuristic). The translation and
-    // audio chains intentionally start empty.
+    // Local-first contract: every default chain provider runs
+    // in-process. Translate uses `embedded.llm`, OCR / QR /
+    // intent classifier use built-in engines (`windows`, `ocrs`,
+    // `rqrr`, `builtin.heuristic`). The ASR chain is empty
+    // because that pipeline still requires the user to point at
+    // an external whisper.cpp HTTP server.
     let s: Settings = toml::from_str(DEFAULT_TOML).expect("default.toml parses");
     assert!(!s.providers.ocr.chain.is_empty(), "OCR has built-in providers");
     assert!(
@@ -35,8 +45,40 @@ fn default_chains_do_not_require_external_servers() {
         !s.providers.intent_classifier.chain.is_empty(),
         "Intent classifier has builtin.heuristic"
     );
-    assert!(s.providers.translate.chain.is_empty());
+    // The translate chain MUST not contain ids that map to external
+    // daemons (`ollama.*`) or cloud APIs (`deepl`, `gemini`). If a
+    // future tuning pass tries to put `ollama.gemma4` back as a
+    // default, this assertion catches the regression — the whole
+    // point of `embedded.llm` is to be standalone.
+    let bans = ["ollama.gemma4", "deepl", "gemini"];
+    for id in &s.providers.translate.chain {
+        assert!(
+            !bans.iter().any(|b| b == id),
+            "translate chain must stay local-first; offending id: {id}"
+        );
+    }
+    assert!(
+        s.providers
+            .translate
+            .chain
+            .iter()
+            .any(|id| id.starts_with("embedded.")),
+        "translate chain must include an embedded local provider"
+    );
     assert!(s.providers.asr.chain.is_empty());
+}
+
+#[test]
+fn embedded_model_setup_seen_starts_false_by_default() {
+    // First-run flag MUST default to false so the onboarding modal
+    // pops on a fresh install. Existing user.toml files that omit
+    // the field should also default to false (the schema's
+    // OnboardingState derives Default).
+    let s: Settings = toml::from_str(DEFAULT_TOML).expect("default.toml parses");
+    assert!(
+        !s.onboarding.embedded_model_setup_seen,
+        "fresh install must show the embedded-model onboarding prompt"
+    );
 }
 
 #[test]

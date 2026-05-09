@@ -103,6 +103,254 @@ export const uninstallPlugin = (id: string) =>
 export const revealPluginFolder = (id: string) =>
   safeInvoke<void>('reveal_plugin_folder', { id });
 export const installOcrModels = () => safeInvoke<string>('install_ocr_models');
+
+/** Status of the embedded LLM model on disk. Used by the settings
+ * UI to decide whether to render the "ダウンロード" CTA or a
+ * "準備済み" badge, and to surface the license advert so corporate
+ * deployments can audit the bundle before approving. */
+export interface EmbeddedModelStatus {
+  path: string;
+  present: boolean;
+  size_bytes: number | null;
+  /** Resolved `repo:filename` of the currently-installed model. */
+  model_id: string;
+  /** SPDX-style license advert (e.g. "Apache-2.0"). */
+  license: string | null;
+  /** Canonical license URL for click-through audit. */
+  license_url: string | null;
+}
+
+export const embeddedModelStatus = () =>
+  safeInvoke<EmbeddedModelStatus>('embedded_model_status', undefined, {
+    path: '',
+    present: false,
+    size_bytes: null,
+    model_id: '',
+    license: null,
+    license_url: null,
+  });
+
+/** Result of a successful `package_embedded_model` call. The UI
+ * displays the path back to the user so they can copy it to a
+ * fileserver. */
+export interface EmbeddedModelPackageResult {
+  path: string;
+  model_id: string;
+  size_bytes: number;
+  sha256: string;
+  license: string | null;
+}
+
+export const packageEmbeddedModel = (
+  targetPath: string,
+  note?: string,
+): Promise<EmbeddedModelPackageResult> =>
+  safeInvoke<EmbeddedModelPackageResult>(
+    'package_embedded_model',
+    { targetPath, note: note ?? null },
+    {
+      path: '',
+      model_id: '',
+      size_bytes: 0,
+      sha256: '',
+      license: null,
+    },
+  );
+
+/** Manifest metadata returned by `inspect_embedded_model_package`.
+ * Mirrors the Rust `PackageManifest` struct. */
+export interface EmbeddedModelPackageManifest {
+  kind: string;
+  format_version: number;
+  model_id: string;
+  model_filename: string;
+  source_repo: string;
+  source_filename: string;
+  sha256: string;
+  size_bytes: number;
+  license: string | null;
+  license_url: string | null;
+  exporter_version: string;
+  exported_at: string;
+  note: string | null;
+}
+
+export const inspectEmbeddedModelPackage = (packagePath: string) =>
+  safeInvoke<EmbeddedModelPackageManifest | null>(
+    'inspect_embedded_model_package',
+    { packagePath },
+    null,
+  );
+
+/** Apply a package — verifies sha256 and atomically swaps in the
+ * GGUF on success. Returns the on-disk path of the imported model. */
+export const applyEmbeddedModelPackage = (packagePath: string) =>
+  safeInvoke<string>('apply_embedded_model_package', { packagePath });
+
+/** Open a "save as" dialog and package the current model. Returns
+ * `null` when the user cancels the dialog. */
+export const pickAndPackageEmbeddedModel = (note?: string) =>
+  safeInvoke<EmbeddedModelPackageResult | null>(
+    'pick_and_package_embedded_model',
+    { note: note ?? null },
+    null,
+  );
+
+/** Open an "open file" dialog and apply the chosen package.
+ * Returns the on-disk path of the imported GGUF, or `null` when
+ * the user cancels. */
+export const pickAndApplyEmbeddedModelPackage = () =>
+  safeInvoke<string | null>('pick_and_apply_embedded_model_package', undefined, null);
+
+/** A single embedded-model tier the picker can show. Mirrors the
+ * Rust `ModelTier` struct in `model_registry.rs`. */
+export interface ModelTier {
+  id: string;
+  display_name: string;
+  description: string;
+  repo: string;
+  filename: string;
+  size_mb: number;
+  min_ram_gb: number;
+  license: string;
+  license_url: string;
+  class: 'compact' | 'standard' | 'quality';
+}
+
+/** Snapshot of (current tier, recommended tier, host capabilities)
+ * used by the settings dropdown and the onboarding modal to render
+ * the "現在 / 推奨 / RAM" trio in one round-trip. */
+export interface ModelTierStatus {
+  current: ModelTier | null;
+  recommended: ModelTier;
+  recommended_reason: string;
+  total_ram_gb: number;
+  cpu_cores: number;
+  /** True when the currently-selected tier requires more RAM than
+   * the host has. The settings UI renders a prominent warning + a
+   * one-click "推奨ティアへ切替" action when this fires. */
+  current_underpowered: boolean;
+}
+
+export const listModelTiers = () =>
+  safeInvoke<ModelTier[]>('list_model_tiers', undefined, []);
+
+export const modelTierStatus = () =>
+  safeInvoke<ModelTierStatus | null>('model_tier_status', undefined, null);
+
+/** Switch the embedded provider to a different tier. Saves the
+ * `repo`/`filename_remote` overrides into user.toml and rebuilds
+ * the provider map; does NOT trigger a download — the caller drives
+ * that via `downloadEmbeddedModel`. */
+export const setModelTier = (tierId: string) =>
+  safeInvoke<void>('set_model_tier', { tierId });
+
+/** Per-sample result from the embedded-LLM benchmark. */
+export interface BenchSample {
+  index: number;
+  total_ms: number;
+  output_tokens: number;
+  tokens_per_second: number;
+  translated_preview: string;
+}
+
+/** Aggregate result returned by the bench IPC. */
+export interface BenchOutcome {
+  tier_display_name: string;
+  model_path: string;
+  samples: BenchSample[];
+  p50_tokens_per_second: number;
+  p95_tokens_per_second: number;
+  mean_tokens_per_second: number;
+  p50_latency_ms: number;
+  p95_latency_ms: number;
+  host_total_ram_gb: number;
+  host_cpu_cores: number;
+  total_run_ms: number;
+}
+
+/** Run an embedded-LLM benchmark using fixed JA/EN translation
+ * fixtures. Returns per-sample latency + aggregate p50/p95 so the
+ * settings UI can show the user honest perf numbers from their
+ * own machine. */
+export const benchEmbeddedTranslate = (samples?: number) =>
+  safeInvoke<BenchOutcome | null>(
+    'bench_embedded_translate',
+    samples != null ? { samples } : undefined,
+    null,
+  );
+
+/** Live progress event fired during `bench_embedded_translate`. The
+ * settings UI subscribes via `onBenchProgress` so the user sees
+ * "サンプル X/N 実行中… YY tokens" instead of a silent spinner. */
+export type BenchProgressEvent =
+  | {
+      phase: 'started';
+      total_samples: number;
+      tier_display_name: string;
+    }
+  | {
+      phase: 'sample_started';
+      index: number;
+      total: number;
+      fixture_text: string;
+    }
+  | {
+      phase: 'sample_progress';
+      index: number;
+      total: number;
+      tokens_so_far: number;
+      elapsed_ms: number;
+    }
+  | {
+      phase: 'sample_completed';
+      sample: BenchSample;
+    }
+  | { phase: 'completed' };
+
+export const onBenchProgress = (
+  handler: (e: BenchProgressEvent) => void,
+): Promise<UnlistenFn> =>
+  listen<BenchProgressEvent>('moonlens://embedded-bench-progress', (e) =>
+    handler(e.payload),
+  );
+
+/** Trigger the embedded LLM download. Idempotent: returns immediately
+ * with the resolved path when the file already exists, unless
+ * `force=true` is supplied. Progress events arrive via
+ * `onEmbeddedModelProgress`. */
+export const downloadEmbeddedModel = (force = false) =>
+  safeInvoke<string>('download_embedded_model', { force });
+
+export const onEmbeddedModelProgress = (
+  handler: (p: ModelProgress) => void,
+): Promise<UnlistenFn> =>
+  listen<ModelProgress>('moonlens://embedded-model-progress', (e) => handler(e.payload));
+
+/** Lifecycle event emitted around `mistralrs::Model::build`. The
+ * layout shell uses these to render a "ローカル LLM をロード中…"
+ * badge during the multi-second cold-start so the user is not
+ * staring at a silent translation request. */
+export type EmbeddedModelLoadingEvent =
+  | {
+      phase: 'started';
+      provider_id: string;
+      model_path: string;
+    }
+  | {
+      phase: 'finished';
+      provider_id: string;
+      model_path: string;
+      success: boolean;
+      error: string | null;
+    };
+
+export const onEmbeddedModelLoading = (
+  handler: (e: EmbeddedModelLoadingEvent) => void,
+): Promise<UnlistenFn> =>
+  listen<EmbeddedModelLoadingEvent>('moonlens://embedded-model-loading', (e) =>
+    handler(e.payload),
+  );
 export const showMain = () => safeInvoke<void>('show_main');
 export const restartApp = () => safeInvoke<void>('restart_app');
 export const hideOverlay = () => safeInvoke<void>('hide_overlay');
@@ -240,17 +488,36 @@ export interface OnboardingStatus {
   platform: 'macos' | 'windows' | 'linux' | 'other';
   needs_macos_permissions_review: boolean;
   macos_permissions: PermissionReport;
+  /** Whether the first-run embedded LLM setup modal should appear.
+   * True means: chain references `embedded.llm`, the GGUF is not
+   * on disk yet, and the user has not dismissed the prompt. */
+  needs_embedded_model_setup: boolean;
+  /** Resolved on-disk path the GGUF will land at — shown in the
+   * modal so the user knows what's about to happen. */
+  embedded_model_path: string;
+  /** Whether the user's translate chain references any
+   * `embedded.*` provider. False means we should NOT bother the
+   * user about downloading a model they will not use. */
+  embedded_in_translate_chain: boolean;
 }
 
 export const getOnboardingStatus = () =>
   safeInvoke<OnboardingStatus>('get_onboarding_status', undefined, {
     platform: 'other',
     needs_macos_permissions_review: false,
-    macos_permissions: defaultPermissions
+    macos_permissions: defaultPermissions,
+    needs_embedded_model_setup: false,
+    embedded_model_path: '',
+    embedded_in_translate_chain: false,
   });
 
 export const markMacosPermissionsReviewed = () =>
   safeInvoke<void>('mark_macos_permissions_reviewed');
+
+/** Mark the embedded-model first-run modal as seen. Called whether
+ * the user accepts the download or dismisses with "後で". */
+export const markEmbeddedModelSetupSeen = () =>
+  safeInvoke<void>('mark_embedded_model_setup_seen');
 
 export const openMacosPrivacyPane = (
   pane: 'screen_capture' | 'accessibility' | 'microphone' | 'input_monitoring'

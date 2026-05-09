@@ -90,17 +90,30 @@ lens_auto_poll_ms = 1500
 # ---------------------------------------------------------------------------
 
 [providers.translate]
-# Empty by default — translation requires the user to choose either an
-# embedded provider (loaded as a plugin) or to opt into Ollama / cloud
-# APIs from Settings → Providers. Earlier builds shipped an `ollama.gemma4`
-# default, but that turned a fresh install into "translation silently
-# fails until you also run Ollama", which violates the local-first
-# product spec. The settings UI surfaces an explicit "プロバイダ未設定"
-# state when the chain is empty so the user is guided to configure one.
-chain = []
+# Local-first chain. The default ships with the in-process embedded
+# LLM runtime (`embedded.llm`) so a fresh install translates out
+# of the box without requiring the user to install Ollama, run a
+# separate daemon, or sign up for a cloud API. The first launch
+# downloads the GGUF model into `<app-data>/moonlens/models/` and
+# the provider transparently picks it up; until the download
+# completes, `embedded.llm` returns a "model not downloaded"
+# error and the chain falls through to whatever else the user
+# configured (or surfaces the missing-model CTA in the settings
+# UI). `ollama.gemma4` is kept as an opt-in fallback for users
+# who already run an Ollama daemon and prefer that path; cloud
+# providers are still gated behind `allow_cloud` / `allow_network`.
+chain = ["embedded.llm"]
 parallel_race = false
 fallback_on = ["timeout", "error", "offline"]
-timeout_ms = 3000
+# 16.x bumped from 30s to 180s. Embedded LLM inference on weak
+# hardware (4-8 GB RAM, no GPU) easily takes 30-90s per Lens line
+# at the Quality (7B) tier; with mistralrs serialising requests
+# on a single model instance, queue-waiting requests would hit
+# the old 30s deadline before they ever started compute. 180s
+# covers the practical worst case (7B on a 4-core CPU, single
+# paragraph block) so legitimately-slow translations succeed
+# instead of all-or-nothing failing.
+timeout_ms = 180000
 allow_cloud = false
 allow_network = false
 max_cost_per_request = 0.0
@@ -202,6 +215,42 @@ sticky_session_ms = 0
 # Per-provider configuration. Unknown keys are preserved verbatim so plugins
 # can declare their own settings without the core knowing the shape.
 # ---------------------------------------------------------------------------
+
+# Embedded local LLM. `model_path` is omitted by default so the
+# provider falls back to `<app-data>/moonlens/models/<file>.gguf`
+# (resolved at runtime by `Pipeline::set_app_data_dir`). Power
+# users can pin a specific GGUF by setting `model_path` to an
+# absolute path. `repo`/`filename_remote` describe the HuggingFace
+# coordinates the download IPC pulls from.
+#
+# 2026-05-09 default switched Gemma 3 1B → Qwen 2.5 1.5B-Instruct.
+# Driver: Apache 2.0 license vs. Gemma's bespoke "Gemma Terms of
+# Use" — Apache 2.0 removes the redistribution paperwork (must
+# include the LICENSE file, no Prohibited Use Policy obligations),
+# which matters for offline corporate deployments where the
+# package travels via fileserver and IT has to greenlight every
+# bundled license. Architecture stays decoder-only so the runtime
+# (`mistral.rs::GgufModelBuilder`) is unchanged.
+[providers.configs."embedded.llm"]
+repo = "Qwen/Qwen2.5-1.5B-Instruct-GGUF"
+filename_remote = "qwen2.5-1.5b-instruct-q4_k_m.gguf"
+license = "Apache-2.0"
+license_url = "https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/blob/main/LICENSE"
+# Streaming on by default. The runtime emits per-token deltas via
+# `Provider::run_streaming`, which the Lens line sinks consume to
+# render translation tokens live. Set false to receive the result
+# as a single chunk (useful for evaluator runs where partial state
+# is undesirable).
+stream = true
+# Sampling: Qwen 2.5 instruction-tuned defaults. Pinned here so the
+# Lens streaming path does not silently regress when the upstream
+# `mistralrs` defaults shift between versions. `temperature = 0.0`
+# (greedy) makes per-line translations deterministic and ~10-20%
+# faster on weak hardware where sampling overhead matters.
+temperature = 0.0
+top_p = 0.95
+num_ctx = 4096
+num_predict = 2048
 
 [providers.configs."ollama.gemma4"]
 endpoint = "http://127.0.0.1:11434"

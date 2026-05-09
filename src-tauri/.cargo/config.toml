@@ -1,0 +1,25 @@
+# Project-local cargo config. Picked up automatically when cargo
+# runs from inside src-tauri/ (Tauri's `tauri:dev` / `tauri:build`
+# scripts cd into this directory before invoking cargo).
+#
+# Why this file exists:
+# The `embedded-llm` feature (= default since Phase 20, 2026-05-09)
+# pulls in `llama-cpp-2`, which compiles llama.cpp from source via
+# bindgen + cmake. bindgen needs `LIBCLANG_PATH` to point at a
+# directory containing libclang.dll/libclang.so. Without it the
+# `llama-cpp-sys-2` build script fails with "libclang not found".
+#
+# CMake is expected to be on the system PATH (install via
+# `winget install Kitware.CMake` on Windows, `apt install cmake`
+# on Linux, `brew install cmake` on macOS). We do NOT inject CMake
+# via this file because cargo's [env] cannot append to PATH — it
+# only replaces, which would break every other tool the build
+# script needs.
+
+[env]
+# Default LLVM install location on Windows (winget install LLVM.LLVM).
+# Override on a per-developer basis by exporting LIBCLANG_PATH in
+# your shell profile before running `npm run tauri:dev`. The
+# `force = false` (default) means an existing env var wins, which
+# is the behavior we want for CI / non-Windows / custom installs.
+LIBCLANG_PATH = "C:\\Program Files\\LLVM\\bin"

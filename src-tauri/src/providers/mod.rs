@@ -12,10 +12,16 @@ pub mod ocr_windows;
 pub mod qr_rqrr;
 pub mod search_serpapi;
 pub mod translate_deepl;
+pub mod translate_embedded_llm;
 pub mod translate_gemini;
 pub mod translate_ollama;
 
 use std::sync::Arc;
+
+/// Streaming token sink invoked once per delta. `done=true` marks the
+/// final chunk; aggregated text is still returned from `run_streaming`
+/// so non-streaming call sites continue to work unchanged.
+pub type StreamingChunkSink = Arc<dyn Fn(String, bool) + Send + Sync>;
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -138,6 +144,25 @@ pub trait Provider: Send + Sync {
     /// indicator and `allow_cloud`/`allow_network` gates.
     fn is_local(&self) -> bool;
     async fn run(&self, input: TaskInput) -> Result<TaskOutput, ProviderError>;
+
+    /// Streaming variant. Default: invoke `run` and forward the final
+    /// `Text` output as a single `done=true` chunk. Providers that
+    /// natively stream (Ollama, the embedded LLM runtime) override
+    /// this to emit per-token deltas as they arrive. The `sink` is
+    /// owned by the caller — providers MUST NOT cache it across calls
+    /// because Lens routes a per-line sink (with the line index baked
+    /// in) per translation.
+    async fn run_streaming(
+        &self,
+        input: TaskInput,
+        sink: StreamingChunkSink,
+    ) -> Result<TaskOutput, ProviderError> {
+        let out = self.run(input).await?;
+        if let TaskOutput::Text(text) = &out {
+            sink(text.clone(), true);
+        }
+        Ok(out)
+    }
 
     /// Optional warm-up hook. Providers that need heavy first-call
     /// initialisation (OCR model load, LLM context allocation) should

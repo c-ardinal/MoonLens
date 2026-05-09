@@ -136,7 +136,15 @@
 
 <div class="ml-content scroll-y lens">
   {#if error}
-    <p class="error" role="alert">エラー: {error}</p>
+    <div class="error-banner" role="alert">
+      <span>エラー: {error}</span>
+      <button
+        type="button"
+        class="error-dismiss"
+        onclick={() => (error = null)}
+        aria-label="エラーを閉じる"
+      >✕</button>
+    </div>
   {/if}
 
   <section class="active-section fadein">
@@ -151,7 +159,7 @@
       <div class="empty card-soft">
         <Focus class="h-8 w-8 muted" aria-hidden="true" />
         <p>表示中のLensウィンドウはありません。</p>
-        <p class="muted small">
+        <p class="muted">
           「新規Lens」ボタンか <Kbd label="⌘L" /> で起動できます。
         </p>
       </div>
@@ -268,6 +276,9 @@
     display: flex;
     flex-direction: column;
     gap: 24px;
+    /* Prevent any child section from exceeding the scroll container width */
+    min-width: 0;
+    width: 100%;
   }
 
   .section-head {
@@ -306,14 +317,26 @@
 
   .lens-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    /* min(280px, 100%) prevents the minmax floor from exceeding the
+       available track width on very narrow containers, which would
+       force the grid wider than its parent and cause horizontal overflow. */
+    grid-template-columns: repeat(auto-fill, minmax(min(280px, 100%), 1fr));
     gap: 12px;
+    /* Explicitly bound to the flow width so columns never stretch the
+       scroll container beyond the viewport. */
+    width: 100%;
+    min-width: 0;
   }
   .lens-card {
     padding: 16px;
     display: flex;
     flex-direction: column;
     gap: 12px;
+    /* Prevent the card from exceeding its grid cell — mono meta values
+       (inset coordinates, refresh intervals) can otherwise force the
+       card wider than the minmax(280px, 1fr) column. */
+    min-width: 0;
+    overflow: hidden;
   }
   .lens-card-head {
     display: flex;
@@ -356,6 +379,12 @@
   .meta-row dd {
     margin: 0;
     color: var(--ink-1);
+    /* Truncate very long mono values (e.g. large inset coordinates) so
+       they do not push the card wider than its grid column. */
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 160px;
   }
 
   .lens-actions {
@@ -374,6 +403,7 @@
     display: flex;
     flex-direction: column;
     gap: 6px;
+    min-width: 0;
   }
   .history-row {
     padding: 12px 14px;
@@ -403,7 +433,8 @@
   }
   .history-src {
     margin: 0 0 4px;
-    font-size: 11.5px;
+    /* Minimum 12px for readable source text (ui-ux-pro-max §6: readable-font-size) */
+    font-size: 12px;
     color: var(--ink-3);
     font-style: italic;
     overflow: hidden;
@@ -412,7 +443,8 @@
   }
   .history-dst {
     margin: 0;
-    font-size: 12.5px;
+    /* 13px for translated result — primary information deserves better legibility */
+    font-size: 13px;
     color: var(--ink-0);
     line-height: 1.5;
   }
@@ -447,7 +479,10 @@
     font-size: 11px;
   }
 
-  .error {
+  .error-banner {
+    display: flex;
+    align-items: center;
+    gap: 8px;
     padding: 8px 12px;
     border-radius: var(--r-sm);
     background: rgba(216, 122, 122, 0.1);
@@ -455,5 +490,25 @@
     border: 1px solid rgba(216, 122, 122, 0.3);
     font-size: 12px;
     margin: 0 0 12px;
+  }
+  .error-banner span {
+    flex: 1;
+    min-width: 0;
+  }
+  .error-dismiss {
+    flex-shrink: 0;
+    width: 20px;
+    height: 20px;
+    display: grid;
+    place-items: center;
+    border-radius: var(--r-sm);
+    color: #d87a7a;
+    font-size: 11px;
+    opacity: 0.7;
+    transition: opacity var(--dur-fast), background var(--dur-fast);
+  }
+  .error-dismiss:hover {
+    opacity: 1;
+    background: rgba(216, 122, 122, 0.15);
   }
 </style>

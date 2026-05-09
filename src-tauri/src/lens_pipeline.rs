@@ -614,18 +614,27 @@ impl LensOcr for PipelineLensOcr {
     }
 }
 
-/// Spin up a fresh [`OllamaTranslator`](crate::providers::translate_ollama::OllamaTranslator)
-/// per translate call so the streaming `chunk_sink` is scoped
-/// cleanly. The config JSON comes from `SettingsStore` in both
-/// production and the evaluator, so few-shot examples, prompt, and
-/// `num_predict` are identical.
-pub struct OllamaLensTranslator {
-    config: serde_json::Value,
+/// Run translations through the user-configured provider chain.
+///
+/// Replaces the earlier `OllamaLensTranslator`, which short-circuited
+/// straight to `OllamaTranslator::new("ollama.gemma4", ...)` regardless
+/// of `providers.translate.chain`. That hard-coded path turned the
+/// "local-first, opt-in" provider design into "Ollama is mandatory" —
+/// a fresh install with `chain = []` (the design default) had Lens
+/// silently failing because the runtime ignored the chain entirely.
+///
+/// This adapter is the inverse: it carries the active [`Pipeline`]
+/// and routes every Lens translation through `Pipeline::run_with_sink`,
+/// so whatever providers the user has configured (embedded LLM,
+/// plugins, Ollama, DeepL, Gemini, ...) drive the Lens just like they
+/// drive the one-shot capture flow.
+pub struct ChainBackedLensTranslator {
+    pipeline: Arc<crate::pipeline::Pipeline>,
 }
 
-impl OllamaLensTranslator {
-    pub fn new(config: serde_json::Value) -> Self {
-        Self { config }
+impl ChainBackedLensTranslator {
+    pub fn new(pipeline: Arc<crate::pipeline::Pipeline>) -> Self {
+        Self { pipeline }
     }
 }
 
@@ -649,26 +658,28 @@ impl LensTranslator for EchoLensTranslator {
 }
 
 #[async_trait]
-impl LensTranslator for OllamaLensTranslator {
+impl LensTranslator for ChainBackedLensTranslator {
     async fn translate(
         &self,
         text: String,
         target_language: String,
         chunk_sink: Arc<dyn Fn(String, bool) + Send + Sync>,
     ) -> Result<String> {
-        use crate::providers::translate_ollama::OllamaTranslator;
-        use crate::providers::{Provider, TaskInput, TaskOutput};
-        let translator =
-            OllamaTranslator::new("ollama.gemma4", &self.config).with_chunk_sink(chunk_sink);
-        let out = translator
-            .run(TaskInput::Translate {
-                text,
-                source_language: "auto".into(),
-                target_language,
-            })
+        use crate::providers::{Capability, TaskInput, TaskOutput};
+        let res = self
+            .pipeline
+            .run_with_sink(
+                Capability::Translate,
+                TaskInput::Translate {
+                    text,
+                    source_language: "auto".into(),
+                    target_language,
+                },
+                chunk_sink,
+            )
             .await
             .map_err(|e| anyhow::anyhow!("translate: {e}"))?;
-        match out {
+        match res.output {
             TaskOutput::Text(s) => Ok(s),
             _ => anyhow::bail!("translator returned non-Text output"),
         }

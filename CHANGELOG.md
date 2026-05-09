@@ -6,7 +6,203 @@ the project adheres to [SemVer](https://semver.org/).
 
 ## Unreleased
 
+### Changed
+
+- **組み込み LLM ランタイムを mistral.rs → llama-cpp-2 (FFI to llama.cpp) へ差し替え**
+  (`Cargo.toml`, `src-tauri/src/providers/translate_embedded_llm.rs`,
+  `src-tauri/src/services/translation_engine.rs`,
+  `docs/EMBEDDED_LLM_PERF.md`)。
+  実機ベンチで mistral.rs CPU パスが期待値の 30% 未満 (Compact 0.5B
+  Q4 で 5–15 tok/s 観測 vs 50–100 tok/s 期待) と確認されたため、
+  llama.cpp の SIMD 最適化 (AVX2 / AVX-512 / Neon / Q4_K_M 量子化
+  カーネル) に切り替えて 2〜5 倍の高速化を狙う。Provider trait 表面
+  ・ChatML 構築・チェーン dispatch・migration ロジックは無変更で、
+  推論ループのみ差し替え。
+    - `embedded-llm` feature の中身が `dep:llama-cpp-2` に変更
+    - 旧 mistral.rs ランタイムは `embedded-llm-mistralrs` feature の
+      裏に保持 (A/B 比較・特殊ビルド向け)
+    - ChatML プロンプトを Qwen 2.5 互換形式 (`<|im_start|>` /
+      `<|im_end|>` / `assistant\n` プライマー) でプロジェクト側から
+      手組み。GGUF メタデータの chat template 不在/破損に依存しない。
+    - 推論は `tokio::task::spawn_blocking` で実行し executor を
+      ブロックしない。
+    - スレッド数は `available_parallelism().min(8)` で自動決定。
+    - 単体テスト追加 4 件 (`build_user_prompt_*`, `render_chatml_*`)。
+      全 380 件パス (差し替え前 376 件 + 新規 4)。
+  - **ビルド要件追加 (開発者のみ・エンドユーザーには影響なし)**:
+    Windows: Visual Studio 2022 Build Tools + LLVM/libclang + CMake、
+    Linux: gcc/clang + cmake、macOS: Xcode CLI Tools。
+    `cargo check --no-default-features` で C++ ビルドを skip 可能。
+
+### Fixed
+
+- **Provider id rename: `embedded.gemma` → `embedded.llm`**
+  (model_registry / settings / IPC / 全 frontend / `default.toml`)。
+  Gemma → Qwen 2.5 へモデルを切替えても旧名のままだった命名 misnomer
+  を解消。型名も `EmbeddedGemmaTranslator` → `EmbeddedLlmTranslator`、
+  ファイル名も `translate_embedded_gemma.rs` → `translate_embedded_llm.rs`。
+  起動時 migration (`migrate_legacy_embedded_settings`) が:
+    - `providers.translate.chain` / `providers.explain.chain` /
+      `providers.summarize.chain` 内の `"embedded.gemma"` →
+      `"embedded.llm"` へ書換
+    - `providers.configs."embedded.gemma"` → `providers.configs."embedded.llm"`
+      へ移動
+    - 続けて 9.x の synthetic-filename 修正も適用
+  既存ユーザーは次回起動で自動修復、再選択不要。テスト 2 件 (rename
+  + idempotency) 追加。
+- **モデルロードを起動時に preload** (`EmbeddedLlmTranslator::preload`):
+  `Provider::preload` の noop default に放置されていた為、初回翻訳
+  呼び出し時まで `mistralrs::GgufModelBuilder::build` が遅延し
+  「Lens を開いた瞬間に数分フリーズ」する致命的 UX 問題を修正。
+  `Pipeline::preload_all` で OCR と並列にバックグラウンドロードが走り、
+  ユーザーが設定画面・ホーム画面を見ている間にロードが完了する。
+  ダウンロード成功直後・ティア切替直後・パッケージ取込直後にも
+  preload を再トリガー。テスト追加。
+- **`embedded-llm` cargo feature を default に格上げ** (Cargo.toml):
+  通常の `npm run tauri:dev` / `tauri:build` で生成したバイナリに
+  mistral.rs が含まれず、すべての翻訳呼び出しが
+  「embedded-llm feature disabled at compile time」で失敗していた
+  問題を修正。CI 用の `cargo check --no-default-features` パスは
+  維持。エラー文言も具体的な復旧手順 (rebuild コマンド) を含むように改善。
+- **multi-file GGUF 対応** (`model_registry`, `services::*`,
+  `embedded_model_package`): Qwen 2.5 7B Q4_K_M は HF 上で 2 分割
+  保存されており、pre-9.x の単一ファイル前提だと URL 組立て段階で
+  404 を引き起こしていた。`ModelTier::filenames: &[&str]` に変更し
+  全パートを順次 DL + 検証。multi-part パッケージング/取込にも
+  対応 (manifest に `parts: Vec<PackageManifestPart>` 追加、v1 形式
+  との後方互換あり)。
+- **legacy 設定の自動移行** (`model_registry::migrate_legacy_embedded_config`):
+  pre-9.x で記録された synthetic な単一ファイル名 (実在しない
+  `qwen2.5-7b-instruct-q4_k_m.gguf`) を、起動時に登録ティアの
+  multi-part 構成へ書き換え。ユーザーが手動で再選択しなくても
+  次回起動で復旧。
+
 ### Added
+
+- **DI リファクタ — services/ モジュール新設**:
+  - `services::ResolvedConfig` (DRY): config解決のスニペットが5箇所
+    重複していたのを単一関数に集約。`filename_remote` 上書き時に
+    `model_path` フォールバックが古いファイル名を指していたバグも修正
+    (test 6 件)。
+  - `services::HardwareProbe` trait + `SysinfoProbe` (production) +
+    `FixedProbe` (test): 「2 GB-RAM PC で推奨ティアは何か」が実機なし
+    で検証可能に (test 3 件)。
+  - `services::ModelStorage` trait + `FileSystemStorage` (production) +
+    `InMemoryStorage` (test): `.partial` 経由の atomic rename / path
+    separator 拒否 / discard クリーンアップを単体テスト化 (test 8 件)。
+  - `services::ModelDownloader` trait + `HttpModelDownloader`
+    (production) + `ScriptedDownloader` (test): mid-stream 失敗 /
+    HTTP 4xx / 進捗イベント発火を mock で検証可能 (test 5 件)。
+  - `services::TranslationEngine` trait + `MistralRsEngine`
+    (production, feature-gated) + `ScriptedEngine` (test): 実 GGUF
+    なしで翻訳パスをテスト可能。リトライ recovery / chunk 分割 /
+    ロード失敗の典型ケースをカバー (test 5 件)。
+  - `services::ModelService<D, S, H>`: 全 adapter を集約。
+    download/package/import/tier_status/set_tier の業務ロジックを
+    保持。新規 mock-based E2E test 9 件 (fresh install → DL →
+    status flips の完全フロー含む)。
+- **AppState に `models: Arc<ModelService<...>>` を追加**: 起動時に
+  production adapters で初期化。IPC コマンドは ModelService への
+  薄ラッパ (5-15行/cmd) に縮小。
+
+### Changed
+
+- **IPC コマンドを ModelService 委譲に書き換え**:
+  `embedded_model_status` / `download_embedded_model` /
+  `package_embedded_model` / `apply_embedded_model_package` /
+  `model_tier_status` / `set_model_tier` の6本がサービス委譲に
+  移行。総行数約500行 → 約100行に圧縮。Tauri 直叩き (reqwest /
+  tokio::fs / sysinfo) を含む業務ロジックは services/ 配下に集約。
+- **テスト総数 324 件 → 360 件**: services/ サブモジュールで
+  36 件追加、すべて mock-based・実 IO/Network/HW非依存。
+
+- **モデル tier registry** (`src-tauri/src/model_registry.rs`):
+  Compact (Qwen 2.5 0.5B, 約400MB, RAM≥4GB) / Standard (Qwen 2.5
+  1.5B, 約1.1GB, RAM≥8GB) / Quality (Qwen 2.5 7B, 約4.7GB, RAM≥16GB)
+  の 3 ティアを Apache 2.0 縛りで定義。`tier_by_id` /
+  `tier_by_coord` / `recommended_tier_for_ram` / `default_tier`
+  を提供。9 unit tests (license/uniqueness/order を全て検証)。
+- **HW検出 + 推奨ティア** (`sysinfo` crate): `model_tier_status`
+  IPC が現在ティア+推奨ティア+RAM/CPUコア数を返す。Onboarding
+  モーダルが推奨ティアを表示し、初回起動時に低スペック検出時は
+  自動的に Compact ティアへ切替。
+- **ティア選択 UI**: 設定 → プロバイダ → ローカル LLM カードに
+  ドロップダウン追加。⭐ で推奨ティアを示し、選択で
+  `repo`/`filename_remote` が user.toml へ反映。`set_model_tier`
+  は DL を強制せず、ユーザがダウンロードボタンで明示的に取得。
+- **設計ドキュメント** `docs/MODEL_RUNTIMES.md`: ONNX/encoder-decoder
+  ランタイム (Helsinki Opus-MT, MADLAD-400) の設計と実装スコープ
+  (~2-3 週間相当) を記述。`embedded.opusmt.<src>-<tgt>` provider id
+  を予約。実装は v0.2 以降。
+
+- **モデルパッケージ化機能** (`embedded_model_package.rs`):
+  `.moonlens-model` ファイル形式 (zip + manifest.json + sha256) で
+  ダウンロード済みモデルをエクスポート/インポート可能に。1人が外部
+  ネットでDL → ファイルサーバ経由で制限環境のPCへ展開、という運用を
+  サポート。新IPC: `package_embedded_model`,
+  `inspect_embedded_model_package`, `apply_embedded_model_package`,
+  `pick_and_package_embedded_model`, `pick_and_apply_embedded_model_package`。
+  オンボーディングモーダル + 設定画面に「パッケージ化」「パッケージ
+  から取込」ボタン。sha256 検証で破損/改竄パッケージは旧モデルを
+  上書きせず取込失敗。
+- **ライセンス情報の UI 表示**: `EmbeddedModelStatus` に `license` /
+  `license_url` / `model_id` を追加。設定画面でライセンス種別を確認
+  できるようにし、企業導入のライセンス監査に対応。
+
+- **スタンドアロン化: 組み込みローカル LLM プロバイダ `embedded.llm`**
+  (`src-tauri/src/providers/translate_embedded_llm.rs`)。`mistral.rs`
+  経由で Gemma の GGUF をアプリ内で読み込んで翻訳する。Ollama などの
+  外部デーモンに依存しない。`embedded-llm` cargo feature で有効化。
+- IPC `embedded_model_status` / `download_embedded_model` (+ 進捗イベント
+  `moonlens://embedded-model-progress`): 設定画面 → プロバイダ にダウンロード
+  ボタン + 進捗バー + 「準備済み」バッジを追加。HuggingFace から
+  `<app-data>/moonlens/models/<file>.gguf` へ直接書き込み、`.partial` 経由で
+  クラッシュ時の半端ファイルを残さない。
+- `Provider` trait に `run_streaming` を追加。`OllamaTranslator` /
+  `EmbeddedLlmTranslator` がネイティブストリームを実装、それ以外の
+  プロバイダは default impl で final Text を 1 chunk として emit。
+- `Pipeline::run_with_sink`: 旧 `Pipeline::run` の per-call sink 版。
+  Lens の per-line streaming がチェーン経由で動くようになり、
+  プロバイダ選択が embedded / Ollama / cloud / plugin で透過。
+- 設定画面 → プロバイダ → サジェスト一覧の先頭に `embedded.llm` を追加、
+  「ローカルのみ」プリセットがそれを優先する。
+
+### Changed
+
+- **デフォルトモデルを Qwen 2.5 1.5B-Instruct (Apache 2.0) に切替**:
+  Gemma 3 1B (Gemma Terms of Use) → Qwen 2.5 1.5B (Apache 2.0)。
+  企業向けの再配布ライセンス汚染を回避。アーキテクチャは decoder-only
+  のままで `mistral.rs` ランタイムは変更なし。サンプリングを greedy
+  (`temperature=0.0`) に変更し低スペックPCでの first-token を高速化。
+  デフォルトサイズは ~770MB → ~1.1GB に増加(品質はQwen 2.5の方が日本語
+  翻訳で勝るため許容)。
+- **rebuild_providers でロード済みエンジンを温存**: `Pipeline` に
+  `embedded_cache` を追加。設定保存(rebuild_providers発火)のたびに
+  数百MBのGGUFが捨てられて再ロードされる挙動を撲滅。`model_path`
+  変更時のみ eviction + reload。
+- **モデルロード進捗イベント** `moonlens://embedded-model-loading`:
+  `mistralrs::Model::build` の前後で発火、layout shell に
+  「ローカル LLM をロード中…」バッジを表示。モデル切替時の沈黙時間が
+  可視化される。
+- **初回起動オンボーディングモーダル** `EmbeddedModelOnboarding.svelte`:
+  チェーンに `embedded.*` あり + GGUF 未配置 + 未提示の3条件で初回起動
+  時に表示。「ダウンロード」「パッケージから取込」「後で」の3択。
+  `OnboardingStatus.needs_embedded_model_setup` で判定。
+
+- **`lens_watcher.rs` の Ollama ハードコード解除**: Lens 翻訳 3 経路
+  (`run_capture_loop` / `translate_paragraph_streaming` /
+  `translate_line_streaming`) が `OllamaTranslator::new("ollama.gemma4", ...)`
+  を直叩きしていた箇所を削除し、すべて `Pipeline::run_with_sink` 経由
+  にした。`providers.translate.chain` の設定がついに Lens にも効く。
+- `OllamaLensTranslator` を `ChainBackedLensTranslator` に rename。中身を
+  Pipeline 経由のチェーン解決に置き換え、構築時に `Arc<Pipeline>` を取る。
+- `default.toml` の `[providers.translate]` chain を `[]` から
+  `["embedded.llm"]` に変更。timeout_ms を 3000 → 30000 に拡大
+  (cold-start 数秒 + paragraph-block 翻訳の現実的な所要時間に合わせた)。
+- README.md: 「Ollama 必須」を撤回し、組み込み Gemma が標準になった旨に更新。
+  Ollama / cloud は optional fallback として位置づけ。
+
+#### (これ以降は過去の `Unreleased` バッチ — リリース時にまとめて流す)
 
 - 常駐サイドバー (`AppSidebar.svelte`): 240px 幅の nav、collapse で
   48px アイコンのみ、現在ルートをアクセントバーでハイライト、
@@ -18,9 +214,6 @@ the project adheres to [SemVer](https://semver.org/).
   record モードで入力可能にする。修飾キー+キーで accelerator 文字列化。
 - `SaveIndicator.svelte`: 設定画面の保存状態 (未保存 / 保存中 / 保存済み /
   失敗) を右上に表示、保存失敗時はエラーメッセージを tooltip で提供。
-
-### Changed
-
 - 設定画面の「保存」ボタンを廃止、500ms debounce での**自動保存**に変更。
   右上に保存インジケータを常時表示 (plan.md Q13-B δ)。
 - `SchemaForm.svelte` を全面改修: `$ref` 解決、`additionalProperties`

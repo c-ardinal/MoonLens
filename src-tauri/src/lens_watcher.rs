@@ -30,14 +30,11 @@ use crate::{
     lens::{self, LensRegistryHandle},
     lens_inpaint,
     lens_pipeline::{
-        run_lens_pipeline, CapturedFrame, LensSink, OllamaLensTranslator, PipelineConfig,
+        run_lens_pipeline, CapturedFrame, ChainBackedLensTranslator, LensSink, PipelineConfig,
         PipelineLensOcr, PreCapturedInput,
     },
     pipeline::Pipeline,
-    providers::{
-        translate_ollama::OllamaTranslator, OcrLine, Provider, ProviderError, TaskInput,
-        TaskOutput,
-    },
+    providers::{Capability, OcrLine, ProviderError, TaskInput, TaskOutput},
     region_watcher::{average_hash, hamming},
     settings::SettingsStore,
 };
@@ -2198,7 +2195,7 @@ pub fn text_is_already_target(text: &str, target_language: &str) -> bool {
 /// A run of OCR lines that belong to the same sentence / paragraph.
 /// We group lines here only for **LLM context** — each member still
 /// gets its own card on screen at its original bbox; the paragraph
-/// only exists so Gemma receives the whole sentence at once and can
+/// only exists so the LLM receives the whole sentence at once and can
 /// resolve cross-line anaphora, carry register, etc.
 #[derive(Debug, Clone)]
 pub struct Paragraph {
@@ -2605,8 +2602,8 @@ pub fn group_paragraphs(lines: &[OcrLine]) -> Vec<Paragraph> {
         .collect()
 }
 
-/// Build a Gemma-ready prompt body that numbers each source line.
-/// The numeric prefix `[1]`, `[2]`, … survives Gemma's phrasing
+/// Build an LLM-ready prompt body that numbers each source line.
+/// The numeric prefix `[1]`, `[2]`, … survives the LLM's phrasing
 /// better than a bare `\n` and gives us a regex-parseable anchor
 /// even if the model adds or removes internal line breaks. The
 /// preceding instruction is delivered via the translator's user
@@ -2621,7 +2618,7 @@ pub fn build_numbered_paragraph(members_text: &[String]) -> String {
 }
 
 /// Distribute a multi-line translation back to its member OCR lines.
-/// Tries the numbered-marker format first (robust against Gemma
+/// Tries the numbered-marker format first (robust against LLM
 /// rewrapping), then falls back to `\n` splitting, then to the
 /// "everything on the first card" safety net.
 ///
@@ -2634,14 +2631,14 @@ pub fn split_paragraph_translation(translation: &str, line_count: usize) -> Vec<
         return Vec::new();
     }
 
-    // 1. Numbered-marker parse. Gemma usually echoes the `[N]`
+    // 1. Numbered-marker parse. LLMs usually echo the `[N]`
     //    prefix; any line whose `[N]` matches a valid member
     //    index wins its slot.
     if let Some(mapped) = parse_numbered_segments(translation, line_count) {
         return mapped;
     }
 
-    // 2. Plain newline fallback (covers Gemma stripping the `[N]`
+    // 2. Plain newline fallback (covers the LLM stripping the `[N]`
     //    prefixes but keeping the line count).
     let trimmed: Vec<&str> = translation
         .split('\n')
@@ -2662,7 +2659,7 @@ pub fn split_paragraph_translation(translation: &str, line_count: usize) -> Vec<
         return out;
     }
 
-    // 3. Gemma collapsed the whole paragraph into one sentence.
+    // 3. The LLM collapsed the whole paragraph into one sentence.
     //    Put everything on the first card so the user has a
     //    complete translation visible; subsequent cards stay
     //    empty and the frontend falls back to source text.
@@ -2676,14 +2673,14 @@ pub fn split_paragraph_translation(translation: &str, line_count: usize) -> Vec<
 /// half of the expected markers are present — in that case the
 /// caller falls through to plain-\n splitting.
 ///
-/// Markers are matched anywhere on a line (Gemma sometimes writes
+/// Markers are matched anywhere on a line (LLMs sometimes write
 /// `**[1]** …` or `[1]:` variants). Duplicate numbers keep the
 /// last occurrence; out-of-range numbers are ignored.
 fn parse_numbered_segments(text: &str, line_count: usize) -> Option<Vec<String>> {
     let mut slots: Vec<Option<String>> = vec![None; line_count];
     let mut matches = 0usize;
     // Split into chunks *at* every `[N]` marker so one marker's
-    // payload can span multiple raw lines (Gemma sometimes breaks
+    // payload can span multiple raw lines (LLMs sometimes break
     // a long translation in the middle of a numbered item).
     let bytes = text.as_bytes();
     let mut i = 0usize;
@@ -2729,7 +2726,7 @@ fn parse_numbered_segments(text: &str, line_count: usize) -> Option<Vec<String>>
     }
 
     // Require a majority of slots filled before we trust the
-    // numbered parse — otherwise Gemma probably dropped the format.
+    // numbered parse — otherwise the LLM probably dropped the format.
     if matches * 2 < line_count {
         return None;
     }
@@ -2751,8 +2748,13 @@ fn parse_numbered_segments(text: &str, line_count: usize) -> Option<Vec<String>>
 /// the Lens management page can list "最近の翻訳" without needing the
 /// frontend to listen on the lens streaming channels itself. Flows
 /// produce one history row per run (joined source + translation) with
-/// `kind = "lens"`, attributed to the Lens-internal `ollama.gemma4`
-/// translator since that's the only translator the watcher uses.
+/// `kind = "lens"`. Provider attribution is intentionally left blank:
+/// translations now flow through the configured chain (embedded
+/// the embedded LLM, Ollama, plugins, cloud APIs) and a single flow can hit
+/// fallbacks across providers, so naming any one would be
+/// misleading. The Settings → History detail view surfaces the
+/// `kind = "lens"` filter; users who need per-provider stats look at
+/// the non-Lens history rows.
 pub struct TauriLensSink {
     app: AppHandle,
     lens_id: String,
@@ -2895,7 +2897,7 @@ impl LensSink for TauriLensSink {
                 } else {
                     Some(translation.as_str())
                 },
-                Some("ollama.gemma4"),
+                None,
                 false,
             );
         }
@@ -3038,12 +3040,6 @@ async fn run_capture_loop(
             // PipelineConfig::default for the rationale).
             ocr_scale: 3,
         };
-        let translator_cfg = snapshot
-            .providers
-            .configs
-            .get("ollama.gemma4")
-            .cloned()
-            .unwrap_or(serde_json::Value::Null);
 
         let mut input = PreCapturedInput::new(CapturedFrame {
             png,
@@ -3056,7 +3052,13 @@ async fn run_capture_loop(
             pipeline.clone(),
         ));
         let ocr = Arc::new(PipelineLensOcr::new(pipeline.clone()));
-        let translator = Arc::new(OllamaLensTranslator::new(translator_cfg));
+        // The Lens used to instantiate `OllamaTranslator` directly here,
+        // which silently bound the entire feature to a running Ollama
+        // daemon regardless of `providers.translate.chain`. Routing
+        // through the Pipeline lets the chain (embedded LLM, plugins,
+        // cloud APIs, ...) drive the Lens just like the one-shot
+        // capture flow — the user's settings finally win.
+        let translator = Arc::new(ChainBackedLensTranslator::new(pipeline.clone()));
 
         if let Err(e) = run_lens_pipeline(
             &mut input,
@@ -3118,16 +3120,8 @@ async fn translate_paragraph_streaming(
         .await;
     }
 
-    let snap = settings.snapshot();
-    let cfg = snap
-        .providers
-        .configs
-        .get("ollama.gemma4")
-        .cloned()
-        .unwrap_or(serde_json::Value::Null);
-
     // Rebuild the paragraph input with explicit `[1]`/`[2]`/...
-    // markers so Gemma's output stays parseable even if the model
+    // markers so the LLM's output stays parseable even if it
     // reshuffles internal newlines. The system prompt still asks
     // for newlines, but the markers are the belt.
     let members_text: Vec<String> = paragraph
@@ -3150,7 +3144,7 @@ async fn translate_paragraph_streaming(
     let numbered = build_numbered_paragraph(&members_text);
 
     // Buffer the whole translation here; we can only split once the
-    // final token arrives (Gemma occasionally reshuffles line breaks
+    // final token arrives (the LLM occasionally reshuffles line breaks
     // mid-stream). Nothing is emitted to the frontend while the
     // stream is running — previous cards from the last flow keep
     // showing until we swap in the new paragraph.
@@ -3163,19 +3157,22 @@ async fn translate_paragraph_streaming(
             }
         });
 
-    let translator =
-        OllamaTranslator::new("ollama.gemma4", &cfg).with_chunk_sink(sink);
-    let out = translator
-        .run(TaskInput::Translate {
-            text: numbered,
-            source_language: "auto".into(),
-            target_language: target_language.clone(),
-        })
+    let pipeline = app.state::<crate::app::AppState>().pipeline.clone();
+    let res = pipeline
+        .run_with_sink(
+            Capability::Translate,
+            TaskInput::Translate {
+                text: numbered,
+                source_language: "auto".into(),
+                target_language: target_language.clone(),
+            },
+            sink,
+        )
         .await?;
 
-    // Some providers return the aggregated text via `run`; fall back
+    // Pipeline returns the aggregated text in `output`; fall back
     // to the buffer if the sink path delivered more detail.
-    let full = match out {
+    let full = match res.output {
         TaskOutput::Text(s) if !s.is_empty() => s,
         _ => buffer.lock().clone(),
     };
@@ -3251,16 +3248,8 @@ async fn translate_line_streaming(
     line_index: usize,
     text: String,
     target_language: String,
-    settings: Arc<SettingsStore>,
+    _settings: Arc<SettingsStore>,
 ) -> Result<String, ProviderError> {
-    let snap = settings.snapshot();
-    let cfg = snap
-        .providers
-        .configs
-        .get("ollama.gemma4")
-        .cloned()
-        .unwrap_or(serde_json::Value::Null);
-
     let lens_id_sink = lens_id.clone();
     let app_sink = app.clone();
     let sink: Arc<dyn Fn(String, bool) + Send + Sync> = Arc::new(move |delta, done| {
@@ -3276,18 +3265,22 @@ async fn translate_line_streaming(
         );
     });
 
-    let translator = OllamaTranslator::new("ollama.gemma4", &cfg).with_chunk_sink(sink);
-    let out = translator
-        .run(TaskInput::Translate {
-            text,
-            source_language: "auto".into(),
-            target_language,
-        })
+    let pipeline = app.state::<crate::app::AppState>().pipeline.clone();
+    let res = pipeline
+        .run_with_sink(
+            Capability::Translate,
+            TaskInput::Translate {
+                text,
+                source_language: "auto".into(),
+                target_language,
+            },
+            sink,
+        )
         .await?;
-    match out {
+    match res.output {
         TaskOutput::Text(s) => Ok(s),
         _ => Err(ProviderError::Other(
-            "ollama returned unexpected output".into(),
+            "translator returned unexpected output".into(),
         )),
     }
 }
@@ -3634,7 +3627,7 @@ mod tests {
 
     #[test]
     fn split_paragraph_translation_numbered_falls_back_when_markers_missing() {
-        // Gemma stripped the markers but kept the line count — the
+        // The LLM stripped the markers but kept the line count — the
         // plain-\n path should still hand back three clean slots.
         let segs = split_paragraph_translation("A\nB\nC", 3);
         assert_eq!(segs, vec!["A", "B", "C"]);
@@ -3653,7 +3646,7 @@ mod tests {
 
     #[test]
     fn split_paragraph_translation_absorbs_extra_segments_into_last_line() {
-        // Gemma ignored the `[N]` format AND emitted too many
+        // The LLM ignored the `[N]` format AND emitted too many
         // newlines — plain-\n fallback absorbs the tail.
         let segs = split_paragraph_translation("A\nB\nC extra\ntrailing", 3);
         assert_eq!(segs.len(), 3);
@@ -3664,7 +3657,7 @@ mod tests {
 
     #[test]
     fn split_paragraph_translation_collapses_onto_first_when_too_few() {
-        // Gemma ignored both line breaks AND markers — keep the
+        // The LLM ignored both line breaks AND markers — keep the
         // entire translation visible on the first card instead of
         // truncating.
         let segs = split_paragraph_translation("One long sentence.", 3);
@@ -3676,7 +3669,7 @@ mod tests {
 
     #[test]
     fn split_paragraph_translation_numbered_handles_colon_variant() {
-        // Gemma sometimes writes `[1]: foo` — the colon should be
+        // LLMs sometimes write `[1]: foo` — the colon should be
         // stripped from the slot content.
         let segs = split_paragraph_translation("[1]: first\n[2]: second", 2);
         assert_eq!(segs, vec!["first", "second"]);
@@ -4432,7 +4425,7 @@ mod tests {
     fn text_is_already_target_single_kanji_ja_label_skips() {
         // Single-kanji UI labels (戻 / 次 / 始 / 終 / ...) are
         // meaningful in Japanese and should NOT be force-translated
-        // into bizarre Gemma rewordings.
+        // into bizarre LLM rewordings.
         assert!(text_is_already_target("日", "ja"));
         assert!(text_is_already_target("戻", "ja"));
         assert!(text_is_already_target("日本", "ja"));

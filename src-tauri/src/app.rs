@@ -16,6 +16,9 @@ use crate::{
     pipeline::Pipeline,
     plugins::PluginRegistry,
     region_watcher::RegionWatcher,
+    services::{
+        FileSystemStorage, HttpModelDownloader, ModelService, SysinfoProbe,
+    },
     settings::{SettingsStore, Watcher},
     storage::Storage,
     subtitle::SubtitleService,
@@ -49,6 +52,17 @@ macro_rules! all_commands {
             ipc::pin_overlay,
             ipc::unpin_overlay,
             ipc::install_ocr_models,
+            ipc::embedded_model_status,
+            ipc::download_embedded_model,
+            ipc::package_embedded_model,
+            ipc::inspect_embedded_model_package,
+            ipc::apply_embedded_model_package,
+            ipc::pick_and_package_embedded_model,
+            ipc::pick_and_apply_embedded_model_package,
+            ipc::list_model_tiers,
+            ipc::model_tier_status,
+            ipc::set_model_tier,
+            ipc::bench_embedded_translate,
             ipc::show_main,
             ipc::restart_app,
             ipc::hide_overlay,
@@ -60,6 +74,7 @@ macro_rules! all_commands {
             ipc::start_subtitle,
             ipc::test_asr_endpoint,
             ipc::get_onboarding_status,
+            ipc::mark_embedded_model_setup_seen,
             ipc::mark_macos_permissions_reviewed,
             ipc::open_macos_privacy_pane,
             ipc::macos_permissions_snapshot,
@@ -79,6 +94,12 @@ macro_rules! all_commands {
     };
 }
 
+/// Concrete `ModelService` type with the production adapters
+/// pre-applied. Kept aliased so `AppState` and IPC commands can refer
+/// to it without spelling the three trait params each time.
+pub type AppModelService =
+    ModelService<HttpModelDownloader, FileSystemStorage, SysinfoProbe>;
+
 /// Application-wide shared state. Kept as `Arc` fields so handles can be
 /// cheaply cloned into async tasks and Tauri commands.
 pub struct AppState {
@@ -86,6 +107,12 @@ pub struct AppState {
     pub storage: Arc<Storage>,
     pub plugins: Arc<PluginRegistry>,
     pub pipeline: Arc<Pipeline>,
+    /// Embedded-model service. Aggregates downloader / storage /
+    /// hardware probe behind a single API the IPC layer thinly
+    /// wraps. Tests instantiate `ModelService` with mock adapters
+    /// instead — the production wiring here uses HTTP + real FS +
+    /// sysinfo.
+    pub models: Arc<AppModelService>,
     pub subtitle: Arc<SubtitleService>,
     pub lenses: LensRegistryHandle,
     /// Per-lens streaming change detectors. Each entry is a polling
@@ -133,18 +160,61 @@ pub fn build() -> Result<()> {
                 }
             });
             let storage = Arc::new(Storage::open(&handle)?);
+            // One-shot legacy-settings migration. Bundled migrations
+            // applied here:
+            //   1. 12.x rename: `embedded.gemma` → `embedded.llm`.
+            //      The provider id was originally named after the
+            //      Gemma model family; the 2026-05-09 switch to Qwen
+            //      2.5 made it misleading, so it was generalised to
+            //      `embedded.llm`.
+            //   2. 9.x synthetic-filename rewrite for the multi-part
+            //      7B Q4_K_M tier — the pre-9.x registry recorded a
+            //      single non-existent filename and downloads 404'd.
+            // Both migrations run before the pipeline materialises
+            // the embedded provider so the next translate / download
+            // sees the corrected coord without the user having to
+            // re-pick the tier from the dropdown.
+            {
+                let mut snap = (*settings.snapshot()).clone();
+                if crate::model_registry::migrate_legacy_embedded_settings(&mut snap) {
+                    if let Err(e) = settings.save(snap) {
+                        tracing::warn!(
+                            "embedded settings migration: save failed: {e}"
+                        );
+                    } else {
+                        tracing::info!(
+                            "embedded settings migration: rewrote legacy id / filename"
+                        );
+                    }
+                }
+            }
             let plugins = Arc::new(PluginRegistry::load(&handle, settings.clone())?);
             let pipeline = Arc::new(Pipeline::new(
                 settings.clone(),
                 storage.clone(),
                 plugins.clone(),
             ));
-            // Forward Ollama streaming chunks to the overlay webview
-            // so the one-shot capture flow can render tokens live.
-            // Lens windows use a different path: the lens_watcher
-            // instantiates its own per-line OllamaTranslator with a
-            // sink that emits `moonlens://lens-line-chunk` tagged by
-            // line_index, so parallel line translations never collide.
+            // Resolve `<app-data>/moonlens/` once so the embedded
+            // LLM provider knows where to look up `models/<file>.gguf`
+            // without hitting the Tauri API on every translate call.
+            // `path().app_data_dir()` returns the OS-specific folder
+            // (`%APPDATA%\moonlens` on Windows, `~/.config/moonlens`
+            // on Linux, `~/Library/Application Support/moonlens` on
+            // macOS) so the resolved path matches `config.toml`'s
+            // existing layout.
+            if let Ok(dir) = handle.path().app_data_dir() {
+                pipeline.set_app_data_dir(dir);
+            }
+            // Forward streaming translation chunks to the overlay
+            // webview so the one-shot capture flow can render tokens
+            // live. The sink is provider-agnostic now: any
+            // `Provider::run_streaming` implementation that emits
+            // deltas (Ollama, embedded LLM, plugins, ...) lights up
+            // this path. Lens windows use a parallel path: the
+            // lens_watcher invokes `Pipeline::run_with_sink` with a
+            // per-line sink that emits `moonlens://lens-line-chunk`
+            // tagged by line_index, so concurrent line translations
+            // never collide.
             {
                 let emit_handle = handle.clone();
                 pipeline.set_chunk_sink(Some(Arc::new(move |delta, done| {
@@ -152,6 +222,46 @@ pub fn build() -> Result<()> {
                         &emit_handle,
                         "moonlens://overlay",
                         crate::overlay::OverlayEvent::Chunk { delta, done },
+                    );
+                })));
+            }
+            // Forward embedded model load lifecycle events to a
+            // dedicated channel so the layout shell can render a
+            // "ローカル LLM をロード中…" badge during the cold-start
+            // (and clear it on completion or failure). Without this,
+            // the multi-second `Model::build` looks like an unexplained
+            // freeze on the first translate call and the first call
+            // after every model swap.
+            {
+                let emit_handle = handle.clone();
+                pipeline.set_embedded_load_notifier(Some(std::sync::Arc::new(move |event| {
+                    use crate::providers::translate_embedded_llm::EmbeddedLoadEvent;
+                    let payload = match event {
+                        EmbeddedLoadEvent::Started {
+                            provider_id,
+                            model_path,
+                        } => serde_json::json!({
+                            "phase": "started",
+                            "provider_id": provider_id,
+                            "model_path": model_path.display().to_string(),
+                        }),
+                        EmbeddedLoadEvent::Finished {
+                            provider_id,
+                            model_path,
+                            success,
+                            error,
+                        } => serde_json::json!({
+                            "phase": "finished",
+                            "provider_id": provider_id,
+                            "model_path": model_path.display().to_string(),
+                            "success": success,
+                            "error": error,
+                        }),
+                    };
+                    let _ = tauri::Emitter::emit(
+                        &emit_handle,
+                        "moonlens://embedded-model-loading",
+                        payload,
                     );
                 })));
             }
@@ -170,6 +280,24 @@ pub fn build() -> Result<()> {
             let lenses: LensRegistryHandle = Arc::new(LensRegistry::new());
             let lens_watchers: LensStreamWatchersHandle = Arc::new(LensStreamWatchers::new());
             let region_watcher = Arc::new(RegionWatcher::new());
+
+            // Build the embedded-model service with the production
+            // adapters. Tests build the same struct with mock
+            // adapters; the IPC layer treats the two identically
+            // because everything goes through the trait.
+            let app_data_dir = handle
+                .path()
+                .app_data_dir()
+                .unwrap_or_else(|_| std::path::PathBuf::from("."));
+            let models = Arc::new(ModelService {
+                downloader: HttpModelDownloader::new(),
+                storage: FileSystemStorage::new(app_data_dir.join("models")),
+                probe: SysinfoProbe,
+                settings: settings.clone(),
+                pipeline: Some(pipeline.clone()),
+                app_data_dir,
+                exporter_version: env!("CARGO_PKG_VERSION").to_string(),
+            });
 
             // Register hotkeys best-effort: an accelerator held by another
             // process (IME, PowerToys, etc.) must NOT abort startup.
@@ -190,6 +318,7 @@ pub fn build() -> Result<()> {
                 storage,
                 plugins,
                 pipeline,
+                models,
                 subtitle,
                 lenses,
                 lens_watchers,

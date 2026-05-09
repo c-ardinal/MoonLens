@@ -99,10 +99,20 @@ impl SettingsStore {
     }
 
     pub fn save(&self, new: Settings) -> Result<()> {
+        // CRITICAL ordering: update the in-memory state BEFORE the
+        // disk write so that a write failure (read-only fs, locked
+        // user.toml, full disk) does not leave the running session
+        // out of sync with itself. Pre-13.x the disk write came
+        // first via `?`, which silently skipped the in-memory
+        // update on failure — the rest of startup then ran against
+        // stale state, e.g. the embedded settings migration would
+        // appear to succeed in-memory but the Pipeline still saw
+        // the pre-migration `embedded.gemma` provider id.
         let serialized = toml::to_string_pretty(&new)?;
-        std::fs::write(&self.config_path, serialized)?;
         *self.inner.write() = new.clone();
         let _ = self.tx.send(Arc::new(new));
+        std::fs::write(&self.config_path, serialized)
+            .context("write user config")?;
         Ok(())
     }
 
@@ -135,6 +145,25 @@ fn layer_user_over_defaults(user_raw: &str) -> Result<Settings> {
         toml::from_str(DEFAULT_TOML).context("bundled default.toml is invalid")?;
     let user_value: toml::Value =
         toml::from_str(user_raw).context("parse user config")?;
+    let merged = deep_merge_toml(default_value, user_value);
+    let merged_str = toml::to_string(&merged).context("re-serialise merged config")?;
+    let settings: Settings =
+        toml::from_str(&merged_str).context("merged config does not match Settings schema")?;
+    Ok(settings)
+}
+
+/// Test-only re-export of the layered loader. Used by
+/// `model_registry::tests` to construct a `Settings` that matches a
+/// realistic user.toml without going through `SettingsStore::load_from`.
+#[cfg(test)]
+pub fn layer_user_over_defaults_for_test(
+    defaults: &str,
+    user_raw: &str,
+) -> Result<Settings> {
+    let default_value: toml::Value =
+        toml::from_str(defaults).context("default.toml parse for test")?;
+    let user_value: toml::Value =
+        toml::from_str(user_raw).context("user toml parse for test")?;
     let merged = deep_merge_toml(default_value, user_value);
     let merged_str = toml::to_string(&merged).context("re-serialise merged config")?;
     let settings: Settings =

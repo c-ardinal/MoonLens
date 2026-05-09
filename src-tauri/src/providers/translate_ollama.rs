@@ -6,7 +6,7 @@ use async_trait::async_trait;
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 
-use super::{Capability, Provider, ProviderError, TaskInput, TaskOutput};
+use super::{Capability, Provider, ProviderError, StreamingChunkSink, TaskInput, TaskOutput};
 
 #[derive(Debug, Clone)]
 pub struct FewShotExample {
@@ -231,36 +231,25 @@ pub fn merge_chat_stream_chunks<I: IntoIterator<Item = String>>(lines: I) -> Str
     out
 }
 
-#[async_trait]
-impl Provider for OllamaTranslator {
-    fn id(&self) -> &str {
-        &self.id
-    }
-    fn capabilities(&self) -> &[Capability] {
-        &[
-            Capability::Translate,
-            Capability::Explain,
-            Capability::Summarize,
-        ]
-    }
-    fn is_local(&self) -> bool {
-        true
-    }
-
-    async fn run(&self, input: TaskInput) -> Result<TaskOutput, ProviderError> {
-        let messages = match input {
+impl OllamaTranslator {
+    /// Build the `messages` list for an arbitrary task input. Extracted so
+    /// `run` and `run_streaming` share one call shape; the only thing
+    /// that differs between the two paths is which sink (stored vs.
+    /// per-call) consumes the streaming deltas.
+    fn build_messages(&self, input: TaskInput) -> Result<Vec<ChatMessage>, ProviderError> {
+        match input {
             TaskInput::Translate {
                 text,
                 source_language,
                 target_language,
-            } => build_chat_messages(
+            } => Ok(build_chat_messages(
                 &self.system_prompt,
                 &self.examples,
                 &source_language,
                 &target_language,
                 &text,
-            ),
-            TaskInput::Explain { prompt, .. } => vec![
+            )),
+            TaskInput::Explain { prompt, .. } => Ok(vec![
                 ChatMessage {
                     role: "system".into(),
                     content: self.system_prompt.clone(),
@@ -269,8 +258,8 @@ impl Provider for OllamaTranslator {
                     role: "user".into(),
                     content: prompt,
                 },
-            ],
-            TaskInput::Summarize { text } => vec![
+            ]),
+            TaskInput::Summarize { text } => Ok(vec![
                 ChatMessage {
                     role: "system".into(),
                     content: self.system_prompt.clone(),
@@ -279,14 +268,23 @@ impl Provider for OllamaTranslator {
                     role: "user".into(),
                     content: format!("Summarize concisely:\n\n{text}"),
                 },
-            ],
-            _ => {
-                return Err(ProviderError::Other(
-                    "OllamaTranslator cannot handle this input".into(),
-                ))
-            }
-        };
+            ]),
+            _ => Err(ProviderError::Other(
+                "OllamaTranslator cannot handle this input".into(),
+            )),
+        }
+    }
 
+    /// Drive a single `/api/chat` streaming call. Per-token deltas go
+    /// through `sink_override` if supplied (used by Lens to thread a
+    /// line-scoped sink), otherwise through the stored `chunk_sink`
+    /// (used by the global capture-flow overlay). Aggregated text is
+    /// returned regardless so non-streaming callers keep working.
+    async fn run_chat(
+        &self,
+        messages: Vec<ChatMessage>,
+        sink_override: Option<&StreamingChunkSink>,
+    ) -> Result<TaskOutput, ProviderError> {
         let url = format!("{}/api/chat", self.endpoint.trim_end_matches('/'));
         let req = ChatRequest {
             model: &self.model,
@@ -311,11 +309,9 @@ impl Provider for OllamaTranslator {
             }
         })?;
 
-        // Parse line-delimited JSON chunks; `/api/chat` wraps each
-        // delta under `message.content`. The sink fires per chunk so
-        // the UI can render tokens live, while we aggregate into a
-        // single Text output so existing call sites keep working
-        // unchanged.
+        let active_sink: Option<&StreamingChunkSink> =
+            sink_override.or(self.chunk_sink.as_ref());
+
         let mut aggregated = String::new();
         let mut buffer = Vec::<u8>::new();
         let mut bytes = resp.bytes_stream();
@@ -332,17 +328,14 @@ impl Provider for OllamaTranslator {
                     continue;
                 }
                 if let Ok(c) = serde_json::from_str::<ChatStreamChunk>(&line_str) {
-                    let delta = c
-                        .message
-                        .map(|m| m.content)
-                        .unwrap_or_default();
+                    let delta = c.message.map(|m| m.content).unwrap_or_default();
                     if !delta.is_empty() {
                         aggregated.push_str(&delta);
-                        if let Some(sink) = &self.chunk_sink {
+                        if let Some(sink) = active_sink {
                             sink(delta, c.done);
                         }
                     } else if c.done {
-                        if let Some(sink) = &self.chunk_sink {
+                        if let Some(sink) = active_sink {
                             sink(String::new(), true);
                         }
                     }
@@ -359,6 +352,37 @@ impl Provider for OllamaTranslator {
             }
         }
         Ok(TaskOutput::Text(aggregated))
+    }
+}
+
+#[async_trait]
+impl Provider for OllamaTranslator {
+    fn id(&self) -> &str {
+        &self.id
+    }
+    fn capabilities(&self) -> &[Capability] {
+        &[
+            Capability::Translate,
+            Capability::Explain,
+            Capability::Summarize,
+        ]
+    }
+    fn is_local(&self) -> bool {
+        true
+    }
+
+    async fn run(&self, input: TaskInput) -> Result<TaskOutput, ProviderError> {
+        let messages = self.build_messages(input)?;
+        self.run_chat(messages, None).await
+    }
+
+    async fn run_streaming(
+        &self,
+        input: TaskInput,
+        sink: StreamingChunkSink,
+    ) -> Result<TaskOutput, ProviderError> {
+        let messages = self.build_messages(input)?;
+        self.run_chat(messages, Some(&sink)).await
     }
 }
 

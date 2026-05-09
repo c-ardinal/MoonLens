@@ -2,6 +2,7 @@
 
 use std::{
     collections::HashMap,
+    path::PathBuf,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -15,10 +16,15 @@ use crate::{
     intent,
     plugins::PluginRegistry,
     providers::{
-        asr_whisper::WhisperCppProvider, ocr_ocrs::OcrsProvider, qr_rqrr::RqrrProvider,
-        search_serpapi::BrowserSearchProvider, translate_deepl::DeepLTranslator,
-        translate_gemini::GeminiProvider, translate_ollama::OllamaTranslator, Capability, Intent,
-        OcrLine, ProviderError, ProviderHandle, TaskInput, TaskOutput,
+        asr_whisper::WhisperCppProvider,
+        ocr_ocrs::OcrsProvider,
+        qr_rqrr::RqrrProvider,
+        search_serpapi::BrowserSearchProvider,
+        translate_deepl::DeepLTranslator,
+        translate_embedded_llm::{EmbeddedLlmTranslator, EmbeddedLoadNotifier},
+        translate_gemini::GeminiProvider,
+        translate_ollama::OllamaTranslator,
+        Capability, Intent, OcrLine, ProviderError, ProviderHandle, TaskInput, TaskOutput,
     },
     settings::{
         schema::{FallbackCondition, TaskChain},
@@ -55,6 +61,29 @@ pub struct Pipeline {
     /// overlay webview; unset in test builds that construct a pipeline
     /// directly.
     chunk_sink: RwLock<Option<ChunkSink>>,
+    /// Resolved Tauri app-data directory, used by local providers
+    /// that need to look up bundled state on disk (currently the
+    /// embedded LLM model). Optional so test fixtures that
+    /// instantiate a `Pipeline` without an `AppHandle` do not have
+    /// to invent a path.
+    app_data_dir: RwLock<Option<PathBuf>>,
+    /// Side-cache of `Arc<EmbeddedLlmTranslator>` keyed by provider
+    /// id. `rebuild_providers` consults this map and reuses the
+    /// existing instance when the resolved `model_path` has not
+    /// changed — without this, every settings save (or every chunk-
+    /// sink swap, since `set_chunk_sink` calls `rebuild_providers`)
+    /// would drop the multi-hundred-MB GGUF that was already loaded
+    /// into the engine and force a cold reload on the next translate
+    /// call. The concrete-typed cache is needed because
+    /// `Arc<dyn Provider>` cannot be downcast back to
+    /// `EmbeddedLlmTranslator` to compare paths.
+    embedded_cache: RwLock<HashMap<String, Arc<EmbeddedLlmTranslator>>>,
+    /// Optional callback fired by every embedded provider around its
+    /// `Model::build` call. Wired to a Tauri emitter at startup so
+    /// the layout shell can show a "ローカル LLM をロード中…" badge
+    /// during the multi-second cold-start (and clear it when the
+    /// load completes / fails). Unset in headless / CI builds.
+    embedded_load_notifier: RwLock<Option<EmbeddedLoadNotifier>>,
 }
 
 impl Pipeline {
@@ -70,6 +99,9 @@ impl Pipeline {
             providers: RwLock::new(HashMap::new()),
             sticky: RwLock::new(HashMap::new()),
             chunk_sink: RwLock::new(None),
+            app_data_dir: RwLock::new(None),
+            embedded_cache: RwLock::new(HashMap::new()),
+            embedded_load_notifier: RwLock::new(None),
         };
         me.rebuild_providers();
         me
@@ -90,7 +122,39 @@ impl Pipeline {
             providers: RwLock::new(providers),
             sticky: RwLock::new(HashMap::new()),
             chunk_sink: RwLock::new(None),
+            app_data_dir: RwLock::new(None),
+            embedded_cache: RwLock::new(HashMap::new()),
+            embedded_load_notifier: RwLock::new(None),
         }
+    }
+
+    /// Install a notifier fired by every embedded provider around its
+    /// `Model::build` call. Replaces any previously installed
+    /// notifier. Drops the cached `Arc<EmbeddedLlmTranslator>`
+    /// instances so the next rebuild rewires them with the new
+    /// notifier — otherwise the cache would keep handing back
+    /// instances bound to the OLD notifier closure forever.
+    pub fn set_embedded_load_notifier(&self, notifier: Option<EmbeddedLoadNotifier>) {
+        *self.embedded_load_notifier.write() = notifier;
+        self.embedded_cache.write().clear();
+        self.rebuild_providers();
+    }
+
+    /// Wire the resolved Tauri app-data directory in. Called once
+    /// during app setup before any provider call so the embedded
+    /// LLM path resolves to the real `<app-data>/moonlens/models/`
+    /// folder. Re-runs provider discovery so already-instantiated
+    /// `EmbeddedLlmTranslator` handles pick up the path.
+    pub fn set_app_data_dir(&self, path: PathBuf) {
+        *self.app_data_dir.write() = Some(path);
+        self.rebuild_providers();
+    }
+
+    /// Read-only accessor for the resolved app-data directory. Used
+    /// by the model-download IPC to know where to write the GGUF
+    /// without re-deriving the path.
+    pub fn app_data_dir(&self) -> Option<PathBuf> {
+        self.app_data_dir.read().clone()
     }
 
     /// Install a callback that every Ollama-style streaming provider
@@ -116,6 +180,50 @@ impl Pipeline {
         }
     }
 
+    /// Resolve (or reuse) an `EmbeddedLlmTranslator` for the given
+    /// id + config. Reuses the cached instance when the resolved
+    /// `model_path` is identical so the loaded GGUF survives across
+    /// rebuilds (critical: every settings save triggers this code
+    /// path, and the loaded model is hundreds of MB of RAM).
+    /// Updates the cache when the path changes (model swap), and
+    /// drops the entry when the id leaves the chain entirely
+    /// (the post-pass below cleans those up).
+    fn embedded_handle(
+        &self,
+        id: &str,
+        cfg: &serde_json::Value,
+        app_data: Option<&PathBuf>,
+    ) -> ProviderHandle {
+        // Build the would-be new instance first so we can compare
+        // paths without holding the cache lock during construction.
+        let mut candidate = EmbeddedLlmTranslator::new(id, cfg);
+        if let Some(dir) = app_data {
+            candidate = candidate.with_app_data_dir(dir);
+        }
+        if let Some(notifier) = self.embedded_load_notifier.read().as_ref() {
+            candidate = candidate.with_load_notifier(notifier.clone());
+        }
+        let want_path = candidate.model_path().to_path_buf();
+
+        let mut cache = self.embedded_cache.write();
+        if let Some(existing) = cache.get(id) {
+            if existing.model_path() == want_path {
+                tracing::debug!(
+                    "pipeline: reusing loaded embedded provider `{id}` (path unchanged)"
+                );
+                return existing.clone();
+            }
+            tracing::info!(
+                "pipeline: embedded provider `{id}` model_path changed ({} → {}); reloading",
+                existing.model_path().display(),
+                want_path.display()
+            );
+        }
+        let arc = Arc::new(candidate);
+        cache.insert(id.to_string(), arc.clone());
+        arc
+    }
+
     /// Rebuild the in-memory provider map from the current settings. Called
     /// on startup and whenever settings hot-reload.
     pub fn rebuild_providers(&self) {
@@ -123,6 +231,7 @@ impl Pipeline {
         let mut map: HashMap<String, ProviderHandle> = HashMap::new();
         let empty = serde_json::Value::Object(Default::default());
         let sink = self.chunk_sink.read().clone();
+        let app_data = self.app_data_dir.read().clone();
         for (id, cfg) in &s.providers.configs {
             let cfg = cfg.clone();
             let handle: Option<ProviderHandle> = match id.as_str() {
@@ -132,6 +241,9 @@ impl Pipeline {
                         p = p.with_chunk_sink(sink.clone());
                     }
                     Some(Arc::new(p))
+                }
+                id if id == "embedded.llm" || id.starts_with("embedded.") => {
+                    Some(self.embedded_handle(id, &cfg, app_data.as_ref()))
                 }
                 "deepl" => Some(Arc::new(DeepLTranslator::new(id, &cfg))),
                 "gemini" => Some(Arc::new(GeminiProvider::new(id, &cfg))),
@@ -181,7 +293,8 @@ impl Pipeline {
             tracing::info!("pipeline: auto-registered `windows` OCR provider (user.toml lacked the section)");
         }
         // Ensure any id referenced in a chain without a configs entry still
-        // has a sane default (e.g. `ollama.gemma4` without explicit config).
+        // has a sane default (e.g. `ollama.gemma4` or `embedded.llm` with
+        // no explicit `[providers.configs."<id>"]` block in user.toml).
         for id in s.providers.translate.chain.iter().chain(
             s.providers
                 .explain
@@ -189,13 +302,27 @@ impl Pipeline {
                 .iter()
                 .chain(s.providers.summarize.chain.iter()),
         ) {
-            if !map.contains_key(id) && id.starts_with("ollama.") {
+            if map.contains_key(id) {
+                continue;
+            }
+            if id.starts_with("ollama.") {
                 let mut p = OllamaTranslator::new(id.as_str(), &empty);
                 if let Some(sink) = &sink {
                     p = p.with_chunk_sink(sink.clone());
                 }
                 map.insert(id.clone(), Arc::new(p));
+            } else if id == "embedded.llm" || id.starts_with("embedded.") {
+                let handle = self.embedded_handle(id, &empty, app_data.as_ref());
+                map.insert(id.clone(), handle);
             }
+        }
+        // Drop cached embedded engines whose ids are no longer in the
+        // resolved provider map. Keeping them around would only waste
+        // RAM since nothing can reach them through `Pipeline::run` /
+        // `run_with_sink` once they leave the map.
+        {
+            let mut cache = self.embedded_cache.write();
+            cache.retain(|id, _| map.contains_key(id));
         }
         *self.providers.write() = map;
     }
@@ -206,6 +333,31 @@ impl Pipeline {
         &self,
         capability: Capability,
         input: TaskInput,
+    ) -> Result<TaskResult, ProviderError> {
+        self.run_inner(capability, input, None).await
+    }
+
+    /// Streaming variant of [`Self::run`]. The supplied `sink` is
+    /// invoked once per token delta the picked provider emits; the
+    /// final aggregated text is still returned in `TaskResult.output`
+    /// so non-streaming consumers can use the same call. Lens routes
+    /// per-line sinks through this entry point so the chain choice
+    /// (embedded LLM, Ollama, plugin, cloud) is invisible to the
+    /// streaming UI.
+    pub async fn run_with_sink(
+        &self,
+        capability: Capability,
+        input: TaskInput,
+        sink: ChunkSink,
+    ) -> Result<TaskResult, ProviderError> {
+        self.run_inner(capability, input, Some(sink)).await
+    }
+
+    async fn run_inner(
+        &self,
+        capability: Capability,
+        input: TaskInput,
+        sink: Option<ChunkSink>,
     ) -> Result<TaskResult, ProviderError> {
         let s = self.settings.snapshot();
         let chain = pick_chain(&s, capability);
@@ -253,7 +405,15 @@ impl Pipeline {
                 }
             }
             let to = Duration::from_millis(chain.timeout_ms as u64);
-            let res = timeout(to, prov.run(input.clone())).await;
+            // Dispatch through `run_streaming` when the caller wants
+            // per-token deltas. Providers that do not natively stream
+            // fall through the trait's default impl, which just emits
+            // the final Text as a single `done=true` chunk so the UI
+            // exits its streaming state cleanly.
+            let res = match &sink {
+                Some(s) => timeout(to, prov.run_streaming(input.clone(), s.clone())).await,
+                None => timeout(to, prov.run(input.clone())).await,
+            };
             match res {
                 Ok(Ok(out)) => {
                     self.remember_sticky(capability, &id, chain.sticky_session_ms);
@@ -491,6 +651,25 @@ fn pick_chain(s: &crate::settings::schema::Settings, cap: Capability) -> TaskCha
 }
 
 /// Test-friendly alias for [`should_fallback`]. Kept minimal on purpose.
+#[cfg(test)]
+impl Pipeline {
+    /// Read-only accessor for the embedded cache used by
+    /// `rebuild_providers` to preserve loaded engines across config
+    /// changes. Tests use this to assert Arc identity (via `ptr_eq`)
+    /// before and after rebuilds.
+    pub fn embedded_cache_for_test(
+        &self,
+    ) -> HashMap<String, Arc<EmbeddedLlmTranslator>> {
+        self.embedded_cache.read().clone()
+    }
+
+    /// Test-only handle to the underlying SettingsStore so tests can
+    /// mutate settings without going through the Tauri command layer.
+    pub fn settings_for_test(&self) -> Arc<SettingsStore> {
+        self.settings.clone()
+    }
+}
+
 #[cfg(test)]
 pub fn should_fallback_for_test(conds: &[FallbackCondition], e: &ProviderError) -> bool {
     should_fallback(conds, e)

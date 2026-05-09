@@ -7,6 +7,8 @@
     currentSettings,
     ensureSettingsLoaded
   } from '$lib/stores/settingsStore';
+  import EmbeddedModelLoadingBadge from '$lib/components/EmbeddedModelLoadingBadge.svelte';
+  import EmbeddedModelOnboarding from '$lib/components/EmbeddedModelOnboarding.svelte';
   import MacOnboarding from '$lib/components/MacOnboarding.svelte';
   import HotkeyFailureToast from '$lib/components/HotkeyFailureToast.svelte';
   import WindowChrome from '$lib/components/WindowChrome.svelte';
@@ -102,6 +104,10 @@
 {/if}
 
 <MacOnboarding />
+{#if !isFloating}
+  <EmbeddedModelOnboarding />
+{/if}
+<EmbeddedModelLoadingBadge />
 <HotkeyFailureToast />
 
 <style>

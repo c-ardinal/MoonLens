@@ -839,7 +839,7 @@ fn render_side_by_side(
         8,
         header_scale,
         &fonts.regular,
-        "INPAINT + TRANSLATION (Ollama/Gemma — red outline = source bbox, green label = fs/weight, red label = overflow)",
+        "INPAINT + TRANSLATION (LLM — red outline = source bbox, green label = fs/weight, red label = overflow)",
     );
 
     DynamicImage::ImageRgba8(canvas)

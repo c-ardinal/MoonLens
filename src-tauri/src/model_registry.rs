@@ -1,0 +1,725 @@
+//! Curated registry of embedded translation models.
+//!
+//! The registry is the single source of truth for "which models can a
+//! user pick from the settings UI." A flat const list (no runtime
+//! plug-in mechanism) is intentional: every entry here ships with the
+//! app, the licence has been audited, and the HuggingFace repo has
+//! been verified to work with `mistral.rs::GgufModelBuilder`. New
+//! entries get a code review where the licence + runtime + size are
+//! sanity-checked, instead of trusting a runtime-fetched manifest.
+//!
+//! Three tiers cover the realistic hardware spread for the offline /
+//! restricted-network deployments this tool targets:
+//!
+//! * **Compact** — old office laptops / corporate VMs with 4 GB RAM.
+//!   Quality is noticeably below the larger tiers but the tool still
+//!   produces usable Japanese output, and the GGUF fits on tight
+//!   disks (< 500 MB).
+//! * **Standard** — modern office laptops with 8 GB RAM. The default
+//!   tier the tool ships with — the install-and-go target.
+//! * **Quality** — workstations with 16 GB+ RAM. Translation quality
+//!   competitive with cloud APIs at the cost of disk + memory.
+//!
+//! All shipped tiers are **Apache 2.0** so corporate redistribution
+//! does not need a license-compatibility review.
+
+use serde::Serialize;
+
+/// Hardware bucket the tier targets. Used by the onboarding flow to
+/// recommend a default based on the host's installed RAM.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ModelTierClass {
+    /// 4 GB RAM hosts. Smallest GGUF; lower translation quality but
+    /// still usable for short Lens lines.
+    Compact,
+    /// 8 GB RAM hosts. Default — balances quality and speed.
+    Standard,
+    /// 16 GB+ RAM hosts. Larger model, higher quality, slower
+    /// first-token latency.
+    Quality,
+}
+
+/// Canonical descriptor for a single picker entry. Matches the JSON
+/// shape `list_model_tiers` returns to the frontend.
+#[derive(Debug, Clone, Serialize)]
+pub struct ModelTier {
+    /// Stable identifier the UI passes back to `set_model_tier`. Picked
+    /// to be readable in `user.toml` so power users can edit by hand.
+    pub id: &'static str,
+    /// Human-readable name the picker displays (Japanese — this is a
+    /// JP-first product).
+    pub display_name: &'static str,
+    /// Short blurb shown beneath the name.
+    pub description: &'static str,
+    /// HuggingFace repo. Must be verified to host the file(s) under
+    /// `resolve/main/<filename>` without authentication; the download
+    /// IPC fetches there.
+    pub repo: &'static str,
+    /// Exact GGUF filename(s) in the repo. Almost every tier has a
+    /// single file, but HuggingFace splits large GGUFs across LFS
+    /// objects (e.g. Qwen 2.5 7B Q4_K_M ships as
+    /// `*-00001-of-00002.gguf` + `*-00002-of-00002.gguf`).
+    /// `mistralrs::GgufModelBuilder` natively accepts a `Vec<String>`
+    /// so loading does not care about split vs. monolithic; the
+    /// downloader iterates over the slice and fetches each part.
+    /// Callers that need a single "primary" reference (UI labels,
+    /// path resolution for status display, package manifest's
+    /// legacy single-file field) use `primary_filename()`.
+    pub filenames: &'static [&'static str],
+    /// Approximate on-disk size in MB across **all** parts. Used
+    /// by the picker to render "~1.1 GB" without having to query HF.
+    pub size_mb: u32,
+    /// Recommended minimum installed RAM in GB. The HW detector uses
+    /// this to bucket the host into a tier class.
+    pub min_ram_gb: u32,
+    /// SPDX-style license advert. Settings UI surfaces this so IT
+    /// audits do not leave the app.
+    pub license: &'static str,
+    /// Canonical license URL.
+    pub license_url: &'static str,
+    /// Tier class for HW recommendation.
+    pub class: ModelTierClass,
+}
+
+impl ModelTier {
+    /// First filename in `filenames`. The IPC layer uses this for
+    /// "model_id" labels and for legacy single-file path resolution
+    /// so existing `user.toml` files (which only carried
+    /// `filename_remote = "..."`) keep working unchanged.
+    pub fn primary_filename(&self) -> &'static str {
+        self.filenames.first().copied().unwrap_or("")
+    }
+
+    /// Display a stable "<repo>:<primary>" identifier the UI shows
+    /// next to the license (and that the export package records as
+    /// `model_id`'s source coordinate). Multi-part tiers identify
+    /// themselves by their first file because that is the
+    /// stable "primary" name (subsequent parts share its prefix).
+    pub fn coord(&self) -> String {
+        format!("{}:{}", self.repo, self.primary_filename())
+    }
+}
+
+/// All shipped tiers, ordered Compact → Standard → Quality. UI
+/// consumers (settings dropdown, onboarding modal) iterate this slice
+/// directly so tier ordering is determined here, not at every call
+/// site.
+pub const TIERS: &[ModelTier] = &[
+    ModelTier {
+        id: "qwen2.5-0.5b-instruct-q4_k_m",
+        display_name: "Compact (Qwen 2.5 0.5B)",
+        description: "低スペックPC向け。最小サイズ・最速起動、翻訳品質は控えめ。",
+        repo: "Qwen/Qwen2.5-0.5B-Instruct-GGUF",
+        filenames: &["qwen2.5-0.5b-instruct-q4_k_m.gguf"],
+        size_mb: 400,
+        min_ram_gb: 4,
+        license: "Apache-2.0",
+        license_url:
+            "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/blob/main/LICENSE",
+        class: ModelTierClass::Compact,
+    },
+    ModelTier {
+        id: "qwen2.5-1.5b-instruct-q4_k_m",
+        display_name: "Standard (Qwen 2.5 1.5B)",
+        description: "標準。一般的なオフィスPCでバランスよく動作する既定ティア。",
+        repo: "Qwen/Qwen2.5-1.5B-Instruct-GGUF",
+        filenames: &["qwen2.5-1.5b-instruct-q4_k_m.gguf"],
+        size_mb: 1100,
+        min_ram_gb: 8,
+        license: "Apache-2.0",
+        license_url:
+            "https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/blob/main/LICENSE",
+        class: ModelTierClass::Standard,
+    },
+    ModelTier {
+        id: "qwen2.5-7b-instruct-q4_k_m",
+        display_name: "Quality (Qwen 2.5 7B)",
+        description:
+            "高品質ティア。16GB+ RAM の高性能PC向け、翻訳品質はクラウドAPIに迫る。",
+        repo: "Qwen/Qwen2.5-7B-Instruct-GGUF",
+        // Qwen 2.5 7B Q4_K_M is split across two LFS files in the
+        // upstream repo. Listing both parts here is what fixes the
+        // 9.x-era 404: the pre-9.x registry recorded a single
+        // synthetic filename `qwen2.5-7b-instruct-q4_k_m.gguf`
+        // that does not exist on HuggingFace. mistralrs's
+        // `GgufModelBuilder` natively accepts the part list, so
+        // loading transparently joins them at runtime.
+        filenames: &[
+            "qwen2.5-7b-instruct-q4_k_m-00001-of-00002.gguf",
+            "qwen2.5-7b-instruct-q4_k_m-00002-of-00002.gguf",
+        ],
+        size_mb: 4700,
+        min_ram_gb: 16,
+        license: "Apache-2.0",
+        license_url:
+            "https://huggingface.co/Qwen/Qwen2.5-7B-Instruct-GGUF/blob/main/LICENSE",
+        class: ModelTierClass::Quality,
+    },
+];
+
+/// The tier the tool defaults to on a fresh install. Reads as
+/// "qwen2.5-1.5b-instruct-q4_k_m" — must stay in sync with
+/// `DEFAULT_MODEL_FILENAME_REMOTE` in `translate_embedded_llm.rs`
+/// (the constants there are the legacy single-model surface; this
+/// registry is its multi-tier replacement).
+pub const DEFAULT_TIER_ID: &str = "qwen2.5-1.5b-instruct-q4_k_m";
+
+/// Look up a tier by its stable id. Returns `None` for unknown ids
+/// — callers that need a fallback should pair this with [`default_tier`].
+pub fn tier_by_id(id: &str) -> Option<&'static ModelTier> {
+    TIERS.iter().find(|t| t.id == id)
+}
+
+/// Resolve the tier matching `repo` + `filename` (the coordinates the
+/// download IPC stores in `[providers.configs."embedded.llm"]`). This
+/// is how the UI maps user.toml back to a tier id without having to
+/// stash the tier id separately. For multi-part tiers the lookup
+/// matches against ANY of the part filenames so a user.toml that
+/// records the second part still resolves correctly.
+pub fn tier_by_coord(repo: &str, filename: &str) -> Option<&'static ModelTier> {
+    TIERS.iter().find(|t| {
+        t.repo == repo
+            && t.filenames.iter().any(|f| *f == filename)
+    })
+}
+
+/// Resolve the tier matching `repo` only — used by the legacy-config
+/// migration to fix user.toml entries whose `filename_remote` points
+/// at a synthetic name we shipped pre-9.x (e.g.
+/// `qwen2.5-7b-instruct-q4_k_m.gguf`, which never existed on HF
+/// because the actual upstream artefact is split into two parts).
+/// Returns the FIRST registered tier with the matching repo so the
+/// migration is deterministic.
+pub fn tier_by_repo(repo: &str) -> Option<&'static ModelTier> {
+    TIERS.iter().find(|t| t.repo == repo)
+}
+
+/// One-shot legacy-config migration. Applied at app startup before
+/// any download IPC runs. Detects the pre-9.x embedded config that
+/// recorded a non-existent synthetic filename for the multi-part
+/// 7B Q4_K_M tier and rewrites the entry to the registered shape
+/// (primary + `filenames_remote_extra`). Idempotent: returns
+/// `false` when the config already matches a known tier or the
+/// repo is unrecognised.
+pub fn migrate_legacy_embedded_config(cfg: &mut serde_json::Value) -> bool {
+    let Some(obj) = cfg.as_object_mut() else {
+        return false;
+    };
+    let Some(repo) = obj
+        .get("repo")
+        .and_then(|v| v.as_str())
+        .map(str::to_string)
+    else {
+        return false;
+    };
+    let Some(filename_remote) = obj
+        .get("filename_remote")
+        .and_then(|v| v.as_str())
+        .map(str::to_string)
+    else {
+        return false;
+    };
+
+    // Already lines up with a registered tier — nothing to do.
+    if tier_by_coord(&repo, &filename_remote).is_some() {
+        return false;
+    }
+
+    // Repo recognised but filename does not match any part. Upgrade
+    // to the registered tier's primary filename + extras list.
+    let Some(tier) = tier_by_repo(&repo) else {
+        return false;
+    };
+
+    obj.insert(
+        "filename_remote".into(),
+        serde_json::Value::String(tier.primary_filename().into()),
+    );
+    if tier.filenames.len() > 1 {
+        let extras: Vec<serde_json::Value> = tier
+            .filenames
+            .iter()
+            .skip(1)
+            .map(|f| serde_json::Value::String((*f).to_string()))
+            .collect();
+        obj.insert(
+            "filenames_remote_extra".into(),
+            serde_json::Value::Array(extras),
+        );
+    } else {
+        obj.remove("filenames_remote_extra");
+    }
+    // Drop any stale `model_path` override so the resolver picks
+    // the new filename's natural location under <app-data>/models/.
+    obj.remove("model_path");
+    true
+}
+
+/// Legacy provider id we shipped before the 12.x rename. Stays as a
+/// constant so the migration's intent is explicit at every call
+/// site and grep-able when (if) we add a third id rename later.
+pub const LEGACY_EMBEDDED_PROVIDER_ID: &str = "embedded.gemma";
+/// Current provider id. The default chain points here; the
+/// migration below rewrites legacy entries to match.
+pub const CURRENT_EMBEDDED_PROVIDER_ID: &str = "embedded.llm";
+
+/// Whole-`Settings` migration that combines:
+///
+/// 1. The 12.x `embedded.gemma` → `embedded.llm` rename. The
+///    embedded provider was originally named after the Gemma model
+///    family it loaded; the 2026-05-09 switch to Qwen 2.5 made the
+///    name actively misleading, so the id was generalised to
+///    `embedded.llm` (model-family-neutral).
+/// 2. The 9.x synthetic-filename rewrite implemented in
+///    [`migrate_legacy_embedded_config`]. The two are bundled because
+///    a single user.toml typically needs both — a user who had
+///    `embedded.gemma` in their chain pre-9.x almost certainly also
+///    had the 7B synthetic filename if they picked Quality.
+///
+/// Returns `true` when the settings were modified. The caller is
+/// expected to persist the snapshot via `SettingsStore::save` if
+/// `true` is returned.
+pub fn migrate_legacy_embedded_settings(
+    s: &mut crate::settings::schema::Settings,
+) -> bool {
+    let mut changed = false;
+
+    // Rename chain entries across every task chain. The translate
+    // chain is the obvious one but the pre-12.x default pre-loaded
+    // `embedded.gemma` into explain / summarize too via the Ollama
+    // preset, so we sweep all four LLM-shaped chains.
+    let chains: [&mut Vec<String>; 5] = [
+        &mut s.providers.translate.chain,
+        &mut s.providers.explain.chain,
+        &mut s.providers.summarize.chain,
+        &mut s.providers.ocr.chain,
+        &mut s.providers.asr.chain,
+    ];
+    for chain in chains {
+        for entry in chain.iter_mut() {
+            if entry == LEGACY_EMBEDDED_PROVIDER_ID {
+                *entry = CURRENT_EMBEDDED_PROVIDER_ID.to_string();
+                changed = true;
+            }
+        }
+    }
+
+    // Move the per-provider config block. Done as a remove-then-
+    // insert to avoid a clone when the entry is large.
+    if let Some(legacy) = s
+        .providers
+        .configs
+        .remove(LEGACY_EMBEDDED_PROVIDER_ID)
+    {
+        // CRITICAL: the merge layer (`layer_user_over_defaults`)
+        // produces a Settings whose `configs` map contains BOTH
+        // `embedded.gemma` (from user.toml, with the user's last
+        // tier choice) AND `embedded.llm` (from default.toml,
+        // bundled defaults). The legacy entry is the user's
+        // authoritative state; the new-key entry is just whatever
+        // the bundled defaults shipped with. Use `insert` (not
+        // `or_insert`) so the legacy data overrides — the previous
+        // `or_insert` was silently rolling user's tier selection
+        // back to the bundled Standard tier on every restart that
+        // did a rename migration.
+        s.providers.configs.insert(
+            CURRENT_EMBEDDED_PROVIDER_ID.to_string(),
+            legacy,
+        );
+        changed = true;
+    }
+
+    // Now apply the synthetic-filename migration on the (possibly
+    // just-renamed) embedded config. Done last so the function
+    // operates on the canonical key.
+    if let Some(cfg) = s
+        .providers
+        .configs
+        .get_mut(CURRENT_EMBEDDED_PROVIDER_ID)
+    {
+        if migrate_legacy_embedded_config(cfg) {
+            changed = true;
+        }
+    }
+
+    changed
+}
+
+/// The fallback when the user's settings reference a coord we no
+/// longer ship. Always succeeds because `DEFAULT_TIER_ID` is checked
+/// at compile time via the unit tests below.
+pub fn default_tier() -> &'static ModelTier {
+    tier_by_id(DEFAULT_TIER_ID).expect("DEFAULT_TIER_ID must point at a real entry in TIERS")
+}
+
+/// Map an installed-RAM measurement (GB) to the tier class we
+/// recommend. The buckets are deliberately conservative — picking
+/// "Quality" on an 8 GB host leaves no headroom for the rest of the
+/// app, the OS, and the user's other software, even though the GGUF
+/// itself fits.
+pub fn recommended_class_for_ram(total_ram_gb: f64) -> ModelTierClass {
+    if total_ram_gb < 6.0 {
+        ModelTierClass::Compact
+    } else if total_ram_gb < 12.0 {
+        ModelTierClass::Standard
+    } else {
+        ModelTierClass::Quality
+    }
+}
+
+/// Resolve the recommended tier for a given RAM measurement. Walks
+/// `TIERS` for the first entry of the matching class — keeps the
+/// recommendation stable even if multiple variants per class get
+/// added later (the first listed wins).
+pub fn recommended_tier_for_ram(total_ram_gb: f64) -> &'static ModelTier {
+    let class = recommended_class_for_ram(total_ram_gb);
+    TIERS
+        .iter()
+        .find(|t| t.class == class)
+        .unwrap_or_else(|| default_tier())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_tier_id_resolves_to_a_registered_entry() {
+        // Compile-time-ish guard: if a future PR drops the default
+        // tier without updating the constant, this test fails before
+        // a release ships a tool that crashes on first launch.
+        assert!(
+            tier_by_id(DEFAULT_TIER_ID).is_some(),
+            "DEFAULT_TIER_ID `{DEFAULT_TIER_ID}` is missing from TIERS"
+        );
+    }
+
+    #[test]
+    fn every_tier_is_apache_licensed() {
+        // The product spec is "license-clean for commercial offline
+        // deployments" — bundling a non-Apache entry would silently
+        // re-introduce the Gemma-ToU paperwork we removed in 5.3.
+        for t in TIERS {
+            assert_eq!(
+                t.license, "Apache-2.0",
+                "tier `{}` is not Apache-2.0",
+                t.id
+            );
+        }
+    }
+
+    #[test]
+    fn every_tier_has_a_unique_id() {
+        let mut seen = std::collections::HashSet::new();
+        for t in TIERS {
+            assert!(
+                seen.insert(t.id),
+                "duplicate tier id `{}`; the lookup helpers depend on uniqueness",
+                t.id
+            );
+        }
+    }
+
+    #[test]
+    fn every_tier_has_a_unique_repo_primary_filename_pair() {
+        // `tier_by_coord` matches against any part filename, but
+        // the primary (first) filename must still be unique within
+        // a repo so the "current tier" lookup from a saved
+        // user.toml's `filename_remote` is unambiguous.
+        let mut seen = std::collections::HashSet::new();
+        for t in TIERS {
+            assert!(
+                seen.insert((t.repo, t.primary_filename())),
+                "duplicate coord `{}:{}`",
+                t.repo,
+                t.primary_filename()
+            );
+        }
+    }
+
+    #[test]
+    fn every_tier_has_at_least_one_filename() {
+        for t in TIERS {
+            assert!(
+                !t.filenames.is_empty(),
+                "tier `{}` has no filenames — downloader cannot run",
+                t.id
+            );
+        }
+    }
+
+    #[test]
+    fn tier_by_coord_matches_any_part_of_split_tiers() {
+        // Regression guard for the 9.x 404 bug: when the user's
+        // `filename_remote` recorded the SECOND part of a multi-
+        // file GGUF (because they edited user.toml by hand or
+        // because a future migration tweaked the canonical name),
+        // the tier lookup MUST still resolve so the picker shows
+        // the right entry rather than "カスタム".
+        let quality = tier_by_id("qwen2.5-7b-instruct-q4_k_m").unwrap();
+        if quality.filenames.len() < 2 {
+            return; // single-file tier — invariant trivially holds.
+        }
+        for f in quality.filenames {
+            let resolved = tier_by_coord(quality.repo, f);
+            assert!(
+                resolved.is_some(),
+                "tier_by_coord({}, {}) failed to resolve a known part",
+                quality.repo,
+                f,
+            );
+            assert_eq!(resolved.unwrap().id, quality.id);
+        }
+    }
+
+    #[test]
+    fn tiers_are_ordered_smallest_to_largest() {
+        // The UI dropdown displays them in order. A Quality entry
+        // sandwiched between two Compacts would surprise users.
+        for window in TIERS.windows(2) {
+            assert!(
+                window[0].size_mb <= window[1].size_mb,
+                "tier `{}` ({} MB) precedes `{}` ({} MB)",
+                window[0].id,
+                window[0].size_mb,
+                window[1].id,
+                window[1].size_mb,
+            );
+        }
+    }
+
+    #[test]
+    fn ram_recommendation_buckets_are_monotonic() {
+        // 2 GB → Compact, 8 GB → Standard, 32 GB → Quality.
+        assert_eq!(recommended_class_for_ram(2.0), ModelTierClass::Compact);
+        assert_eq!(recommended_class_for_ram(4.0), ModelTierClass::Compact);
+        assert_eq!(recommended_class_for_ram(8.0), ModelTierClass::Standard);
+        assert_eq!(recommended_class_for_ram(12.0), ModelTierClass::Quality);
+        assert_eq!(recommended_class_for_ram(64.0), ModelTierClass::Quality);
+    }
+
+    #[test]
+    fn recommended_tier_resolves_to_a_concrete_entry_for_every_ram() {
+        // Each bucket has at least one tier registered, so the
+        // recommendation is never an Option — the picker always has
+        // a default to highlight.
+        for ram in [1.0, 4.0, 8.0, 16.0, 64.0] {
+            let t = recommended_tier_for_ram(ram);
+            assert!(
+                tier_by_id(t.id).is_some(),
+                "recommended tier id `{}` not registered (ram={})",
+                t.id,
+                ram
+            );
+        }
+    }
+
+    #[test]
+    fn coord_format_round_trips_through_tier_by_coord() {
+        for t in TIERS {
+            let coord = t.coord();
+            let (repo, filename) = coord.split_once(':').expect("coord has colon");
+            let resolved = tier_by_coord(repo, filename).expect("coord resolves");
+            assert_eq!(resolved.id, t.id);
+            assert_eq!(filename, t.primary_filename());
+        }
+    }
+
+    #[test]
+    fn migration_rewrites_pre_9x_quality_synthetic_filename() {
+        // Repro of the user-reported 9.x 404: pre-9.x recorded a
+        // synthetic single-file name that does not exist on HF.
+        let mut cfg = serde_json::json!({
+            "repo": "Qwen/Qwen2.5-7B-Instruct-GGUF",
+            "filename_remote": "qwen2.5-7b-instruct-q4_k_m.gguf",
+            "license": "Apache-2.0",
+        });
+        let migrated = migrate_legacy_embedded_config(&mut cfg);
+        assert!(migrated, "stale 7B config must trigger migration");
+        let obj = cfg.as_object().unwrap();
+        assert_eq!(
+            obj.get("filename_remote").and_then(|v| v.as_str()),
+            Some("qwen2.5-7b-instruct-q4_k_m-00001-of-00002.gguf")
+        );
+        let extras = obj
+            .get("filenames_remote_extra")
+            .and_then(|v| v.as_array())
+            .expect("extras populated");
+        assert_eq!(extras.len(), 1);
+        assert_eq!(
+            extras[0].as_str(),
+            Some("qwen2.5-7b-instruct-q4_k_m-00002-of-00002.gguf"),
+        );
+    }
+
+    #[test]
+    fn migration_is_a_noop_for_already_correct_configs() {
+        let mut cfg = serde_json::json!({
+            "repo": "Qwen/Qwen2.5-1.5B-Instruct-GGUF",
+            "filename_remote": "qwen2.5-1.5b-instruct-q4_k_m.gguf",
+        });
+        let migrated = migrate_legacy_embedded_config(&mut cfg);
+        assert!(!migrated, "matching config must not be touched");
+    }
+
+    #[test]
+    fn settings_migration_renames_legacy_embedded_id_in_chains_and_configs() {
+        // Repro of the 12.x rename: user.toml carries the legacy
+        // `embedded.gemma` id in both the translate chain and the
+        // per-provider configs map. After migration both must be
+        // `embedded.llm`.
+        let toml = r#"
+            [providers.translate]
+            chain = ["embedded.gemma", "ollama.gemma4"]
+
+            [providers.explain]
+            chain = ["embedded.gemma"]
+
+            [providers.configs."embedded.gemma"]
+            repo = "Qwen/Qwen2.5-1.5B-Instruct-GGUF"
+            filename_remote = "qwen2.5-1.5b-instruct-q4_k_m.gguf"
+            license = "Apache-2.0"
+        "#;
+        let defaults =
+            include_str!("settings/default.toml");
+        let mut s: crate::settings::schema::Settings =
+            crate::settings::store::layer_user_over_defaults_for_test(defaults, toml)
+                .expect("layered settings parse");
+        let migrated = migrate_legacy_embedded_settings(&mut s);
+        assert!(migrated, "legacy id must trigger migration");
+
+        assert!(
+            s.providers.translate.chain.iter().all(|e| e != "embedded.gemma"),
+            "no chain entry may remain as the legacy id"
+        );
+        assert!(
+            s.providers.translate.chain.iter().any(|e| e == "embedded.llm"),
+            "translate chain must reference the new id"
+        );
+        assert!(
+            s.providers.explain.chain.iter().any(|e| e == "embedded.llm"),
+            "explain chain must also be migrated"
+        );
+        assert!(
+            s.providers.configs.get("embedded.gemma").is_none(),
+            "legacy configs entry must be removed"
+        );
+        assert!(
+            s.providers.configs.get("embedded.llm").is_some(),
+            "new configs entry must exist after migration"
+        );
+    }
+
+    #[test]
+    fn settings_migration_preserves_user_data_when_both_keys_exist() {
+        // Regression for the 13.x bug: before the fix, the migration
+        // used `or_insert(legacy)` to move the per-provider config
+        // block. But because `default.toml` already provides an
+        // `embedded.llm` block, the merged Settings ALWAYS had both
+        // `embedded.gemma` (from user.toml — the user's authoritative
+        // state) AND `embedded.llm` (from defaults — Standard 1.5B).
+        // `or_insert` kept the default-derived entry and silently
+        // discarded the user's tier selection, rolling Quality 7B
+        // back to Standard 1.5B on every restart.
+        let user_toml = r#"
+            [providers.translate]
+            chain = ["embedded.gemma"]
+
+            [providers.configs."embedded.gemma"]
+            repo = "Qwen/Qwen2.5-7B-Instruct-GGUF"
+            filename_remote = "qwen2.5-7b-instruct-q4_k_m-00001-of-00002.gguf"
+            filenames_remote_extra = ["qwen2.5-7b-instruct-q4_k_m-00002-of-00002.gguf"]
+            license = "Apache-2.0"
+        "#;
+        let defaults = include_str!("settings/default.toml");
+        let mut s = crate::settings::store::layer_user_over_defaults_for_test(
+            defaults, user_toml,
+        )
+        .expect("layered settings parse");
+
+        // Sanity: before migration, BOTH keys must coexist (this is
+        // exactly the merge state the bug was triggered by — without
+        // both keys present the bug does not surface).
+        assert!(
+            s.providers.configs.contains_key("embedded.gemma"),
+            "user.toml's legacy entry must survive the layer merge"
+        );
+        assert!(
+            s.providers.configs.contains_key("embedded.llm"),
+            "default.toml's new entry must survive the layer merge"
+        );
+
+        let migrated = migrate_legacy_embedded_settings(&mut s);
+        assert!(migrated, "migration must report a change");
+
+        // After migration: legacy key gone, embedded.llm carries
+        // the USER'S Quality 7B selection (NOT the default Standard
+        // 1.5B).
+        assert!(!s.providers.configs.contains_key("embedded.gemma"));
+        let llm = s
+            .providers
+            .configs
+            .get("embedded.llm")
+            .expect("embedded.llm must exist post-migration");
+        assert_eq!(
+            llm.get("repo").and_then(|v| v.as_str()),
+            Some("Qwen/Qwen2.5-7B-Instruct-GGUF"),
+            "user's Quality 7B repo MUST survive migration; \
+             a default-derived `embedded.llm` value here means the \
+             rollback bug has regressed"
+        );
+        assert_eq!(
+            llm.get("filename_remote").and_then(|v| v.as_str()),
+            Some("qwen2.5-7b-instruct-q4_k_m-00001-of-00002.gguf"),
+            "user's primary filename MUST survive"
+        );
+        let extras = llm
+            .get("filenames_remote_extra")
+            .and_then(|v| v.as_array())
+            .expect("multi-part extras MUST survive");
+        assert_eq!(extras.len(), 1);
+        assert_eq!(
+            extras[0].as_str(),
+            Some("qwen2.5-7b-instruct-q4_k_m-00002-of-00002.gguf")
+        );
+    }
+
+    #[test]
+    fn settings_migration_is_idempotent() {
+        // Running migration twice on a fresh-default settings file
+        // must be a no-op the second time. Guards against partially
+        // applying migrations and dirtying user.toml on every launch.
+        let defaults = include_str!("settings/default.toml");
+        let mut s: crate::settings::schema::Settings =
+            toml::from_str(defaults).expect("default.toml parses");
+        let first = migrate_legacy_embedded_settings(&mut s);
+        let second = migrate_legacy_embedded_settings(&mut s);
+        assert!(
+            !first,
+            "default.toml is already canonical; first run must be a no-op"
+        );
+        assert!(!second, "second run must always be a no-op");
+    }
+
+    #[test]
+    fn migration_is_a_noop_for_unknown_repos() {
+        // User has a custom plugin model — leave alone.
+        let mut cfg = serde_json::json!({
+            "repo": "myorg/my-custom-model",
+            "filename_remote": "anything.gguf",
+        });
+        let migrated = migrate_legacy_embedded_config(&mut cfg);
+        assert!(!migrated, "unknown repo must not be migrated");
+    }
+
+    #[test]
+    fn default_tier_is_the_standard_class() {
+        // The install-and-go default targets typical office hardware
+        // (8 GB RAM). If a future tuning pass swaps the default to a
+        // Compact, this test fails so we re-evaluate the on-boarding
+        // copy ("約 1GB のモデルをダウンロードします") which assumes
+        // the Standard tier.
+        assert_eq!(default_tier().class, ModelTierClass::Standard);
+    }
+}

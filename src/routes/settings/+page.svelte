@@ -26,7 +26,27 @@
     Server,
     Sparkles
   } from 'lucide-svelte';
-  import { getSettingsSchema, restartApp } from '$lib/ipc';
+  import {
+    benchEmbeddedTranslate,
+    downloadEmbeddedModel,
+    embeddedModelStatus,
+    getSettingsSchema,
+    listModelTiers,
+    modelTierStatus,
+    onBenchProgress,
+    onEmbeddedModelProgress,
+    pickAndApplyEmbeddedModelPackage,
+    pickAndPackageEmbeddedModel,
+    restartApp,
+    setModelTier,
+    type BenchOutcome,
+    type BenchProgressEvent,
+    type BenchSample,
+    type EmbeddedModelStatus,
+    type ModelProgress,
+    type ModelTier,
+    type ModelTierStatus,
+  } from '$lib/ipc';
   import {
     currentSettings,
     ensureSettingsLoaded,
@@ -40,6 +60,7 @@
     restartNeeded,
     resetToBootSnapshot
   } from '$lib/stores/settingsStore';
+  import EngineCard, { type EngineKind, type EngineStatusBadge } from '$lib/components/EngineCard.svelte';
   import SchemaForm from '$lib/components/SchemaForm.svelte';
   import CommandPalette from '$lib/components/CommandPalette.svelte';
   import SaveIndicator from '$lib/components/SaveIndicator.svelte';
@@ -166,6 +187,236 @@
   const loading = $derived($settingsLoading);
   const showRestartBanner = $derived($restartNeeded);
 
+  /** Status snapshot of the embedded LLM model file. Refreshed on
+   * mount and after every successful download so the providers tab
+   * reflects the on-disk reality without needing a settings reload. */
+  let embeddedStatus = $state<EmbeddedModelStatus>({
+    path: '',
+    present: false,
+    size_bytes: null,
+    model_id: '',
+    license: null,
+    license_url: null,
+  });
+  let embeddedProgress = $state<ModelProgress | null>(null);
+  let embeddedDownloading = $state(false);
+  let embeddedError = $state<string | null>(null);
+  let unlistenEmbeddedProgress: (() => void) | null = null;
+  let embeddedPackaging = $state(false);
+  let embeddedImporting = $state(false);
+  let embeddedPackageMessage = $state<string | null>(null);
+  let modelTiers = $state<ModelTier[]>([]);
+  let tierStatus = $state<ModelTierStatus | null>(null);
+  let selectedTierId = $state<string>('');
+  let switchingTier = $state(false);
+  let benchRunning = $state(false);
+  let benchResult = $state<BenchOutcome | null>(null);
+  let benchError = $state<string | null>(null);
+  /** Live progress state, populated by onBenchProgress. Cleared at
+   * the start of each run so a re-run does not show stale numbers. */
+  let benchProgress = $state<{
+    totalSamples: number;
+    currentIndex: number;
+    tokensSoFar: number;
+    elapsedMs: number;
+    fixtureText: string;
+    completedSamples: BenchSample[];
+  } | null>(null);
+  let unlistenBench: (() => void) | null = null;
+
+  function handleBenchEvent(e: BenchProgressEvent) {
+    switch (e.phase) {
+      case 'started':
+        benchProgress = {
+          totalSamples: e.total_samples,
+          currentIndex: 0,
+          tokensSoFar: 0,
+          elapsedMs: 0,
+          fixtureText: '',
+          completedSamples: [],
+        };
+        break;
+      case 'sample_started':
+        if (benchProgress) {
+          benchProgress = {
+            ...benchProgress,
+            currentIndex: e.index,
+            tokensSoFar: 0,
+            elapsedMs: 0,
+            fixtureText: e.fixture_text,
+          };
+        }
+        break;
+      case 'sample_progress':
+        if (benchProgress) {
+          benchProgress = {
+            ...benchProgress,
+            tokensSoFar: e.tokens_so_far,
+            elapsedMs: e.elapsed_ms,
+          };
+        }
+        break;
+      case 'sample_completed':
+        if (benchProgress) {
+          benchProgress = {
+            ...benchProgress,
+            completedSamples: [...benchProgress.completedSamples, e.sample],
+          };
+        }
+        break;
+      case 'completed':
+        // Final result arrives via the IPC return value, so just
+        // mark the live progress as done.
+        break;
+    }
+  }
+
+  async function runEmbeddedBench() {
+    if (benchRunning || !embeddedStatus.present) return;
+    benchRunning = true;
+    benchError = null;
+    benchResult = null;
+    benchProgress = null;
+    // Subscribe to progress BEFORE invoking so we don't miss the
+    // "started" event.
+    if (!unlistenBench) {
+      try {
+        unlistenBench = await onBenchProgress(handleBenchEvent);
+      } catch (e) {
+        console.warn('bench progress listener failed:', e);
+      }
+    }
+    try {
+      benchResult = await benchEmbeddedTranslate(5);
+    } catch (e) {
+      benchError = e instanceof Error ? e.message : String(e);
+    } finally {
+      benchRunning = false;
+    }
+  }
+
+  /** Hand-tuned per-tier baselines derived from public llama.cpp
+   *  benchmarks on a "modern office laptop" CPU class (Intel
+   *  Core i5-1240P / Ryzen 5 5500U or similar, 4-8 P-cores, no GPU,
+   *  Q4_K_M quant). These are realistic targets — if the user's
+   *  bench is below these, performance is genuinely off and points
+   *  to mistralrs's CPU path being the bottleneck. */
+  function expectedTokensPerSecondFor(tierId: string | undefined): number | null {
+    if (!tierId) return null;
+    if (tierId.includes('0.5b')) return 50;
+    if (tierId.includes('1.5b')) return 25;
+    if (tierId.includes('7b')) return 5;
+    return null;
+  }
+
+  async function refreshTierState() {
+    try {
+      const [tiers, status] = await Promise.all([
+        listModelTiers(),
+        modelTierStatus(),
+      ]);
+      modelTiers = tiers;
+      tierStatus = status;
+      // Snap the dropdown to whatever the backend reports as
+      // `current`. If the user has hand-edited user.toml to point at
+      // an unregistered coord, `current` is null and the dropdown
+      // shows "カスタム" via a synthetic option below.
+      selectedTierId = status?.current?.id ?? '__custom__';
+    } catch (e) {
+      console.warn('tier status load failed:', e);
+    }
+  }
+
+  async function handleTierChange(nextId: string) {
+    if (switchingTier || nextId === selectedTierId || nextId === '__custom__') return;
+    switchingTier = true;
+    embeddedError = null;
+    try {
+      await setModelTier(nextId);
+      selectedTierId = nextId;
+      await Promise.all([refreshEmbeddedStatus(), refreshTierState()]);
+    } catch (e) {
+      embeddedError = e instanceof Error ? e.message : String(e);
+      // Roll the dropdown back so it does not lie about backend state.
+      selectedTierId = tierStatus?.current?.id ?? '__custom__';
+    } finally {
+      switchingTier = false;
+    }
+  }
+
+  function formatTierSize(mb: number): string {
+    if (mb < 1024) return `${mb} MB`;
+    return `${(mb / 1024).toFixed(1)} GB`;
+  }
+
+  async function packageCurrentModel() {
+    if (embeddedPackaging || !embeddedStatus.present) return;
+    embeddedPackaging = true;
+    embeddedError = null;
+    embeddedPackageMessage = null;
+    try {
+      const result = await pickAndPackageEmbeddedModel();
+      if (result && result.path) {
+        const sizeMb = (result.size_bytes / (1024 * 1024)).toFixed(0);
+        embeddedPackageMessage =
+          `パッケージを保存しました: ${result.path} ` +
+          `(${sizeMb} MB, ${result.license ?? 'ライセンス未指定'})`;
+      }
+    } catch (e) {
+      embeddedError = e instanceof Error ? e.message : String(e);
+    } finally {
+      embeddedPackaging = false;
+    }
+  }
+
+  async function importPackage() {
+    if (embeddedImporting) return;
+    embeddedImporting = true;
+    embeddedError = null;
+    embeddedPackageMessage = null;
+    try {
+      const imported = await pickAndApplyEmbeddedModelPackage();
+      if (imported) {
+        embeddedPackageMessage = `パッケージを取り込みました: ${imported}`;
+        await refreshEmbeddedStatus();
+      }
+    } catch (e) {
+      embeddedError = e instanceof Error ? e.message : String(e);
+    } finally {
+      embeddedImporting = false;
+    }
+  }
+
+  async function refreshEmbeddedStatus() {
+    try {
+      embeddedStatus = await embeddedModelStatus();
+    } catch (e) {
+      console.warn('embedded model status failed:', e);
+    }
+  }
+
+  async function startEmbeddedDownload(force = false) {
+    if (embeddedDownloading) return;
+    embeddedDownloading = true;
+    embeddedError = null;
+    embeddedProgress = null;
+    try {
+      await downloadEmbeddedModel(force);
+      await refreshEmbeddedStatus();
+    } catch (e) {
+      embeddedError = e instanceof Error ? e.message : String(e);
+    } finally {
+      embeddedDownloading = false;
+    }
+  }
+
+  function formatBytes(bytes: number | null | undefined): string {
+    if (bytes == null) return '不明';
+    const mb = bytes / (1024 * 1024);
+    if (mb < 1024) return `${mb.toFixed(1)} MB`;
+    return `${(mb / 1024).toFixed(2)} GB`;
+  }
+
   onMount(async () => {
     void ensureSettingsLoaded();
     try {
@@ -180,10 +431,28 @@
     } catch {
       appVersion = null;
     }
+    void refreshEmbeddedStatus();
+    void refreshTierState();
+    try {
+      const off = await onEmbeddedModelProgress((p) => {
+        embeddedProgress = p;
+      });
+      unlistenEmbeddedProgress = off;
+    } catch (e) {
+      console.warn('embedded progress listener failed:', e);
+    }
   });
 
   onDestroy(() => {
     /* store owns the debounce timer */
+    if (unlistenEmbeddedProgress) {
+      unlistenEmbeddedProgress();
+      unlistenEmbeddedProgress = null;
+    }
+    if (unlistenBench) {
+      unlistenBench();
+      unlistenBench = null;
+    }
   });
 
   // The curated controls bind through these helpers; they delegate to
@@ -280,11 +549,16 @@
       label: 'Heuristic',
       description: '組み込みヒューリスティック分類'
     },
+    'embedded.llm': {
+      kind: 'local',
+      label: '組み込みローカル LLM',
+      description: 'MoonLens に同梱されるローカル LLM (Qwen 2.5, Apache 2.0)。初回起動時にモデルを自動ダウンロード。'
+    },
     // External servers (require user-managed daemon)
     'ollama.gemma4': {
       kind: 'external',
       label: 'Ollama (Gemma 4)',
-      description: 'http://127.0.0.1:11434 で稼働するローカル LLM サーバ'
+      description: 'http://127.0.0.1:11434 で稼働するローカル LLM サーバ (オプション)'
     },
     'whisper_cpp.large_v3_turbo': {
       kind: 'external',
@@ -346,7 +620,7 @@
       id: 'translate',
       label: '翻訳',
       description: 'OCR後・字幕の本文翻訳',
-      suggestions: ['ollama.gemma4', 'deepl', 'gemini']
+      suggestions: ['embedded.llm', 'ollama.gemma4', 'deepl', 'gemini']
     },
     {
       id: 'ocr',
@@ -364,13 +638,13 @@
       id: 'explain',
       label: '説明',
       description: '画像や文章を要約・説明',
-      suggestions: ['ollama.gemma4', 'gemini']
+      suggestions: ['embedded.llm', 'ollama.gemma4', 'gemini']
     },
     {
       id: 'summarize',
       label: '要約',
       description: '長文を短く要約',
-      suggestions: ['ollama.gemma4', 'gemini']
+      suggestions: ['embedded.llm', 'ollama.gemma4', 'gemini']
     },
     {
       id: 'reverse_image_search',
@@ -391,6 +665,33 @@
       suggestions: ['builtin.heuristic']
     }
   ];
+
+  // Catalog integrity self-check. Every provider id referenced by
+  // `chainCatalog.suggestions` MUST appear in `providerHints`,
+  // otherwise the UI falls back to "未分類のプロバイダ" — which is
+  // exactly how the 14.x bug manifested when a sed-based rename
+  // missed single-quoted occurrences and the keys/labels drifted
+  // between the two catalogs. Logging on module init means the
+  // dev console screams the moment a future PR introduces drift,
+  // so the bug never reaches production again.
+  {
+    const known = new Set(Object.keys(providerHints));
+    const referenced = new Set<string>();
+    for (const chain of chainCatalog) {
+      for (const id of chain.suggestions) referenced.add(id);
+    }
+    const missing = [...referenced].filter(
+      (id) => !known.has(id) && !id.startsWith('plugin.'),
+    );
+    if (missing.length > 0) {
+      // eslint-disable-next-line no-console
+      console.error(
+        '[settings] provider catalog drift — these ids are recommended but lack hints, ' +
+          'and would render as "未分類のプロバイダ":',
+        missing,
+      );
+    }
+  }
 
   function reorderChain(key: ChainKey, fromIndex: number, toIndex: number) {
     const chain: string[] = read(`providers.${key}.chain`, []);
@@ -522,6 +823,236 @@
   const currentSuggestions = $derived(
     currentChainCatalog.suggestions.filter((s) => !currentChainIds.includes(s))
   );
+
+  /** ----------------------------------------------------------------
+   * EngineCard helpers — used by every task-tab to derive (enabled,
+   * priority) from the saved chain. The chain is the source of truth;
+   * EngineCard is a presentational shell that calls back into these
+   * for write-side mutations.
+   * ---------------------------------------------------------------- */
+  function engineEnabled(task: ChainKey, providerId: string): boolean {
+    const chain: string[] = read(`providers.${task}.chain`, []);
+    return chain.includes(providerId);
+  }
+  function enginePriority(task: ChainKey, providerId: string): number | null {
+    const chain: string[] = read(`providers.${task}.chain`, []);
+    const idx = chain.indexOf(providerId);
+    return idx >= 0 ? idx + 1 : null;
+  }
+  function setEngineEnabled(
+    task: ChainKey,
+    providerId: string,
+    next: boolean,
+  ) {
+    const chain: string[] = read(`providers.${task}.chain`, []);
+    const idx = chain.indexOf(providerId);
+    if (next && idx === -1) {
+      update(`providers.${task}.chain`, [...chain, providerId]);
+    } else if (!next && idx !== -1) {
+      const out = chain.slice();
+      out.splice(idx, 1);
+      update(`providers.${task}.chain`, out);
+    }
+  }
+  function moveEngineUp(task: ChainKey, providerId: string) {
+    const chain: string[] = read(`providers.${task}.chain`, []);
+    const idx = chain.indexOf(providerId);
+    if (idx <= 0) return;
+    reorderChain(task, idx, idx - 1);
+  }
+  function moveEngineDown(task: ChainKey, providerId: string) {
+    const chain: string[] = read(`providers.${task}.chain`, []);
+    const idx = chain.indexOf(providerId);
+    if (idx === -1 || idx >= chain.length - 1) return;
+    reorderChain(task, idx, idx + 1);
+  }
+
+  /** Per-card detail open/close state, keyed by `${task}:${providerId}`.
+   *  Persists across the session so a card stays open while the user
+   *  edits config in another sub-section. */
+  let detailOpen = $state<Record<string, boolean>>({});
+  function isDetailOpen(task: ChainKey, providerId: string): boolean {
+    return Boolean(detailOpen[`${task}:${providerId}`]);
+  }
+  function toggleDetailOpen(task: ChainKey, providerId: string) {
+    const k = `${task}:${providerId}`;
+    detailOpen = { ...detailOpen, [k]: !detailOpen[k] };
+  }
+
+  /** Build an engine status badge for a translate-capable provider. */
+  function translateEngineStatus(providerId: string): EngineStatusBadge | null {
+    if (providerId === 'embedded.llm' || providerId.startsWith('embedded.')) {
+      if (embeddedDownloading) {
+        return { label: 'ダウンロード中…', tone: 'pending' };
+      }
+      if (embeddedStatus.present) {
+        return {
+          label: `準備済み ${formatBytes(embeddedStatus.size_bytes)}`,
+          tone: 'ok',
+        };
+      }
+      return { label: '未ダウンロード', tone: 'warn' };
+    }
+    if (providerId.startsWith('ollama.')) {
+      // The provider itself just hits HTTP; we cannot tell from the
+      // settings whether the user has an `ollama serve` running. The
+      // honest read-out is "(別途) Ollama 必要" until a future
+      // health-check IPC lands.
+      return { label: 'Ollama 起動が必要', tone: 'info' };
+    }
+    if (providerId === 'deepl') {
+      const env = read<string>('providers.configs.deepl.api_key_env', 'DEEPL_API_KEY');
+      return {
+        label: `API キー: ${env}`,
+        tone: 'info',
+      };
+    }
+    if (providerId === 'gemini') {
+      const env = read<string>('providers.configs.gemini.api_key_env', 'GEMINI_API_KEY');
+      return {
+        label: `API キー: ${env}`,
+        tone: 'info',
+      };
+    }
+    return null;
+  }
+
+  /** The fixed catalog of translate engines we render. User-added
+   *  ids (e.g. `plugin.my_translator`) are appended dynamically so
+   *  they do not disappear from the UI just because we did not list
+   *  them up-front. */
+  const TRANSLATE_BUILTIN_ENGINES: ReadonlyArray<{
+    id: string;
+    title: string;
+    subtitle: string;
+    kind: EngineKind;
+  }> = [
+    {
+      id: 'embedded.llm',
+      title: '組み込みローカル LLM',
+      subtitle: 'スタンドアロン翻訳エンジン (Apache 2.0)',
+      kind: 'local',
+    },
+    {
+      id: 'ollama.gemma4',
+      title: 'Ollama 連携',
+      subtitle: 'http://127.0.0.1:11434 で稼働するローカル LLM サーバ',
+      kind: 'external',
+    },
+    {
+      id: 'deepl',
+      title: 'DeepL',
+      subtitle: 'クラウド翻訳 API',
+      kind: 'cloud',
+    },
+    {
+      id: 'gemini',
+      title: 'Google Gemini',
+      subtitle: 'クラウド LLM API',
+      kind: 'cloud',
+    },
+  ];
+
+  // Translate-tab catalog integrity check. Same intent as the
+  // chainCatalog self-check above, but scoped to the translate
+  // tab's bespoke engine list — every id here must round-trip
+  // through providerHints so the engine card renders with a
+  // proper kind pill. Without this, a stale id (e.g.
+  // `embedded.gemma` after the 12.x rename) would surface the
+  // engine in the translate tab but render its hint as
+  // "未分類のプロバイダ" — a contradictory state where the user
+  // can toggle the card but the rest of the app silently treats
+  // the id as unknown.
+  {
+    const known = new Set(Object.keys(providerHints));
+    const missing = TRANSLATE_BUILTIN_ENGINES.filter(
+      (e) => !known.has(e.id) && !e.id.startsWith('plugin.'),
+    );
+    if (missing.length > 0) {
+      // eslint-disable-next-line no-console
+      console.error(
+        '[settings] TRANSLATE_BUILTIN_ENGINES drift — these ids lack hints:',
+        missing.map((e) => e.id),
+      );
+    }
+  }
+
+  /** Compute the actual list of cards to render for the translate
+   *  tab — the built-in catalog plus any custom ids the user has
+   *  in their chain that we do not recognise (e.g. plugin providers). */
+  const translateEngineList = $derived.by(() => {
+    const chain: string[] = read('providers.translate.chain', []);
+    const known = new Set(TRANSLATE_BUILTIN_ENGINES.map((e) => e.id));
+    const custom = chain.filter((id) => !known.has(id));
+    return [
+      ...TRANSLATE_BUILTIN_ENGINES,
+      ...custom.map((id) => ({
+        id,
+        title: id,
+        subtitle: id.startsWith('plugin.')
+          ? 'プラグイン提供のプロバイダ'
+          : '未分類のプロバイダ',
+        kind: 'external' as EngineKind,
+      })),
+    ];
+  });
+
+  /** Overall task-level health string. Drives the green/yellow
+   *  banner at the top of the translate tab. */
+  const translateHealth = $derived.by(() => {
+    const chain: string[] = read('providers.translate.chain', []);
+    if (chain.length === 0) {
+      return {
+        tone: 'warn' as const,
+        label: '⚠️ 翻訳エンジンが未選択です — 下から1つ以上有効化してください',
+      };
+    }
+    const first = chain[0];
+    if (first === 'embedded.llm' || first.startsWith('embedded.')) {
+      if (embeddedStatus.present) {
+        return {
+          tone: 'ok' as const,
+          label: '✅ 翻訳できる状態です (組み込み LLM が応答可能)',
+        };
+      }
+      if (chain.length > 1) {
+        return {
+          tone: 'warn' as const,
+          label: `⚠️ 組み込みモデル未DL — フォールバックで ${chain[1]} が試されます`,
+        };
+      }
+      return {
+        tone: 'warn' as const,
+        label: '⚠️ 組み込みモデルが未ダウンロードです',
+      };
+    }
+    if (first.startsWith('ollama.')) {
+      return {
+        tone: 'info' as const,
+        label: 'ℹ️ Ollama を優先設定 — 別途 `ollama serve` が必要です',
+      };
+    }
+    if (first === 'deepl' || first === 'gemini') {
+      return {
+        tone: 'info' as const,
+        label: `ℹ️ クラウド優先 — ${first.toUpperCase()} の API キー (環境変数) が必要です`,
+      };
+    }
+    return {
+      tone: 'info' as const,
+      label: `ℹ️ ${first} を優先設定`,
+    };
+  });
+
+  /** Wrapper that uses the model-tier registry for the embedded
+   *  card's tier dropdown, which is shown inside the EngineCard
+   *  detail body. Mirrors the previous tier-row behaviour but
+   *  without the standalone embedded card. */
+  function tierDescriptionLine(): string {
+    const t = tierStatus?.recommended;
+    if (!tierStatus) return '';
+    return `${tierStatus.recommended_reason}`;
+  }
 </script>
 
 <PageHeader title="設定" subtitle="変更は自動保存されます">
@@ -1092,44 +1623,9 @@
         <header class="section-head">
           <h2>プロバイダ</h2>
           <p class="lead">
-            各タスクのバックエンド (LLM・OCR・音声認識) を選び、優先順位を決めます。
-            既定では <strong>ローカル組み込み</strong>のみが有効です。Ollama
-            などの外部サーバやクラウド API はオプションで追加できます。
+            各タスクで使うエンジンをチェックボックスで有効化します。チェックを入れたエンジンは順番に試され、失敗すると次のエンジンへフォールバックします。エンジンの ▼ ボタンで設定 (モデルダウンロード・APIキー・接続先) を開閉できます。
           </p>
         </header>
-
-        <div class="card preset-card">
-          <div class="kicker-row">プリセット</div>
-          <div class="preset-grid">
-            <button class="preset-btn" type="button" onclick={applyLocalOnlyPreset}>
-              <HardDrive class="h-4 w-4" aria-hidden="true" />
-              <div>
-                <div class="preset-title">ローカルのみ</div>
-                <div class="preset-desc">
-                  外部サーバ・クラウドへ一切送信しない構成
-                </div>
-              </div>
-            </button>
-            <button class="preset-btn" type="button" onclick={applyOllamaPreset}>
-              <Server class="h-4 w-4" aria-hidden="true" />
-              <div>
-                <div class="preset-title">Ollama 連携</div>
-                <div class="preset-desc">
-                  ローカルで稼働させた Ollama を翻訳に使用 (オプション)
-                </div>
-              </div>
-            </button>
-            <button class="preset-btn" type="button" onclick={applyCloudPreset}>
-              <Cloud class="h-4 w-4" aria-hidden="true" />
-              <div>
-                <div class="preset-title">クラウドフォールバック</div>
-                <div class="preset-desc">
-                  ローカルが失敗した時のみ DeepL / Gemini に切替
-                </div>
-              </div>
-            </button>
-          </div>
-        </div>
 
         <!-- Sub-tabs for each chain -->
         <div class="provider-tabs scroll-x" role="tablist">
@@ -1159,134 +1655,647 @@
             <span class="kicker-desc">{currentChainCatalog.description}</span>
           </div>
 
-          <div class="chain-section">
-            {#if currentChainIds.length === 0}
-              <div class="chain-empty-state">
-                <Sparkles class="h-5 w-5 accent-text" aria-hidden="true" />
-                <div>
-                  <div class="empty-title-line">プロバイダが未設定です</div>
-                  <p class="muted small">
-                    下のおすすめから選ぶか、プロバイダ ID を直接入力して追加してください。
-                    {#if providerTab === 'translate' || providerTab === 'asr'}
-                      未設定の状態では {currentChainCatalog.label} は実行できません。
-                    {/if}
-                  </p>
-                </div>
-              </div>
-            {:else}
-              <ul class="chain-list">
-                {#each currentChainIds as id, i (id + i)}
-                  {@const hint = hintFor(id)}
-                  <li class="chain-row">
-                    <span class="chain-rank mono">{i + 1}</span>
-                    <span class="chain-id-block">
-                      <span class="chain-id mono">{id}</span>
-                      <span class="chain-hint">
-                        <span class="kind-pill kind-{hint.kind}">
-                          {#if hint.kind === 'local'}
-                            <HardDrive class="h-3 w-3" aria-hidden="true" />
-                            ローカル
-                          {:else if hint.kind === 'external'}
-                            <Server class="h-3 w-3" aria-hidden="true" />
-                            外部サーバ
-                          {:else}
-                            <Cloud class="h-3 w-3" aria-hidden="true" />
-                            クラウド
-                          {/if}
-                        </span>
-                        <span class="muted small">{hint.description}</span>
-                      </span>
-                    </span>
-                    <span class="chain-actions">
-                      <button
-                        type="button"
-                        class="chain-btn"
-                        title="優先度を上げる"
-                        aria-label="優先度を上げる"
-                        disabled={i === 0}
-                        onclick={() => reorderChain(providerTab, i, i - 1)}
-                      >
-                        <ArrowUp class="h-3.5 w-3.5" aria-hidden="true" />
-                      </button>
-                      <button
-                        type="button"
-                        class="chain-btn"
-                        title="優先度を下げる"
-                        aria-label="優先度を下げる"
-                        disabled={i === currentChainIds.length - 1}
-                        onclick={() => reorderChain(providerTab, i, i + 1)}
-                      >
-                        <ArrowDown class="h-3.5 w-3.5" aria-hidden="true" />
-                      </button>
-                      <button
-                        type="button"
-                        class="chain-btn danger"
-                        title="削除"
-                        aria-label="削除"
-                        onclick={() => removeChainEntry(providerTab, i)}
-                      >
-                        <Trash2 class="h-3.5 w-3.5" aria-hidden="true" />
-                      </button>
-                    </span>
-                  </li>
-                {/each}
-              </ul>
-            {/if}
-
-            {#if currentSuggestions.length > 0}
-              <div class="suggestion-row">
-                <span class="muted small">おすすめ:</span>
-                {#each currentSuggestions as id (id)}
-                  {@const hint = hintFor(id)}
-                  <button
-                    type="button"
-                    class="suggestion-chip"
-                    onclick={() => addChainEntry(providerTab, id)}
-                    title={hint.description}
-                  >
-                    <Plus class="h-3 w-3" aria-hidden="true" />
-                    {hint.label}
-                    <span class="kind-pill kind-{hint.kind} compact">
-                      {#if hint.kind === 'local'}
-                        ローカル
-                      {:else if hint.kind === 'external'}
-                        外部
-                      {:else}
-                        クラウド
-                      {/if}
-                    </span>
-                  </button>
-                {/each}
-              </div>
-            {/if}
-
-            <div class="chain-add">
-              <input
-                class="input"
-                type="text"
-                placeholder="例: ollama.gemma4 / deepl / plugin.my-engine"
-                value={newChainEntries[providerTab] ?? ''}
-                oninput={(e) =>
-                  (newChainEntries = {
-                    ...newChainEntries,
-                    [providerTab]: (e.target as HTMLInputElement).value
-                  })}
-                onkeydown={(e) => {
-                  if (e.key === 'Enter') {
-                    e.preventDefault();
-                    addChainEntry(providerTab);
-                  }
-                }}
-              />
-              <button
-                class="btn"
-                type="button"
-                onclick={() => addChainEntry(providerTab)}
-              >
-                <Plus class="h-3.5 w-3.5" aria-hidden="true" /> 追加
-              </button>
+          {#if providerTab === 'translate'}
+            <!-- TASK-SPECIFIC ENGINE LIST: TRANSLATE -->
+            <!--
+              Each engine is one card. The checkbox toggles whether
+              the engine is in the chain; the priority badge shows
+              its position; the ▼ detail body holds engine-specific
+              setup (download, API key, endpoint, …) so the user
+              never has to leave the card to make the engine work.
+            -->
+            <div class="health-banner tone-{translateHealth.tone}">
+              {translateHealth.label}
             </div>
-          </div>
+
+            <div class="engine-list">
+              {#each translateEngineList as engine (engine.id)}
+                {@const enabled = engineEnabled('translate', engine.id)}
+                {@const priority = enginePriority('translate', engine.id)}
+                {@const detailOpenNow = isDetailOpen('translate', engine.id)}
+                {@const status = translateEngineStatus(engine.id)}
+                {@const recommended =
+                  engine.id === 'embedded.llm' &&
+                  tierStatus &&
+                  tierStatus.current?.id === tierStatus.recommended.id}
+                <EngineCard
+                  title={engine.title}
+                  subtitle={engine.subtitle}
+                  providerId={engine.id}
+                  kind={engine.kind}
+                  {enabled}
+                  {priority}
+                  enabledCount={currentChainIds.length}
+                  {status}
+                  recommended={Boolean(recommended)}
+                  detailOpen={detailOpenNow}
+                  onToggle={(next) =>
+                    setEngineEnabled('translate', engine.id, next)}
+                  onMoveUp={priority && priority > 1
+                    ? () => moveEngineUp('translate', engine.id)
+                    : null}
+                  onMoveDown={priority &&
+                  priority < currentChainIds.length
+                    ? () => moveEngineDown('translate', engine.id)
+                    : null}
+                  onToggleDetail={() => toggleDetailOpen('translate', engine.id)}
+                >
+                  {#if engine.id === 'embedded.llm'}
+                    <!-- Embedded LLM detail: model status, tier
+                         dropdown, download / package / import.
+                         Replaces the standalone "組み込みローカル LLM"
+                         card so DL state and the engine selection
+                         live in the same visual block. -->
+                    <div class="detail-grid">
+                      <div class="detail-status">
+                        {#if embeddedStatus.present}
+                          <strong>準備済み</strong> · {formatBytes(embeddedStatus.size_bytes)}
+                          {#if embeddedStatus.license}
+                            · ライセンス: <strong>{embeddedStatus.license}</strong>
+                            {#if embeddedStatus.license_url}
+                              <a
+                                href={embeddedStatus.license_url}
+                                target="_blank"
+                                rel="noreferrer noopener"
+                                class="link-muted"
+                              >
+                                詳細
+                              </a>
+                            {/if}
+                          {/if}
+                          <div class="muted small mono">{embeddedStatus.path}</div>
+                          {#if embeddedStatus.model_id}
+                            <div class="muted small">モデル: {embeddedStatus.model_id}</div>
+                          {/if}
+                        {:else}
+                          約 1GB の GGUF を
+                          <strong>ダウンロード</strong>
+                          するか、社内ファイルサーバ等から
+                          <strong>パッケージファイル (.moonlens-model)</strong>
+                          を取り込んでください。
+                        {/if}
+                      </div>
+
+                      {#if modelTiers.length > 0}
+                        <div class="detail-row">
+                          <label class="detail-label" for="embedded-tier-select">
+                            モデルティア
+                          </label>
+                          <select
+                            id="embedded-tier-select"
+                            class="preset-btn"
+                            value={selectedTierId}
+                            disabled={switchingTier ||
+                              embeddedDownloading ||
+                              embeddedImporting}
+                            onchange={(e) =>
+                              handleTierChange((e.target as HTMLSelectElement).value)}
+                            style="min-width: 16rem;"
+                          >
+                            {#each modelTiers as tier (tier.id)}
+                              <option value={tier.id}>
+                                {tier.display_name} — {formatTierSize(tier.size_mb)} (RAM≥{tier.min_ram_gb}GB)
+                                {tierStatus && tier.id === tierStatus.recommended.id
+                                  ? ' ⭐推奨'
+                                  : ''}
+                              </option>
+                            {/each}
+                            {#if !tierStatus?.current}
+                              <option value="__custom__" disabled>
+                                カスタム (user.toml 直接編集)
+                              </option>
+                            {/if}
+                          </select>
+                        </div>
+                        {#if tierStatus}
+                          <div class="muted small">
+                            {tierStatus.recommended_reason}
+                          </div>
+                        {/if}
+                        {#if tierStatus?.current_underpowered}
+                          <div class="hw-warning">
+                            <strong>⚠️ 性能不足の可能性</strong>
+                            お使いの PC (RAM
+                            {tierStatus.total_ram_gb.toFixed(1)} GB) は
+                            現在の {tierStatus.current?.display_name}
+                            ティア (RAM ≥ {tierStatus.current?.min_ram_gb} GB
+                            推奨) には不足しています。翻訳がタイムアウト
+                            する可能性が高いため、
+                            <strong>{tierStatus.recommended.display_name}</strong>
+                            への切替を推奨します。
+                            <button
+                              type="button"
+                              class="hw-warning-action"
+                              disabled={switchingTier ||
+                                embeddedDownloading ||
+                                embeddedImporting}
+                              onclick={() =>
+                                handleTierChange(
+                                  tierStatus!.recommended.id,
+                                )}
+                            >
+                              推奨ティアへ切替
+                            </button>
+                          </div>
+                        {/if}
+                      {/if}
+
+                      {#if embeddedDownloading && embeddedProgress}
+                        <div class="detail-progress">
+                          {formatBytes(embeddedProgress.downloaded)}
+                          {#if embeddedProgress.total}
+                            / {formatBytes(embeddedProgress.total)}
+                          {/if}
+                          {#if embeddedProgress.fraction != null}
+                            ({(embeddedProgress.fraction * 100).toFixed(1)}%)
+                          {/if}
+                          <progress
+                            value={embeddedProgress.fraction ?? 0}
+                            max="1"
+                            style="width: 100%; margin-top: 0.25rem;"
+                          ></progress>
+                        </div>
+                      {/if}
+
+                      {#if embeddedError}
+                        <div class="detail-error">エラー: {embeddedError}</div>
+                      {/if}
+                      {#if embeddedPackageMessage}
+                        <div class="detail-info">{embeddedPackageMessage}</div>
+                      {/if}
+
+                      {#if embeddedStatus.present}
+                        <!-- Embedded LLM benchmark. Runs 5
+                             representative JA/EN translations and
+                             reports per-sample latency + p50 / p95
+                             tokens/sec — an honest read-out so the
+                             user can compare their hardware against
+                             the documented baseline (e.g. llama.cpp
+                             Q4 0.5B ≈ 50 tok/s on a 2022-era
+                             office laptop). If their numbers come
+                             out an order of magnitude below, the
+                             runtime (mistralrs) is the bottleneck
+                             and a swap to llama-cpp-rs is justified. -->
+                        <div class="bench-section">
+                          <button
+                            type="button"
+                            class="preset-btn"
+                            disabled={benchRunning ||
+                              embeddedDownloading ||
+                              embeddedImporting}
+                            onclick={runEmbeddedBench}
+                          >
+                            {benchRunning
+                              ? 'ベンチ実行中… (5サンプル直列)'
+                              : '実機ベンチを実行 (5サンプル翻訳)'}
+                          </button>
+
+                          <!-- Live progress while benchRunning. Without
+                               this panel the user stares at a button
+                               that just says "実行中…" for minutes. The
+                               token counter + elapsed time prove the
+                               engine is still alive even on slow CPUs
+                               where individual tokens take seconds. -->
+                          {#if benchRunning && benchProgress}
+                            {@const pct =
+                              benchProgress.totalSamples > 0
+                                ? Math.min(
+                                    100,
+                                    ((benchProgress.completedSamples.length +
+                                      (benchProgress.currentIndex > 0 ? 0.5 : 0)) /
+                                      benchProgress.totalSamples) *
+                                      100,
+                                  )
+                                : 0}
+                            <div class="bench-progress">
+                              <div class="bench-progress-headline">
+                                {#if benchProgress.currentIndex > 0}
+                                  サンプル <strong
+                                    >{benchProgress.currentIndex}/{benchProgress.totalSamples}</strong
+                                  > 実行中
+                                  ・ <strong>{benchProgress.tokensSoFar}</strong> tokens 生成
+                                  ・ {(benchProgress.elapsedMs / 1000).toFixed(1)} 秒経過
+                                {:else}
+                                  ベンチ準備中…
+                                {/if}
+                              </div>
+                              <progress value={pct} max="100" class="bench-progress-bar"></progress>
+                              {#if benchProgress.fixtureText}
+                                <div class="muted small">
+                                  入力: <code class="muted">{benchProgress.fixtureText}</code>
+                                </div>
+                              {/if}
+                              {#if benchProgress.completedSamples.length > 0}
+                                <div class="muted small">
+                                  完了済み: {benchProgress.completedSamples
+                                    .map(
+                                      (s) =>
+                                        `#${s.index} ${s.tokens_per_second.toFixed(1)} tok/s`,
+                                    )
+                                    .join(' / ')}
+                                </div>
+                              {/if}
+                            </div>
+                          {/if}
+
+                          {#if benchError}
+                            <div class="detail-error">
+                              ベンチ失敗: {benchError}
+                            </div>
+                          {/if}
+                          {#if benchResult}
+                            {@const expected = expectedTokensPerSecondFor(
+                              tierStatus?.current?.id,
+                            )}
+                            {@const ratio = expected
+                              ? (benchResult.p50_tokens_per_second /
+                                  expected) *
+                                100
+                              : null}
+                            <div class="bench-result">
+                              <div class="bench-headline">
+                                <strong>p50</strong>
+                                {benchResult.p50_tokens_per_second.toFixed(1)} tok/s
+                                ・ <strong>p95</strong>
+                                {benchResult.p95_tokens_per_second.toFixed(1)} tok/s
+                                ・ <strong>mean</strong>
+                                {benchResult.mean_tokens_per_second.toFixed(1)} tok/s
+                                {#if expected != null}
+                                  <span
+                                    class:bench-ratio-bad={ratio != null && ratio < 30}
+                                    class:bench-ratio-warn={ratio != null && ratio >= 30 && ratio < 70}
+                                    class:bench-ratio-ok={ratio != null && ratio >= 70}
+                                    class="bench-ratio"
+                                  >
+                                    (期待値 {expected} tok/s の {ratio?.toFixed(0)}%)
+                                  </span>
+                                {/if}
+                              </div>
+                              <div class="muted small">
+                                {benchResult.tier_display_name}
+                                ・ RAM {benchResult.host_total_ram_gb.toFixed(1)} GB
+                                ・ {benchResult.host_cpu_cores} cores
+                                ・ 全 {(benchResult.total_run_ms / 1000).toFixed(1)} 秒
+                              </div>
+                              <details class="bench-detail">
+                                <summary>サンプル別の詳細</summary>
+                                <table class="bench-table">
+                                  <thead>
+                                    <tr>
+                                      <th>#</th>
+                                      <th>tokens</th>
+                                      <th>ms</th>
+                                      <th>tok/s</th>
+                                      <th>preview</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {#each benchResult.samples as s (s.index)}
+                                      <tr>
+                                        <td>{s.index}</td>
+                                        <td>{s.output_tokens}</td>
+                                        <td>{s.total_ms}</td>
+                                        <td>{s.tokens_per_second.toFixed(1)}</td>
+                                        <td class="bench-preview">{s.translated_preview}</td>
+                                      </tr>
+                                    {/each}
+                                  </tbody>
+                                </table>
+                              </details>
+                              {#if expected != null && ratio != null && ratio < 30}
+                                <div class="bench-verdict">
+                                  ⚠️ 期待値の 30% 未満です。現行ランタイム
+                                  (llama.cpp via llama-cpp-2) でも CPU が
+                                  期待速度に達していません。考えられる原因は
+                                  ① 古めの CPU / SIMD (AVX2) 非対応、
+                                  ② バックグラウンドプロセスによる負荷、
+                                  ③ DDR メモリ帯域不足、④ サーマルスロットリング、
+                                  のいずれか。<code class="muted">docs/EMBEDDED_LLM_PERF.md</code>
+                                  に詳細を記載。低位ティアへ切替えるか、常駐ソフト停止後に再ベンチを推奨。
+                                </div>
+                              {:else if expected != null && ratio != null && ratio < 70}
+                                <div class="bench-verdict bench-verdict-warn">
+                                  期待値の 30〜70% です。古めの CPU や
+                                  background load の影響と思われます。低位ティアへ
+                                  切替えるか、不要な常駐プロセスを停止すると改善が見込めます。
+                                </div>
+                              {/if}
+                            </div>
+                          {/if}
+                        </div>
+                      {/if}
+
+                      <div class="detail-actions">
+                        {#if !embeddedStatus.present}
+                          <button
+                            type="button"
+                            class="preset-btn"
+                            disabled={embeddedDownloading || embeddedImporting}
+                            onclick={() => startEmbeddedDownload(false)}
+                          >
+                            {embeddedDownloading
+                              ? 'ダウンロード中…'
+                              : 'ダウンロード'}
+                          </button>
+                          <button
+                            type="button"
+                            class="preset-btn"
+                            disabled={embeddedDownloading || embeddedImporting}
+                            onclick={importPackage}
+                            title="社内のファイルサーバ等から .moonlens-model パッケージを取り込む"
+                          >
+                            {embeddedImporting
+                              ? '取込中…'
+                              : 'パッケージから取込'}
+                          </button>
+                        {:else}
+                          <button
+                            type="button"
+                            class="preset-btn"
+                            disabled={embeddedDownloading}
+                            onclick={() => startEmbeddedDownload(true)}
+                          >
+                            再ダウンロード
+                          </button>
+                          <button
+                            type="button"
+                            class="preset-btn"
+                            disabled={embeddedPackaging}
+                            onclick={packageCurrentModel}
+                            title="ダウンロード済みモデルを .moonlens-model にパッケージ化して、社内のオフライン PC へ配布できるようにします"
+                          >
+                            {embeddedPackaging
+                              ? 'パッケージ化中…'
+                              : 'パッケージ化'}
+                          </button>
+                          <button
+                            type="button"
+                            class="preset-btn"
+                            disabled={embeddedImporting}
+                            onclick={importPackage}
+                            title="別のパッケージファイルから取込 (上書き)"
+                          >
+                            {embeddedImporting ? '取込中…' : 'パッケージから取込'}
+                          </button>
+                        {/if}
+                      </div>
+                    </div>
+                  {:else if engine.id === 'ollama.gemma4'}
+                    <!-- Ollama detail: endpoint + model + reminder
+                         that the daemon must be running separately. -->
+                    <div class="detail-grid">
+                      <div class="detail-status">
+                        外部 Ollama サーバを翻訳に使います。Ollama を別途
+                        インストールして
+                        <code class="muted">ollama serve</code> で起動した上で、
+                        <code class="muted">ollama pull gemma4:e2b</code>
+                        を済ませておく必要があります。
+                      </div>
+                      <div class="detail-row">
+                        <label class="detail-label" for="ollama-endpoint">
+                          エンドポイント
+                        </label>
+                        <input
+                          id="ollama-endpoint"
+                          class="input"
+                          type="text"
+                          value={read<string>(
+                            'providers.configs."ollama.gemma4".endpoint',
+                            'http://127.0.0.1:11434',
+                          )}
+                          oninput={(e) =>
+                            update(
+                              'providers.configs."ollama.gemma4".endpoint',
+                              (e.target as HTMLInputElement).value,
+                            )}
+                        />
+                      </div>
+                      <div class="detail-row">
+                        <label class="detail-label" for="ollama-model">
+                          モデル
+                        </label>
+                        <input
+                          id="ollama-model"
+                          class="input"
+                          type="text"
+                          value={read<string>(
+                            'providers.configs."ollama.gemma4".model',
+                            'gemma4:e2b',
+                          )}
+                          oninput={(e) =>
+                            update(
+                              'providers.configs."ollama.gemma4".model',
+                              (e.target as HTMLInputElement).value,
+                            )}
+                        />
+                      </div>
+                    </div>
+                  {:else if engine.id === 'deepl'}
+                    <!-- DeepL detail: API key env var + formality. -->
+                    <div class="detail-grid">
+                      <div class="detail-status">
+                        DeepL クラウド翻訳 API を使います。API キーは
+                        <code class="muted">.env</code>
+                        / 環境変数経由で渡してください (キー名は下で指定)。
+                      </div>
+                      <div class="detail-row">
+                        <label class="detail-label" for="deepl-key-env">
+                          API キーの環境変数名
+                        </label>
+                        <input
+                          id="deepl-key-env"
+                          class="input"
+                          type="text"
+                          value={read<string>(
+                            'providers.configs.deepl.api_key_env',
+                            'DEEPL_API_KEY',
+                          )}
+                          oninput={(e) =>
+                            update(
+                              'providers.configs.deepl.api_key_env',
+                              (e.target as HTMLInputElement).value,
+                            )}
+                        />
+                      </div>
+                      <div class="detail-row">
+                        <label class="detail-label" for="deepl-formality">
+                          formality
+                        </label>
+                        <input
+                          id="deepl-formality"
+                          class="input"
+                          type="text"
+                          value={read<string>(
+                            'providers.configs.deepl.formality',
+                            'default',
+                          )}
+                          oninput={(e) =>
+                            update(
+                              'providers.configs.deepl.formality',
+                              (e.target as HTMLInputElement).value,
+                            )}
+                        />
+                      </div>
+                    </div>
+                  {:else if engine.id === 'gemini'}
+                    <!-- Gemini detail: API key env + model. -->
+                    <div class="detail-grid">
+                      <div class="detail-status">
+                        Google Gemini クラウド LLM を使います。API キーは
+                        <code class="muted">.env</code>
+                        / 環境変数経由で渡してください。
+                      </div>
+                      <div class="detail-row">
+                        <label class="detail-label" for="gemini-key-env">
+                          API キーの環境変数名
+                        </label>
+                        <input
+                          id="gemini-key-env"
+                          class="input"
+                          type="text"
+                          value={read<string>(
+                            'providers.configs.gemini.api_key_env',
+                            'GEMINI_API_KEY',
+                          )}
+                          oninput={(e) =>
+                            update(
+                              'providers.configs.gemini.api_key_env',
+                              (e.target as HTMLInputElement).value,
+                            )}
+                        />
+                      </div>
+                      <div class="detail-row">
+                        <label class="detail-label" for="gemini-model">
+                          モデル
+                        </label>
+                        <input
+                          id="gemini-model"
+                          class="input"
+                          type="text"
+                          value={read<string>(
+                            'providers.configs.gemini.model',
+                            'gemini-2.5-flash',
+                          )}
+                          oninput={(e) =>
+                            update(
+                              'providers.configs.gemini.model',
+                              (e.target as HTMLInputElement).value,
+                            )}
+                        />
+                      </div>
+                    </div>
+                  {:else}
+                    <!-- Plugin / unknown provider — no curated UI,
+                         the user added it via custom id input. -->
+                    <div class="detail-status">
+                      カスタムプロバイダ — 詳細設定は
+                      <code class="muted">providers.configs."{engine.id}"</code>
+                      を user.toml で直接編集してください。
+                    </div>
+                  {/if}
+                </EngineCard>
+              {/each}
+
+              <!-- Custom id input — kept for power users (plugin
+                   providers, bespoke ids) that the registry does
+                   not know about up-front. -->
+              <div class="chain-add">
+                <input
+                  class="input"
+                  type="text"
+                  placeholder="その他のエンジン ID (例: plugin.my-engine)"
+                  value={newChainEntries[providerTab] ?? ''}
+                  oninput={(e) =>
+                    (newChainEntries = {
+                      ...newChainEntries,
+                      [providerTab]: (e.target as HTMLInputElement).value
+                    })}
+                  onkeydown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      addChainEntry(providerTab);
+                    }
+                  }}
+                />
+                <button
+                  class="btn"
+                  type="button"
+                  onclick={() => addChainEntry(providerTab)}
+                >
+                  <Plus class="h-3.5 w-3.5" aria-hidden="true" /> カスタム追加
+                </button>
+              </div>
+            </div>
+          {:else}
+            <!-- TASK-SPECIFIC ENGINE LIST: OCR / ASR / others -->
+            <!--
+              Same EngineCard pattern as translate but driven by
+              `chainCatalog[task].suggestions` plus any custom ids
+              already in the chain. Detail bodies are intentionally
+              skipped here — these tasks do not have model downloads
+              or API keys, so a simple toggle + status pill is
+              enough. Detailed config still lives in user.toml for
+              power users.
+            -->
+            <div class="engine-list">
+              {#each currentChainCatalog.suggestions
+                .concat(currentChainIds.filter(
+                  (id) => !currentChainCatalog.suggestions.includes(id),
+                )) as engineId, idx (engineId + idx)}
+                {@const enabled = engineEnabled(providerTab, engineId)}
+                {@const priority = enginePriority(providerTab, engineId)}
+                {@const hint = hintFor(engineId)}
+                <EngineCard
+                  title={hint.label}
+                  subtitle={hint.description}
+                  providerId={engineId}
+                  kind={hint.kind}
+                  {enabled}
+                  {priority}
+                  enabledCount={currentChainIds.length}
+                  status={null}
+                  detailOpen={false}
+                  onToggle={(next) =>
+                    setEngineEnabled(providerTab, engineId, next)}
+                  onMoveUp={priority && priority > 1
+                    ? () => moveEngineUp(providerTab, engineId)
+                    : null}
+                  onMoveDown={priority &&
+                  priority < currentChainIds.length
+                    ? () => moveEngineDown(providerTab, engineId)
+                    : null}
+                  onToggleDetail={null}
+                />
+              {/each}
+
+              <div class="chain-add">
+                <input
+                  class="input"
+                  type="text"
+                  placeholder="その他のエンジン ID (例: plugin.my-engine)"
+                  value={newChainEntries[providerTab] ?? ''}
+                  oninput={(e) =>
+                    (newChainEntries = {
+                      ...newChainEntries,
+                      [providerTab]: (e.target as HTMLInputElement).value
+                    })}
+                  onkeydown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      addChainEntry(providerTab);
+                    }
+                  }}
+                />
+                <button
+                  class="btn"
+                  type="button"
+                  onclick={() => addChainEntry(providerTab)}
+                >
+                  <Plus class="h-3.5 w-3.5" aria-hidden="true" /> カスタム追加
+                </button>
+              </div>
+            </div>
+          {/if}
 
           <div class="kicker-row mt-divider">挙動</div>
           <div class="row">
@@ -1725,6 +2734,226 @@
 {/if}
 
 <style>
+  /* ----- Engine card list (providers tab) -----
+   * Each engine = one EngineCard. The list itself just stacks
+   * cards with a uniform gap so the priority badges line up. */
+  .engine-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.625rem;
+    padding: 0.5rem 0;
+  }
+  .health-banner {
+    margin: 0.5rem 0;
+    padding: 0.625rem 0.875rem;
+    border-radius: 8px;
+    font-size: 0.875rem;
+    line-height: 1.4;
+    border: 1px solid;
+  }
+  .health-banner.tone-ok {
+    background: color-mix(in srgb, #10b981 12%, transparent);
+    border-color: color-mix(in srgb, #10b981 35%, transparent);
+    color: color-mix(in srgb, #10b981 95%, var(--ink));
+  }
+  .health-banner.tone-warn {
+    background: color-mix(in srgb, #f59e0b 12%, transparent);
+    border-color: color-mix(in srgb, #f59e0b 35%, transparent);
+    color: color-mix(in srgb, #f59e0b 95%, var(--ink));
+  }
+  .health-banner.tone-info {
+    background: color-mix(in srgb, var(--accent) 10%, transparent);
+    border-color: color-mix(in srgb, var(--accent) 30%, transparent);
+    color: var(--ink);
+  }
+  /* HW capability mismatch warning. Sat between the tier dropdown
+     and the download button so the user reads the warning BEFORE
+     they kick off a multi-GB download for a tier they cannot
+     realistically run. */
+  .hw-warning {
+    margin-top: 0.5rem;
+    padding: 0.625rem 0.875rem;
+    border-radius: 8px;
+    font-size: 0.8125rem;
+    line-height: 1.5;
+    background: color-mix(in srgb, #ef4444 10%, transparent);
+    border: 1px solid color-mix(in srgb, #ef4444 35%, transparent);
+    color: color-mix(in srgb, #ef4444 95%, var(--ink));
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  .hw-warning strong {
+    color: color-mix(in srgb, #ef4444 100%, var(--ink));
+  }
+  .hw-warning-action {
+    margin-left: auto;
+    padding: 0.25rem 0.625rem;
+    border-radius: 6px;
+    border: 1px solid color-mix(in srgb, #ef4444 50%, transparent);
+    background: color-mix(in srgb, #ef4444 18%, transparent);
+    color: color-mix(in srgb, #ef4444 100%, var(--ink));
+    font-size: 0.75rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 120ms ease, border-color 120ms ease;
+  }
+  .hw-warning-action:hover:not(:disabled) {
+    background: color-mix(in srgb, #ef4444 28%, transparent);
+    border-color: color-mix(in srgb, #ef4444 70%, transparent);
+  }
+  .hw-warning-action:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+  .bench-section {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    margin-top: 0.5rem;
+    padding-top: 0.5rem;
+    border-top: 1px dashed var(--border);
+  }
+  .bench-progress {
+    display: flex;
+    flex-direction: column;
+    gap: 0.375rem;
+    padding: 0.5rem 0.75rem;
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--accent) 8%, var(--surface));
+    border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+    font-size: 0.8125rem;
+  }
+  .bench-progress-headline {
+    color: var(--ink);
+  }
+  .bench-progress-bar {
+    width: 100%;
+    height: 0.375rem;
+  }
+  .bench-result {
+    display: flex;
+    flex-direction: column;
+    gap: 0.375rem;
+    padding: 0.625rem 0.75rem;
+    border-radius: 8px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    font-size: 0.8125rem;
+  }
+  .bench-headline {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    align-items: baseline;
+    line-height: 1.5;
+  }
+  .bench-ratio {
+    margin-left: auto;
+    font-size: 0.75rem;
+    padding: 0.125rem 0.5rem;
+    border-radius: 999px;
+  }
+  .bench-ratio-ok {
+    background: color-mix(in srgb, #10b981 18%, transparent);
+    color: #10b981;
+  }
+  .bench-ratio-warn {
+    background: color-mix(in srgb, #f59e0b 22%, transparent);
+    color: #f59e0b;
+  }
+  .bench-ratio-bad {
+    background: color-mix(in srgb, #ef4444 22%, transparent);
+    color: #ef4444;
+  }
+  .bench-detail {
+    margin-top: 0.25rem;
+  }
+  .bench-detail > summary {
+    cursor: pointer;
+    color: var(--ink-muted);
+    font-size: 0.75rem;
+    padding: 0.125rem 0;
+  }
+  .bench-table {
+    width: 100%;
+    margin-top: 0.5rem;
+    font-size: 0.75rem;
+    border-collapse: collapse;
+  }
+  .bench-table th,
+  .bench-table td {
+    text-align: left;
+    padding: 0.25rem 0.5rem;
+    border-bottom: 1px solid var(--border);
+  }
+  .bench-table th {
+    color: var(--ink-muted);
+    font-weight: 500;
+  }
+  .bench-preview {
+    color: var(--ink-muted);
+    max-width: 18rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .bench-verdict {
+    margin-top: 0.5rem;
+    padding: 0.5rem 0.75rem;
+    border-radius: 6px;
+    background: color-mix(in srgb, #ef4444 12%, transparent);
+    border: 1px solid color-mix(in srgb, #ef4444 35%, transparent);
+    color: color-mix(in srgb, #ef4444 95%, var(--ink));
+    font-size: 0.8125rem;
+    line-height: 1.5;
+  }
+  .detail-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 0.625rem;
+  }
+  .detail-status {
+    color: var(--ink-muted);
+    font-size: 0.8125rem;
+    line-height: 1.4;
+  }
+  .detail-row {
+    display: flex;
+    align-items: center;
+    gap: 0.625rem;
+  }
+  .detail-label {
+    flex: 0 0 8rem;
+    font-size: 0.8125rem;
+    color: var(--ink-muted);
+  }
+  .detail-row .input {
+    flex: 1;
+    min-width: 0;
+  }
+  .detail-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+  .detail-progress {
+    font-size: 0.8125rem;
+    color: var(--ink-muted);
+  }
+  .detail-error {
+    color: #ef4444;
+    font-size: 0.8125rem;
+  }
+  .detail-info {
+    color: var(--accent);
+    font-size: 0.8125rem;
+  }
+  .mono {
+    font-family: var(--font-mono);
+  }
+
   .settings {
     height: 100%;
     display: flex;

@@ -34,6 +34,13 @@ pub struct OnboardingState {
     /// walk-through on macOS. Other platforms always store `true` so the
     /// flag is a no-op there.
     pub macos_permissions_reviewed: bool,
+    /// Whether the user has been shown the embedded LLM setup
+    /// prompt. Stays `false` until the first-run modal is either
+    /// dismissed ("後で") or completed (download finished). Once `true`
+    /// the modal never reappears, even if the model file is later
+    /// removed — at that point the Settings → Providers card is the
+    /// authoritative status / download surface.
+    pub embedded_model_setup_seen: bool,
 }
 
 /* ------------------------------- appearance ------------------------------ */
