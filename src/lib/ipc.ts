@@ -245,12 +245,26 @@ export const modelTierStatus = () =>
 export const setModelTier = (tierId: string) =>
   safeInvoke<void>('set_model_tier', { tierId });
 
-/** Per-sample result from the embedded-LLM benchmark. */
+/** Per-sample result from the embedded-LLM benchmark.
+ *
+ * Two throughput numbers are reported per sample:
+ *   - `tokens_per_second`: wall-clock rate. Includes context
+ *     setup + prompt eval. Reflects the per-line latency a Lens
+ *     user actually feels.
+ *   - `decode_tokens_per_second`: steady-state generation rate
+ *     after the first token is out. The model's intrinsic
+ *     throughput; this is the apples-to-apples metric vs
+ *     `llama-bench tg` upstream and what the verdict compares
+ *     against the published baseline.
+ */
 export interface BenchSample {
   index: number;
   total_ms: number;
+  prompt_eval_ms: number;
+  decode_ms: number;
   output_tokens: number;
   tokens_per_second: number;
+  decode_tokens_per_second: number;
   translated_preview: string;
 }
 
@@ -262,6 +276,9 @@ export interface BenchOutcome {
   p50_tokens_per_second: number;
   p95_tokens_per_second: number;
   mean_tokens_per_second: number;
+  p50_decode_tokens_per_second: number;
+  p95_decode_tokens_per_second: number;
+  mean_decode_tokens_per_second: number;
   p50_latency_ms: number;
   p95_latency_ms: number;
   host_total_ram_gb: number;

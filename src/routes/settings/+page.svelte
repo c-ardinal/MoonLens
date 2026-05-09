@@ -1907,29 +1907,33 @@
                             {@const expected = expectedTokensPerSecondFor(
                               tierStatus?.current?.id,
                             )}
-                            {@const ratio = expected
-                              ? (benchResult.p50_tokens_per_second /
+                            {@const decodeRatio = expected
+                              ? (benchResult.p50_decode_tokens_per_second /
                                   expected) *
                                 100
                               : null}
                             <div class="bench-result">
                               <div class="bench-headline">
-                                <strong>p50</strong>
-                                {benchResult.p50_tokens_per_second.toFixed(1)} tok/s
-                                ・ <strong>p95</strong>
-                                {benchResult.p95_tokens_per_second.toFixed(1)} tok/s
-                                ・ <strong>mean</strong>
-                                {benchResult.mean_tokens_per_second.toFixed(1)} tok/s
+                                <strong>生成速度 (decode)</strong>
+                                p50 {benchResult.p50_decode_tokens_per_second.toFixed(1)}
+                                / mean {benchResult.mean_decode_tokens_per_second.toFixed(1)} tok/s
                                 {#if expected != null}
                                   <span
-                                    class:bench-ratio-bad={ratio != null && ratio < 30}
-                                    class:bench-ratio-warn={ratio != null && ratio >= 30 && ratio < 70}
-                                    class:bench-ratio-ok={ratio != null && ratio >= 70}
+                                    class:bench-ratio-bad={decodeRatio != null && decodeRatio < 30}
+                                    class:bench-ratio-warn={decodeRatio != null && decodeRatio >= 30 && decodeRatio < 70}
+                                    class:bench-ratio-ok={decodeRatio != null && decodeRatio >= 70}
                                     class="bench-ratio"
                                   >
-                                    (期待値 {expected} tok/s の {ratio?.toFixed(0)}%)
+                                    (期待値 {expected} tok/s の {decodeRatio?.toFixed(0)}%)
                                   </span>
                                 {/if}
+                              </div>
+                              <div class="bench-subline muted small">
+                                <strong>per-line wall-clock</strong>
+                                p50 {benchResult.p50_tokens_per_second.toFixed(1)}
+                                / mean {benchResult.mean_tokens_per_second.toFixed(1)} tok/s
+                                — context 構築 + プロンプト評価込みの
+                                ライン単体スループット
                               </div>
                               <div class="muted small">
                                 {benchResult.tier_display_name}
@@ -1944,8 +1948,10 @@
                                     <tr>
                                       <th>#</th>
                                       <th>tokens</th>
-                                      <th>ms</th>
-                                      <th>tok/s</th>
+                                      <th>total ms</th>
+                                      <th>prompt eval ms</th>
+                                      <th>decode tok/s</th>
+                                      <th>wall tok/s</th>
                                       <th>preview</th>
                                     </tr>
                                   </thead>
@@ -1955,6 +1961,8 @@
                                         <td>{s.index}</td>
                                         <td>{s.output_tokens}</td>
                                         <td>{s.total_ms}</td>
+                                        <td>{s.prompt_eval_ms}</td>
+                                        <td>{s.decode_tokens_per_second.toFixed(1)}</td>
                                         <td>{s.tokens_per_second.toFixed(1)}</td>
                                         <td class="bench-preview">{s.translated_preview}</td>
                                       </tr>
@@ -1962,22 +1970,28 @@
                                   </tbody>
                                 </table>
                               </details>
-                              {#if expected != null && ratio != null && ratio < 30}
+                              {#if expected != null && decodeRatio != null && decodeRatio < 30}
                                 <div class="bench-verdict">
-                                  ⚠️ 期待値の 30% 未満です。現行ランタイム
-                                  (llama.cpp via llama-cpp-2) でも CPU が
-                                  期待速度に達していません。考えられる原因は
-                                  ① 古めの CPU / SIMD (AVX2) 非対応、
+                                  ⚠️ 生成速度が期待値の 30% 未満です。
+                                  考えられる原因: ① CPU が古い (AVX2 非対応 / 5+ 年前)、
                                   ② バックグラウンドプロセスによる負荷、
-                                  ③ DDR メモリ帯域不足、④ サーマルスロットリング、
-                                  のいずれか。<code class="muted">docs/EMBEDDED_LLM_PERF.md</code>
-                                  に詳細を記載。低位ティアへ切替えるか、常駐ソフト停止後に再ベンチを推奨。
+                                  ③ DDR メモリ帯域不足、④ サーマルスロットリング。
+                                  低位ティアへ切替えるか、常駐ソフト停止後に再ベンチを推奨。
+                                  <code class="muted">docs/EMBEDDED_LLM_PERF.md</code> 参照。
                                 </div>
-                              {:else if expected != null && ratio != null && ratio < 70}
+                              {:else if expected != null && decodeRatio != null && decodeRatio < 70}
                                 <div class="bench-verdict bench-verdict-warn">
-                                  期待値の 30〜70% です。古めの CPU や
-                                  background load の影響と思われます。低位ティアへ
-                                  切替えるか、不要な常駐プロセスを停止すると改善が見込めます。
+                                  生成速度は期待値の 30〜70%。CPU 世代相応の
+                                  数値です。より高速にしたい場合は不要な常駐プロセスを
+                                  停止するか、低位ティアへ切替えてください。
+                                </div>
+                              {:else if expected != null && decodeRatio != null}
+                                <div class="bench-verdict bench-verdict-ok">
+                                  ✓ 生成速度は期待値の 70% 以上 — llama.cpp が
+                                  期待通り動作しています。per-line wall-clock が
+                                  低い場合は context 構築 + プロンプト評価が
+                                  支配的なため、複数行を連続翻訳すれば
+                                  実効スループットは向上します。
                                 </div>
                               {/if}
                             </div>

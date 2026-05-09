@@ -101,24 +101,52 @@ pub struct ImportOutcome {
 /// the full inference latency for one representative translation
 /// request — useful both for showing the user the variance across
 /// samples and for computing aggregate p50 / p95 latencies in the UI.
+///
+/// llama.cpp upstream (and the wider community) reports two separate
+/// numbers for inference benchmarks:
+///   1. **Prompt eval** (a.k.a. prefill): time to process the input
+///      prompt + LlamaContext setup. One-shot per request.
+///   2. **Generation** (a.k.a. decode): the streaming token rate
+///      AFTER prompt eval is done.
+/// Mixing them into a single "tokens / total_ms" number makes short
+/// translations look catastrophically slow because prompt eval
+/// dominates total time when the output is only a handful of tokens.
+/// We track them separately and compare the **decode** rate against
+/// the published baseline in the verdict — that is the apples-to-apples
+/// metric vs `llama-bench` upstream.
 #[derive(Debug, Clone)]
 pub struct BenchSample {
     /// 1-indexed sample number (1..=N).
     pub index: u32,
     /// Total wall-clock latency from request submission to final
-    /// chunk delivered, in milliseconds. Includes prompt processing
-    /// + decode for `output_tokens` tokens.
+    /// chunk delivered, in milliseconds. Includes context creation,
+    /// prompt processing, AND decode for `output_tokens` tokens.
     pub total_ms: u64,
+    /// Time to first token (a.k.a. prefill latency / TTFT) in
+    /// milliseconds. From request submission to the first streaming
+    /// token. Bounded below by context construction (~70ms for
+    /// n_ctx=2048) + prompt eval (proportional to prompt length).
+    pub prompt_eval_ms: u64,
+    /// Steady-state decode time in milliseconds — `last_token_at -
+    /// first_token_at`. Zero when only one token was produced (no
+    /// inter-token interval to measure).
+    pub decode_ms: u64,
     /// Number of output tokens the engine produced. Counted by
     /// streaming chunk callbacks (one chunk = one token in the
     /// llama.cpp text-generation path), so this matches what the
     /// user actually saw render to screen.
     pub output_tokens: u32,
-    /// Decode rate (tokens / second), computed as
-    /// `output_tokens / total_ms * 1000`. Surfaced because it is
-    /// the headline number users compare against published
-    /// llama.cpp benchmarks for the same model.
+    /// Wall-clock decode rate (tokens / second), computed as
+    /// `output_tokens / total_ms * 1000`. Includes prompt eval
+    /// overhead — the per-line latency a Lens user actually feels.
     pub tokens_per_second: f64,
+    /// Steady-state decode rate (tokens / second), computed as
+    /// `(output_tokens - 1) / decode_ms * 1000` for samples with
+    /// 2+ tokens, falling back to `tokens_per_second` for 1-token
+    /// outputs. This is the model's intrinsic generation throughput
+    /// — what `llama-bench tg` reports — and is the right number to
+    /// compare against published llama.cpp baselines.
+    pub decode_tokens_per_second: f64,
     /// Translated text. Cropped to the first 80 chars so the UI
     /// does not need to render multi-line bodies in its bench
     /// table.
@@ -194,6 +222,13 @@ pub struct BenchOutcome {
     pub p50_tokens_per_second: f64,
     pub p95_tokens_per_second: f64,
     pub mean_tokens_per_second: f64,
+    /// Decode-only aggregates — the model's intrinsic generation
+    /// throughput, comparable to upstream `llama-bench tg`. These
+    /// drive the verdict because they isolate the runtime/SIMD
+    /// performance from the per-request setup overhead.
+    pub p50_decode_tokens_per_second: f64,
+    pub p95_decode_tokens_per_second: f64,
+    pub mean_decode_tokens_per_second: f64,
     pub p50_latency_ms: u64,
     pub p95_latency_ms: u64,
     /// HW snapshot at bench start. Lets the user post a screenshot
@@ -749,6 +784,14 @@ where
             let token_count = Arc::new(Mutex::new(0u32));
             let preview = Arc::new(Mutex::new(String::new()));
             let last_emit = Arc::new(Mutex::new(Instant::now()));
+            // Track first / last token timestamps so we can split
+            // prompt-eval (= TTFT) from steady-state decode in the
+            // metrics. Without this split, the bench's tokens/total_ms
+            // ratio attributes ~70% of a 4-token sample's wall-clock
+            // to the per-request setup, masking the actual decode
+            // throughput by 5-10x.
+            let first_token_at = Arc::new(Mutex::new(None::<Instant>));
+            let last_token_at = Arc::new(Mutex::new(None::<Instant>));
             let sample_started = Instant::now();
 
             // The sink fires once per streaming token. Three jobs:
@@ -764,12 +807,22 @@ where
             let token_count_for_sink = token_count.clone();
             let preview_for_sink = preview.clone();
             let last_emit_for_sink = last_emit.clone();
+            let first_token_for_sink = first_token_at.clone();
+            let last_token_for_sink = last_token_at.clone();
             let on_progress_for_sink = on_progress.clone();
             let total_for_sink = n;
             let index_for_sink = i + 1;
             let sink: StreamingChunkSink = Arc::new(move |delta, _done| {
                 if !delta.is_empty() {
+                    let now = Instant::now();
                     *token_count_for_sink.lock() += 1;
+                    {
+                        let mut first = first_token_for_sink.lock();
+                        if first.is_none() {
+                            *first = Some(now);
+                        }
+                    }
+                    *last_token_for_sink.lock() = Some(now);
                     let mut p = preview_for_sink.lock();
                     if p.chars().count() < 80 {
                         p.push_str(&delta);
@@ -778,7 +831,7 @@ where
                     if let Some(cb) = on_progress_for_sink.as_ref() {
                         let mut last = last_emit_for_sink.lock();
                         if last.elapsed() >= std::time::Duration::from_millis(250) {
-                            *last = Instant::now();
+                            *last = now;
                             let tokens = *token_count_for_sink.lock();
                             let elapsed = sample_started.elapsed().as_millis() as u64;
                             drop(last);
@@ -816,6 +869,30 @@ where
             } else {
                 0.0
             };
+
+            // Split-metric computation. With the streaming sink
+            // recording per-token timestamps:
+            //   - prompt_eval_ms = sample_started → first_token_at
+            //   - decode_ms      = first_token_at → last_token_at
+            // We use (output_tokens - 1) as the numerator for
+            // decode_tps because the FIRST token's wall-clock cost
+            // is dominated by prompt eval, not decode — including it
+            // would still mix prompt eval into the decode metric.
+            let first_at = *first_token_at.lock();
+            let last_at = *last_token_at.lock();
+            let prompt_eval_ms = first_at
+                .map(|t| t.duration_since(sample_started).as_millis() as u64)
+                .unwrap_or(elapsed_ms);
+            let decode_ms = match (first_at, last_at) {
+                (Some(f), Some(l)) if l > f => l.duration_since(f).as_millis() as u64,
+                _ => 0,
+            };
+            let decode_tps = if output_tokens >= 2 && decode_ms > 0 {
+                ((output_tokens - 1) as f64) / (decode_ms as f64) * 1000.0
+            } else {
+                tps
+            };
+
             // Surface inference failures by recording 0 tokens; the
             // UI will see the discrepancy and can warn.
             let _ = match res {
@@ -826,17 +903,23 @@ where
             let sample = BenchSample {
                 index: i + 1,
                 total_ms: elapsed_ms,
+                prompt_eval_ms,
+                decode_ms,
                 output_tokens,
                 tokens_per_second: tps,
+                decode_tokens_per_second: decode_tps,
                 translated_preview: preview_text,
             };
             tracing::info!(
-                "bench: sample {}/{} done — {} tokens in {} ms ({:.1} tok/s)",
+                "bench: sample {}/{} done — {} tokens in {} ms (wall {:.1} tok/s, \
+                 prompt_eval {} ms, decode {:.1} tok/s)",
                 sample.index,
                 n,
                 sample.output_tokens,
                 sample.total_ms,
                 sample.tokens_per_second,
+                sample.prompt_eval_ms,
+                sample.decode_tokens_per_second,
             );
             if let Some(cb) = on_progress.as_ref() {
                 cb(BenchProgressEvent::SampleCompleted {
@@ -857,6 +940,9 @@ where
             p50_tokens_per_second: aggregates.p50_tps,
             p95_tokens_per_second: aggregates.p95_tps,
             mean_tokens_per_second: aggregates.mean_tps,
+            p50_decode_tokens_per_second: aggregates.p50_decode_tps,
+            p95_decode_tokens_per_second: aggregates.p95_decode_tps,
+            mean_decode_tokens_per_second: aggregates.mean_decode_tps,
             p50_latency_ms: aggregates.p50_ms,
             p95_latency_ms: aggregates.p95_ms,
             host_total_ram_gb: host.total_ram_gb,
@@ -875,12 +961,15 @@ where
 /// Internal aggregate result. Public-via-`BenchOutcome` only —
 /// kept private so the IPC contract stays minimal.
 #[derive(Debug, Clone, Copy)]
-struct BenchAggregates {
-    p50_tps: f64,
-    p95_tps: f64,
-    mean_tps: f64,
-    p50_ms: u64,
-    p95_ms: u64,
+pub(crate) struct BenchAggregates {
+    pub p50_tps: f64,
+    pub p95_tps: f64,
+    pub mean_tps: f64,
+    pub p50_decode_tps: f64,
+    pub p95_decode_tps: f64,
+    pub mean_decode_tps: f64,
+    pub p50_ms: u64,
+    pub p95_ms: u64,
 }
 
 /// Compute p50 / p95 / mean for a slice of samples. Public to the
@@ -892,15 +981,24 @@ pub(crate) fn compute_bench_aggregates(samples: &[BenchSample]) -> BenchAggregat
             p50_tps: 0.0,
             p95_tps: 0.0,
             mean_tps: 0.0,
+            p50_decode_tps: 0.0,
+            p95_decode_tps: 0.0,
+            mean_decode_tps: 0.0,
             p50_ms: 0,
             p95_ms: 0,
         };
     }
     let mut tps: Vec<f64> = samples.iter().map(|s| s.tokens_per_second).collect();
+    let mut decode_tps: Vec<f64> = samples
+        .iter()
+        .map(|s| s.decode_tokens_per_second)
+        .collect();
     let mut ms: Vec<u64> = samples.iter().map(|s| s.total_ms).collect();
     tps.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    decode_tps.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
     ms.sort_unstable();
     let mean = tps.iter().sum::<f64>() / tps.len() as f64;
+    let mean_decode = decode_tps.iter().sum::<f64>() / decode_tps.len() as f64;
     // Nearest-rank percentiles. With 5 samples, p50 = index 2,
     // p95 = index 4. Conservative for small N (we never have 100
     // samples here so the smoothed-percentile formula buys nothing).
@@ -910,12 +1008,17 @@ pub(crate) fn compute_bench_aggregates(samples: &[BenchSample]) -> BenchAggregat
     };
     let p50_tps = tps[pct_idx(50.0, tps.len())];
     let p95_tps = tps[pct_idx(95.0, tps.len())];
+    let p50_decode_tps = decode_tps[pct_idx(50.0, decode_tps.len())];
+    let p95_decode_tps = decode_tps[pct_idx(95.0, decode_tps.len())];
     let p50_ms = ms[pct_idx(50.0, ms.len())];
     let p95_ms = ms[pct_idx(95.0, ms.len())];
     BenchAggregates {
         p50_tps,
         p95_tps,
         mean_tps: mean,
+        p50_decode_tps,
+        p95_decode_tps,
+        mean_decode_tps: mean_decode,
         p50_ms,
         p95_ms,
     }
@@ -1117,8 +1220,14 @@ mod tests {
         let mk = |idx: u32, ms: u64, tps: f64| BenchSample {
             index: idx,
             total_ms: ms,
+            // Tests: prompt_eval=0, decode_ms=ms-100 (arbitrary positive split),
+            // decode_tps mirrors wall tps so the legacy assertions on
+            // p50_tps still hold while exercising the new fields.
+            prompt_eval_ms: 100,
+            decode_ms: ms.saturating_sub(100),
             output_tokens: 10,
             tokens_per_second: tps,
+            decode_tokens_per_second: tps,
             translated_preview: String::new(),
         };
         let samples = vec![
@@ -1145,8 +1254,66 @@ mod tests {
         assert_eq!(aggs.p50_tps, 0.0);
         assert_eq!(aggs.p95_tps, 0.0);
         assert_eq!(aggs.mean_tps, 0.0);
+        assert_eq!(aggs.p50_decode_tps, 0.0);
+        assert_eq!(aggs.p95_decode_tps, 0.0);
+        assert_eq!(aggs.mean_decode_tps, 0.0);
         assert_eq!(aggs.p50_ms, 0);
         assert_eq!(aggs.p95_ms, 0);
+    }
+
+    #[test]
+    fn bench_aggregates_split_decode_from_wall_clock() {
+        // Regression guard for the Phase 20.6 metric split. The
+        // decode-tps and wall-clock-tps aggregates must be computed
+        // independently — a sample whose decode is 50 tok/s but
+        // whose wall-clock includes a long prompt-eval (= effective
+        // wall tps of 5 tok/s) MUST report the 50 tok/s in the
+        // decode aggregates and the 5 tok/s in the wall-clock
+        // aggregates. Mixing the two would defeat the purpose of
+        // the split.
+        let samples = vec![
+            BenchSample {
+                index: 1,
+                total_ms: 800,
+                prompt_eval_ms: 700,
+                decode_ms: 80,
+                output_tokens: 5,
+                tokens_per_second: 6.25,           // 5 / 0.8
+                decode_tokens_per_second: 50.0,    // 4 / 0.08
+                translated_preview: String::new(),
+            },
+            BenchSample {
+                index: 2,
+                total_ms: 1000,
+                prompt_eval_ms: 700,
+                decode_ms: 280,
+                output_tokens: 15,
+                tokens_per_second: 15.0,           // 15 / 1.0
+                decode_tokens_per_second: 50.0,    // 14 / 0.28
+                translated_preview: String::new(),
+            },
+            BenchSample {
+                index: 3,
+                total_ms: 900,
+                prompt_eval_ms: 700,
+                decode_ms: 180,
+                output_tokens: 10,
+                tokens_per_second: 11.11,
+                decode_tokens_per_second: 50.0,
+                translated_preview: String::new(),
+            },
+        ];
+        let aggs = compute_bench_aggregates(&samples);
+        // Decode aggregates: every sample is 50 → all percentiles 50.
+        assert!((aggs.p50_decode_tps - 50.0).abs() < 1e-6);
+        assert!((aggs.mean_decode_tps - 50.0).abs() < 1e-6);
+        // Wall-clock aggregates: each sample is meaningfully lower.
+        // p50 (sorted [6.25, 11.11, 15.0]) = 11.11.
+        assert!((aggs.p50_tps - 11.11).abs() < 0.01);
+        assert!(aggs.mean_tps < aggs.mean_decode_tps,
+            "wall-clock mean ({:.2}) must be < decode mean ({:.2})",
+            aggs.mean_tps,
+            aggs.mean_decode_tps);
     }
 
     #[tokio::test]

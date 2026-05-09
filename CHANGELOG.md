@@ -8,6 +8,21 @@ the project adheres to [SemVer](https://semver.org/).
 
 ### Changed
 
+- **ベンチメトリクスを decode と per-line wall-clock に分離**
+  (`services/model_service.rs`, `ipc.rs`, `lib/ipc.ts`,
+  `routes/settings/+page.svelte`, `docs/EMBEDDED_LLM_PERF.md`)。
+  従来の `tokens / total_ms` は context 構築 + プロンプト評価込みで、
+  短文翻訳では context overhead が wall-clock の 70%以上を占めて
+  decode 速度を完全にマスクしていた問題を解消。
+    - サンプル毎に first/last token 時刻を記録し、`decode_ms` =
+      `last - first`、`prompt_eval_ms` = `start - first` を分離計測
+    - decode_tps = `(output_tokens - 1) / decode_ms` で `llama-bench tg`
+      互換指標
+    - UI は「生成速度 (decode)」と「per-line wall-clock」を 2 段表示。
+      期待値%の判定は decode 側で実施 (mistral.rs 比較で公正な比較に)
+    - 70% 以上で「✓ llama.cpp が期待通り動作」緑判定追加
+    - 中間帯 (30〜70%) と低位 (30%未満) のメッセージも実態に合わせて
+      改善 (CPU 世代・background load・SIMD 非対応の切り分け)
 - **組み込み LLM ランタイムを mistral.rs → llama-cpp-2 (FFI to llama.cpp) へ差し替え**
   (`Cargo.toml`, `src-tauri/src/providers/translate_embedded_llm.rs`,
   `src-tauri/src/services/translation_engine.rs`,
