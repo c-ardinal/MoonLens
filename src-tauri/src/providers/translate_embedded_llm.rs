@@ -166,15 +166,27 @@ pub struct EmbeddedLlmTranslator {
     /// multi-second cold-start (which is otherwise invisible —
     /// translation requests just appear to stall).
     load_notifier: Option<EmbeddedLoadNotifier>,
-    /// Lazily-initialised llama.cpp model. The first translation
-    /// call pays the model-load cost (a few hundred MB of GGUF +
-    /// tokenizer init), every subsequent call reuses it. Wrapped in
-    /// `tokio::sync::Mutex` so concurrent translates serialise on
-    /// load but each request can spawn its own per-request
-    /// `LlamaContext` (the context borrows from the model — we keep
-    /// the model alive in `Arc` and create / drop contexts inline).
+    /// Lazily-initialised llama.cpp engine worker. Phase 20.7:
+    /// instead of holding `Arc<LlamaModel>` and creating a fresh
+    /// `LlamaContext` per request (which paid ~700 ms per call for
+    /// context allocation + KV cache + 302 MiB compute buffer
+    /// reservation + prompt eval), we now own a dedicated worker
+    /// thread per provider that:
+    ///   1. Loads the GGUF once at startup.
+    ///   2. Creates ONE `LlamaContext` and reuses it across requests.
+    ///   3. Calls `clear_kv_cache` between requests to start fresh
+    ///      without re-paying allocation costs.
+    ///   4. Receives requests via an mpsc channel, sends results via
+    ///      a oneshot per request.
+    /// This lets us reuse the context (which is `!Send` because it
+    /// owns a raw `NonNull<llama_context>`) without unsafe lifetime
+    /// gymnastics — the context never leaves the worker thread.
+    ///
+    /// `tokio::sync::Mutex` is used over `parking_lot` because
+    /// `ensure_engine` is async (we await on the worker's startup
+    /// signal) and lock acquisition needs to suspend, not spin.
     #[cfg(feature = "embedded-llm")]
-    engine: tokio::sync::Mutex<Option<std::sync::Arc<llama_cpp_2::model::LlamaModel>>>,
+    engine: tokio::sync::Mutex<Option<std::sync::Arc<EngineWorkerHandle>>>,
 }
 
 impl EmbeddedLlmTranslator {
@@ -402,19 +414,331 @@ impl Provider for EmbeddedLlmTranslator {
 /// and `new_context` calls take a `&LlamaBackend`; using a static
 /// reference is the canonical pattern from the upstream examples.
 #[cfg(feature = "embedded-llm")]
-fn llama_backend() -> Result<&'static llama_cpp_2::llama_backend::LlamaBackend, ProviderError> {
+fn llama_backend() -> Result<&'static llama_cpp_2::llama_backend::LlamaBackend, String> {
     use llama_cpp_2::llama_backend::LlamaBackend;
     use std::sync::OnceLock;
     static BACKEND: OnceLock<LlamaBackend> = OnceLock::new();
     if let Some(b) = BACKEND.get() {
         return Ok(b);
     }
-    let backend = LlamaBackend::init()
-        .map_err(|e| ProviderError::Other(format!("llama backend init: {e}")))?;
+    let backend = LlamaBackend::init().map_err(|e| format!("llama backend init: {e}"))?;
     let _ = BACKEND.set(backend);
     BACKEND
         .get()
-        .ok_or_else(|| ProviderError::Other("llama backend init race".into()))
+        .ok_or_else(|| "llama backend init race".to_string())
+}
+
+/// Worker-side request. Sent from the async surface
+/// ([`run_inference`] / [`run_inference_streaming`]) over an mpsc
+/// channel; the worker processes them one at a time on its dedicated
+/// OS thread. This is the only way to share a `LlamaContext` (which
+/// is `!Send`) across many translate calls — the context never
+/// leaves the worker thread.
+#[cfg(feature = "embedded-llm")]
+struct InferenceRequest {
+    /// Pre-rendered ChatML prompt. Built on the calling task before
+    /// the request is sent so prompt assembly can use the
+    /// EmbeddedLlmTranslator's system_prompt field directly.
+    prompt: String,
+    /// Token cap for this request. Honors the per-call override
+    /// (bench uses 64, production uses 512+).
+    max_predict: usize,
+    /// Optional per-token sink. `None` for non-streaming calls. The
+    /// closure must be `Send` because it crosses the channel into
+    /// the worker thread.
+    on_token: Option<Box<dyn FnMut(String) + Send>>,
+    /// Result channel. The worker sends the aggregated text (or an
+    /// error message) back when inference completes.
+    response_tx: tokio::sync::oneshot::Sender<Result<String, String>>,
+}
+
+/// Caller-facing handle to the engine worker. Keeps the request
+/// channel + the worker thread alive. Drops cleanly: when the last
+/// `Arc<EngineWorkerHandle>` goes away, the request channel closes,
+/// the worker loop exits, and the worker's owned `LlamaContext`
+/// + `LlamaModel` are dropped on the worker thread.
+#[cfg(feature = "embedded-llm")]
+pub struct EngineWorkerHandle {
+    request_tx: std::sync::mpsc::Sender<InferenceRequest>,
+    /// Kept just to detach the worker thread on shutdown. We do not
+    /// `join()` because the worker exits cleanly when the channel
+    /// closes; the `JoinHandle` here is purely for the OS-level
+    /// reaper. Wrapped in `Option` so `Drop` can `take()` it.
+    _join: parking_lot::Mutex<Option<std::thread::JoinHandle<()>>>,
+}
+
+#[cfg(feature = "embedded-llm")]
+impl EngineWorkerHandle {
+    /// Spawn a dedicated worker thread that loads the GGUF, creates
+    /// a long-lived `LlamaContext`, and serves inference requests
+    /// over an mpsc channel. Awaits the worker's "ready" signal so
+    /// callers see the load failure immediately (rather than
+    /// per-request).
+    async fn spawn(
+        provider_id: String,
+        model_path: PathBuf,
+        load_notifier: Option<EmbeddedLoadNotifier>,
+    ) -> Result<Self, ProviderError> {
+        use std::sync::mpsc;
+        use tokio::sync::oneshot;
+
+        let (req_tx, req_rx) = mpsc::channel::<InferenceRequest>();
+        let (ready_tx, ready_rx) = oneshot::channel::<Result<(), String>>();
+
+        let join = std::thread::Builder::new()
+            .name(format!("moonlens-llm-{}", provider_id))
+            .spawn(move || {
+                worker_main(provider_id, model_path, load_notifier, ready_tx, req_rx);
+            })
+            .map_err(|e| ProviderError::Other(format!("worker spawn: {e}")))?;
+
+        match ready_rx.await {
+            Ok(Ok(())) => Ok(Self {
+                request_tx: req_tx,
+                _join: parking_lot::Mutex::new(Some(join)),
+            }),
+            Ok(Err(msg)) => Err(ProviderError::Other(format!("embedded LLM load: {msg}"))),
+            Err(_) => Err(ProviderError::Other(
+                "embedded LLM worker died before signalling ready".into(),
+            )),
+        }
+    }
+
+    /// Submit a request and await the worker's reply. Cheap; serializes
+    /// per worker (which is fine — translation requests for the same
+    /// provider already serialize through `Pipeline`'s chain).
+    async fn submit(
+        &self,
+        prompt: String,
+        max_predict: usize,
+        on_token: Option<Box<dyn FnMut(String) + Send>>,
+    ) -> Result<String, ProviderError> {
+        use tokio::sync::oneshot;
+        let (tx, rx) = oneshot::channel();
+        let req = InferenceRequest {
+            prompt,
+            max_predict,
+            on_token,
+            response_tx: tx,
+        };
+        self.request_tx
+            .send(req)
+            .map_err(|_| ProviderError::Other("embedded LLM worker shut down".into()))?;
+        match rx.await {
+            Ok(Ok(text)) => Ok(text),
+            Ok(Err(msg)) => Err(ProviderError::Other(format!("embedded LLM inference: {msg}"))),
+            Err(_) => Err(ProviderError::Other(
+                "embedded LLM worker dropped response channel".into(),
+            )),
+        }
+    }
+}
+
+/// Worker thread main. Owns the model + context for the lifetime of
+/// the channel; exits cleanly when the request channel is closed
+/// (i.e. the last `EngineWorkerHandle` is dropped).
+#[cfg(feature = "embedded-llm")]
+fn worker_main(
+    provider_id: String,
+    model_path: PathBuf,
+    load_notifier: Option<EmbeddedLoadNotifier>,
+    ready_tx: tokio::sync::oneshot::Sender<Result<(), String>>,
+    req_rx: std::sync::mpsc::Receiver<InferenceRequest>,
+) {
+    use llama_cpp_2::context::params::LlamaContextParams;
+    use llama_cpp_2::model::params::LlamaModelParams;
+    use llama_cpp_2::model::LlamaModel;
+    use llama_cpp_2::sampling::LlamaSampler;
+    use std::num::NonZeroU32;
+
+    if let Some(n) = load_notifier.as_ref() {
+        n(EmbeddedLoadEvent::Started {
+            provider_id: provider_id.clone(),
+            model_path: model_path.clone(),
+        });
+    }
+
+    tracing::info!(
+        "embedded LLM: loading GGUF via llama.cpp ({})",
+        model_path.display()
+    );
+
+    let backend = match llama_backend() {
+        Ok(b) => b,
+        Err(e) => {
+            let _ = ready_tx.send(Err(e.clone()));
+            if let Some(n) = load_notifier.as_ref() {
+                n(EmbeddedLoadEvent::Finished {
+                    provider_id: provider_id.clone(),
+                    model_path: model_path.clone(),
+                    success: false,
+                    error: Some(e),
+                });
+            }
+            return;
+        }
+    };
+
+    // CPU-only path. n_gpu_layers=0 is explicit because the product
+    // spec is "fast on CPU" — GPU offload should be a deliberate
+    // setting, not implicit.
+    let model_params = LlamaModelParams::default().with_n_gpu_layers(0);
+    let model_params = std::pin::Pin::new(&model_params);
+    let model = match LlamaModel::load_from_file(backend, &model_path, &model_params) {
+        Ok(m) => m,
+        Err(e) => {
+            let msg = format!("{e}");
+            let _ = ready_tx.send(Err(msg.clone()));
+            if let Some(n) = load_notifier.as_ref() {
+                n(EmbeddedLoadEvent::Finished {
+                    provider_id: provider_id.clone(),
+                    model_path: model_path.clone(),
+                    success: false,
+                    error: Some(msg.lines().next().unwrap_or(&msg).to_string()),
+                });
+            }
+            return;
+        }
+    };
+
+    // Context size is fixed for the worker's lifetime. 4096 fits
+    // every realistic Lens line + the bundled max_predict; longer
+    // paragraphs that approach this cap still work because we
+    // clear_kv_cache between requests (i.e. the old prompt does not
+    // accumulate). If a future tier needs more, adjust here.
+    let n_ctx = NonZeroU32::new(4096).expect("4096 is non-zero");
+    let n_threads = recommended_threads();
+    let ctx_params = LlamaContextParams::default()
+        .with_n_ctx(Some(n_ctx))
+        .with_n_batch(2048)
+        .with_n_threads(n_threads)
+        .with_n_threads_batch(n_threads);
+
+    let mut ctx = match model.new_context(backend, ctx_params) {
+        Ok(c) => c,
+        Err(e) => {
+            let msg = format!("new_context: {e}");
+            let _ = ready_tx.send(Err(msg.clone()));
+            if let Some(n) = load_notifier.as_ref() {
+                n(EmbeddedLoadEvent::Finished {
+                    provider_id: provider_id.clone(),
+                    model_path: model_path.clone(),
+                    success: false,
+                    error: Some(msg),
+                });
+            }
+            return;
+        }
+    };
+
+    let mut sampler = LlamaSampler::chain_simple([LlamaSampler::greedy()]);
+
+    if let Some(n) = load_notifier.as_ref() {
+        n(EmbeddedLoadEvent::Finished {
+            provider_id: provider_id.clone(),
+            model_path: model_path.clone(),
+            success: true,
+            error: None,
+        });
+    }
+    let _ = ready_tx.send(Ok(()));
+    tracing::info!(
+        target: "embedded_llm_perf",
+        "embedded LLM worker ready: n_ctx=4096 n_threads={n_threads} (context will be reused across calls)",
+    );
+
+    // Request loop. `recv()` blocks until a request arrives or the
+    // channel is closed (last handle dropped). When the channel
+    // closes we exit, dropping ctx + model + sampler in that order.
+    while let Ok(req) = req_rx.recv() {
+        // Reset KV cache + sampler so the new request starts fresh
+        // without re-paying the per-context-creation cost (~70 ms +
+        // 302 MiB compute buffer alloc the per-request architecture
+        // paid).
+        ctx.clear_kv_cache();
+        sampler.reset();
+        let result =
+            run_inference_in_context(&model, &mut ctx, &mut sampler, req.prompt, req.max_predict, req.on_token);
+        let _ = req.response_tx.send(result);
+    }
+    tracing::info!("embedded LLM worker exiting (channel closed)");
+}
+
+/// Per-request inference body. Runs inside the worker thread, given
+/// a borrowed `LlamaContext` that survives across requests.
+#[cfg(feature = "embedded-llm")]
+fn run_inference_in_context(
+    model: &llama_cpp_2::model::LlamaModel,
+    ctx: &mut llama_cpp_2::context::LlamaContext<'_>,
+    sampler: &mut llama_cpp_2::sampling::LlamaSampler,
+    prompt: String,
+    max_predict: usize,
+    on_token: Option<Box<dyn FnMut(String) + Send>>,
+) -> Result<String, String> {
+    use llama_cpp_2::llama_batch::LlamaBatch;
+    use llama_cpp_2::model::AddBos;
+    use std::num::NonZeroU16;
+
+    let mut on_token = on_token;
+    let prompt_tokens = model
+        .str_to_token(&prompt, AddBos::Always)
+        .map_err(|e| format!("tokenize: {e}"))?;
+    let n_prompt = prompt_tokens.len();
+    if n_prompt == 0 {
+        return Err("tokenized prompt was empty".into());
+    }
+
+    let batch_capacity = n_prompt.max(512);
+    let mut batch = LlamaBatch::new(batch_capacity, 1);
+    batch
+        .add_sequence(&prompt_tokens, 0, false)
+        .map_err(|e| format!("batch add_sequence: {e}"))?;
+    ctx.decode(&mut batch)
+        .map_err(|e| format!("decode prompt: {e}"))?;
+
+    let mut decoder = encoding_rs::UTF_8.new_decoder();
+    let mut aggregated = String::new();
+    let mut n_cur = i32::try_from(n_prompt).map_err(|e| format!("n_cur i32: {e}"))?;
+    let mut produced = 0usize;
+
+    let infer_started = std::time::Instant::now();
+    while produced < max_predict {
+        let token = sampler.sample(ctx, batch.n_tokens() - 1);
+        sampler.accept(token);
+        if model.is_eog_token(token) {
+            break;
+        }
+        let piece = model
+            .token_to_piece(token, &mut decoder, false, NonZeroU16::new(1))
+            .map_err(|e| format!("token_to_piece: {e}"))?;
+        if !piece.is_empty() {
+            aggregated.push_str(&piece);
+            if let Some(cb) = on_token.as_mut() {
+                cb(piece);
+            }
+        }
+
+        batch.clear();
+        batch
+            .add(token, n_cur, &[0], true)
+            .map_err(|e| format!("batch add: {e}"))?;
+        ctx.decode(&mut batch)
+            .map_err(|e| format!("decode step: {e}"))?;
+        n_cur += 1;
+        produced += 1;
+    }
+    let elapsed_ms = infer_started.elapsed().as_millis() as u64;
+    let tps = if elapsed_ms > 0 {
+        (produced as f64) / (elapsed_ms as f64) * 1000.0
+    } else {
+        0.0
+    };
+    tracing::info!(
+        target: "embedded_llm_perf",
+        "embedded LLM inference done (worker reuse): n_prompt={n_prompt} produced={produced} \
+         elapsed_ms={elapsed_ms} tok_per_sec={tps:.1}",
+    );
+    Ok(aggregated)
 }
 
 /// User-prompt builder shared by the single-shot and streaming
@@ -469,13 +793,16 @@ fn render_chatml(system: &str, user: &str) -> String {
     )
 }
 
+/// Resolve (or lazily spawn) the per-translator worker thread that
+/// holds the long-lived `LlamaContext`. Phase 20.7: replaces the
+/// old `Arc<LlamaModel>` field with a worker handle. The first call
+/// pays the model-load cost (sent to a background thread, so the
+/// tokio executor stays free); every subsequent call returns the
+/// cached handle in microseconds.
 #[cfg(feature = "embedded-llm")]
 async fn ensure_engine(
     provider: &EmbeddedLlmTranslator,
-) -> Result<std::sync::Arc<llama_cpp_2::model::LlamaModel>, ProviderError> {
-    use llama_cpp_2::model::params::LlamaModelParams;
-    use llama_cpp_2::model::LlamaModel;
-
+) -> Result<std::sync::Arc<EngineWorkerHandle>, ProviderError> {
     {
         let guard = provider.engine.lock().await;
         if let Some(eng) = guard.as_ref() {
@@ -483,66 +810,25 @@ async fn ensure_engine(
         }
     }
 
-    let model_path = provider.model_path.clone();
-    tracing::info!(
-        "embedded LLM: loading GGUF via llama.cpp ({})",
-        model_path.display()
-    );
-
-    if let Some(notify) = provider.load_notifier.as_ref() {
-        notify(EmbeddedLoadEvent::Started {
-            provider_id: provider.id.clone(),
-            model_path: model_path.clone(),
-        });
+    let handle = EngineWorkerHandle::spawn(
+        provider.id.clone(),
+        provider.model_path.clone(),
+        provider.load_notifier.clone(),
+    )
+    .await?;
+    let arc = std::sync::Arc::new(handle);
+    let mut guard = provider.engine.lock().await;
+    // Race: another caller may have inserted a handle while we were
+    // spawning. Keep theirs if so — both are equivalent; ours simply
+    // gets dropped, which closes its channel and exits its worker.
+    if let Some(eng) = guard.as_ref() {
+        return Ok(eng.clone());
     }
-
-    let backend = llama_backend()?;
-    let load_path = model_path.clone();
-    let load_result = tokio::task::spawn_blocking(move || -> Result<LlamaModel, String> {
-        // CPU-only path. n_gpu_layers=0 is explicit because the
-        // product spec is "fast on CPU" — GPU offload should be a
-        // deliberate setting, not implicit here.
-        let params = LlamaModelParams::default().with_n_gpu_layers(0);
-        let params = std::pin::Pin::new(&params);
-        LlamaModel::load_from_file(backend, &load_path, &params).map_err(|e| format!("{e}"))
-    })
-    .await
-    .map_err(|e| ProviderError::Other(format!("embedded LLM load join: {e}")))?;
-
-    match load_result {
-        Ok(model) => {
-            let arc = std::sync::Arc::new(model);
-            {
-                let mut guard = provider.engine.lock().await;
-                if guard.is_none() {
-                    *guard = Some(arc.clone());
-                }
-            }
-            if let Some(notify) = provider.load_notifier.as_ref() {
-                notify(EmbeddedLoadEvent::Finished {
-                    provider_id: provider.id.clone(),
-                    model_path: model_path.clone(),
-                    success: true,
-                    error: None,
-                });
-            }
-            Ok(arc)
-        }
-        Err(msg) => {
-            if let Some(notify) = provider.load_notifier.as_ref() {
-                notify(EmbeddedLoadEvent::Finished {
-                    provider_id: provider.id.clone(),
-                    model_path: model_path.clone(),
-                    success: false,
-                    error: Some(msg.lines().next().unwrap_or(&msg).to_string()),
-                });
-            }
-            Err(ProviderError::Other(format!("embedded LLM load: {msg}")))
-        }
-    }
+    *guard = Some(arc.clone());
+    Ok(arc)
 }
 
-/// Recommended thread count for the inference batch. `llama.cpp`
+/// Recommended thread count for the inference worker. `llama.cpp`
 /// generally peaks around 4-8 threads on small models; hand it the
 /// lesser of (logical cores, 8) to keep latency stable on larger
 /// desktops without oversubscribing tiny laptops.
@@ -555,113 +841,16 @@ fn recommended_threads() -> i32 {
     i32::try_from(capped).unwrap_or(4)
 }
 
-/// Core CPU-bound inference loop. Runs on a `spawn_blocking` worker
-/// so the tokio executor stays free during the multi-second decode.
-/// Creates a fresh `LlamaContext` per call — Phase 20.7 will replace
-/// this with a worker thread that owns a long-lived context.
-#[cfg(feature = "embedded-llm")]
-fn run_blocking_inference(
-    model: std::sync::Arc<llama_cpp_2::model::LlamaModel>,
-    backend: &'static llama_cpp_2::llama_backend::LlamaBackend,
-    prompt: String,
-    max_predict: usize,
-    on_token: Option<Box<dyn FnMut(String) + Send>>,
-) -> Result<String, String> {
-    use llama_cpp_2::context::params::LlamaContextParams;
-    use llama_cpp_2::llama_batch::LlamaBatch;
-    use llama_cpp_2::model::AddBos;
-    use llama_cpp_2::sampling::LlamaSampler;
-    use std::num::{NonZeroU16, NonZeroU32};
-
-    let mut on_token = on_token;
-
-    let prompt_tokens = model
-        .str_to_token(&prompt, AddBos::Always)
-        .map_err(|e| format!("tokenize: {e}"))?;
-    let n_prompt = prompt_tokens.len();
-    if n_prompt == 0 {
-        return Err("tokenized prompt was empty".into());
-    }
-
-    // Size the context to comfortably hold prompt + generation. A
-    // nominal 2048-token floor avoids oversized allocation for short
-    // Lens lines while still fitting paragraph blocks. If the user
-    // requests a larger num_predict than fits, we grow the window.
-    let needed = n_prompt + max_predict + 16;
-    let n_ctx = needed.max(2048).min(8192);
-    let n_ctx_u32 = u32::try_from(n_ctx).map_err(|e| format!("n_ctx u32: {e}"))?;
-
-    let ctx_params = LlamaContextParams::default()
-        .with_n_ctx(NonZeroU32::new(n_ctx_u32))
-        .with_n_batch(n_ctx_u32.max(512))
-        .with_n_threads(recommended_threads())
-        .with_n_threads_batch(recommended_threads());
-
-    let mut ctx = model
-        .new_context(backend, ctx_params)
-        .map_err(|e| format!("new_context: {e}"))?;
-
-    let batch_capacity = n_prompt.max(512);
-    let mut batch = LlamaBatch::new(batch_capacity, 1);
-    batch
-        .add_sequence(&prompt_tokens, 0, false)
-        .map_err(|e| format!("batch add_sequence: {e}"))?;
-    ctx.decode(&mut batch)
-        .map_err(|e| format!("decode prompt: {e}"))?;
-
-    // Greedy sampler is the right default for translation — we want
-    // the model's most-likely rendering, not a creative variant.
-    let mut sampler = LlamaSampler::chain_simple([LlamaSampler::greedy()]);
-
-    let mut decoder = encoding_rs::UTF_8.new_decoder();
-    let mut aggregated = String::new();
-    let mut n_cur = i32::try_from(n_prompt).map_err(|e| format!("n_cur i32: {e}"))?;
-    let mut produced = 0usize;
-
-    while produced < max_predict {
-        let token = sampler.sample(&ctx, batch.n_tokens() - 1);
-        sampler.accept(token);
-        if model.is_eog_token(token) {
-            break;
-        }
-        let piece = model
-            .token_to_piece(token, &mut decoder, false, NonZeroU16::new(1))
-            .map_err(|e| format!("token_to_piece: {e}"))?;
-        if !piece.is_empty() {
-            aggregated.push_str(&piece);
-            if let Some(cb) = on_token.as_mut() {
-                cb(piece);
-            }
-        }
-
-        batch.clear();
-        batch
-            .add(token, n_cur, &[0], true)
-            .map_err(|e| format!("batch add: {e}"))?;
-        ctx.decode(&mut batch)
-            .map_err(|e| format!("decode step: {e}"))?;
-        n_cur += 1;
-        produced += 1;
-    }
-    Ok(aggregated)
-}
-
 #[cfg(feature = "embedded-llm")]
 async fn run_inference(
     provider: &EmbeddedLlmTranslator,
     input: TaskInput,
 ) -> Result<TaskOutput, ProviderError> {
-    let model = ensure_engine(provider).await?;
+    let worker = ensure_engine(provider).await?;
     let user = build_user_prompt(&input)?;
     let prompt = render_chatml(&provider.system_prompt, &user);
     let max_predict = provider.max_predict_tokens.unwrap_or(512);
-    let backend = llama_backend()?;
-    let aggregated = tokio::task::spawn_blocking(move || {
-        run_blocking_inference(model, backend, prompt, max_predict, None)
-    })
-    .await
-    .map_err(|e| ProviderError::Other(format!("embedded LLM inference join: {e}")))?
-    .map_err(|e| ProviderError::Other(format!("embedded LLM inference: {e}")))?;
+    let aggregated = worker.submit(prompt, max_predict, None).await?;
     Ok(TaskOutput::Text(aggregated))
 }
 
@@ -671,31 +860,20 @@ async fn run_inference_streaming(
     input: TaskInput,
     sink: StreamingChunkSink,
 ) -> Result<TaskOutput, ProviderError> {
-    let model = ensure_engine(provider).await?;
+    let worker = ensure_engine(provider).await?;
     let user = build_user_prompt(&input)?;
     let prompt = render_chatml(&provider.system_prompt, &user);
     let max_predict = provider.max_predict_tokens.unwrap_or(512);
-    let backend = llama_backend()?;
 
-    // Bridge the blocking inference loop's per-token callback into
-    // the async sink. We fire `done=false` per delta and a final
-    // `done=true` empty marker once the loop exits, mirroring the
-    // semantics other streaming providers (Ollama / Gemini) use.
+    // Bridge the worker's per-token callback into the async sink.
+    // We fire `done=false` per delta and a final `done=true` empty
+    // marker once the worker returns, mirroring the semantics
+    // other streaming providers (Ollama / Gemini) use.
     let sink_arc = sink.clone();
-    let aggregated = tokio::task::spawn_blocking(move || {
-        run_blocking_inference(
-            model,
-            backend,
-            prompt,
-            max_predict,
-            Some(Box::new(move |piece: String| {
-                sink_arc(piece, false);
-            })),
-        )
-    })
-    .await
-    .map_err(|e| ProviderError::Other(format!("embedded LLM stream join: {e}")))?
-    .map_err(|e| ProviderError::Other(format!("embedded LLM stream: {e}")))?;
+    let on_token: Box<dyn FnMut(String) + Send> = Box::new(move |piece: String| {
+        sink_arc(piece, false);
+    });
+    let aggregated = worker.submit(prompt, max_predict, Some(on_token)).await?;
     sink(String::new(), true);
     Ok(TaskOutput::Text(aggregated))
 }

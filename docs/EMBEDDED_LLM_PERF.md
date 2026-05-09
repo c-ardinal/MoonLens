@@ -118,3 +118,4 @@ i5-8400 のような 5+ 年前の CPU でも decode 49 tok/s は十分実用速�
 - **2026-05-09 (午前)**: 初版。期待値ベースラインと現状のランタイム評価を記載。
 - **2026-05-09 (午後)**: ランタイムを mistral.rs → llama-cpp-2 に差し替え。期待値表を「現行 / 旧」併記に変更。
 - **2026-05-09 (夜)**: ベンチを decode tok/s と per-line wall-clock tok/s に分離。判定は decode 側で行うように変更 (= 上流 `llama-bench tg` 互換指標)。i5-8400 実機ベースラインを追加。
+- **2026-05-10**: Phase 20.7 — `EmbeddedLlmTranslator` にワーカースレッド + context 再利用導入。per-line wall-clock のオーバーヘッド (~700ms/サンプル) を初回 1 回に圧縮。i5-8400 / Compact 0.5B Q4_K_M で wall 10.5 → 14.1 tok/s (+34%)、decode 45.2 → 51.1 tok/s (+13%)。Standard / Quality も全ティア 70%+ 緑判定。

@@ -8,6 +8,23 @@ the project adheres to [SemVer](https://semver.org/).
 
 ### Changed
 
+- **組み込み LLM の context 再利用 (Phase 20.7)** — `EmbeddedLlmTranslator`
+  に専用ワーカースレッドを導入。`LlamaContext` を翻訳間で再利用し、
+  毎リクエスト ~700ms 払っていた「context 構築 + KV cache 24MiB +
+  compute buffer 302MiB + graph reserve」を初回1回だけに圧縮。
+    - `LlamaContext: !Send` (内部に `NonNull<llama_context>`) のため
+      `tokio::spawn_blocking` 経由ではなく、provider ごとに dedicated
+      OS スレッドを spawn。`std::sync::mpsc` でリクエストを受け取り、
+      `tokio::sync::oneshot` で結果を返す
+    - 翻訳間で `clear_kv_cache` + `sampler.reset()` を呼んで状態を
+      リセット (allocation 再利用)
+    - ワーカー寿命 = `Arc<EngineWorkerHandle>` 寿命。最後の Arc が
+      drop されると channel が閉じてワーカーが綺麗に終了し
+      context + model が drop される (ティア切替時の旧モデル
+      解放にも対応)
+    - 実測効果 (i5-8400 / Compact 0.5B Q4_K_M):
+      decode 45.2 → 51.1 tok/s (+13%)、wall 10.5 → 14.1 tok/s (+34%)。
+      Standard 1.5B / Quality 7B も全ティアで 70%+ 緑判定に
 - **ベンチメトリクスを decode と per-line wall-clock に分離**
   (`services/model_service.rs`, `ipc.rs`, `lib/ipc.ts`,
   `routes/settings/+page.svelte`, `docs/EMBEDDED_LLM_PERF.md`)。
