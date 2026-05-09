@@ -300,12 +300,30 @@
    *  Core i5-1240P / Ryzen 5 5500U or similar, 4-8 P-cores, no GPU,
    *  Q4_K_M quant). These are realistic targets — if the user's
    *  bench is below these, performance is genuinely off and points
-   *  to mistralrs's CPU path being the bottleneck. */
+   *  to a hardware/runtime issue, not the model.
+   *
+   *  Bucketing by approximate parameter count rather than exact
+   *  tier id keeps the baseline list short (the same i5-1240P that
+   *  hits 50 tok/s on Qwen 2.5 0.5B will hit roughly the same on
+   *  Qwen 3 0.6B and Gemma 4 e2b). Family-specific differences
+   *  (sparse-activation Gemma e2b/e4b activates fewer params per
+   *  token, so its decode is closer to its effective param count
+   *  than its total) are noted in the lookup. */
   function expectedTokensPerSecondFor(tierId: string | undefined): number | null {
     if (!tierId) return null;
-    if (tierId.includes('0.5b')) return 50;
-    if (tierId.includes('1.5b')) return 25;
-    if (tierId.includes('7b')) return 5;
+    const id = tierId.toLowerCase();
+    // Sub-1B: Qwen 2.5 0.5B, Qwen 3 0.6B
+    if (id.includes('0.5b') || id.includes('0.6b')) return 50;
+    // ~1.5-1.7B: Qwen 2.5 1.5B, Qwen 3 1.7B, SmolLM 2 1.7B
+    if (id.includes('1.5b') || id.includes('1.7b')) return 25;
+    // Gemma 4 nano: effective 2B / 4B activation, decode is close
+    // to dense ~1B / ~2B respectively, NOT to total param count.
+    if (id.includes('e2b')) return 30;
+    if (id.includes('e4b')) return 15;
+    // Mid-tier dense: Qwen 3 4B
+    if (id.includes('4b')) return 10;
+    // Quality tier: Qwen 2.5 7B
+    if (id.includes('7b')) return 5;
     return null;
   }
 

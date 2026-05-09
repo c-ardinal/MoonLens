@@ -160,6 +160,13 @@ pub struct EmbeddedLlmTranslator {
     /// timed out every call. Adding the cap is what makes the
     /// embedded LLM path actually usable.
     max_predict_tokens: Option<usize>,
+    /// Chat template family the active GGUF expects. ChatML for
+    /// Qwen / SmolLM family, Gemma for Google's Gemma variants.
+    /// Resolved from the registry tier at construction time —
+    /// `EmbeddedLlmTranslator::new` looks up the (repo, filename)
+    /// pair via `tier_by_coord` and picks up the template, falling
+    /// back to ChatML when unknown.
+    chat_template: crate::model_registry::ChatTemplate,
     /// Optional lifecycle hook for the slow GGUF load. Fired right
     /// before and right after `LlamaModel::load_from_file` so the UI
     /// can light up a "ローカル LLM をロード中…" badge during the
@@ -231,11 +238,34 @@ impl EmbeddedLlmTranslator {
             .and_then(|v| v.as_u64())
             .map(|v| v as usize)
             .or(Some(512));
+        // Resolve chat template via the registry. Two layers:
+        //   1. `chat_template` config override — power users can pin
+        //      a template independent of the registered tier.
+        //   2. `(repo, filename_remote)` lookup — the path most
+        //      callers take. New tiers register their template once
+        //      and the runtime picks it up automatically.
+        // Fallback: ChatML, the most common open-weight format.
+        let chat_template = config
+            .get("chat_template")
+            .and_then(|v| v.as_str())
+            .and_then(|s| match s {
+                "gemma" => Some(crate::model_registry::ChatTemplate::Gemma),
+                "chatml" | "chat_ml" => Some(crate::model_registry::ChatTemplate::ChatMl),
+                _ => None,
+            })
+            .or_else(|| {
+                let repo = config.get("repo").and_then(|v| v.as_str())?;
+                let filename = config.get("filename_remote").and_then(|v| v.as_str())?;
+                crate::model_registry::tier_by_coord(repo, filename)
+                    .map(|t| t.chat_template)
+            })
+            .unwrap_or(crate::model_registry::ChatTemplate::ChatMl);
         Self {
             id: id.into(),
             model_path,
             system_prompt,
             max_predict_tokens,
+            chat_template,
             load_notifier: None,
             #[cfg(feature = "embedded-llm")]
             engine: tokio::sync::Mutex::new(None),
@@ -774,22 +804,56 @@ fn build_user_prompt(input: &TaskInput) -> Result<String, ProviderError> {
     }
 }
 
-/// Manually rendered Qwen 2.5 / ChatML prompt. The model itself
-/// embeds a Jinja chat template, but we render the prompt by hand
-/// so:
+/// Render the (system + user) → final prompt for the model's chat
+/// template family. We render by hand instead of using the GGUF's
+/// embedded Jinja so:
 ///   1. The exact shape is independent of any per-build template
 ///      bug in the GGUF metadata (we have hit one of those before
 ///      with split-file Qwen 7B).
 ///   2. We avoid pulling in Jinja parsing at runtime.
-/// Format matches the upstream Qwen 2.5 release notes: `<|im_start|>`
-/// / `<|im_end|>` markers, system + user, then `<|im_start|>assistant\n`
-/// to prime the response.
+///   3. We can audit the prompt format from one place per family
+///      without chasing model-specific quirks.
+#[cfg(feature = "embedded-llm")]
+fn render_prompt(
+    template: crate::model_registry::ChatTemplate,
+    system: &str,
+    user: &str,
+) -> String {
+    use crate::model_registry::ChatTemplate;
+    match template {
+        ChatTemplate::ChatMl => render_chatml(system, user),
+        ChatTemplate::Gemma => render_gemma(system, user),
+    }
+}
+
+/// ChatML — used by Qwen 2.5 / Qwen 3 / SmolLM 2 / many other
+/// open-weight families. Format matches the upstream Qwen release
+/// notes: `<|im_start|>` / `<|im_end|>` markers wrapping each turn,
+/// `<|im_start|>assistant\n` to prime the response.
 #[cfg(feature = "embedded-llm")]
 fn render_chatml(system: &str, user: &str) -> String {
     format!(
         "<|im_start|>system\n{system}<|im_end|>\n\
          <|im_start|>user\n{user}<|im_end|>\n\
          <|im_start|>assistant\n",
+    )
+}
+
+/// Gemma — used by Gemma 2 / 3 / 4 (incl. nano e2b/e4b).
+/// `<start_of_turn>role\ncontent<end_of_turn>` markers, no system
+/// role on the wire. The Gemma chat template inlines the system
+/// prompt into the first user turn (separated by a blank line) and
+/// primes the response with `<start_of_turn>model\n`.
+#[cfg(feature = "embedded-llm")]
+fn render_gemma(system: &str, user: &str) -> String {
+    let user_block = if system.trim().is_empty() {
+        user.to_string()
+    } else {
+        format!("{system}\n\n{user}")
+    };
+    format!(
+        "<start_of_turn>user\n{user_block}<end_of_turn>\n\
+         <start_of_turn>model\n",
     )
 }
 
@@ -848,7 +912,7 @@ async fn run_inference(
 ) -> Result<TaskOutput, ProviderError> {
     let worker = ensure_engine(provider).await?;
     let user = build_user_prompt(&input)?;
-    let prompt = render_chatml(&provider.system_prompt, &user);
+    let prompt = render_prompt(provider.chat_template, &provider.system_prompt, &user);
     let max_predict = provider.max_predict_tokens.unwrap_or(512);
     let aggregated = worker.submit(prompt, max_predict, None).await?;
     Ok(TaskOutput::Text(aggregated))
@@ -862,7 +926,7 @@ async fn run_inference_streaming(
 ) -> Result<TaskOutput, ProviderError> {
     let worker = ensure_engine(provider).await?;
     let user = build_user_prompt(&input)?;
-    let prompt = render_chatml(&provider.system_prompt, &user);
+    let prompt = render_prompt(provider.chat_template, &provider.system_prompt, &user);
     let max_predict = provider.max_predict_tokens.unwrap_or(512);
 
     // Bridge the worker's per-token callback into the async sink.
@@ -1027,6 +1091,45 @@ mod tests {
         .unwrap();
         assert!(prompt.starts_with("Summarize concisely"), "got: {prompt}");
         assert!(prompt.ends_with("long text"), "got: {prompt}");
+    }
+
+    #[cfg(feature = "embedded-llm")]
+    #[test]
+    fn render_gemma_inlines_system_into_first_user_turn() {
+        // Gemma's chat template has no system role on the wire —
+        // the system prompt MUST be merged into the first user turn,
+        // separated by a blank line. Skipping this would leave the
+        // model with no system instruction at all.
+        let s = render_gemma("you are helpful", "translate this");
+        assert!(
+            s.starts_with("<start_of_turn>user\nyou are helpful\n\ntranslate this<end_of_turn>"),
+            "system+user merge missing or malformed: {s}"
+        );
+        assert!(s.ends_with("<start_of_turn>model\n"), "got: {s}");
+    }
+
+    #[cfg(feature = "embedded-llm")]
+    #[test]
+    fn render_gemma_skips_blank_system_prefix() {
+        // When the system prompt is empty/whitespace, the Gemma
+        // user turn should NOT begin with two blank lines (the
+        // model treats those as a literal part of the turn and
+        // sometimes echoes them back).
+        let s = render_gemma("", "x");
+        assert!(s.starts_with("<start_of_turn>user\nx<end_of_turn>"), "got: {s}");
+    }
+
+    #[cfg(feature = "embedded-llm")]
+    #[test]
+    fn render_prompt_dispatches_by_template_family() {
+        use crate::model_registry::ChatTemplate;
+        let chatml = render_prompt(ChatTemplate::ChatMl, "sys", "hi");
+        assert!(chatml.contains("<|im_start|>system\nsys<|im_end|>"));
+        let gemma = render_prompt(ChatTemplate::Gemma, "sys", "hi");
+        assert!(gemma.contains("<start_of_turn>user\nsys\n\nhi<end_of_turn>"));
+        // The two formats must NOT bleed into each other.
+        assert!(!chatml.contains("<start_of_turn>"), "chatml leaked Gemma markers: {chatml}");
+        assert!(!gemma.contains("<|im_start|>"), "gemma leaked ChatML markers: {gemma}");
     }
 
     #[cfg(feature = "embedded-llm")]

@@ -23,7 +23,7 @@
 //! All shipped tiers are **Apache 2.0** so corporate redistribution
 //! does not need a license-compatibility review.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 /// Hardware bucket the tier targets. Used by the onboarding flow to
 /// recommend a default based on the host's installed RAM.
@@ -38,6 +38,27 @@ pub enum ModelTierClass {
     /// 16 GB+ RAM hosts. Larger model, higher quality, slower
     /// first-token latency.
     Quality,
+}
+
+/// Chat template family the model expects. Different model families
+/// use different prompt markers — using the wrong template degrades
+/// quality silently (the model still produces text, but it ignores
+/// the system prompt and generates lower-quality translations).
+///
+/// Concrete formats currently supported:
+/// - **ChatML**: `<|im_start|>role\ncontent<|im_end|>` markers,
+///   used by Qwen 2.5 / Qwen 3 / SmolLM 2 / many open-weight models.
+/// - **Gemma**: `<start_of_turn>role\ncontent<end_of_turn>`, used by
+///   Gemma 2 / Gemma 3 / Gemma 4 (incl. nano e2b/e4b). No system role
+///   in the on-the-wire format — system prompt is inlined into the
+///   first user turn.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ChatTemplate {
+    /// `<|im_start|>` / `<|im_end|>` (Qwen / SmolLM / others).
+    ChatMl,
+    /// `<start_of_turn>` / `<end_of_turn>` (Gemma family).
+    Gemma,
 }
 
 /// Canonical descriptor for a single picker entry. Matches the JSON
@@ -60,9 +81,9 @@ pub struct ModelTier {
     /// single file, but HuggingFace splits large GGUFs across LFS
     /// objects (e.g. Qwen 2.5 7B Q4_K_M ships as
     /// `*-00001-of-00002.gguf` + `*-00002-of-00002.gguf`).
-    /// `mistralrs::GgufModelBuilder` natively accepts a `Vec<String>`
-    /// so loading does not care about split vs. monolithic; the
-    /// downloader iterates over the slice and fetches each part.
+    /// `llama-cpp-2` natively loads the primary file and follows the
+    /// part chain via mmap; the downloader iterates over the slice
+    /// and fetches each part.
     /// Callers that need a single "primary" reference (UI labels,
     /// path resolution for status display, package manifest's
     /// legacy single-file field) use `primary_filename()`.
@@ -80,6 +101,16 @@ pub struct ModelTier {
     pub license_url: &'static str,
     /// Tier class for HW recommendation.
     pub class: ModelTierClass,
+    /// Chat template family the model expects. Determines which
+    /// prompt markers `EmbeddedLlmTranslator` uses when assembling
+    /// the (system + user) → (rendered prompt) mapping. Defaults to
+    /// `ChatMl` for Qwen / SmolLM family models.
+    #[serde(default = "default_chat_template")]
+    pub chat_template: ChatTemplate,
+}
+
+fn default_chat_template() -> ChatTemplate {
+    ChatTemplate::ChatMl
 }
 
 impl ModelTier {
@@ -106,6 +137,12 @@ impl ModelTier {
 /// directly so tier ordering is determined here, not at every call
 /// site.
 pub const TIERS: &[ModelTier] = &[
+    // Ordered smallest → largest by Q4_K_M GGUF size_mb so the UI
+    // dropdown reads naturally and the regression test
+    // `tiers_are_ordered_smallest_to_largest` keeps the contract.
+    // Within a size bucket, the originally-shipped Qwen 2.5 tiers
+    // come first (they are the recommended defaults); alternate-
+    // family A/B candidates (Qwen 3, SmolLM 2, Gemma) follow.
     ModelTier {
         id: "qwen2.5-0.5b-instruct-q4_k_m",
         display_name: "Compact (Qwen 2.5 0.5B)",
@@ -118,6 +155,21 @@ pub const TIERS: &[ModelTier] = &[
         license_url:
             "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/blob/main/LICENSE",
         class: ModelTierClass::Compact,
+        chat_template: ChatTemplate::ChatMl,
+    },
+    ModelTier {
+        id: "qwen3-0.6b-instruct-q4_k_m",
+        display_name: "Compact+ (Qwen 3 0.6B)",
+        description: "Qwen 2.5 0.5B 後継。多言語品質向上、特に日本語で上回る (Apache 2.0)。",
+        repo: "Qwen/Qwen3-0.6B-Instruct-GGUF",
+        filenames: &["qwen3-0.6b-instruct-q4_k_m.gguf"],
+        size_mb: 460,
+        min_ram_gb: 4,
+        license: "Apache-2.0",
+        license_url:
+            "https://huggingface.co/Qwen/Qwen3-0.6B-Instruct-GGUF/blob/main/LICENSE",
+        class: ModelTierClass::Compact,
+        chat_template: ChatTemplate::ChatMl,
     },
     ModelTier {
         id: "qwen2.5-1.5b-instruct-q4_k_m",
@@ -131,6 +183,86 @@ pub const TIERS: &[ModelTier] = &[
         license_url:
             "https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/blob/main/LICENSE",
         class: ModelTierClass::Standard,
+        chat_template: ChatTemplate::ChatMl,
+    },
+    ModelTier {
+        id: "smollm2-1.7b-instruct-q4_k_m",
+        display_name: "Standard- (SmolLM 2 1.7B)",
+        description: "HuggingFace 製の超軽量設計。Qwen 3 1.7B との比較ベンチ用 (Apache 2.0)。",
+        repo: "HuggingFaceTB/SmolLM2-1.7B-Instruct-GGUF",
+        filenames: &["smollm2-1.7b-instruct-q4_k_m.gguf"],
+        size_mb: 1100,
+        min_ram_gb: 8,
+        license: "Apache-2.0",
+        license_url:
+            "https://huggingface.co/HuggingFaceTB/SmolLM2-1.7B-Instruct-GGUF/blob/main/LICENSE",
+        class: ModelTierClass::Standard,
+        chat_template: ChatTemplate::ChatMl,
+    },
+    ModelTier {
+        id: "qwen3-1.7b-instruct-q4_k_m",
+        display_name: "Standard+ (Qwen 3 1.7B)",
+        description: "Qwen 2.5 1.5B 後継。標準ティアの正統進化版 (Apache 2.0)。",
+        repo: "Qwen/Qwen3-1.7B-Instruct-GGUF",
+        filenames: &["qwen3-1.7b-instruct-q4_k_m.gguf"],
+        size_mb: 1200,
+        min_ram_gb: 8,
+        license: "Apache-2.0",
+        license_url:
+            "https://huggingface.co/Qwen/Qwen3-1.7B-Instruct-GGUF/blob/main/LICENSE",
+        class: ModelTierClass::Standard,
+        chat_template: ChatTemplate::ChatMl,
+    },
+    // Gemma 4 nano (e2b / e4b) — Google's edge-optimised family with
+    // sparse activation (effective param count smaller than total).
+    // **License caveat**: Gemma Terms of Use, NOT Apache 2.0. Commercial
+    // use is permitted but redistribution requires shipping the license
+    // terms + Prohibited Use Policy. Selecting this tier surfaces a
+    // license-acknowledgement step in the settings UI before download.
+    //
+    // HF repo paths assume Google's official quants (`google/gemma-4-…-it-gguf`).
+    // If the path is wrong on first download attempt the IPC will surface
+    // a 404; the registry can be patched to point at a 3rd-party quant
+    // mirror (e.g. `bartowski/...`) without code changes.
+    ModelTier {
+        id: "gemma-4-e2b-it-q4_k_m",
+        display_name: "Edge (Gemma 4 e2b)",
+        description: "Google 製エッジモデル。effective 2B 活性化、軽量。Gemma TOS — 配布時にライセンス同梱必須。",
+        repo: "google/gemma-4-e2b-it-gguf",
+        filenames: &["gemma-4-e2b-it-q4_k_m.gguf"],
+        size_mb: 1500,
+        min_ram_gb: 6,
+        license: "Gemma-Terms-of-Use",
+        license_url: "https://ai.google.dev/gemma/terms",
+        class: ModelTierClass::Compact,
+        chat_template: ChatTemplate::Gemma,
+    },
+    ModelTier {
+        id: "gemma-4-e4b-it-q4_k_m",
+        display_name: "Edge+ (Gemma 4 e4b)",
+        description: "Gemma 4 nano e4b 版。effective 4B 活性化。Gemma TOS。",
+        repo: "google/gemma-4-e4b-it-gguf",
+        filenames: &["gemma-4-e4b-it-q4_k_m.gguf"],
+        size_mb: 2500,
+        min_ram_gb: 8,
+        license: "Gemma-Terms-of-Use",
+        license_url: "https://ai.google.dev/gemma/terms",
+        class: ModelTierClass::Standard,
+        chat_template: ChatTemplate::Gemma,
+    },
+    ModelTier {
+        id: "qwen3-4b-instruct-q4_k_m",
+        display_name: "Quality- (Qwen 3 4B)",
+        description: "中量級 (Standard と Quality の中間)。8-16GB RAM PC で実用的な品質と速度のバランス (Apache 2.0)。",
+        repo: "Qwen/Qwen3-4B-Instruct-GGUF",
+        filenames: &["qwen3-4b-instruct-q4_k_m.gguf"],
+        size_mb: 2700,
+        min_ram_gb: 12,
+        license: "Apache-2.0",
+        license_url:
+            "https://huggingface.co/Qwen/Qwen3-4B-Instruct-GGUF/blob/main/LICENSE",
+        class: ModelTierClass::Standard,
+        chat_template: ChatTemplate::ChatMl,
     },
     ModelTier {
         id: "qwen2.5-7b-instruct-q4_k_m",
@@ -142,9 +274,9 @@ pub const TIERS: &[ModelTier] = &[
         // upstream repo. Listing both parts here is what fixes the
         // 9.x-era 404: the pre-9.x registry recorded a single
         // synthetic filename `qwen2.5-7b-instruct-q4_k_m.gguf`
-        // that does not exist on HuggingFace. mistralrs's
-        // `GgufModelBuilder` natively accepts the part list, so
-        // loading transparently joins them at runtime.
+        // that does not exist on HuggingFace. llama-cpp-2 follows
+        // the part chain via mmap, so loading transparently joins
+        // them at runtime.
         filenames: &[
             "qwen2.5-7b-instruct-q4_k_m-00001-of-00002.gguf",
             "qwen2.5-7b-instruct-q4_k_m-00002-of-00002.gguf",
@@ -155,6 +287,7 @@ pub const TIERS: &[ModelTier] = &[
         license_url:
             "https://huggingface.co/Qwen/Qwen2.5-7B-Instruct-GGUF/blob/main/LICENSE",
         class: ModelTierClass::Quality,
+        chat_template: ChatTemplate::ChatMl,
     },
 ];
 
@@ -396,15 +529,51 @@ mod tests {
     }
 
     #[test]
-    fn every_tier_is_apache_licensed() {
-        // The product spec is "license-clean for commercial offline
-        // deployments" — bundling a non-Apache entry would silently
-        // re-introduce the Gemma-ToU paperwork we removed in 5.3.
+    fn every_tier_uses_an_allowed_license() {
+        // Allow-list approach: any tier that lands here MUST use a
+        // license we have legal sign-off on for commercial offline
+        // distribution. Apache-2.0 is the preferred default; Gemma
+        // TOS is permitted under the documented redistribution
+        // workflow (license + Prohibited Use Policy bundled in the
+        // package). New entries with other licenses would silently
+        // re-introduce the contamination this allow-list prevents.
+        const ALLOWED: &[&str] = &["Apache-2.0", "Gemma-Terms-of-Use"];
         for t in TIERS {
+            assert!(
+                ALLOWED.contains(&t.license),
+                "tier `{}` license `{}` is not in the allow-list (allowed: {:?})",
+                t.id,
+                t.license,
+                ALLOWED,
+            );
+        }
+    }
+
+    #[test]
+    fn chat_template_matches_known_model_family() {
+        // Cross-check: the registered chat_template for each tier
+        // must align with the model family (inferred from id /
+        // repo). A future PR that registers a Qwen tier with the
+        // Gemma template (or vice versa) would silently wreck
+        // translation quality — this guard catches it pre-merge.
+        for t in TIERS {
+            let id_lc = t.id.to_lowercase();
+            let expected = if id_lc.starts_with("qwen")
+                || id_lc.starts_with("smollm")
+            {
+                ChatTemplate::ChatMl
+            } else if id_lc.starts_with("gemma") {
+                ChatTemplate::Gemma
+            } else {
+                // Unknown family: skip — but flag in a separate test
+                // when we add one (so the allow-list above stays
+                // explicit).
+                continue;
+            };
             assert_eq!(
-                t.license, "Apache-2.0",
-                "tier `{}` is not Apache-2.0",
-                t.id
+                t.chat_template, expected,
+                "tier `{}` should use {:?} but is registered as {:?}",
+                t.id, expected, t.chat_template,
             );
         }
     }

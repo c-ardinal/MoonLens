@@ -6,6 +6,33 @@ the project adheres to [SemVer](https://semver.org/).
 
 ## Unreleased
 
+### Added
+
+- **Phase 21: 代替モデル候補ティアの追加** — Qwen 3 (0.6B / 1.7B / 4B
+  Instruct Q4_K_M, Apache 2.0)、SmolLM 2 1.7B Instruct Q4_K_M
+  (Apache 2.0)、Gemma 4 nano e2b / e4b Instruct Q4_K_M (Gemma TOS)。
+  既存 Qwen 2.5 ティアと並列に登録、ユーザーが設定 UI から選択 →
+  ダウンロード → ベンチで A/B 比較可能。
+    - `model_registry::ChatTemplate` enum 導入: ChatML (Qwen / SmolLM)
+      / Gemma の 2 系統。`ModelTier` に `chat_template` フィールド追加
+    - provider 側に `render_prompt()` テンプレートディスパッチを実装、
+      Gemma 用の `<start_of_turn>` / `<end_of_turn>` 形式 (system
+      prompt は 1 番目の user turn に inline) を追加
+    - `expectedTokensPerSecondFor()` (Svelte) を新ティア ID 対応に拡張、
+      Gemma nano の sparse activation 特性 (effective param で性能予測)
+      も反映
+    - 既存テスト `every_tier_is_apache_licensed` を
+      `every_tier_uses_an_allowed_license` に置き換え。Apache-2.0 +
+      Gemma TOS の allow-list 検証
+    - `chat_template_matches_known_model_family` テスト追加 (Qwen が
+      Gemma テンプレートで誤登録される回帰を防ぐ)
+    - **Gemma TOS 注意事項**: 配布パッケージ (`.moonlens-model`) に
+      Gemma ライセンス + Prohibited Use Policy を同梱する仕組みは別途
+      実装予定。ローカル開発・社内配布には影響なし
+    - **Gemma 4 HF パス未検証**: `google/gemma-4-e[24]b-it-gguf` を
+      仮置き。404 になる場合は実存パス (例: `bartowski/...` or
+      `unsloth/...`) に差し替え必要
+
 ### Changed
 
 - **組み込み LLM の context 再利用 (Phase 20.7)** — `EmbeddedLlmTranslator`

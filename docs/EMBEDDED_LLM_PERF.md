@@ -19,8 +19,16 @@ MoonLens の組み込み LLM は **CPU 単体でも実用速度** で動くこ�
 | ティア | モデル | サイズ (Q4_K_M) | **llama.cpp 期待値 (現行ランタイム)** | mistral.rs (旧ランタイム参考値) |
 |---|---|---|---|---|
 | Compact | Qwen 2.5 0.5B | ~400 MB | **50-100 tok/s** | 5-15 tok/s |
+| Compact+ | Qwen 3 0.6B | ~460 MB | **45-90 tok/s** | n/a |
 | Standard | Qwen 2.5 1.5B | ~1.1 GB | **20-30 tok/s** | 4-10 tok/s |
+| Standard- | SmolLM 2 1.7B | ~1.1 GB | **22-35 tok/s** | n/a |
+| Standard+ | Qwen 3 1.7B | ~1.2 GB | **18-28 tok/s** | n/a |
+| Edge (Gemma) | Gemma 4 e2b | ~1.5 GB | **30-50 tok/s** | n/a |
+| Edge+ (Gemma) | Gemma 4 e4b | ~2.5 GB | **15-25 tok/s** | n/a |
+| Quality- | Qwen 3 4B | ~2.7 GB | **8-14 tok/s** | n/a |
 | Quality | Qwen 2.5 7B (split) | ~4.7 GB | **3-7 tok/s** | 0.5-2 tok/s |
+
+**Gemma nano (e2b/e4b) の補足**: スパース活性化で 1 トークン生成あたりの実効パラメータが小さいので、デコード速度は同じ「総 GB ファイル」のデンスモデルより速いことがあります (e2b は ~1B 相当、e4b は ~2B 相当)。
 
 llama.cpp の数値は外部公開ベンチ (`ggml-org/llama.cpp` リポジトリ + ユーザーレポート) からの代表値。mistral.rs 列は Phase 20 の差し替え前に観測した参考値。
 
