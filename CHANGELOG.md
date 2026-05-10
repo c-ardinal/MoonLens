@@ -8,6 +8,19 @@ the project adheres to [SemVer](https://semver.org/).
 
 ### Added
 
+- **`bench_all_tiers` CLI ベンチランナー** (`src-tauri/examples/bench_all_tiers.rs`) —
+  `cargo run --example bench_all_tiers --release --features embedded-llm`
+  で `model_registry::TIERS` の全ティアを順に走らせて比較表を出力。
+  設定 UI から 1 ティアずつ手動切替する代わりに、ダウンロード済の
+  全ティアを一気にベンチ → 結果を decode tok/s 降順でテーブル表示。
+    - ディスクに無いティアは `SKIP` 表示でスキップ (UI で先に DL)
+    - `--samples N` で 1〜20 サンプル指定 (既定 5)
+    - `--app-data PATH` で別 PC のデータディレクトリ指定可能
+    - `--write-report PATH` で markdown レポート出力 (per-sample の
+      decode_ms / preview 含む — perf docs にコピペ可能な形式)
+    - i5-8400 動作確認: Qwen 2.5 0.5B/1.5B/7B 全ティアで動作、
+      decode 数値は UI ベンチと一致 (52.6 / 24.8 / 6.3 tok/s)
+
 - **Phase 21: 代替モデル候補ティアの追加** — Qwen 3 (0.6B / 1.7B / 4B
   Instruct Q4_K_M, Apache 2.0)、SmolLM 2 1.7B Instruct Q4_K_M
   (Apache 2.0)、Gemma 4 nano e2b / e4b Instruct Q4_K_M (Gemma TOS)。
