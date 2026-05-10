@@ -16,19 +16,22 @@ MoonLens の組み込み LLM は **CPU 単体でも実用速度** で動くこ�
 
 「モダンオフィスPC」= Intel Core i5/i7 12th-gen 以降 / Ryzen 5 5500U 以降、4-8 物理コア、AVX2 対応、DDR4-3200 以上、SSD ローカル。
 
-| ティア | モデル | サイズ (Q4_K_M) | **llama.cpp 期待値 (現行ランタイム)** | mistral.rs (旧ランタイム参考値) |
-|---|---|---|---|---|
-| Compact | Qwen 2.5 0.5B | ~400 MB | **50-100 tok/s** | 5-15 tok/s |
-| Compact+ | Qwen 3 0.6B | ~460 MB | **45-90 tok/s** | n/a |
-| Standard | Qwen 2.5 1.5B | ~1.1 GB | **20-30 tok/s** | 4-10 tok/s |
-| Standard- | SmolLM 2 1.7B | ~1.1 GB | **22-35 tok/s** | n/a |
-| Standard+ | Qwen 3 1.7B | ~1.2 GB | **18-28 tok/s** | n/a |
-| Edge (Gemma) | Gemma 4 e2b | ~1.5 GB | **30-50 tok/s** | n/a |
-| Edge+ (Gemma) | Gemma 4 e4b | ~2.5 GB | **15-25 tok/s** | n/a |
-| Quality- | Qwen 3 4B | ~2.7 GB | **8-14 tok/s** | n/a |
-| Quality | Qwen 2.5 7B (split) | ~4.7 GB | **3-7 tok/s** | 0.5-2 tok/s |
+サイズは Q4_K_M 量子化での実測値。期待値は llama.cpp ベースの decode tok/s (= `llama-bench tg` 相当)。
 
-**Gemma nano (e2b/e4b) の補足**: スパース活性化で 1 トークン生成あたりの実効パラメータが小さいので、デコード速度は同じ「総 GB ファイル」のデンスモデルより速いことがあります (e2b は ~1B 相当、e4b は ~2B 相当)。
+| ティア | モデル | サイズ (Q4_K_M) | **decode 期待値** | mistral.rs 参考値 |
+|---|---|---:|:---|:---|
+| Compact+ | Qwen 3 0.6B (unsloth GGUF) | 379 MB | **45-90 tok/s** | n/a |
+| Compact | Qwen 2.5 0.5B | 469 MB | **50-100 tok/s** | 5-15 tok/s |
+| Standard+ | Qwen 3 1.7B (unsloth GGUF) | 1007 MB | **18-28 tok/s** | n/a |
+| Standard | Qwen 2.5 1.5B | 1066 MB | **20-30 tok/s** | 4-10 tok/s |
+| Quality- | Qwen 3 4B Instruct 2507 | 2381 MB | **8-14 tok/s** | n/a |
+| Edge (Gemma) | Gemma 4 nano E2B | 2963 MB | **15-22 tok/s** | n/a |
+| Quality | Qwen 2.5 7B (split) | 4482 MB | **3-7 tok/s** | 0.5-2 tok/s |
+| Edge+ (Gemma) | Gemma 4 nano E4B | 4747 MB | **6-12 tok/s** | n/a |
+
+**Gemma nano (E2B/E4B) の補足**: スパース活性化で 1 トークン生成あたりの実効パラメータが小さい (E2B: effective 2B / total ~5B、E4B: effective 4B / total ~8B)。decode はファイルサイズではなく effective param に近い速度になるため、E2B はサイズ 3GB だが decode 速度は ~1.5B クラスのデンスモデル相当。
+
+**SmolLM 2 1.7B**: 当初候補に含めたが、en→ja 翻訳テストで完全に文字化けする出力 (decode ~4 tok/s でも翻訳結果が「ンンンンにす。」など意味不明) が出たため Phase 21 で TIERS から除外。SmolLM 2 は英語特化トレーニングで日本語データが極端に少なく、本ツールの主要ユースケース (英→日翻訳) に使えない。多言語ファインチューン版が出れば再評価する。
 
 llama.cpp の数値は外部公開ベンチ (`ggml-org/llama.cpp` リポジトリ + ユーザーレポート) からの代表値。mistral.rs 列は Phase 20 の差し替え前に観測した参考値。
 
@@ -113,13 +116,33 @@ llama.cpp の数値は外部公開ベンチ (`ggml-org/llama.cpp` リポジト�
 
 ## 実機ベースライン記録
 
-実際のユーザー実機でのベンチ結果を時系列で記録 (期待値の校正に使用):
+実際のユーザー実機でのベンチ結果を時系列で記録 (期待値の校正に使用)。
 
-| 日付 | CPU | RAM | ティア | decode tok/s (mean) | wall tok/s (mean) | コメント |
-|---|---|---|---|---|---|---|
-| 2026-05-09 | i5-8400 (Coffee Lake, 6c6t, 2017) | 64 GB | Compact 0.5B Q4_K_M | **49** | 11.4 | 期待値レンジ内。短文では wall が大きく低下するのは仕様 (= プロンプト評価が支配的)。 |
+### i5-8400 (Coffee Lake, 6c6t, 2017) / 64 GB DDR4 — 2026-05-11 (Phase 21 v3)
 
-i5-8400 のような 5+ 年前の CPU でも decode 49 tok/s は十分実用速度。Lens で 1 行翻訳すると wall ~10 tok/s に見えるが、これは「1 行ごとに context 再構築」しているため。複数行連続翻訳では decode 側に近づく。
+`cargo run --example bench_all_tiers --release --features embedded-llm -- --samples 5` で全ティアを連続実行した結果。
+
+| ティア | テンプレ | decode mean | wall mean | 翻訳品質 |
+|---|---|---:|---:|---|
+| Compact (Qwen 2.5 0.5B) | ChatML | **53.9** | 13.6 | ◯ (時々中国語漏れ) |
+| Compact+ (Qwen 3 0.6B) | ChatML+no_think | **48.8** | 16.8 | △ (短文/truncated 多い) |
+| Standard (Qwen 2.5 1.5B) | ChatML | **25.0** | 7.9 | ◯ |
+| Standard+ (Qwen 3 1.7B) | ChatML+no_think | **21.4** | 6.8 | ◯ |
+| Edge (Gemma 4 E2B) | Gemma | **16.8** | 6.9 | △ (一部英語エコー) |
+| Quality- (Qwen 3 4B Instruct 2507) | ChatML | **9.8** | 3.1 | ◎ |
+| Edge+ (Gemma 4 E4B) | Gemma | **8.7** | 1.9 | ◎ (最高品質クラス) |
+| Quality (Qwen 2.5 7B) | ChatML | **5.9** | 1.8 | ◎ |
+
+**観察**:
+- Compact 帯 (~400MB): Qwen 2.5 0.5B が速度・品質のバランスで最良
+- Standard 帯 (~1GB): Qwen 2.5 1.5B が最速、Qwen 3 1.7B は同等品質でやや遅い
+- 中量級 (~2.5GB): **Qwen 3 4B Instruct 2507 を新ティアとして追加** — 7B より 1.7倍速く、品質も高い
+- 高品質帯: **Gemma 4 E4B が驚きの結果** — 5GB ファイルだが sparse activation のおかげで 7B (4.5GB) より decode 47% 速い + 翻訳品質も同等以上
+
+**Phase 21 v3 で適用した修正**:
+- Qwen 3 系 (0.6B / 1.7B) は thinking mode が暴走するため、ChatML に no_think prime (`<think>\n\n</think>\n\n`) を追加
+- Qwen 3 4B Instruct 2507 は "instruct-2507" 系列で thinking が weights レベルで除去済 → 通常 ChatML を使用 (no_think prime を入れると EOS を即時出力する)
+- SmolLM 2 1.7B は en→ja で完全文字化けのため除外
 
 ## 改訂履歴
 

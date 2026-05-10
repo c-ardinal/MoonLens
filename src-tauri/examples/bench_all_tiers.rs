@@ -375,6 +375,7 @@ fn print_summary(results: &[TierResult]) {
 fn template_label(t: ChatTemplate) -> &'static str {
     match t {
         ChatTemplate::ChatMl => "ChatML",
+        ChatTemplate::ChatMlQwen3NoThink => "ChatML+nt",
         ChatTemplate::Gemma => "Gemma",
     }
 }

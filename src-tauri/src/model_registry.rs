@@ -47,16 +47,26 @@ pub enum ModelTierClass {
 ///
 /// Concrete formats currently supported:
 /// - **ChatML**: `<|im_start|>role\ncontent<|im_end|>` markers,
-///   used by Qwen 2.5 / Qwen 3 / SmolLM 2 / many open-weight models.
+///   used by Qwen 2.5 / many open-weight models.
+/// - **ChatML (Qwen 3 no-think)**: same markers as ChatML but the
+///   assistant primer pre-emits empty `<think>...</think>` tags so
+///   Qwen 3's deliberative-reasoning mode short-circuits and the
+///   model proceeds straight to the answer. Without this, Qwen 3
+///   wastes the entire 64-token bench budget thinking out loud and
+///   never reaches the translation. See HF Qwen 3 release notes for
+///   the `enable_thinking=False` flag (this is the manual-render
+///   equivalent).
 /// - **Gemma**: `<start_of_turn>role\ncontent<end_of_turn>`, used by
-///   Gemma 2 / Gemma 3 / Gemma 4 (incl. nano e2b/e4b). No system role
+///   Gemma 2 / Gemma 3 / Gemma 4 (incl. nano E2B/E4B). No system role
 ///   in the on-the-wire format — system prompt is inlined into the
 ///   first user turn.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ChatTemplate {
-    /// `<|im_start|>` / `<|im_end|>` (Qwen / SmolLM / others).
+    /// `<|im_start|>` / `<|im_end|>` (Qwen 2.5 / open-weight models).
     ChatMl,
+    /// ChatML with Qwen 3's reasoning mode disabled (empty think tags).
+    ChatMlQwen3NoThink,
     /// `<start_of_turn>` / `<end_of_turn>` (Gemma family).
     Gemma,
 }
@@ -137,12 +147,35 @@ impl ModelTier {
 /// directly so tier ordering is determined here, not at every call
 /// site.
 pub const TIERS: &[ModelTier] = &[
-    // Ordered smallest → largest by Q4_K_M GGUF size_mb so the UI
-    // dropdown reads naturally and the regression test
-    // `tiers_are_ordered_smallest_to_largest` keeps the contract.
-    // Within a size bucket, the originally-shipped Qwen 2.5 tiers
-    // come first (they are the recommended defaults); alternate-
-    // family A/B candidates (Qwen 3, SmolLM 2, Gemma) follow.
+    // Ordered smallest → largest by Q4_K_M GGUF size_mb. The UI
+    // dropdown iterates this slice directly and the regression test
+    // `tiers_are_ordered_smallest_to_largest` enforces the
+    // monotonicity. Phase 21 dropped the SmolLM 2 1.7B candidate
+    // after benchmarking confirmed it produces gibberish on en→ja
+    // (English-only training data); see docs/EMBEDDED_LLM_PERF.md
+    // for the full rejection record.
+    ModelTier {
+        id: "qwen3-0.6b-q4_k_m",
+        display_name: "Compact+ (Qwen 3 0.6B)",
+        description: "Qwen 2.5 0.5B 後継。多言語品質向上、特に日本語で上回る (Apache 2.0)。",
+        // The original Qwen org does not ship GGUF quants for the
+        // small Qwen 3 sizes; unsloth's mirror is the canonical
+        // community quantisation for these.
+        repo: "unsloth/Qwen3-0.6B-GGUF",
+        filenames: &["Qwen3-0.6B-Q4_K_M.gguf"],
+        size_mb: 397,
+        min_ram_gb: 4,
+        license: "Apache-2.0",
+        license_url:
+            "https://huggingface.co/unsloth/Qwen3-0.6B-GGUF/blob/main/LICENSE",
+        class: ModelTierClass::Compact,
+        // Qwen 3 ships with deliberative-reasoning mode on by default,
+        // emitting `<think>...</think>` blocks before answering. For
+        // short-output translation that wastes the entire token budget
+        // on internal monologue. The no-think template primes the
+        // assistant turn with empty `<think></think>` to bypass it.
+        chat_template: ChatTemplate::ChatMlQwen3NoThink,
+    },
     ModelTier {
         id: "qwen2.5-0.5b-instruct-q4_k_m",
         display_name: "Compact (Qwen 2.5 0.5B)",
@@ -158,18 +191,18 @@ pub const TIERS: &[ModelTier] = &[
         chat_template: ChatTemplate::ChatMl,
     },
     ModelTier {
-        id: "qwen3-0.6b-instruct-q4_k_m",
-        display_name: "Compact+ (Qwen 3 0.6B)",
-        description: "Qwen 2.5 0.5B 後継。多言語品質向上、特に日本語で上回る (Apache 2.0)。",
-        repo: "Qwen/Qwen3-0.6B-Instruct-GGUF",
-        filenames: &["qwen3-0.6b-instruct-q4_k_m.gguf"],
-        size_mb: 460,
-        min_ram_gb: 4,
+        id: "qwen3-1.7b-q4_k_m",
+        display_name: "Standard+ (Qwen 3 1.7B)",
+        description: "Qwen 2.5 1.5B 後継。標準ティアの正統進化版 (Apache 2.0)。",
+        repo: "unsloth/Qwen3-1.7B-GGUF",
+        filenames: &["Qwen3-1.7B-Q4_K_M.gguf"],
+        size_mb: 1056,
+        min_ram_gb: 8,
         license: "Apache-2.0",
         license_url:
-            "https://huggingface.co/Qwen/Qwen3-0.6B-Instruct-GGUF/blob/main/LICENSE",
-        class: ModelTierClass::Compact,
-        chat_template: ChatTemplate::ChatMl,
+            "https://huggingface.co/unsloth/Qwen3-1.7B-GGUF/blob/main/LICENSE",
+        class: ModelTierClass::Standard,
+        chat_template: ChatTemplate::ChatMlQwen3NoThink,
     },
     ModelTier {
         id: "qwen2.5-1.5b-instruct-q4_k_m",
@@ -186,83 +219,45 @@ pub const TIERS: &[ModelTier] = &[
         chat_template: ChatTemplate::ChatMl,
     },
     ModelTier {
-        id: "smollm2-1.7b-instruct-q4_k_m",
-        display_name: "Standard- (SmolLM 2 1.7B)",
-        description: "HuggingFace 製の超軽量設計。Qwen 3 1.7B との比較ベンチ用 (Apache 2.0)。",
-        repo: "HuggingFaceTB/SmolLM2-1.7B-Instruct-GGUF",
-        filenames: &["smollm2-1.7b-instruct-q4_k_m.gguf"],
-        size_mb: 1100,
-        min_ram_gb: 8,
+        id: "qwen3-4b-instruct-2507-q4_k_m",
+        display_name: "Quality- (Qwen 3 4B Instruct 2507)",
+        description: "中量級 (Standard と Quality の中間)。8-16GB RAM PC で実用的な品質と速度のバランス (Apache 2.0)。",
+        repo: "unsloth/Qwen3-4B-Instruct-2507-GGUF",
+        filenames: &["Qwen3-4B-Instruct-2507-Q4_K_M.gguf"],
+        size_mb: 2497,
+        min_ram_gb: 12,
         license: "Apache-2.0",
         license_url:
-            "https://huggingface.co/HuggingFaceTB/SmolLM2-1.7B-Instruct-GGUF/blob/main/LICENSE",
+            "https://huggingface.co/unsloth/Qwen3-4B-Instruct-2507-GGUF/blob/main/LICENSE",
         class: ModelTierClass::Standard,
+        // Phase 21 v2 finding: the "Instruct-2507" variant has its
+        // reasoning mode removed at the checkpoint level — the
+        // empty-think primer that works for Qwen 3 0.6B / 1.7B
+        // makes 2507 emit EOS immediately (5 samples → 3 produced
+        // 0 tokens, 2 echoed the source verbatim). Plain ChatML
+        // (no primer) is the right template here.
         chat_template: ChatTemplate::ChatMl,
     },
-    ModelTier {
-        id: "qwen3-1.7b-instruct-q4_k_m",
-        display_name: "Standard+ (Qwen 3 1.7B)",
-        description: "Qwen 2.5 1.5B 後継。標準ティアの正統進化版 (Apache 2.0)。",
-        repo: "Qwen/Qwen3-1.7B-Instruct-GGUF",
-        filenames: &["qwen3-1.7b-instruct-q4_k_m.gguf"],
-        size_mb: 1200,
-        min_ram_gb: 8,
-        license: "Apache-2.0",
-        license_url:
-            "https://huggingface.co/Qwen/Qwen3-1.7B-Instruct-GGUF/blob/main/LICENSE",
-        class: ModelTierClass::Standard,
-        chat_template: ChatTemplate::ChatMl,
-    },
-    // Gemma 4 nano (e2b / e4b) — Google's edge-optimised family with
+    // Gemma 4 nano (E2B / E4B) — Google's edge-optimised family with
     // sparse activation (effective param count smaller than total).
     // **License caveat**: Gemma Terms of Use, NOT Apache 2.0. Commercial
     // use is permitted but redistribution requires shipping the license
     // terms + Prohibited Use Policy. Selecting this tier surfaces a
     // license-acknowledgement step in the settings UI before download.
-    //
-    // HF repo paths assume Google's official quants (`google/gemma-4-…-it-gguf`).
-    // If the path is wrong on first download attempt the IPC will surface
-    // a 404; the registry can be patched to point at a 3rd-party quant
-    // mirror (e.g. `bartowski/...`) without code changes.
+    // Google does not ship GGUF; unsloth's mirror is the canonical
+    // community quantisation for these.
     ModelTier {
         id: "gemma-4-e2b-it-q4_k_m",
-        display_name: "Edge (Gemma 4 e2b)",
-        description: "Google 製エッジモデル。effective 2B 活性化、軽量。Gemma TOS — 配布時にライセンス同梱必須。",
-        repo: "google/gemma-4-e2b-it-gguf",
-        filenames: &["gemma-4-e2b-it-q4_k_m.gguf"],
-        size_mb: 1500,
-        min_ram_gb: 6,
-        license: "Gemma-Terms-of-Use",
-        license_url: "https://ai.google.dev/gemma/terms",
-        class: ModelTierClass::Compact,
-        chat_template: ChatTemplate::Gemma,
-    },
-    ModelTier {
-        id: "gemma-4-e4b-it-q4_k_m",
-        display_name: "Edge+ (Gemma 4 e4b)",
-        description: "Gemma 4 nano e4b 版。effective 4B 活性化。Gemma TOS。",
-        repo: "google/gemma-4-e4b-it-gguf",
-        filenames: &["gemma-4-e4b-it-q4_k_m.gguf"],
-        size_mb: 2500,
+        display_name: "Edge (Gemma 4 E2B)",
+        description: "Google 製エッジモデル。effective 2B 活性化 (total ~5B)、Gemma TOS — 配布時にライセンス同梱必須。",
+        repo: "unsloth/gemma-4-E2B-it-GGUF",
+        filenames: &["gemma-4-E2B-it-Q4_K_M.gguf"],
+        size_mb: 3107,
         min_ram_gb: 8,
         license: "Gemma-Terms-of-Use",
         license_url: "https://ai.google.dev/gemma/terms",
         class: ModelTierClass::Standard,
         chat_template: ChatTemplate::Gemma,
-    },
-    ModelTier {
-        id: "qwen3-4b-instruct-q4_k_m",
-        display_name: "Quality- (Qwen 3 4B)",
-        description: "中量級 (Standard と Quality の中間)。8-16GB RAM PC で実用的な品質と速度のバランス (Apache 2.0)。",
-        repo: "Qwen/Qwen3-4B-Instruct-GGUF",
-        filenames: &["qwen3-4b-instruct-q4_k_m.gguf"],
-        size_mb: 2700,
-        min_ram_gb: 12,
-        license: "Apache-2.0",
-        license_url:
-            "https://huggingface.co/Qwen/Qwen3-4B-Instruct-GGUF/blob/main/LICENSE",
-        class: ModelTierClass::Standard,
-        chat_template: ChatTemplate::ChatMl,
     },
     ModelTier {
         id: "qwen2.5-7b-instruct-q4_k_m",
@@ -288,6 +283,19 @@ pub const TIERS: &[ModelTier] = &[
             "https://huggingface.co/Qwen/Qwen2.5-7B-Instruct-GGUF/blob/main/LICENSE",
         class: ModelTierClass::Quality,
         chat_template: ChatTemplate::ChatMl,
+    },
+    ModelTier {
+        id: "gemma-4-e4b-it-q4_k_m",
+        display_name: "Edge+ (Gemma 4 E4B)",
+        description: "Gemma 4 nano E4B 版。effective 4B 活性化 (total ~8B)。Gemma TOS。",
+        repo: "unsloth/gemma-4-E4B-it-GGUF",
+        filenames: &["gemma-4-E4B-it-Q4_K_M.gguf"],
+        size_mb: 4977,
+        min_ram_gb: 12,
+        license: "Gemma-Terms-of-Use",
+        license_url: "https://ai.google.dev/gemma/terms",
+        class: ModelTierClass::Quality,
+        chat_template: ChatTemplate::Gemma,
     },
 ];
 
@@ -553,21 +561,29 @@ mod tests {
     fn chat_template_matches_known_model_family() {
         // Cross-check: the registered chat_template for each tier
         // must align with the model family (inferred from id /
-        // repo). A future PR that registers a Qwen tier with the
-        // Gemma template (or vice versa) would silently wreck
-        // translation quality — this guard catches it pre-merge.
+        // repo). A future PR that registers a Qwen 3 tier WITHOUT
+        // the no-think variant (or a Qwen 2.5 tier WITH it) would
+        // silently wreck translation quality — this guard catches
+        // it pre-merge.
         for t in TIERS {
             let id_lc = t.id.to_lowercase();
-            let expected = if id_lc.starts_with("qwen")
-                || id_lc.starts_with("smollm")
-            {
+            let expected = if id_lc.contains("instruct-2507") {
+                // Qwen 3 "Instruct-2507" is the post-thinking
+                // checkpoint — reasoning mode was removed at the
+                // weights level. Plain ChatML is correct; the
+                // no-think primer makes the model emit EOS
+                // immediately (Phase 21 v2 finding).
+                ChatTemplate::ChatMl
+            } else if id_lc.starts_with("qwen3") {
+                // Base Qwen 3 ships with reasoning mode on by
+                // default; the no-think render is required for
+                // short-output translation.
+                ChatTemplate::ChatMlQwen3NoThink
+            } else if id_lc.starts_with("qwen") {
                 ChatTemplate::ChatMl
             } else if id_lc.starts_with("gemma") {
                 ChatTemplate::Gemma
             } else {
-                // Unknown family: skip — but flag in a separate test
-                // when we add one (so the allow-list above stays
-                // explicit).
                 continue;
             };
             assert_eq!(

@@ -1167,7 +1167,11 @@ mod tests {
     async fn tier_snapshot_recommends_compact_for_low_ram() {
         let svc = build_service(2.0, 2, ScriptedDownloader::new(), InMemoryStorage::new());
         let snap = svc.tier_snapshot();
-        assert_eq!(snap.recommended.id, "qwen2.5-0.5b-instruct-q4_k_m");
+        // Phase 21 ordering: Qwen 3 0.6B now precedes Qwen 2.5 0.5B
+        // in TIERS (smaller GGUF + better multilingual quality), so
+        // it is the first Compact-class tier the recommender picks.
+        assert_eq!(snap.recommended.class, ModelTierClass::Compact);
+        assert_eq!(snap.recommended.id, "qwen3-0.6b-q4_k_m");
         assert!(snap.recommended_reason.contains("Compact"));
         assert!(snap.recommended_reason.contains("2.0"));
     }
@@ -1359,7 +1363,9 @@ mod tests {
     /// that do not require running infrastructure.
     #[tokio::test]
     async fn e2e_fresh_install_through_first_translation_ready() {
-        let url = "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf";
+        // Phase 21 ordering: Qwen 3 0.6B is the recommended Compact
+        // for fresh installs (first Compact-class tier in TIERS).
+        let url = "https://huggingface.co/unsloth/Qwen3-0.6B-GGUF/resolve/main/Qwen3-0.6B-Q4_K_M.gguf";
         let storage = InMemoryStorage::new();
         let downloader = ScriptedDownloader::new()
             .respond_to(url, ScriptedResponse::ok(vec![9u8; 4096]).with_chunk_size(512));
@@ -1371,7 +1377,7 @@ mod tests {
 
         // 2. Tier snapshot recommends Compact.
         let tier = svc.tier_snapshot();
-        assert_eq!(tier.recommended.id, "qwen2.5-0.5b-instruct-q4_k_m");
+        assert_eq!(tier.recommended.id, "qwen3-0.6b-q4_k_m");
 
         // 3. User accepts the recommendation.
         svc.set_tier(&tier.recommended.id).await.unwrap();
@@ -1384,6 +1390,6 @@ mod tests {
         let s = svc.status().await.unwrap();
         assert!(s.present);
         assert_eq!(s.license, "Apache-2.0");
-        assert!(s.model_id.contains("qwen2.5-0.5b-instruct-q4_k_m.gguf"));
+        assert!(s.model_id.contains("Qwen3-0.6B-Q4_K_M.gguf"));
     }
 }

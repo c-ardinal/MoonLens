@@ -8,6 +8,31 @@ the project adheres to [SemVer](https://semver.org/).
 
 ### Added
 
+- **Phase 21 v2: ベンチ結果に基づくティア整理**
+  (`src-tauri/src/model_registry.rs`, `src-tauri/src/providers/translate_embedded_llm.rs`,
+  `docs/EMBEDDED_LLM_PERF.md`, `bench_phase21.md`)
+  - **`ChatTemplate::ChatMlQwen3NoThink` 新設** — Qwen 3 base 系 (0.6B / 1.7B)
+    の thinking mode (`<think>...</think>`) が翻訳タスクで暴走 (64-token 全部
+    consume) する問題を解決。assistant primer に空 `<think>\n\n</think>\n\n` を
+    pre-emit して reasoning を bypass。
+  - **Qwen 3 4B Instruct 2507 は通常 ChatML** — "Instruct-2507" 系列は thinking が
+    weights レベルで除去済のため、no_think prime を入れると EOS 即時出力で
+    壊れる。template を `ChatMl` に分岐。
+  - **SmolLM 2 1.7B を TIERS から除外** — en→ja で完全文字化けが発生
+    (decode ~4 tok/s で「ンンンンにす。」等)。英語特化トレーニングで日本語データが
+    極端に少ないため。多言語ファインチューン版が出れば再評価。
+  - **`recommended_tier_for_ram` の出力が変化** — Compact 帯の先頭が
+    Qwen 3 0.6B に (元は Qwen 2.5 0.5B)。e2e/recommendation テストを更新。
+  - i5-8400 全ティアベースライン記録を docs に追加。
+
+- **HuggingFace パスを実存リポに修正**
+  (`src-tauri/src/model_registry.rs`)
+  - Qwen 3: `Qwen/Qwen3-*-Instruct-GGUF` (404) → `unsloth/Qwen3-*-GGUF`
+  - Qwen 3 4B: `unsloth/Qwen3-4B-Instruct-2507-GGUF`
+  - Gemma 4 E2B/E4B: `google/gemma-4-e[24]b-it-gguf` (Google は GGUF 配布なし) →
+    `unsloth/gemma-4-E[24]B-it-GGUF`
+  - サイズ表記を実測値に更新 (Gemma 4 E2B: 1500MB → 3107MB、E4B: 2500MB → 4977MB)
+
 - **`bench_all_tiers` CLI ベンチランナー** (`src-tauri/examples/bench_all_tiers.rs`) —
   `cargo run --example bench_all_tiers --release --features embedded-llm`
   で `model_registry::TIERS` の全ティアを順に走らせて比較表を出力。

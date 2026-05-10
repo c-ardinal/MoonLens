@@ -822,6 +822,7 @@ fn render_prompt(
     use crate::model_registry::ChatTemplate;
     match template {
         ChatTemplate::ChatMl => render_chatml(system, user),
+        ChatTemplate::ChatMlQwen3NoThink => render_chatml_qwen3_no_think(system, user),
         ChatTemplate::Gemma => render_gemma(system, user),
     }
 }
@@ -836,6 +837,24 @@ fn render_chatml(system: &str, user: &str) -> String {
         "<|im_start|>system\n{system}<|im_end|>\n\
          <|im_start|>user\n{user}<|im_end|>\n\
          <|im_start|>assistant\n",
+    )
+}
+
+/// ChatML for Qwen 3 with reasoning mode disabled. Identical to
+/// `render_chatml` except the assistant primer pre-emits empty
+/// `<think></think>` tags. Qwen 3 ships with deliberative reasoning
+/// on by default — without this primer the model spends the entire
+/// 64-token bench budget thinking out loud and never reaches the
+/// translation. See HF Qwen 3 release notes for the
+/// `enable_thinking=False` flag (this is the manual-render
+/// equivalent: pre-filling the think turn with empty content tells
+/// the model "no thinking required, proceed to answer").
+#[cfg(feature = "embedded-llm")]
+fn render_chatml_qwen3_no_think(system: &str, user: &str) -> String {
+    format!(
+        "<|im_start|>system\n{system}<|im_end|>\n\
+         <|im_start|>user\n{user}<|im_end|>\n\
+         <|im_start|>assistant\n<think>\n\n</think>\n\n",
     )
 }
 
@@ -1127,9 +1146,31 @@ mod tests {
         assert!(chatml.contains("<|im_start|>system\nsys<|im_end|>"));
         let gemma = render_prompt(ChatTemplate::Gemma, "sys", "hi");
         assert!(gemma.contains("<start_of_turn>user\nsys\n\nhi<end_of_turn>"));
+        let qwen3 = render_prompt(ChatTemplate::ChatMlQwen3NoThink, "sys", "hi");
+        assert!(qwen3.contains("<|im_start|>system\nsys<|im_end|>"));
         // The two formats must NOT bleed into each other.
         assert!(!chatml.contains("<start_of_turn>"), "chatml leaked Gemma markers: {chatml}");
         assert!(!gemma.contains("<|im_start|>"), "gemma leaked ChatML markers: {gemma}");
+    }
+
+    #[cfg(feature = "embedded-llm")]
+    #[test]
+    fn render_chatml_qwen3_no_think_pre_emits_empty_think_tags() {
+        // Critical regression guard: Qwen 3 thinking mode is on by
+        // default and burns the entire token budget on
+        // `<think>...</think>` blocks. The no-think render works
+        // by pre-filling those tags with empty content, telling the
+        // model "thinking already done, proceed to answer". If a
+        // future change drops this, every Qwen 3 tier silently
+        // regresses to ~10% effective decode throughput.
+        let s = render_chatml_qwen3_no_think("sys", "translate");
+        assert!(s.contains("<|im_start|>assistant\n<think>\n\n</think>\n\n"),
+            "no-think primer missing or malformed: {s}");
+        // Sanity: empty think pair is between user end and answer.
+        let user_end = s.find("<|im_start|>user\ntranslate<|im_end|>")
+            .expect("user turn missing");
+        let asst_start = s.find("<|im_start|>assistant").expect("asst start missing");
+        assert!(user_end < asst_start, "user must come before assistant");
     }
 
     #[cfg(feature = "embedded-llm")]
