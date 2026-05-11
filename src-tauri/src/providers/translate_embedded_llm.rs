@@ -881,9 +881,17 @@ fn run_inference_in_context(
         if model.is_eog_token(token) {
             break;
         }
+        // llama-cpp-2's token_to_piece enumerates a fixed set of
+        // token types and returns `UnknownTokenType` for anything
+        // outside that list. Newer models (Qwen 3.5, RakutenAI 2.0,
+        // EuroLLM, ...) ship tokenisers that include type tags the
+        // wrapper does not yet enumerate — but the actual token is
+        // still valid in the model's KV cache. Treat the decoder
+        // failure as "skip the surface form, keep generating" so
+        // the model can recover instead of aborting mid-sentence.
         let piece = model
             .token_to_piece(token, &mut decoder, false, NonZeroU16::new(1))
-            .map_err(|e| format!("token_to_piece: {e}"))?;
+            .unwrap_or_default();
         if !piece.is_empty() {
             aggregated.push_str(&piece);
             if let Some(cb) = on_token.as_mut() {
@@ -1019,9 +1027,12 @@ fn run_inference_in_context_spec(
         if model.is_eog_token(tok) {
             return Ok(true);
         }
+        // Same wrapper-enum recovery as the autoregressive path:
+        // emit empty when the token type is not in llama-cpp-2's
+        // enum; the model state still includes the token.
         let piece = model
             .token_to_piece(tok, decoder, false, NonZeroU16::new(1))
-            .map_err(|e| format!("token_to_piece: {e}"))?;
+            .unwrap_or_default();
         if !piece.is_empty() {
             aggregated.push_str(&piece);
             if let Some(cb) = on_token.as_mut() {

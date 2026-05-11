@@ -230,6 +230,26 @@ pub const TIERS: &[ModelTier] = &[
         chat_template: ChatTemplate::ChatMl,
         drafter: None,
     },
+    // Qwen 3.5 0.8B and 2B were evaluated in Phase 23 v23c bench
+    // but rejected: with the no-think primer applied (their GGUF
+    // still triggers reasoning despite the "default OFF" claim
+    // in the model card), JA translation quality was inconsistent
+    // — 0.8B mixed in Chinese ("欢迎来到未来翻译的殿堂"); 2B
+    // produced semantic breaks ("急げんこつなうとんぼが lazy な
+    // ぬまを越す"). For per-line speed Compact+ (Qwen 3 0.6B) was
+    // faster anyway. Removed pending JA-quality investigation.
+    // RakutenAI 2.0 mini-instruct (1.53B Apache 2.0) was evaluated
+    // in Phase 23 v1 bench but produced broken translations (echoes
+    // system prompt, mixes EN/JA fragments, emits raw <|im_end|>
+    // before content). Chat template incompatibility suspected;
+    // removed pending JA-quality investigation.
+    //
+    // EuroLLM 1.7B-Instruct (utter-project, Apache 2.0) was also
+    // evaluated and rejected: outputs random European languages
+    // (Tamil/Dutch/Norwegian) instead of Japanese, despite the
+    // 35-language model card claim. The translation directive in
+    // our prompt is apparently outside EuroLLM's training
+    // distribution.
     ModelTier {
         id: "qwen3-1.7b-q4_k_m",
         display_name: "Standard+ (Qwen 3 1.7B)",
@@ -261,6 +281,21 @@ pub const TIERS: &[ModelTier] = &[
         drafter: None,
     },
     ModelTier {
+        id: "llm-jp-3.1-1.8b-instruct4-q4_k_m",
+        display_name: "JA-Standard+ (llm-jp 3.1 1.8B)",
+        description: "日本政府系 LLM-JP プロジェクトの 1.8B JA-EN モデル (Apache 2.0)。日本語学習データ重視。",
+        repo: "mmnga/llm-jp-3.1-1.8b-instruct4-gguf",
+        filenames: &["llm-jp-3.1-1.8b-instruct4-Q4_K_M.gguf"],
+        size_mb: 1110,
+        min_ram_gb: 8,
+        license: "Apache-2.0",
+        license_url:
+            "https://huggingface.co/llm-jp/llm-jp-3.1-1.8b/blob/main/LICENSE",
+        class: ModelTierClass::Standard,
+        chat_template: ChatTemplate::ChatMl,
+        drafter: None,
+    },
+    ModelTier {
         id: "qwen3-4b-instruct-2507-q4_k_m",
         display_name: "Quality- (Qwen 3 4B Instruct 2507)",
         description: "中量級 (Standard と Quality の中間)。8-16GB RAM PC で実用的な品質と速度のバランス (Apache 2.0)。",
@@ -279,6 +314,22 @@ pub const TIERS: &[ModelTier] = &[
         // 0 tokens, 2 echoed the source verbatim). Plain ChatML
         // (no primer) is the right template here.
         chat_template: ChatTemplate::ChatMl,
+        drafter: None,
+    },
+    ModelTier {
+        id: "qwen3.5-4b-q4_k_m",
+        display_name: "Quality-- (Qwen 3.5 4B)",
+        description: "Qwen 3.5 4B 中量級。Qwen 3 4B 2507 後継。201言語、thinking デフォルトOFF (Apache 2.0)。",
+        repo: "unsloth/Qwen3.5-4B-GGUF",
+        filenames: &["Qwen3.5-4B-Q4_K_M.gguf"],
+        size_mb: 2614,
+        min_ram_gb: 12,
+        license: "Apache-2.0",
+        license_url:
+            "https://huggingface.co/unsloth/Qwen3.5-4B-GGUF/blob/main/LICENSE",
+        class: ModelTierClass::Standard,
+        // See Qwen 3.5 0.8B note: same no-think primer needed.
+        chat_template: ChatTemplate::ChatMlQwen3NoThink,
         drafter: None,
     },
     // Gemma 4 nano (E2B / E4B) — Google's edge-optimised family with
@@ -627,7 +678,14 @@ mod tests {
         // it pre-merge.
         for t in TIERS {
             let id_lc = t.id.to_lowercase();
-            let expected = if id_lc.contains("instruct-2507") {
+            let expected = if id_lc.starts_with("qwen3.5") {
+                // Qwen 3.5: model card claims thinking is default
+                // OFF, but bench confirmed the GGUF still emits
+                // `<think>` blocks. Use the same no-think primer
+                // as Qwen 3 base. (See registry comment on
+                // qwen3.5-0.8b for the Phase 23 evidence.)
+                ChatTemplate::ChatMlQwen3NoThink
+            } else if id_lc.contains("instruct-2507") {
                 // Qwen 3 "Instruct-2507" is the post-thinking
                 // checkpoint — reasoning mode was removed at the
                 // weights level. Plain ChatML is correct; the
@@ -643,6 +701,11 @@ mod tests {
                 ChatTemplate::ChatMl
             } else if id_lc.starts_with("gemma") {
                 ChatTemplate::Gemma
+            } else if id_lc.starts_with("llm-jp") {
+                // llm-jp 3.1 1.8B — JA-specialised, ChatML compatible.
+                // (RakutenAI / EuroLLM were dropped — see registry
+                // comments at their former position for rationale.)
+                ChatTemplate::ChatMl
             } else {
                 continue;
             };

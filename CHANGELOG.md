@@ -8,6 +8,41 @@ the project adheres to [SemVer](https://semver.org/).
 
 ### Added
 
+- **Phase 23: ナレッジカットオフ後の新世代モデル調査**
+  (`src-tauri/src/model_registry.rs`, `bench_phase23.md`)
+  ユーザー指摘「あなたの 2026-01 ナレッジカットオフ後にも良いモデルが
+  リリースされている可能性」を受けて HuggingFace の最新リリースを
+  網羅調査。6 候補 (~7.6GB) を DL + 自動ベンチ。最終的に 2 ティアを
+  採用、4 つを品質問題で除外。
+    - ✓ **採用 — JA-Standard+ (llm-jp 3.1 1.8B Instruct4)**:
+      日本政府系 LLM-JP プロジェクトの 1.8B JA-EN モデル
+      (`mmnga/llm-jp-3.1-1.8b-instruct4-gguf`, Apache 2.0,
+      2025-05 リリース)。i5-8400 で decode 21.6 / wall 11.2
+      tok/s — Compact+ (Qwen 3 0.6B) の wall 13.1 を 85% 維持
+      しつつ Qwen 2.5 7B (decode 5.8) と同等の JA 翻訳品質を達成。
+      「0.6B の per-line 速度 + 7B の品質」というユーザー目標の
+      現実的な最良解。
+    - ✓ **採用 — Quality-- (Qwen 3.5 4B)**: Qwen 3 4B Instruct
+      2507 の後継 (`unsloth/Qwen3.5-4B-GGUF`, Apache 2.0)。
+      decode 9.3 / wall 2.2 で Qwen 2.5 7B (5.8/1.9) を 60%
+      高速化、翻訳品質は同等。`ChatMlQwen3NoThink` テンプレ必要
+      (Qwen 3.5 はモデルカードで「default OFF」だが GGUF は
+      実測 thinking 暴走を継続)。
+    - ✗ **除外 — RakutenAI 2.0 mini (1.5B)**: 翻訳が壊れる
+      (system プロンプトをエコー、EOS だけ出力、英日混在)。
+      chat template 不一致疑い、要 JA-quality 調査。
+    - ✗ **除外 — EuroLLM 1.7B (utter-project)**: 35言語多言語
+      モデルだが Japanese ターゲット指定を無視してタミル語・
+      ドイツ語・ノルウェー語をランダム生成。翻訳プロンプト
+      フォーマットの想定外と推定。
+    - ✗ **除外 — Qwen 3.5 0.8B / 2B**: thinking 暴走を NoThink
+      テンプレで抑制しても JA 翻訳品質ムラ (狐 → 犬、JA → 中国語
+      混入、意味破綻)。サイズが似た既存ティア (Compact+ Qwen 3
+      0.6B / Standard+ Qwen 3 1.7B) と比べて利点なし。
+    - 追加修正: `token_to_piece` の `UnknownTokenType` エラーを
+      致命的ではなく空文字列扱いに変更 (llama-cpp-2 wrapper の
+      token type enum が Qwen 3.5 等の新トークナイザに未対応)。
+
 - **Phase 22: Speculative decoding インフラ実装 — Gemma 4 MTP drafter 統合**
   (`src-tauri/src/model_registry.rs`, `src-tauri/src/providers/translate_embedded_llm.rs`,
   `src-tauri/examples/bench_all_tiers.rs`)
