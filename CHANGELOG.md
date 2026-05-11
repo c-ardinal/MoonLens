@@ -8,6 +8,44 @@ the project adheres to [SemVer](https://semver.org/).
 
 ### Added
 
+- **Phase 22: Speculative decoding インフラ実装 — Gemma 4 MTP drafter 統合**
+  (`src-tauri/src/model_registry.rs`, `src-tauri/src/providers/translate_embedded_llm.rs`,
+  `src-tauri/examples/bench_all_tiers.rs`)
+  - 2026-05-05 Google が Gemma 4 family 用に公開した MTP drafter
+    (Multi-Token Prediction、Apache 2.0) を組み込み LLM ランタイムに
+    統合する Rust 側インフラを完成。drafter は本体 Gemma 4 の ~3%
+    サイズの小型モデル (E2B: 78M params / Q8_0 ~95MB) で、推論時に
+    N トークン先読みして本体が並列検証する spec decode 方式により
+    最大 3x の高速化を狙う設計。
+  - 新 `DrafterSpec` 構造体を `ModelTier` の Optional フィールドとして
+    追加。Gemma 4 E2B (`Radamanthys11/Gemma-4-E2B-it-assistant-GGUF`
+    Q8_0) と Gemma 4 E4B (`AtomicChat/gemma-4-E4B-it-assistant-GGUF`
+    Q8_0) に既定値 `n_draft=5` で登録。
+  - llama-cpp-2 0.1.145 にネイティブ speculative decoding API なし
+    のため、`get_logits_ith` / `clear_kv_cache_seq` / batch decode
+    プリミティブを組み合わせて自前実装 (`run_inference_in_context_spec`)。
+    アルゴリズム:
+      1. drafter が N トークン autoregressively 予測
+      2. target が N トークンを 1 回の batch decode で並列検証
+      3. accept/reject ループで mismatch 位置を特定 → correction
+         発行 + KV キャッシュロールバック
+      4. 全 accept なら "free bonus" トークンを target の最終
+         位置 logits から無償取得
+  - drafter 未 DL or load 失敗 のティアでは自動 fallback で従来の
+    autoregressive パスに退化 (graceful degrade)。
+  - bench_all_tiers が drafter 状態 (spec decode 有無 + n_draft +
+    drafter ファイル名) をティア毎に表示するように拡張。
+  - **⚠ 実行ブロッカー (upstream llama.cpp 未対応)**: 公式 drafter
+    GGUF は `gemma4_mtp` / `gemma4_assistant` という新アーキテクチャ
+    を使用しており、現行 llama.cpp は未サポート。upstream PR
+    [ggml-org/llama.cpp#22738](https://github.com/ggml-org/llama.cpp/pull/22738)
+    が drafter サポートを提案したが「AI 生成コード」疑惑でクローズされ
+    未マージ。drafter ロード時に `null result from llama cpp:
+    unknown model architecture: 'gemma4_mtp'` が出て worker は
+    autoregressive にフォールバックする。本ツール側のコードは
+    upstream マージ後、`Cargo.toml` の `llama-cpp-2` バージョン bump
+    のみで spec decode が自動有効化される。
+
 - **Phase 21 v2: ベンチ結果に基づくティア整理**
   (`src-tauri/src/model_registry.rs`, `src-tauri/src/providers/translate_embedded_llm.rs`,
   `docs/EMBEDDED_LLM_PERF.md`, `bench_phase21.md`)

@@ -150,6 +150,18 @@ struct TierResult {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Surface the worker's `embedded_llm_perf` tracing target so the
+    // spec-decode acceptance rate + per-call decode rate are visible.
+    // RUST_LOG can still override (e.g. RUST_LOG=debug for more).
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+                tracing_subscriber::EnvFilter::new("embedded_llm_perf=info")
+            }),
+        )
+        .with_writer(std::io::stderr)
+        .try_init();
+
     let args = parse_args()?;
     let models_dir = default_model_dir(&args.app_data);
     println!("== bench_all_tiers ==");
@@ -173,7 +185,21 @@ async fn main() -> Result<()> {
             continue;
         }
 
-        println!("---- {} ({}) ----", tier.id, tier.display_name);
+        let drafter_status = match tier.drafter {
+            Some(d) => {
+                let dp = models_dir.join(d.filename);
+                if dp.is_file() {
+                    format!(" [spec decode: {} n_draft={}]", d.filename, d.n_draft)
+                } else {
+                    format!(" [drafter MISSING, falling back: {}]", d.filename)
+                }
+            }
+            None => String::new(),
+        };
+        println!(
+            "---- {} ({}){} ----",
+            tier.id, tier.display_name, drafter_status
+        );
         match bench_one_tier(tier, &primary_path, args.samples).await {
             Ok(result) => {
                 println!(

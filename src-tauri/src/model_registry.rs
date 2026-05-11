@@ -117,6 +117,44 @@ pub struct ModelTier {
     /// `ChatMl` for Qwen / SmolLM family models.
     #[serde(default = "default_chat_template")]
     pub chat_template: ChatTemplate,
+    /// Optional speculative-decoding drafter. When present, the
+    /// embedded translator loads BOTH this tier's main GGUF AND the
+    /// drafter alongside it, and runs every translation through a
+    /// spec-decode loop: the drafter predicts N tokens
+    /// autoregressively, the main model batch-verifies them in
+    /// parallel, and matching prefixes are accepted in a single
+    /// forward pass. Google's Gemma 4 family ships official
+    /// drafters (`*-it-assistant`) under Apache 2.0; community
+    /// quantisations are on HuggingFace.
+    ///
+    /// Vocabulary compatibility is mandatory — drafter and main
+    /// model MUST share the tokeniser, otherwise spec decode
+    /// produces garbage. The runtime trusts this invariant (no
+    /// per-token vocab check) so the registry is the right place
+    /// to encode it.
+    #[serde(default)]
+    pub drafter: Option<DrafterSpec>,
+}
+
+/// Optional speculative-decoding drafter paired with a main tier.
+/// The drafter is a smaller version of the main model that shares
+/// its tokeniser; spec decode uses the drafter to predict candidate
+/// tokens and the main model to verify them, accepting a run of
+/// matching tokens in a single batch decode.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct DrafterSpec {
+    /// HuggingFace repo hosting the drafter GGUF.
+    pub repo: &'static str,
+    /// Drafter GGUF filename in `repo`.
+    pub filename: &'static str,
+    /// Approximate on-disk size in MB. Used by the picker / status
+    /// UI to show "+ 95 MB drafter" alongside the main model size.
+    pub size_mb: u32,
+    /// Default n_draft (tokens predicted per spec round). Typical
+    /// values are 4-8 — too small means no speedup, too large means
+    /// wasted draft work when acceptance rate is low. Per-model
+    /// because some pairings tolerate longer drafts than others.
+    pub n_draft: u32,
 }
 
 fn default_chat_template() -> ChatTemplate {
@@ -175,6 +213,7 @@ pub const TIERS: &[ModelTier] = &[
         // on internal monologue. The no-think template primes the
         // assistant turn with empty `<think></think>` to bypass it.
         chat_template: ChatTemplate::ChatMlQwen3NoThink,
+        drafter: None,
     },
     ModelTier {
         id: "qwen2.5-0.5b-instruct-q4_k_m",
@@ -189,6 +228,7 @@ pub const TIERS: &[ModelTier] = &[
             "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/blob/main/LICENSE",
         class: ModelTierClass::Compact,
         chat_template: ChatTemplate::ChatMl,
+        drafter: None,
     },
     ModelTier {
         id: "qwen3-1.7b-q4_k_m",
@@ -203,6 +243,7 @@ pub const TIERS: &[ModelTier] = &[
             "https://huggingface.co/unsloth/Qwen3-1.7B-GGUF/blob/main/LICENSE",
         class: ModelTierClass::Standard,
         chat_template: ChatTemplate::ChatMlQwen3NoThink,
+        drafter: None,
     },
     ModelTier {
         id: "qwen2.5-1.5b-instruct-q4_k_m",
@@ -217,6 +258,7 @@ pub const TIERS: &[ModelTier] = &[
             "https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/blob/main/LICENSE",
         class: ModelTierClass::Standard,
         chat_template: ChatTemplate::ChatMl,
+        drafter: None,
     },
     ModelTier {
         id: "qwen3-4b-instruct-2507-q4_k_m",
@@ -237,6 +279,7 @@ pub const TIERS: &[ModelTier] = &[
         // 0 tokens, 2 echoed the source verbatim). Plain ChatML
         // (no primer) is the right template here.
         chat_template: ChatTemplate::ChatMl,
+        drafter: None,
     },
     // Gemma 4 nano (E2B / E4B) — Google's edge-optimised family with
     // sparse activation (effective param count smaller than total).
@@ -258,6 +301,16 @@ pub const TIERS: &[ModelTier] = &[
         license_url: "https://ai.google.dev/gemma/terms",
         class: ModelTierClass::Standard,
         chat_template: ChatTemplate::Gemma,
+        // Official Google MTP drafter (Apache 2.0). The Google org
+        // ships `google/gemma-4-E2B-it-assistant` as raw safetensors
+        // (78M params, ~158 MB); community Q8_0 quant is the
+        // canonical GGUF for embedded use.
+        drafter: Some(DrafterSpec {
+            repo: "Radamanthys11/Gemma-4-E2B-it-assistant-GGUF",
+            filename: "gemma-4-E2B-it-assistant-Q8_0.gguf",
+            size_mb: 95,
+            n_draft: 5,
+        }),
     },
     ModelTier {
         id: "qwen2.5-7b-instruct-q4_k_m",
@@ -283,6 +336,7 @@ pub const TIERS: &[ModelTier] = &[
             "https://huggingface.co/Qwen/Qwen2.5-7B-Instruct-GGUF/blob/main/LICENSE",
         class: ModelTierClass::Quality,
         chat_template: ChatTemplate::ChatMl,
+        drafter: None,
     },
     ModelTier {
         id: "gemma-4-e4b-it-q4_k_m",
@@ -296,6 +350,12 @@ pub const TIERS: &[ModelTier] = &[
         license_url: "https://ai.google.dev/gemma/terms",
         class: ModelTierClass::Quality,
         chat_template: ChatTemplate::Gemma,
+        drafter: Some(DrafterSpec {
+            repo: "AtomicChat/gemma-4-E4B-it-assistant-GGUF",
+            filename: "gemma-4-E4B-it-assistant.Q8_0.gguf",
+            size_mb: 96,
+            n_draft: 5,
+        }),
     },
 ];
 

@@ -150,3 +150,4 @@ llama.cpp の数値は外部公開ベンチ (`ggml-org/llama.cpp` リポジト�
 - **2026-05-09 (午後)**: ランタイムを mistral.rs → llama-cpp-2 に差し替え。期待値表を「現行 / 旧」併記に変更。
 - **2026-05-09 (夜)**: ベンチを decode tok/s と per-line wall-clock tok/s に分離。判定は decode 側で行うように変更 (= 上流 `llama-bench tg` 互換指標)。i5-8400 実機ベースラインを追加。
 - **2026-05-10**: Phase 20.7 — `EmbeddedLlmTranslator` にワーカースレッド + context 再利用導入。per-line wall-clock のオーバーヘッド (~700ms/サンプル) を初回 1 回に圧縮。i5-8400 / Compact 0.5B Q4_K_M で wall 10.5 → 14.1 tok/s (+34%)、decode 45.2 → 51.1 tok/s (+13%)。Standard / Quality も全ティア 70%+ 緑判定。
+- **2026-05-11**: Phase 22 — Gemma 4 MTP drafter による speculative decoding を実装。drafter ロード → spec decode loop → KV ロールバック → bonus token 全フロー完成。但し**実行ブロック**: drafter GGUF は新 architecture `gemma4_mtp` を使用しており、現行 llama.cpp 未対応 (upstream PR #22738 クローズ済、マージ未定)。drafter ロード失敗時は graceful fallback で従来の autoregressive 経路を使用するため翻訳機能には影響なし。upstream 対応後は llama-cpp-2 のバージョン bump のみで spec decode が自動有効化される。

@@ -167,6 +167,15 @@ pub struct EmbeddedLlmTranslator {
     /// pair via `tier_by_coord` and picks up the template, falling
     /// back to ChatML when unknown.
     chat_template: crate::model_registry::ChatTemplate,
+    /// Optional speculative-decoding drafter on disk. When present
+    /// the worker loads BOTH this and the main model, then runs
+    /// every inference through a spec-decode loop (drafter predicts
+    /// N tokens, main model verifies in a single batch). When None
+    /// the worker uses the normal autoregressive path.
+    drafter_path: Option<PathBuf>,
+    /// Number of tokens the drafter predicts per spec-decode round.
+    /// Only meaningful when `drafter_path` is Some.
+    drafter_n_draft: u32,
     /// Optional lifecycle hook for the slow GGUF load. Fired right
     /// before and right after `LlamaModel::load_from_file` so the UI
     /// can light up a "ローカル LLM をロード中…" badge during the
@@ -260,12 +269,53 @@ impl EmbeddedLlmTranslator {
                     .map(|t| t.chat_template)
             })
             .unwrap_or(crate::model_registry::ChatTemplate::ChatMl);
+        // Resolve speculative-decoding drafter, if any. Two layers
+        // (same precedence as chat_template):
+        //   1. Explicit `drafter_path` override in config — power
+        //      users with a custom drafter point here directly.
+        //   2. Registry lookup by (repo, filename_remote) — picks
+        //      up the official drafter when the tier registers one.
+        let (drafter_path, drafter_n_draft) = {
+            let explicit = config
+                .get("drafter_path")
+                .and_then(|v| v.as_str())
+                .map(PathBuf::from);
+            let n_draft = config
+                .get("drafter_n_draft")
+                .and_then(|v| v.as_u64())
+                .map(|v| v as u32);
+            if let Some(p) = explicit {
+                (Some(p), n_draft.unwrap_or(5))
+            } else {
+                let from_registry = (|| {
+                    let repo = config.get("repo").and_then(|v| v.as_str())?;
+                    let filename = config.get("filename_remote").and_then(|v| v.as_str())?;
+                    let tier = crate::model_registry::tier_by_coord(repo, filename)?;
+                    tier.drafter
+                })();
+                match from_registry {
+                    Some(spec) => {
+                        // Drafter sits alongside the main GGUF in the
+                        // same models/ dir; the downloader puts it
+                        // there at the exact `filename`.
+                        let p = model_path
+                            .parent()
+                            .map(|d| d.join(spec.filename))
+                            .unwrap_or_else(|| PathBuf::from(spec.filename));
+                        (Some(p), n_draft.unwrap_or(spec.n_draft))
+                    }
+                    None => (None, n_draft.unwrap_or(5)),
+                }
+            }
+        };
         Self {
             id: id.into(),
             model_path,
             system_prompt,
             max_predict_tokens,
             chat_template,
+            drafter_path,
+            drafter_n_draft,
             load_notifier: None,
             #[cfg(feature = "embedded-llm")]
             engine: tokio::sync::Mutex::new(None),
@@ -507,6 +557,8 @@ impl EngineWorkerHandle {
     async fn spawn(
         provider_id: String,
         model_path: PathBuf,
+        drafter_path: Option<PathBuf>,
+        drafter_n_draft: u32,
         load_notifier: Option<EmbeddedLoadNotifier>,
     ) -> Result<Self, ProviderError> {
         use std::sync::mpsc;
@@ -518,7 +570,15 @@ impl EngineWorkerHandle {
         let join = std::thread::Builder::new()
             .name(format!("moonlens-llm-{}", provider_id))
             .spawn(move || {
-                worker_main(provider_id, model_path, load_notifier, ready_tx, req_rx);
+                worker_main(
+                    provider_id,
+                    model_path,
+                    drafter_path,
+                    drafter_n_draft,
+                    load_notifier,
+                    ready_tx,
+                    req_rx,
+                );
             })
             .map_err(|e| ProviderError::Other(format!("worker spawn: {e}")))?;
 
@@ -571,6 +631,8 @@ impl EngineWorkerHandle {
 fn worker_main(
     provider_id: String,
     model_path: PathBuf,
+    drafter_path: Option<PathBuf>,
+    drafter_n_draft: u32,
     load_notifier: Option<EmbeddedLoadNotifier>,
     ready_tx: tokio::sync::oneshot::Sender<Result<(), String>>,
     req_rx: std::sync::mpsc::Receiver<InferenceRequest>,
@@ -663,6 +725,66 @@ fn worker_main(
 
     let mut sampler = LlamaSampler::chain_simple([LlamaSampler::greedy()]);
 
+    // Optional speculative-decoding drafter. Loaded once at worker
+    // startup; spec_decode_inference uses (model, ctx) as the
+    // target/verifier and (drafter_model, drafter_ctx) to predict
+    // candidate tokens N at a time. If load fails we degrade to
+    // pure autoregressive — spec decode is opt-in, not required.
+    let drafter_pair: Option<(LlamaModel, llama_cpp_2::context::LlamaContext<'_>)> =
+        drafter_path.as_ref().and_then(|p| {
+            tracing::info!(
+                target: "embedded_llm_perf",
+                "embedded LLM: loading drafter GGUF for spec decode ({})",
+                p.display()
+            );
+            let dp = LlamaModelParams::default().with_n_gpu_layers(0);
+            let dp = std::pin::Pin::new(&dp);
+            let drafter_model = match LlamaModel::load_from_file(backend, p, &dp) {
+                Ok(m) => m,
+                Err(e) => {
+                    tracing::warn!(
+                        target: "embedded_llm_perf",
+                        "embedded LLM: drafter load failed, falling back to autoregressive: {e}"
+                    );
+                    return None;
+                }
+            };
+            let dctx_params = LlamaContextParams::default()
+                .with_n_ctx(Some(n_ctx))
+                .with_n_batch(2048)
+                .with_n_threads(n_threads)
+                .with_n_threads_batch(n_threads);
+            // SAFETY: LlamaContext borrows from LlamaModel via a
+            // lifetime parameter, but in practice only uses the
+            // model's raw C pointer (`NonNull<llama_model>`), which
+            // is heap-allocated and stable across Rust struct
+            // moves. The transmute extends the Rust-level borrow
+            // to 'static so we can store both in a tuple; safety
+            // relies on the worker thread keeping the tuple alive
+            // for the full inference, which it does (the tuple is
+            // a local on the worker thread, dropped only on
+            // worker exit).
+            let drafter_static: &'static LlamaModel = unsafe {
+                std::mem::transmute::<&LlamaModel, &'static LlamaModel>(&drafter_model)
+            };
+            let drafter_ctx = match drafter_static.new_context(backend, dctx_params) {
+                Ok(c) => c,
+                Err(e) => {
+                    tracing::warn!(
+                        target: "embedded_llm_perf",
+                        "embedded LLM: drafter context create failed, falling back: {e}"
+                    );
+                    return None;
+                }
+            };
+            tracing::info!(
+                target: "embedded_llm_perf",
+                "embedded LLM: drafter ready (model + ctx loaded)"
+            );
+            Some((drafter_model, drafter_ctx))
+        });
+    let has_drafter = drafter_pair.is_some();
+
     if let Some(n) = load_notifier.as_ref() {
         n(EmbeddedLoadEvent::Finished {
             provider_id: provider_id.clone(),
@@ -674,21 +796,42 @@ fn worker_main(
     let _ = ready_tx.send(Ok(()));
     tracing::info!(
         target: "embedded_llm_perf",
-        "embedded LLM worker ready: n_ctx=4096 n_threads={n_threads} (context will be reused across calls)",
+        "embedded LLM worker ready: n_ctx=4096 n_threads={n_threads} \
+         spec_decode={has_drafter} n_draft={drafter_n_draft}",
     );
 
+    let mut drafter_pair = drafter_pair;
     // Request loop. `recv()` blocks until a request arrives or the
     // channel is closed (last handle dropped). When the channel
     // closes we exit, dropping ctx + model + sampler in that order.
     while let Ok(req) = req_rx.recv() {
         // Reset KV cache + sampler so the new request starts fresh
-        // without re-paying the per-context-creation cost (~70 ms +
-        // 302 MiB compute buffer alloc the per-request architecture
-        // paid).
+        // without re-paying the per-context-creation cost.
         ctx.clear_kv_cache();
         sampler.reset();
-        let result =
-            run_inference_in_context(&model, &mut ctx, &mut sampler, req.prompt, req.max_predict, req.on_token);
+        let result = if let Some((drafter_model, drafter_ctx)) = drafter_pair.as_mut() {
+            drafter_ctx.clear_kv_cache();
+            run_inference_in_context_spec(
+                &model,
+                &mut ctx,
+                &mut sampler,
+                drafter_model,
+                drafter_ctx,
+                drafter_n_draft as usize,
+                req.prompt,
+                req.max_predict,
+                req.on_token,
+            )
+        } else {
+            run_inference_in_context(
+                &model,
+                &mut ctx,
+                &mut sampler,
+                req.prompt,
+                req.max_predict,
+                req.on_token,
+            )
+        };
         let _ = req.response_tx.send(result);
     }
     tracing::info!("embedded LLM worker exiting (channel closed)");
@@ -769,6 +912,387 @@ fn run_inference_in_context(
          elapsed_ms={elapsed_ms} tok_per_sec={tps:.1}",
     );
     Ok(aggregated)
+}
+
+/// Speculative-decoding inference. Runs the same translation request
+/// as `run_inference_in_context` but uses a smaller "drafter" model
+/// to predict candidate tokens that the main model verifies in one
+/// batch — accepting N tokens in a single decode when the drafter
+/// matches the main model's argmax. With a vocab-compatible drafter
+/// (e.g. Google's gemma-4-*-it-assistant), greedy spec decode is
+/// mathematically equivalent to plain greedy: the output sequence is
+/// identical, only the wall-clock time shrinks.
+///
+/// Both contexts must use the same tokeniser. Both KV caches are
+/// kept in sync — they always contain the same prefix of tokens.
+/// The algorithm:
+///   1. Prefill both contexts with `prompt`.
+///   2. Sample first token from target (no drafting needed).
+///   3. Feed the first token into BOTH contexts.
+///   4. Loop:
+///      a. Drafter generates `n_draft` candidate tokens
+///         autoregressively (each step: decode 1 token → argmax).
+///      b. Target batch-decodes the N candidates in ONE call,
+///         producing per-position logits.
+///      c. For each candidate position i, compare target's argmax
+///         to the drafter's pick. Accept tokens until the first
+///         mismatch.
+///      d. On mismatch at position k: output the target's correction
+///         (which may differ from drafter's pick), then rollback
+///         both KV caches past position k+1 in the new tokens.
+///      e. If all N accepted: emit one "free" bonus token from
+///         target's last logits (it has been computed during the
+///         verify batch and costs nothing extra).
+#[cfg(feature = "embedded-llm")]
+fn run_inference_in_context_spec(
+    model: &llama_cpp_2::model::LlamaModel,
+    ctx: &mut llama_cpp_2::context::LlamaContext<'_>,
+    sampler: &mut llama_cpp_2::sampling::LlamaSampler,
+    drafter_model: &llama_cpp_2::model::LlamaModel,
+    drafter_ctx: &mut llama_cpp_2::context::LlamaContext<'_>,
+    n_draft: usize,
+    prompt: String,
+    max_predict: usize,
+    on_token: Option<Box<dyn FnMut(String) + Send>>,
+) -> Result<String, String> {
+    use llama_cpp_2::llama_batch::LlamaBatch;
+    use llama_cpp_2::model::AddBos;
+    use llama_cpp_2::token::LlamaToken;
+    use std::num::NonZeroU16;
+
+    let mut on_token = on_token;
+    let prompt_tokens = model
+        .str_to_token(&prompt, AddBos::Always)
+        .map_err(|e| format!("tokenize: {e}"))?;
+    let n_prompt = prompt_tokens.len();
+    if n_prompt == 0 {
+        return Err("tokenized prompt was empty".into());
+    }
+    // Tokenise with drafter's tokeniser too — they SHOULD be
+    // identical for a paired (main, drafter) but we don't enforce it
+    // at type level; if the drafter's tokeniser drifts the spec
+    // decode will produce mismatches on every token and effectively
+    // degrade to autoregressive (just slower because we waste
+    // drafter compute). The right pair (gemma-4-it + gemma-4-it-
+    // assistant) shares vocab by design.
+    let drafter_prompt_tokens = drafter_model
+        .str_to_token(&prompt, AddBos::Always)
+        .map_err(|e| format!("drafter tokenize: {e}"))?;
+    if drafter_prompt_tokens.len() != n_prompt {
+        return Err(format!(
+            "drafter tokenizer mismatch: drafter produced {} tokens vs target {}",
+            drafter_prompt_tokens.len(),
+            n_prompt
+        ));
+    }
+
+    // === Phase 1: Prefill both contexts ===
+    let batch_capacity = n_prompt.max(512);
+    let mut t_batch = LlamaBatch::new(batch_capacity, 1);
+    t_batch
+        .add_sequence(&prompt_tokens, 0, false)
+        .map_err(|e| format!("target prefill add_sequence: {e}"))?;
+    ctx.decode(&mut t_batch)
+        .map_err(|e| format!("target prefill decode: {e}"))?;
+    let mut d_batch = LlamaBatch::new(batch_capacity, 1);
+    d_batch
+        .add_sequence(&drafter_prompt_tokens, 0, false)
+        .map_err(|e| format!("drafter prefill add_sequence: {e}"))?;
+    drafter_ctx
+        .decode(&mut d_batch)
+        .map_err(|e| format!("drafter prefill decode: {e}"))?;
+
+    let mut decoder = encoding_rs::UTF_8.new_decoder();
+    let mut aggregated = String::new();
+    let mut n_target_pos = i32::try_from(n_prompt).map_err(|e| format!("n_pos i32: {e}"))?;
+    let mut n_drafter_pos = n_target_pos;
+    let mut produced = 0usize;
+
+    // Helper: emit a token (decode, push, sink callback). Returns
+    // true if we should stop (EOG or budget exhausted).
+    let mut emit = |aggregated: &mut String,
+                    produced: &mut usize,
+                    decoder: &mut encoding_rs::Decoder,
+                    on_token: &mut Option<Box<dyn FnMut(String) + Send>>,
+                    tok: LlamaToken|
+     -> Result<bool, String> {
+        if model.is_eog_token(tok) {
+            return Ok(true);
+        }
+        let piece = model
+            .token_to_piece(tok, decoder, false, NonZeroU16::new(1))
+            .map_err(|e| format!("token_to_piece: {e}"))?;
+        if !piece.is_empty() {
+            aggregated.push_str(&piece);
+            if let Some(cb) = on_token.as_mut() {
+                cb(piece);
+            }
+        }
+        *produced += 1;
+        Ok(*produced >= max_predict)
+    };
+
+    // === Phase 2: Sample first token from target's prefill logits ===
+    let first = sampler.sample(ctx, t_batch.n_tokens() - 1);
+    sampler.accept(first);
+    if emit(
+        &mut aggregated,
+        &mut produced,
+        &mut decoder,
+        &mut on_token,
+        first,
+    )? {
+        return Ok(aggregated);
+    }
+    // Feed `first` into both contexts so their KV caches stay aligned.
+    let mut b = LlamaBatch::new(1, 1);
+    b.add(first, n_target_pos, &[0], true)
+        .map_err(|e| format!("target advance add: {e}"))?;
+    ctx.decode(&mut b)
+        .map_err(|e| format!("target advance decode: {e}"))?;
+    n_target_pos += 1;
+    let mut b = LlamaBatch::new(1, 1);
+    b.add(first, n_drafter_pos, &[0], true)
+        .map_err(|e| format!("drafter advance add: {e}"))?;
+    drafter_ctx
+        .decode(&mut b)
+        .map_err(|e| format!("drafter advance decode: {e}"))?;
+    n_drafter_pos += 1;
+
+    // === Phase 3: Spec decode loop ===
+    let infer_started = std::time::Instant::now();
+    let mut total_drafted = 0usize;
+    let mut total_accepted = 0usize;
+    while produced < max_predict {
+        // Step 1: Drafter speculatively generates N candidates.
+        // Each is its own greedy argmax over the drafter's logits.
+        // We use a separate "drafter sampler" so the main sampler's
+        // accept history stays clean (we re-feed accepted tokens
+        // back into it later).
+        let mut drafts: Vec<LlamaToken> = Vec::with_capacity(n_draft);
+        let drafter_start = n_drafter_pos;
+        let mut drafter_sampler = llama_cpp_2::sampling::LlamaSampler::chain_simple([
+            llama_cpp_2::sampling::LlamaSampler::greedy(),
+        ]);
+        for _ in 0..n_draft {
+            // Drafter's last decode left logits at position end of
+            // its KV cache; sample from there.
+            let tok = drafter_sampler.sample(drafter_ctx, -1);
+            drafts.push(tok);
+            let mut b = LlamaBatch::new(1, 1);
+            b.add(tok, n_drafter_pos, &[0], true)
+                .map_err(|e| format!("draft step add: {e}"))?;
+            drafter_ctx
+                .decode(&mut b)
+                .map_err(|e| format!("draft step decode: {e}"))?;
+            n_drafter_pos += 1;
+        }
+        total_drafted += drafts.len();
+
+        // Step 2: BEFORE running verify batch, capture target's
+        // prediction for the position drafts[0] occupies. The
+        // current ctx state (after [prompt, first, accepted_so_far])
+        // has logits at slot -1 that show target's next-token
+        // distribution — i.e. what it would predict for drafts[0].
+        // We must capture this NOW because the verify batch will
+        // overwrite the logits buffer.
+        let target_pred_for_drafts_0: LlamaToken = {
+            let last = ctx.get_logits();
+            argmax_logits(last)
+        };
+
+        // Step 3: Target batch-verifies ALL N drafts in one decode.
+        // Each position carries logits=true so we can read per-
+        // position predictions afterwards.
+        let mut v_batch = LlamaBatch::new(n_draft.max(1), 1);
+        for (i, &t) in drafts.iter().enumerate() {
+            v_batch
+                .add(t, n_target_pos + i as i32, &[0], true)
+                .map_err(|e| format!("verify add: {e}"))?;
+        }
+        ctx.decode(&mut v_batch)
+            .map_err(|e| format!("verify decode: {e}"))?;
+        // After this decode, target's KV cache has the drafts
+        // appended; we may need to rewind on mismatch. Position i
+        // in the verify batch produced logits showing "next-token
+        // prediction GIVEN drafts[0..=i] consumed" — i.e. what
+        // target would emit after drafts[i].
+
+        let mut n_accepted_this_round = 0usize;
+        let mut mismatch_at: Option<usize> = None;
+        let mut correction: Option<LlamaToken> = None;
+        for i in 0..drafts.len() {
+            // To verify drafts[i], we need target's prediction at
+            // the position BEFORE consuming drafts[i]:
+            //   - i == 0 → captured above as target_pred_for_drafts_0
+            //   - i >= 1 → verify batch slot (i-1) = "logits after
+            //              consuming drafts[i-1]" = next-token
+            //              prediction for drafts[i].
+            let target_pred = if i == 0 {
+                target_pred_for_drafts_0
+            } else {
+                let arr = ctx.get_logits_ith((i - 1) as i32);
+                argmax_logits(arr)
+            };
+            if drafts[i] == target_pred {
+                // Accept drafts[i].
+                if emit(
+                    &mut aggregated,
+                    &mut produced,
+                    &mut decoder,
+                    &mut on_token,
+                    drafts[i],
+                )? {
+                    sampler.accept(drafts[i]);
+                    n_accepted_this_round += 1;
+                    n_target_pos += n_accepted_this_round as i32;
+                    n_drafter_pos = drafter_start + n_accepted_this_round as i32;
+                    total_accepted += n_accepted_this_round;
+                    log_spec_perf(infer_started, produced, total_drafted, total_accepted, n_prompt);
+                    return Ok(aggregated);
+                }
+                sampler.accept(drafts[i]);
+                n_accepted_this_round += 1;
+            } else {
+                // Mismatch: emit target's correction instead.
+                if emit(
+                    &mut aggregated,
+                    &mut produced,
+                    &mut decoder,
+                    &mut on_token,
+                    target_pred,
+                )? {
+                    sampler.accept(target_pred);
+                    mismatch_at = Some(i);
+                    correction = Some(target_pred);
+                    n_accepted_this_round += 1;
+                    // Don't update positions yet — we'll roll back.
+                    total_accepted += n_accepted_this_round;
+                    log_spec_perf(infer_started, produced, total_drafted, total_accepted, n_prompt);
+                    return Ok(aggregated);
+                }
+                sampler.accept(target_pred);
+                mismatch_at = Some(i);
+                correction = Some(target_pred);
+                n_accepted_this_round += 1;
+                break;
+            }
+        }
+        total_accepted += n_accepted_this_round;
+
+        // Step 4: Sync KV caches based on accept/reject outcome.
+        if let Some(k) = mismatch_at {
+            // Output ends with drafts[0..k] (accepted, k items)
+            // plus target_pred (correction, 1 item). Target KV
+            // has [prompt, first, drafts[0..N-1]] = n_target_pos +
+            // N positions. We want to keep [prompt, first,
+            // drafts[0..k-1], correction] = n_target_pos + k + 1
+            // positions (1-indexed positions correspond to
+            // n_target_pos + k for the correction slot).
+            //
+            // Remove target KV from `n_target_pos + k` onward.
+            ctx.clear_kv_cache_seq(Some(0), Some((n_target_pos + k as i32) as u32), None)
+                .map_err(|e| format!("target kv rollback: {e:?}"))?;
+            let mut b = LlamaBatch::new(1, 1);
+            b.add(correction.unwrap(), n_target_pos + k as i32, &[0], true)
+                .map_err(|e| format!("correction add: {e}"))?;
+            ctx.decode(&mut b)
+                .map_err(|e| format!("correction decode: {e}"))?;
+            n_target_pos = n_target_pos + k as i32 + 1;
+
+            // Drafter KV similarly: keep [prompt, first,
+            // drafts[0..k-1], correction] = drafter_start + k + 1.
+            drafter_ctx
+                .clear_kv_cache_seq(Some(0), Some((drafter_start + k as i32) as u32), None)
+                .map_err(|e| format!("drafter kv rollback: {e:?}"))?;
+            let mut b = LlamaBatch::new(1, 1);
+            b.add(correction.unwrap(), drafter_start + k as i32, &[0], true)
+                .map_err(|e| format!("drafter correction add: {e}"))?;
+            drafter_ctx
+                .decode(&mut b)
+                .map_err(|e| format!("drafter correction decode: {e}"))?;
+            n_drafter_pos = drafter_start + k as i32 + 1;
+        } else {
+            // All N drafts accepted. Target's verify batch left
+            // logits at slot N-1 = "next-token prediction after
+            // consuming drafts[N-1]". That's a "free bonus" token
+            // we can emit without an extra decode pass on target.
+            n_target_pos += drafts.len() as i32;
+            let bonus_logits = ctx.get_logits_ith((drafts.len() - 1) as i32);
+            let bonus = argmax_logits(bonus_logits);
+            // Feed bonus into target so its KV cache keeps the
+            // sequence we just emitted.
+            let mut b = LlamaBatch::new(1, 1);
+            b.add(bonus, n_target_pos, &[0], true)
+                .map_err(|e| format!("bonus target add: {e}"))?;
+            ctx.decode(&mut b)
+                .map_err(|e| format!("bonus target decode: {e}"))?;
+            n_target_pos += 1;
+            // Feed bonus into drafter too so both KV caches stay
+            // aligned for the next spec round.
+            let mut b = LlamaBatch::new(1, 1);
+            b.add(bonus, n_drafter_pos, &[0], true)
+                .map_err(|e| format!("bonus drafter add: {e}"))?;
+            drafter_ctx
+                .decode(&mut b)
+                .map_err(|e| format!("bonus drafter decode: {e}"))?;
+            n_drafter_pos += 1;
+            // Emit bonus AFTER updating positions so the early-
+            // return path sees consistent state.
+            if emit(
+                &mut aggregated,
+                &mut produced,
+                &mut decoder,
+                &mut on_token,
+                bonus,
+            )? {
+                sampler.accept(bonus);
+                log_spec_perf(infer_started, produced, total_drafted, total_accepted, n_prompt);
+                return Ok(aggregated);
+            }
+            sampler.accept(bonus);
+        }
+    }
+    log_spec_perf(infer_started, produced, total_drafted, total_accepted, n_prompt);
+    Ok(aggregated)
+}
+
+#[cfg(feature = "embedded-llm")]
+fn argmax_logits(logits: &[f32]) -> llama_cpp_2::token::LlamaToken {
+    use llama_cpp_2::token::LlamaToken;
+    let (idx, _) = logits
+        .iter()
+        .enumerate()
+        .max_by(|a, b| a.1.partial_cmp(b.1).unwrap_or(std::cmp::Ordering::Equal))
+        .unwrap_or((0, &0.0));
+    LlamaToken(idx as i32)
+}
+
+#[cfg(feature = "embedded-llm")]
+fn log_spec_perf(
+    started: std::time::Instant,
+    produced: usize,
+    drafted: usize,
+    accepted: usize,
+    n_prompt: usize,
+) {
+    let elapsed_ms = started.elapsed().as_millis() as u64;
+    let tps = if elapsed_ms > 0 {
+        (produced as f64) / (elapsed_ms as f64) * 1000.0
+    } else {
+        0.0
+    };
+    let acc_pct = if drafted > 0 {
+        100.0 * (accepted as f64) / (drafted as f64)
+    } else {
+        0.0
+    };
+    tracing::info!(
+        target: "embedded_llm_perf",
+        "embedded LLM spec-decode done: n_prompt={n_prompt} produced={produced} \
+         elapsed_ms={elapsed_ms} tok_per_sec={tps:.1} \
+         drafted={drafted} accepted={accepted} acceptance={acc_pct:.0}%",
+    );
 }
 
 /// User-prompt builder shared by the single-shot and streaming
@@ -893,9 +1417,27 @@ async fn ensure_engine(
         }
     }
 
+    // Resolve the drafter path: only pass it to the worker if the
+    // file actually exists on disk. A registry-declared drafter that
+    // the user hasn't downloaded yet would otherwise fail the worker
+    // load and prevent normal inference. Spec decode is an opt-in
+    // optimisation — gracefully degrade to autoregressive when the
+    // drafter file is missing.
+    let drafter_present = provider
+        .drafter_path
+        .as_ref()
+        .map(|p| p.is_file())
+        .unwrap_or(false);
+    let drafter_path = if drafter_present {
+        provider.drafter_path.clone()
+    } else {
+        None
+    };
     let handle = EngineWorkerHandle::spawn(
         provider.id.clone(),
         provider.model_path.clone(),
+        drafter_path,
+        provider.drafter_n_draft,
         provider.load_notifier.clone(),
     )
     .await?;
