@@ -671,10 +671,17 @@ fn worker_main(
         }
     };
 
-    // CPU-only path. n_gpu_layers=0 is explicit because the product
-    // spec is "fast on CPU" — GPU offload should be a deliberate
-    // setting, not implicit.
-    let model_params = LlamaModelParams::default().with_n_gpu_layers(0);
+    // GPU offload (opt-in). Default 0 = pure CPU (the product
+    // spec is "fast on CPU"). When built with the `embedded-llm-vulkan`
+    // or `embedded-llm-cuda` feature, set `MOONLENS_GPU_LAYERS=N`
+    // (or 99 for "all layers") to offload tensors to the GPU.
+    // Reads at worker spawn time; per-tier override is via the
+    // settings UI / config rather than per-request.
+    let gpu_layers: u32 = std::env::var("MOONLENS_GPU_LAYERS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0);
+    let model_params = LlamaModelParams::default().with_n_gpu_layers(gpu_layers);
     let model_params = std::pin::Pin::new(&model_params);
     let model = match LlamaModel::load_from_file(backend, &model_path, &model_params) {
         Ok(m) => m,
@@ -730,14 +737,18 @@ fn worker_main(
     // target/verifier and (drafter_model, drafter_ctx) to predict
     // candidate tokens N at a time. If load fails we degrade to
     // pure autoregressive — spec decode is opt-in, not required.
-    let drafter_pair: Option<(LlamaModel, llama_cpp_2::context::LlamaContext<'_>)> =
+    let mut drafter_pair: Option<(LlamaModel, llama_cpp_2::context::LlamaContext<'_>)> =
         drafter_path.as_ref().and_then(|p| {
             tracing::info!(
                 target: "embedded_llm_perf",
                 "embedded LLM: loading drafter GGUF for spec decode ({})",
                 p.display()
             );
-            let dp = LlamaModelParams::default().with_n_gpu_layers(0);
+            // Use the same gpu_layers as the main model so target
+            // and drafter live in the same memory space (otherwise
+            // KV cache transfers between CPU↔GPU per request would
+            // destroy any spec-decode speedup).
+            let dp = LlamaModelParams::default().with_n_gpu_layers(gpu_layers);
             let dp = std::pin::Pin::new(&dp);
             let drafter_model = match LlamaModel::load_from_file(backend, p, &dp) {
                 Ok(m) => m,
@@ -785,6 +796,50 @@ fn worker_main(
         });
     let has_drafter = drafter_pair.is_some();
 
+    // GPU warmup: when offloading to a Vulkan / CUDA backend, the
+    // FIRST inference compiles every required shader / kernel
+    // lazily. On RTX 4080 + Vulkan this takes 5-22 seconds for the
+    // worst tier — the user clicks "translate" and waits, even
+    // though every subsequent translation is under 200ms. Running
+    // a tiny dummy decode here pays that one-time cost up front so
+    // the first user-visible translation is already fast.
+    //
+    // For CPU-only builds the warmup is essentially free (a few ms)
+    // and we still do it — it primes the worker's batch + sampler
+    // allocations and primes the OS page cache for the model
+    // weights.
+    {
+        use llama_cpp_2::llama_batch::LlamaBatch;
+        let warmup_started = std::time::Instant::now();
+        // Pick a token in-vocab (BOS is always defined). We do not
+        // care about the output — only that one full decode +
+        // sample cycle executes against every kernel the backend
+        // needs.
+        let bos = model.token_bos();
+        let mut warm_batch = LlamaBatch::new(1, 1);
+        if warm_batch.add(bos, 0, &[0], true).is_ok() && ctx.decode(&mut warm_batch).is_ok() {
+            let _ = sampler.sample(&ctx, 0);
+        }
+        ctx.clear_kv_cache();
+        sampler.reset();
+        // Same warmup for the drafter, when present.
+        if let Some((dm, dctx)) = drafter_pair.as_mut() {
+            let dbos = dm.token_bos();
+            let mut dwarm = LlamaBatch::new(1, 1);
+            if dwarm.add(dbos, 0, &[0], true).is_ok() && dctx.decode(&mut dwarm).is_ok() {
+                // No sampler needed — drafter sample uses its own
+                // ad-hoc sampler per request, not a long-lived one.
+            }
+            dctx.clear_kv_cache();
+        }
+        let warmup_ms = warmup_started.elapsed().as_millis() as u64;
+        tracing::info!(
+            target: "embedded_llm_perf",
+            "embedded LLM warmup: {} ms (compiled backend kernels)",
+            warmup_ms
+        );
+    }
+
     if let Some(n) = load_notifier.as_ref() {
         n(EmbeddedLoadEvent::Finished {
             provider_id: provider_id.clone(),
@@ -797,10 +852,9 @@ fn worker_main(
     tracing::info!(
         target: "embedded_llm_perf",
         "embedded LLM worker ready: n_ctx=4096 n_threads={n_threads} \
-         spec_decode={has_drafter} n_draft={drafter_n_draft}",
+         spec_decode={has_drafter} n_draft={drafter_n_draft} gpu_layers={gpu_layers}",
     );
 
-    let mut drafter_pair = drafter_pair;
     // Request loop. `recv()` blocks until a request arrives or the
     // channel is closed (last handle dropped). When the channel
     // closes we exit, dropping ctx + model + sampler in that order.

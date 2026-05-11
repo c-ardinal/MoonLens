@@ -8,6 +8,25 @@ the project adheres to [SemVer](https://semver.org/).
 
 ### Added
 
+- **Phase 24: GPU offload (Vulkan) + cold-start warmup**
+  (`src-tauri/Cargo.toml`, `src-tauri/src/providers/translate_embedded_llm.rs`,
+  `bench_phase24_gpu.md`, `bench_phase24_gpu_warm.md`)
+  - 新 cargo features 追加: `embedded-llm-vulkan` / `embedded-llm-cuda`。
+    既定の `embedded-llm` は CPU-only のまま (エンドユーザー配布の
+    バイナリサイズと依存関係を最小化)、GPU offload は opt-in build。
+  - 環境変数 `MOONLENS_GPU_LAYERS` 追加 (既定 0 = pure CPU,
+    99 = 全レイヤー GPU)。worker 起動時に読み取り。
+  - **Worker startup warmup**: GPU の Vulkan shader compilation を
+    事前消費するため、worker spawn 後 ready 通知前に 1-token の
+    ダミー推論を実行。i5-8400 + RTX 4080 で初回翻訳が 21.6 秒 →
+    82 ms に改善 (Gemma 4 E2B の例)。CPU build でも数 ms のコスト
+    でメモリプリフェッチ + アロケーション warmup として機能。
+  - i5-8400 + RTX 4080 ベースライン記録 (warmup 込み):
+    - Compact (Qwen 2.5 0.5B): decode 312 / wall 190 tok/s (56 ms/翻訳)
+    - JA-Standard+ (llm-jp 3.1 1.8B): decode 300 / wall 232 (206 ms/翻訳)
+    - Quality (Qwen 2.5 7B): decode 85 / wall 59 (218 ms/翻訳)
+    - 全ティアで CPU 比 10-30 倍の高速化。
+
 - **Phase 23: ナレッジカットオフ後の新世代モデル調査**
   (`src-tauri/src/model_registry.rs`, `bench_phase23.md`)
   ユーザー指摘「あなたの 2026-01 ナレッジカットオフ後にも良いモデルが

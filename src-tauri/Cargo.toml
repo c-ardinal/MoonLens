@@ -141,6 +141,14 @@ default = ["audio", "ocrs-engine", "embedded-llm"]
 audio = ["dep:cpal"]
 ocrs-engine = ["dep:ocrs", "dep:rten"]
 embedded-llm = ["dep:llama-cpp-2"]
+# GPU-offload variants. The `embedded-llm` base feature builds
+# llama.cpp CPU-only; adding `-vulkan` or `-cuda` pulls in the
+# corresponding ggml backend so `n_gpu_layers > 0` can offload
+# tensors to the GPU. Vulkan works on any GPU with a Vulkan 1.1+
+# driver (Intel iGPU / AMD / NVIDIA — broadest reach). CUDA is
+# NVIDIA-only and needs the CUDA Toolkit installed at build time.
+embedded-llm-vulkan = ["embedded-llm", "llama-cpp-2/vulkan"]
+embedded-llm-cuda = ["embedded-llm", "llama-cpp-2/cuda"]
 embedded-llm-mistralrs = ["dep:mistralrs"]
 
 [dev-dependencies]
