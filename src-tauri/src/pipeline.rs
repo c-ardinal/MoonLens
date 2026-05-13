@@ -24,13 +24,16 @@ use crate::{
         translate_embedded_llm::{EmbeddedLlmTranslator, EmbeddedLoadNotifier},
         translate_gemini::GeminiProvider,
         translate_ollama::OllamaTranslator,
+        translate_routed::RoutedTranslator,
         Capability, Intent, OcrLine, ProviderError, ProviderHandle, TaskInput, TaskOutput,
     },
+    services::hardware_probe::GPU_FEATURE_ENABLED,
     settings::{
-        schema::{FallbackCondition, TaskChain},
+        schema::{FallbackCondition, Providers as ProvidersSettings, TaskChain},
         SettingsStore,
     },
     storage::Storage,
+    translation_router::Hardware,
 };
 
 /// Outcome reported to the UI per task attempt. `used_provider`/`via_cloud`
@@ -181,13 +184,19 @@ impl Pipeline {
     }
 
     /// Resolve (or reuse) an `EmbeddedLlmTranslator` for the given
-    /// id + config. Reuses the cached instance when the resolved
-    /// `model_path` is identical so the loaded GGUF survives across
-    /// rebuilds (critical: every settings save triggers this code
-    /// path, and the loaded model is hundreds of MB of RAM).
-    /// Updates the cache when the path changes (model swap), and
-    /// drops the entry when the id leaves the chain entirely
-    /// (the post-pass below cleans those up).
+    /// id + config. Reuses the cached instance when both the
+    /// resolved `model_path` AND the requested `gpu_layers` match
+    /// what we already loaded, so a settings save that changes
+    /// neither (the common case — flipping a UI overlay opacity
+    /// shouldn't reload a 1 GB GGUF) is free, while a real GPU /
+    /// model swap evicts the stale entry.
+    ///
+    /// Pre-Phase-27 bug: the cache only compared `model_path`. A
+    /// user flipping `performance.use_gpu_if_available` ON kept
+    /// the existing CPU-loaded translator forever because the
+    /// path was unchanged; the new `gpu_layers` value was
+    /// silently discarded. Including `gpu_layers` in the
+    /// comparison key closes that gap.
     fn embedded_handle(
         &self,
         id: &str,
@@ -200,28 +209,97 @@ impl Pipeline {
         if let Some(dir) = app_data {
             candidate = candidate.with_app_data_dir(dir);
         }
+        candidate = candidate.with_gpu_layers(self.resolved_gpu_layers());
         if let Some(notifier) = self.embedded_load_notifier.read().as_ref() {
             candidate = candidate.with_load_notifier(notifier.clone());
         }
         let want_path = candidate.model_path().to_path_buf();
+        let want_gpu_layers = candidate.gpu_layers();
 
         let mut cache = self.embedded_cache.write();
         if let Some(existing) = cache.get(id) {
-            if existing.model_path() == want_path {
+            if existing.model_path() == want_path && existing.gpu_layers() == want_gpu_layers {
                 tracing::debug!(
-                    "pipeline: reusing loaded embedded provider `{id}` (path unchanged)"
+                    "pipeline: reusing loaded embedded provider `{id}` \
+                     (path + gpu_layers unchanged)"
                 );
                 return existing.clone();
             }
             tracing::info!(
-                "pipeline: embedded provider `{id}` model_path changed ({} → {}); reloading",
+                "pipeline: embedded provider `{id}` config changed \
+                 (path: {} → {}, gpu_layers: {} → {}); reloading",
                 existing.model_path().display(),
-                want_path.display()
+                want_path.display(),
+                existing.gpu_layers(),
+                want_gpu_layers,
             );
         }
         let arc = Arc::new(candidate);
         cache.insert(id.to_string(), arc.clone());
         arc
+    }
+
+    /// Translate the user's `performance.use_gpu_if_available`
+    /// toggle into the `n_gpu_layers` value the llama.cpp runtime
+    /// expects. Two-step gate:
+    ///
+    ///   - The toggle has to be ON in user settings.
+    ///   - The binary has to be built with at least one GPU
+    ///     backend feature (`embedded-llm-vulkan` /
+    ///     `embedded-llm-cuda` / `embedded-llm-metal`). Flipping
+    ///     the toggle on a feature-disabled build is a no-op
+    ///     because the runtime has no GPU path to dispatch to.
+    ///
+    /// When both gates pass we return `99` ("offload all layers")
+    /// rather than auto-detecting the model's layer count — the
+    /// upstream runtime is documented to cap the value at the
+    /// real layer count, so passing 99 is the canonical "as much
+    /// GPU as possible" knob. A future enhancement could pick a
+    /// smaller value based on probed VRAM, but the binary
+    /// currently has no VRAM probe.
+    fn resolved_gpu_layers(&self) -> u32 {
+        let snap = self.settings.snapshot();
+        if snap.performance.use_gpu_if_available && GPU_FEATURE_ENABLED {
+            99
+        } else {
+            0
+        }
+    }
+
+    /// Build a `RoutedTranslator` for `id == "embedded.llm"` when
+    /// the user has opted into a routing tier. Returns `None` when
+    /// `user_tier` is unset (legacy single-model surface stays in
+    /// effect) or when the wrapper cannot be constructed.
+    ///
+    /// The wrapper is rebuilt fresh on every `rebuild_providers`
+    /// call instead of going through `embedded_cache` because the
+    /// cache compares model_path against a single GGUF; a routed
+    /// wrapper owns 1-2 GGUFs and would not fit that comparison.
+    /// The cost is small — `RoutedTranslator::new` only allocates
+    /// thin wrappers around `EmbeddedLlmTranslator`, and each of
+    /// those workers lazy-loads its GGUF on first inference.
+    fn routed_handle(
+        &self,
+        id: &str,
+        providers: &ProvidersSettings,
+        app_data: Option<&PathBuf>,
+    ) -> Option<ProviderHandle> {
+        let user_tier = providers.user_tier?;
+        let hardware = if GPU_FEATURE_ENABLED {
+            Hardware::Gpu
+        } else {
+            Hardware::Cpu
+        };
+        let notifier = self.embedded_load_notifier.read().clone();
+        let gpu_layers = self.resolved_gpu_layers();
+        let rt = RoutedTranslator::new(id, user_tier, hardware, gpu_layers, app_data, notifier);
+        tracing::info!(
+            "pipeline: registered RoutedTranslator for user_tier={:?} hw={:?} \
+             gpu_layers={gpu_layers}",
+            user_tier,
+            hardware
+        );
+        Some(Arc::new(rt))
     }
 
     /// Rebuild the in-memory provider map from the current settings. Called
@@ -243,7 +321,27 @@ impl Pipeline {
                     Some(Arc::new(p))
                 }
                 id if id == "embedded.llm" || id.starts_with("embedded.") => {
-                    Some(self.embedded_handle(id, &cfg, app_data.as_ref()))
+                    // Routing-aware path: when the user has opted
+                    // into a translation tier, the `embedded.llm`
+                    // slot is filled by a `RoutedTranslator` that
+                    // owns one model per tier_id the matrix can
+                    // dispatch to, and a per-call `route()` call
+                    // selects between them. This only fires for
+                    // the canonical `embedded.llm` id — auxiliary
+                    // ids (e.g. `embedded.llm.bench`) stay on the
+                    // legacy single-tier path because they target
+                    // a specific model, not a routing tier.
+                    if id == "embedded.llm" {
+                        if let Some(routed) =
+                            self.routed_handle(id, &s.providers, app_data.as_ref())
+                        {
+                            Some(routed)
+                        } else {
+                            Some(self.embedded_handle(id, &cfg, app_data.as_ref()))
+                        }
+                    } else {
+                        Some(self.embedded_handle(id, &cfg, app_data.as_ref()))
+                    }
                 }
                 "deepl" => Some(Arc::new(DeepLTranslator::new(id, &cfg))),
                 "gemini" => Some(Arc::new(GeminiProvider::new(id, &cfg))),
@@ -290,7 +388,9 @@ impl Pipeline {
                     &default_cfg,
                 )),
             );
-            tracing::info!("pipeline: auto-registered `windows` OCR provider (user.toml lacked the section)");
+            tracing::info!(
+                "pipeline: auto-registered `windows` OCR provider (user.toml lacked the section)"
+            );
         }
         // Ensure any id referenced in a chain without a configs entry still
         // has a sane default (e.g. `ollama.gemma4` or `embedded.llm` with
@@ -376,9 +476,7 @@ impl Pipeline {
         if matches!(capability, Capability::Ocr)
             && !effective_chain.iter().any(|id| id == "windows")
         {
-            tracing::info!(
-                "pipeline: prepending `windows` OCR provider to chain (auto-migration)"
-            );
+            tracing::info!("pipeline: prepending `windows` OCR provider to chain (auto-migration)");
             effective_chain.insert(0, "windows".into());
         }
 
@@ -657,9 +755,7 @@ impl Pipeline {
     /// `rebuild_providers` to preserve loaded engines across config
     /// changes. Tests use this to assert Arc identity (via `ptr_eq`)
     /// before and after rebuilds.
-    pub fn embedded_cache_for_test(
-        &self,
-    ) -> HashMap<String, Arc<EmbeddedLlmTranslator>> {
+    pub fn embedded_cache_for_test(&self) -> HashMap<String, Arc<EmbeddedLlmTranslator>> {
         self.embedded_cache.read().clone()
     }
 

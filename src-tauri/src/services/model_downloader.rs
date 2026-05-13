@@ -142,20 +142,14 @@ impl ModelDownloader for HttpModelDownloader {
             downloaded += chunk.len() as u64;
             if let Some(cb) = on_progress.as_ref() {
                 if last_emit.elapsed() >= std::time::Duration::from_millis(100) {
-                    cb(DownloadProgress {
-                        downloaded,
-                        total,
-                    });
+                    cb(DownloadProgress { downloaded, total });
                     last_emit = std::time::Instant::now();
                 }
             }
         }
         let path = writer.commit().await?;
         if let Some(cb) = on_progress.as_ref() {
-            cb(DownloadProgress {
-                downloaded,
-                total,
-            });
+            cb(DownloadProgress { downloaded, total });
         }
         Ok(DownloadResult {
             path,
@@ -265,10 +259,7 @@ pub mod scripted {
                 .get(&request.url)
                 .cloned()
                 .ok_or_else(|| {
-                    ModelDownloaderError::Http(format!(
-                        "no scripted response for {}",
-                        request.url
-                    ))
+                    ModelDownloaderError::Http(format!("no scripted response for {}", request.url))
                 })?;
             if response.status >= 400 {
                 return Err(ModelDownloaderError::HttpStatus(response.status));
@@ -291,10 +282,7 @@ pub mod scripted {
                 writer.write_all(chunk).await?;
                 downloaded += chunk.len() as u64;
                 if let Some(cb) = on_progress.as_ref() {
-                    let p = DownloadProgress {
-                        downloaded,
-                        total,
-                    };
+                    let p = DownloadProgress { downloaded, total };
                     cb(p);
                     self.progress_log.lock().push(p);
                 }
@@ -325,8 +313,10 @@ mod tests {
     #[tokio::test]
     async fn happy_path_writes_full_payload_into_storage() {
         let storage = InMemoryStorage::new();
-        let dl = ScriptedDownloader::new()
-            .respond_to("https://example.test/m.gguf", scripted::ScriptedResponse::ok(vec![1u8; 4096]));
+        let dl = ScriptedDownloader::new().respond_to(
+            "https://example.test/m.gguf",
+            scripted::ScriptedResponse::ok(vec![1u8; 4096]),
+        );
         let req = DownloadRequest {
             url: "https://example.test/m.gguf".into(),
             filename: "m.gguf".into(),
@@ -374,7 +364,10 @@ mod tests {
             url: "https://example.test/m.gguf".into(),
             filename: "m.gguf".into(),
         };
-        let err = dl.download(req, &storage, None).await.expect_err("must fail");
+        let err = dl
+            .download(req, &storage, None)
+            .await
+            .expect_err("must fail");
         assert!(matches!(err, ModelDownloaderError::Http(_)));
         // Storage MUST not show a partial file — discard cleaned up.
         assert!(!storage.meta("m.gguf").await.unwrap().exists);
@@ -391,7 +384,10 @@ mod tests {
             url: "https://example.test/missing.gguf".into(),
             filename: "m.gguf".into(),
         };
-        let err = dl.download(req, &storage, None).await.expect_err("must fail");
+        let err = dl
+            .download(req, &storage, None)
+            .await
+            .expect_err("must fail");
         assert!(matches!(err, ModelDownloaderError::HttpStatus(404)));
     }
 
@@ -403,7 +399,10 @@ mod tests {
             url: "https://example.test/never-registered".into(),
             filename: "m.gguf".into(),
         };
-        let err = dl.download(req, &storage, None).await.expect_err("must fail");
+        let err = dl
+            .download(req, &storage, None)
+            .await
+            .expect_err("must fail");
         match err {
             ModelDownloaderError::Http(msg) => assert!(msg.contains("no scripted response")),
             _ => panic!("expected Http error, got {err:?}"),

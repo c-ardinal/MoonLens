@@ -16,9 +16,7 @@ use crate::{
     pipeline::Pipeline,
     plugins::PluginRegistry,
     region_watcher::RegionWatcher,
-    services::{
-        FileSystemStorage, HttpModelDownloader, ModelService, SysinfoProbe,
-    },
+    services::{FileSystemStorage, HttpModelDownloader, ModelService, SysinfoProbe},
     settings::{SettingsStore, Watcher},
     storage::Storage,
     subtitle::SubtitleService,
@@ -62,6 +60,12 @@ macro_rules! all_commands {
             ipc::list_model_tiers,
             ipc::model_tier_status,
             ipc::set_model_tier,
+            ipc::get_user_tier,
+            ipc::set_user_tier,
+            ipc::clear_user_tier,
+            ipc::preview_routing,
+            ipc::routed_model_status,
+            ipc::download_routed_model,
             ipc::bench_embedded_translate,
             ipc::show_main,
             ipc::restart_app,
@@ -97,8 +101,7 @@ macro_rules! all_commands {
 /// Concrete `ModelService` type with the production adapters
 /// pre-applied. Kept aliased so `AppState` and IPC commands can refer
 /// to it without spelling the three trait params each time.
-pub type AppModelService =
-    ModelService<HttpModelDownloader, FileSystemStorage, SysinfoProbe>;
+pub type AppModelService = ModelService<HttpModelDownloader, FileSystemStorage, SysinfoProbe>;
 
 /// Application-wide shared state. Kept as `Arc` fields so handles can be
 /// cheaply cloned into async tasks and Tauri commands.
@@ -178,13 +181,9 @@ pub fn build() -> Result<()> {
                 let mut snap = (*settings.snapshot()).clone();
                 if crate::model_registry::migrate_legacy_embedded_settings(&mut snap) {
                     if let Err(e) = settings.save(snap) {
-                        tracing::warn!(
-                            "embedded settings migration: save failed: {e}"
-                        );
+                        tracing::warn!("embedded settings migration: save failed: {e}");
                     } else {
-                        tracing::info!(
-                            "embedded settings migration: rewrote legacy id / filename"
-                        );
+                        tracing::info!("embedded settings migration: rewrote legacy id / filename");
                     }
                 }
             }
@@ -393,8 +392,7 @@ fn build_tray(app: &AppHandle) -> Result<()> {
                             win.on_window_event(move |event| {
                                 if matches!(
                                     event,
-                                    tauri::WindowEvent::Moved(_)
-                                        | tauri::WindowEvent::Resized(_)
+                                    tauri::WindowEvent::Moved(_) | tauri::WindowEvent::Resized(_)
                                 ) {
                                     watchers.trigger(&id_for_events);
                                 }

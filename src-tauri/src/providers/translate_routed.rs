@@ -1,0 +1,522 @@
+//! Routing-aware embedded LLM provider.
+//!
+//! When the user has opted into the routing matrix (i.e.
+//! `Settings.providers.user_tier` is `Some`), the pipeline wires
+//! the `embedded.llm` chain entry to this wrapper instead of the
+//! single-model [`EmbeddedLlmTranslator`]. On every translate
+//! call, the wrapper:
+//!
+//! 1. Looks up the routing decision via
+//!    [`translation_router::route`] using the saved tier and the
+//!    host's compile-time hardware bucket.
+//! 2. Dispatches to one of the pre-loaded inner translators
+//!    (Direct) or wraps two of them in a
+//!    [`PivotTranslator`](super::translate_pivot::PivotTranslator)
+//!    on the fly (Pivot).
+//!
+//! Memory footprint scales with the active tier:
+//! * Compact → 1 model (~0.6 GB)
+//! * Standard → 2 models (~4.2 GB total)
+//! * Quality → 2 models (~6.1 GB total)
+//!
+//! The wrapper does NOT eagerly preload model weights — each
+//! inner translator's worker thread lazy-loads on first use. The
+//! `preload` trait hook drives all inner translators concurrently
+//! so the cold-start cost is paid in the background at startup.
+//!
+//! Failure modes:
+//! * Router returns `Unsupported` (Compact tier asked for X→Y
+//!   with neither side ja/en): the wrapper surfaces
+//!   `ProviderError::UnsupportedLanguage`. The pipeline's
+//!   fallback chain then takes over if a cloud provider is
+//!   permitted.
+//! * Resolved tier is not registered in `model_registry::TIERS`:
+//!   internal logic error — the matrix should never name a tier
+//!   that is missing. Returns `ProviderError::Other` so the
+//!   diagnostic surfaces in logs.
+
+use async_trait::async_trait;
+use std::collections::HashMap;
+use std::path::PathBuf;
+use std::sync::Arc;
+
+use super::translate_embedded_llm::{EmbeddedLlmTranslator, EmbeddedLoadNotifier};
+use super::translate_pivot::PivotTranslator;
+use super::{
+    Capability, Provider, ProviderError, ProviderHandle, StreamingChunkSink, TaskInput, TaskOutput,
+};
+use crate::model_registry::{tier_by_id, ModelTier};
+use crate::translation_router::{route, Hardware, RoutingDecision, UserTier};
+
+/// Wrapper provider that picks the right inner translator per
+/// translate request. See module docs for the full contract.
+pub struct RoutedTranslator {
+    id: String,
+    user_tier: UserTier,
+    hardware: Hardware,
+    /// Pre-instantiated inner translators keyed by their tier id.
+    /// Construction populates this once with every tier id the
+    /// current `user_tier` can possibly route to (see
+    /// `tier_ids_for`). Lookup at run-time is O(1).
+    inner: HashMap<&'static str, ProviderHandle>,
+}
+
+impl RoutedTranslator {
+    /// Resolve which tier IDs `user_tier` needs loaded. Mirrors
+    /// the entries the routing matrix can return so the
+    /// constructor below only instantiates models the router
+    /// might actually dispatch to.
+    pub fn tier_ids_for(user_tier: UserTier) -> Vec<&'static str> {
+        use crate::model_registry::{
+            COMPACT_JA_TIER_ID, QUALITY_MULTI_TIER_ID, STANDARD_JA_BRIDGE_TIER_ID,
+            STANDARD_MULTI_TIER_ID,
+        };
+        match user_tier {
+            UserTier::Compact => vec![COMPACT_JA_TIER_ID],
+            UserTier::Standard => vec![STANDARD_JA_BRIDGE_TIER_ID, STANDARD_MULTI_TIER_ID],
+            UserTier::Quality => vec![STANDARD_JA_BRIDGE_TIER_ID, QUALITY_MULTI_TIER_ID],
+        }
+    }
+
+    /// Construct the wrapper. Each tier id in `tier_ids_for`
+    /// is materialised into an `EmbeddedLlmTranslator` whose
+    /// config block points at the tier's `(repo, filename)`
+    /// coordinates. The caller's `notifier` is forwarded so
+    /// every inner load surfaces a UI badge.
+    ///
+    /// `gpu_layers` is propagated to **every** inner translator
+    /// so toggling the user's GPU setting in Settings →
+    /// Performance applies uniformly to the JA bridge and the
+    /// multilingual model; the matrix never wants one inner on
+    /// GPU and the other on CPU (the slower CPU half would
+    /// dominate pivot latency and defeat the routing decision).
+    pub fn new(
+        id: impl Into<String>,
+        user_tier: UserTier,
+        hardware: Hardware,
+        gpu_layers: u32,
+        app_data: Option<&PathBuf>,
+        notifier: Option<EmbeddedLoadNotifier>,
+    ) -> Self {
+        let mut inner: HashMap<&'static str, ProviderHandle> = HashMap::new();
+        for tier_id in Self::tier_ids_for(user_tier) {
+            let Some(tier) = tier_by_id(tier_id) else {
+                // The constants ARE in TIERS — `model_registry::
+                // router_anchor_ids_are_registered` enforces it.
+                // Skipping defensively keeps a future migration
+                // hiccup from panicking the whole app at startup.
+                tracing::error!("RoutedTranslator: tier `{tier_id}` not in registry, skipping",);
+                continue;
+            };
+            let cfg = config_for_tier(tier);
+            let inner_id = format!("embedded.llm.routed:{tier_id}");
+            let mut translator = EmbeddedLlmTranslator::new(&inner_id, &cfg);
+            if let Some(dir) = app_data {
+                translator = translator.with_app_data_dir(dir);
+            }
+            translator = translator.with_gpu_layers(gpu_layers);
+            if let Some(notifier) = &notifier {
+                translator = translator.with_load_notifier(notifier.clone());
+            }
+            inner.insert(tier_id, Arc::new(translator));
+        }
+        Self {
+            id: id.into(),
+            user_tier,
+            hardware,
+            inner,
+        }
+    }
+
+    /// The inner tier that handles non-Translate inputs (Explain
+    /// / Summarize). Picked once per user_tier so the same
+    /// instance services every aux call — keeps the model's KV
+    /// cache warm across consecutive Explain → Summarize use.
+    ///
+    /// Choice: the first tier in `tier_ids_for(user_tier)`. For
+    /// Compact that is JA-Compact (the only model); for Standard
+    /// / Quality that is JA-Std+ (the JA bridge). The JA bridge
+    /// outperforms the Edge multi tier on Japanese
+    /// instruction-following per Phase 27, and the Lens / capture
+    /// flows feed mostly Japanese source through Explain /
+    /// Summarize — so the bridge is the right default.
+    fn aux_tier_id(&self) -> &'static str {
+        Self::tier_ids_for(self.user_tier)
+            .first()
+            .copied()
+            .expect("tier_ids_for always returns at least one id")
+    }
+
+    /// Pick the provider handle that should serve `input`. The
+    /// router only governs Translate; Explain / Summarize
+    /// dispatch to a single inner tier (the JA bridge). Other
+    /// input shapes are an upstream wiring error.
+    fn dispatch_handle(&self, input: &TaskInput) -> Result<ProviderHandle, ProviderError> {
+        match input {
+            TaskInput::Translate {
+                source_language,
+                target_language,
+                ..
+            } => {
+                let decision = route(
+                    self.user_tier,
+                    self.hardware,
+                    source_language,
+                    target_language,
+                );
+                self.handle_for(decision, source_language, target_language)
+            }
+            TaskInput::Explain { .. } | TaskInput::Summarize { .. } => {
+                let id = self.aux_tier_id();
+                self.inner.get(id).cloned().ok_or_else(|| {
+                    ProviderError::Other(format!(
+                        "RoutedTranslator: aux tier `{id}` not loaded for \
+                         user_tier={:?}",
+                        self.user_tier
+                    ))
+                })
+            }
+            _ => Err(ProviderError::Other(
+                "RoutedTranslator: unsupported input shape (only Translate / \
+                 Explain / Summarize)"
+                    .into(),
+            )),
+        }
+    }
+
+    /// Resolve a `ProviderHandle` for one matrix decision.
+    /// `Direct` is a direct map lookup; `Pivot` wraps the two
+    /// looked-up handles in a fresh `PivotTranslator` (cheap —
+    /// the wrapper only owns two `Arc`s and a string id).
+    fn handle_for(
+        &self,
+        decision: RoutingDecision,
+        src: &str,
+        tgt: &str,
+    ) -> Result<ProviderHandle, ProviderError> {
+        match decision {
+            RoutingDecision::Direct { tier_id } => {
+                self.inner.get(tier_id).cloned().ok_or_else(|| {
+                    ProviderError::Other(format!(
+                        "RoutedTranslator: routed tier `{tier_id}` not loaded for \
+                         user_tier={:?}",
+                        self.user_tier
+                    ))
+                })
+            }
+            RoutingDecision::Pivot {
+                stage1_tier,
+                stage2_tier,
+            } => {
+                let s1 = self.inner.get(stage1_tier).cloned().ok_or_else(|| {
+                    ProviderError::Other(format!(
+                        "RoutedTranslator: pivot stage1 tier `{stage1_tier}` not loaded"
+                    ))
+                })?;
+                let s2 = self.inner.get(stage2_tier).cloned().ok_or_else(|| {
+                    ProviderError::Other(format!(
+                        "RoutedTranslator: pivot stage2 tier `{stage2_tier}` not loaded"
+                    ))
+                })?;
+                let pivot_id = format!("embedded.llm.pivot:{stage1_tier}->{stage2_tier}");
+                Ok(Arc::new(PivotTranslator::new(pivot_id, s1, s2)))
+            }
+            RoutingDecision::Unsupported => {
+                Err(ProviderError::UnsupportedLanguage(src.into(), tgt.into()))
+            }
+        }
+    }
+}
+
+/// Build the JSON config block an `EmbeddedLlmTranslator` reads
+/// for tier `tier`. Mirrors the shape `default.toml` produces for
+/// `[providers.configs."embedded.llm"]` minus the user-specific
+/// overrides — those don't apply to routing-managed models.
+fn config_for_tier(tier: &ModelTier) -> serde_json::Value {
+    let mut obj = serde_json::Map::new();
+    obj.insert("repo".into(), serde_json::Value::String(tier.repo.into()));
+    obj.insert(
+        "filename_remote".into(),
+        serde_json::Value::String(tier.primary_filename().into()),
+    );
+    if tier.filenames.len() > 1 {
+        let extras: Vec<serde_json::Value> = tier
+            .filenames
+            .iter()
+            .skip(1)
+            .map(|f| serde_json::Value::String((*f).to_string()))
+            .collect();
+        obj.insert(
+            "filenames_remote_extra".into(),
+            serde_json::Value::Array(extras),
+        );
+    }
+    obj.insert(
+        "license".into(),
+        serde_json::Value::String(tier.license.into()),
+    );
+    serde_json::Value::Object(obj)
+}
+
+#[async_trait]
+impl Provider for RoutedTranslator {
+    fn id(&self) -> &str {
+        &self.id
+    }
+
+    fn capabilities(&self) -> &[Capability] {
+        // Match the legacy `embedded.llm` capability set. The
+        // routing matrix only governs Translate, but Explain /
+        // Summarize need to keep working too — pre-12.x users
+        // who had `embedded.gemma` in their explain chain see it
+        // renamed to `embedded.llm` by the legacy-settings
+        // migration, and routing must not break that path. Non-
+        // Translate inputs run through `default_tier_for_aux`
+        // (see `run`) — a single fixed inner tier.
+        &[
+            Capability::Translate,
+            Capability::Explain,
+            Capability::Summarize,
+        ]
+    }
+
+    fn is_local(&self) -> bool {
+        // Every inner tier comes from `model_registry::TIERS`,
+        // which is the curated local-model list. So a routed
+        // translator is unconditionally local.
+        true
+    }
+
+    async fn run(&self, input: TaskInput) -> Result<TaskOutput, ProviderError> {
+        let handle = self.dispatch_handle(&input)?;
+        handle.run(input).await
+    }
+
+    async fn run_streaming(
+        &self,
+        input: TaskInput,
+        sink: StreamingChunkSink,
+    ) -> Result<TaskOutput, ProviderError> {
+        let handle = self.dispatch_handle(&input)?;
+        handle.run_streaming(input, sink).await
+    }
+
+    async fn preload(&self) -> Result<(), ProviderError> {
+        // Warm every inner tier concurrently. Failures in any one
+        // tier are swallowed because the pipeline-level preload
+        // already does that, but we still propagate the FIRST
+        // error so a missing-model state shows up in the IPC's
+        // `embedded_model_status` view.
+        let handles: Vec<_> = self.inner.values().map(|h| h.preload()).collect();
+        // Sequential `await` over the vec — `try_join_all` would
+        // need `futures` and the cost of waiting in series is
+        // dominated by the disk I/O each load does anyway.
+        for fut in handles {
+            fut.await?;
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model_registry::{
+        COMPACT_JA_TIER_ID, QUALITY_MULTI_TIER_ID, STANDARD_JA_BRIDGE_TIER_ID,
+        STANDARD_MULTI_TIER_ID,
+    };
+
+    #[test]
+    fn tier_ids_for_compact_loads_only_ja_compact() {
+        let ids = RoutedTranslator::tier_ids_for(UserTier::Compact);
+        assert_eq!(ids, vec![COMPACT_JA_TIER_ID]);
+    }
+
+    #[test]
+    fn tier_ids_for_standard_loads_ja_bridge_and_e2b() {
+        let ids = RoutedTranslator::tier_ids_for(UserTier::Standard);
+        assert!(ids.contains(&STANDARD_JA_BRIDGE_TIER_ID));
+        assert!(ids.contains(&STANDARD_MULTI_TIER_ID));
+        assert_eq!(ids.len(), 2);
+    }
+
+    #[test]
+    fn tier_ids_for_quality_loads_ja_bridge_and_e4b() {
+        let ids = RoutedTranslator::tier_ids_for(UserTier::Quality);
+        assert!(ids.contains(&STANDARD_JA_BRIDGE_TIER_ID));
+        assert!(ids.contains(&QUALITY_MULTI_TIER_ID));
+        assert_eq!(ids.len(), 2);
+    }
+
+    #[test]
+    fn constructor_populates_inner_for_every_required_tier() {
+        for tier in [UserTier::Compact, UserTier::Standard, UserTier::Quality] {
+            let rt = RoutedTranslator::new("embedded.llm", tier, Hardware::Cpu, 0, None, None);
+            for id in RoutedTranslator::tier_ids_for(tier) {
+                assert!(
+                    rt.inner.contains_key(id),
+                    "RoutedTranslator missing inner for tier {tier:?} id {id}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn config_for_tier_picks_first_filename_as_primary() {
+        // Single-part tier: no `filenames_remote_extra`.
+        let tier = tier_by_id(STANDARD_JA_BRIDGE_TIER_ID).unwrap();
+        let cfg = config_for_tier(tier);
+        assert_eq!(cfg.get("repo").and_then(|v| v.as_str()), Some(tier.repo));
+        assert_eq!(
+            cfg.get("filename_remote").and_then(|v| v.as_str()),
+            Some(tier.primary_filename())
+        );
+        assert!(cfg.get("filenames_remote_extra").is_none());
+    }
+
+    #[test]
+    fn config_for_tier_lists_extras_for_split_files() {
+        // Multi-part: Qwen 2.5 7B Q4_K_M ships split. The router
+        // never picks it (matrix uses Edge family for Quality
+        // multi), but exercising the code path here keeps the
+        // config builder honest.
+        let split = tier_by_id("qwen2.5-7b-instruct-q4_k_m").unwrap();
+        if split.filenames.len() < 2 {
+            return;
+        }
+        let cfg = config_for_tier(split);
+        let extras = cfg
+            .get("filenames_remote_extra")
+            .and_then(|v| v.as_array())
+            .expect("extras present for multi-part");
+        assert_eq!(extras.len(), split.filenames.len() - 1);
+    }
+
+    #[test]
+    fn dispatch_for_explain_routes_to_aux_tier() {
+        // Explain / Summarize must NOT go through the routing
+        // matrix (it only governs Translate); they fall to the
+        // configured aux tier instead. Verify the dispatch picks
+        // the JA bridge for Standard.
+        let rt = RoutedTranslator::new(
+            "embedded.llm",
+            UserTier::Standard,
+            Hardware::Cpu,
+            0,
+            None,
+            None,
+        );
+        let h = match rt.dispatch_handle(&TaskInput::Explain {
+            prompt: "anything".into(),
+            image_png: None,
+        }) {
+            Ok(h) => h,
+            Err(e) => panic!("Explain must dispatch, got error: {e:?}"),
+        };
+        // Aux id is `embedded.llm.routed:<tier>` per
+        // `RoutedTranslator::new`. For Standard that's the JA
+        // bridge.
+        assert_eq!(
+            h.id(),
+            "embedded.llm.routed:llm-jp-3.1-1.8b-instruct4-q4_k_m"
+        );
+    }
+
+    #[test]
+    fn dispatch_for_summarize_routes_to_aux_tier() {
+        let rt = RoutedTranslator::new(
+            "embedded.llm",
+            UserTier::Compact,
+            Hardware::Cpu,
+            0,
+            None,
+            None,
+        );
+        let h = match rt.dispatch_handle(&TaskInput::Summarize {
+            text: "anything".into(),
+        }) {
+            Ok(h) => h,
+            Err(e) => panic!("Summarize must dispatch, got error: {e:?}"),
+        };
+        // Compact only has JA-Compact loaded.
+        assert_eq!(h.id(), "embedded.llm.routed:llm-jp-3-980m-instruct3-q4_k_m");
+    }
+
+    #[test]
+    fn dispatch_rejects_non_llm_inputs() {
+        // OCR / ASR / etc must never reach RoutedTranslator —
+        // they have their own provider chains. If they do, it's
+        // an upstream wiring bug worth surfacing loudly.
+        let rt = RoutedTranslator::new(
+            "embedded.llm",
+            UserTier::Standard,
+            Hardware::Cpu,
+            0,
+            None,
+            None,
+        );
+        let result = rt.dispatch_handle(&TaskInput::Ocr {
+            image_png: vec![],
+            languages: vec![],
+        });
+        match result {
+            Ok(_) => panic!("expected error, got Ok"),
+            Err(ProviderError::Other(msg)) => {
+                assert!(msg.contains("unsupported input"), "msg: {msg}");
+            }
+            Err(other) => panic!("expected Other, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn capabilities_match_legacy_embedded_llm_surface() {
+        // Legacy single-tier provider advertises Translate +
+        // Explain + Summarize. Routed wrapper MUST match so a
+        // user.toml that lists `embedded.llm` in explain or
+        // summarize chains keeps working after the user opts
+        // into routing.
+        let rt = RoutedTranslator::new(
+            "embedded.llm",
+            UserTier::Standard,
+            Hardware::Cpu,
+            0,
+            None,
+            None,
+        );
+        let caps = rt.capabilities();
+        assert!(caps.contains(&Capability::Translate));
+        assert!(caps.contains(&Capability::Explain));
+        assert!(caps.contains(&Capability::Summarize));
+    }
+
+    #[tokio::test]
+    async fn compact_x_to_y_surfaces_unsupported_language_error() {
+        // The router returns Unsupported for Compact + non-en/ja
+        // pair; the wrapper translates that into a typed
+        // `UnsupportedLanguage` error the pipeline knows how to
+        // fall through to a cloud provider on.
+        let rt = RoutedTranslator::new(
+            "embedded.llm",
+            UserTier::Compact,
+            Hardware::Cpu,
+            0,
+            None,
+            None,
+        );
+        let err = rt
+            .run(TaskInput::Translate {
+                text: "Hola".into(),
+                source_language: "fr".into(),
+                target_language: "de".into(),
+            })
+            .await
+            .unwrap_err();
+        match err {
+            ProviderError::UnsupportedLanguage(s, t) => {
+                assert_eq!(s, "fr");
+                assert_eq!(t, "de");
+            }
+            other => panic!("expected UnsupportedLanguage, got {other:?}"),
+        }
+    }
+}

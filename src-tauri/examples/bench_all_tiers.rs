@@ -20,12 +20,7 @@
 //! `SKIP` line. Download them via the settings UI first, or pass an
 //! `--app-data` pointing at a dir that already has them.
 
-use std::{
-    fs,
-    path::PathBuf,
-    sync::Arc,
-    time::Instant,
-};
+use std::{fs, path::PathBuf, sync::Arc, time::Instant};
 
 use anyhow::{anyhow, Context, Result};
 use parking_lot::Mutex;
@@ -63,11 +58,15 @@ fn parse_args() -> Result<CliArgs> {
     while let Some(flag) = iter.next() {
         match flag.as_str() {
             "--samples" => {
-                let v = iter.next().ok_or_else(|| anyhow!("--samples needs a value"))?;
+                let v = iter
+                    .next()
+                    .ok_or_else(|| anyhow!("--samples needs a value"))?;
                 samples = v.parse().context("--samples must be a positive integer")?;
             }
             "--app-data" => {
-                let v = iter.next().ok_or_else(|| anyhow!("--app-data needs a value"))?;
+                let v = iter
+                    .next()
+                    .ok_or_else(|| anyhow!("--app-data needs a value"))?;
                 app_data = Some(PathBuf::from(v));
             }
             "--write-report" => {
@@ -155,9 +154,8 @@ async fn main() -> Result<()> {
     // RUST_LOG can still override (e.g. RUST_LOG=debug for more).
     let _ = tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
-                tracing_subscriber::EnvFilter::new("embedded_llm_perf=info")
-            }),
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("embedded_llm_perf=info")),
         )
         .with_writer(std::io::stderr)
         .try_init();
@@ -181,7 +179,10 @@ async fn main() -> Result<()> {
     for tier in TIERS {
         let primary_path = models_dir.join(tier.primary_filename());
         if !primary_path.is_file() {
-            println!("SKIP  {}  ({}) — not downloaded", tier.id, tier.display_name);
+            println!(
+                "SKIP  {}  ({}) — not downloaded",
+                tier.id, tier.display_name
+            );
             continue;
         }
 
@@ -455,12 +456,7 @@ fn render_markdown(results: &[TierResult], samples: u32) -> String {
             // Crop preview to a single line to keep the markdown
             // table parseable; the GGUF can emit literal newlines
             // mid-translation that would otherwise break rendering.
-            let preview_one_line = s
-                .preview
-                .lines()
-                .next()
-                .unwrap_or("")
-                .replace('|', "\\|");
+            let preview_one_line = s.preview.lines().next().unwrap_or("").replace('|', "\\|");
             out.push_str(&format!(
                 "| {} | {} | {} | {} | {} | {:.1} | {:.1} | {} |\n",
                 s.index,

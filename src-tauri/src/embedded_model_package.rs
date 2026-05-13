@@ -245,10 +245,7 @@ pub fn build_package(
     manifest_template: PackageManifestInput,
 ) -> Result<PackageManifest> {
     if !source_gguf.is_file() {
-        return Err(anyhow!(
-            "source GGUF not found: {}",
-            source_gguf.display()
-        ));
+        return Err(anyhow!("source GGUF not found: {}", source_gguf.display()));
     }
 
     // Hash up front so the manifest reflects the bytes we are about
@@ -307,13 +304,11 @@ pub fn build_package(
     manifest.validate()?;
 
     if let Some(parent) = dest.parent() {
-        std::fs::create_dir_all(parent).with_context(|| {
-            format!("create parent dir for {}", dest.display())
-        })?;
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("create parent dir for {}", dest.display()))?;
     }
 
-    let dest_file = File::create(dest)
-        .with_context(|| format!("create {}", dest.display()))?;
+    let dest_file = File::create(dest).with_context(|| format!("create {}", dest.display()))?;
     let mut zip = zip::ZipWriter::new(BufWriter::new(dest_file));
 
     // GGUFs are already quantised → compression level adds CPU time
@@ -322,8 +317,7 @@ pub fn build_package(
     // feature targets.
     let stored = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
 
-    let manifest_bytes =
-        serde_json::to_vec_pretty(&manifest).context("serialise manifest")?;
+    let manifest_bytes = serde_json::to_vec_pretty(&manifest).context("serialise manifest")?;
     zip.start_file(MANIFEST_ENTRY, stored)
         .context("start manifest entry")?;
     zip.write_all(&manifest_bytes)
@@ -340,9 +334,8 @@ pub fn build_package(
      -> Result<()> {
         zip.start_file(name, stored)
             .with_context(|| format!("start zip entry {}", name))?;
-        let mut src = BufReader::new(
-            File::open(path).with_context(|| format!("open {}", path.display()))?,
-        );
+        let mut src =
+            BufReader::new(File::open(path).with_context(|| format!("open {}", path.display()))?);
         loop {
             let n = src
                 .read(buf)
@@ -391,10 +384,9 @@ pub struct PackageManifestInput {
 /// sees model id, size, license, and exporter version BEFORE the
 /// big GGUF write touches disk.
 pub fn inspect_package(package: &Path) -> Result<PackageManifest> {
-    let file = File::open(package)
-        .with_context(|| format!("open package {}", package.display()))?;
-    let mut zip = zip::ZipArchive::new(BufReader::new(file))
-        .context("open package as zip")?;
+    let file =
+        File::open(package).with_context(|| format!("open package {}", package.display()))?;
+    let mut zip = zip::ZipArchive::new(BufReader::new(file)).context("open package as zip")?;
     let mut manifest_entry = zip
         .by_name(MANIFEST_ENTRY)
         .context("manifest.json not found in package")?;
@@ -402,8 +394,7 @@ pub fn inspect_package(package: &Path) -> Result<PackageManifest> {
     manifest_entry
         .read_to_string(&mut buf)
         .context("read manifest")?;
-    let manifest: PackageManifest =
-        serde_json::from_str(&buf).context("parse manifest")?;
+    let manifest: PackageManifest = serde_json::from_str(&buf).context("parse manifest")?;
     manifest.validate()?;
     Ok(manifest)
 }
@@ -417,9 +408,8 @@ pub fn inspect_package(package: &Path) -> Result<PackageManifest> {
 pub fn apply_package(package: &Path, target_dir: &Path) -> Result<(PathBuf, PackageManifest)> {
     let manifest = inspect_package(package)?;
 
-    std::fs::create_dir_all(target_dir).with_context(|| {
-        format!("create target dir {}", target_dir.display())
-    })?;
+    std::fs::create_dir_all(target_dir)
+        .with_context(|| format!("create target dir {}", target_dir.display()))?;
 
     // First pass: extract every entry into a `.import.partial`
     // sibling and verify its sha256. We commit nothing until every
@@ -444,10 +434,9 @@ pub fn apply_package(package: &Path, target_dir: &Path) -> Result<(PathBuf, Pack
     )
     .collect();
 
-    let file = File::open(package)
-        .with_context(|| format!("re-open package {}", package.display()))?;
-    let mut zip = zip::ZipArchive::new(BufReader::new(file))
-        .context("re-open package as zip")?;
+    let file =
+        File::open(package).with_context(|| format!("re-open package {}", package.display()))?;
+    let mut zip = zip::ZipArchive::new(BufReader::new(file)).context("re-open package as zip")?;
 
     for (entry_name, expected_sha, expected_size) in &entries {
         let final_path = target_dir.join(entry_name);
@@ -478,7 +467,8 @@ pub fn apply_package(package: &Path, target_dir: &Path) -> Result<(PathBuf, Pack
                 .with_context(|| format!("write temp `{}`", tmp_path.display()))?;
             total += n as u64;
         }
-        tmp.flush().with_context(|| format!("flush `{}`", tmp_path.display()))?;
+        tmp.flush()
+            .with_context(|| format!("flush `{}`", tmp_path.display()))?;
         drop(tmp);
 
         let computed = hex::encode(hasher.finalize());
@@ -587,7 +577,10 @@ mod tests {
         let (final_path, applied_manifest) = apply_package(&pkg, &target).expect("apply");
         assert_eq!(applied_manifest, manifest);
         let recovered = std::fs::read(&final_path).expect("read final");
-        assert_eq!(recovered, payload, "extracted GGUF must match the source byte-for-byte");
+        assert_eq!(
+            recovered, payload,
+            "extracted GGUF must match the source byte-for-byte"
+        );
     }
 
     #[test]
@@ -611,8 +604,7 @@ mod tests {
             for i in 0..in_zip.len() {
                 let mut entry = in_zip.by_index(i).unwrap();
                 if entry.name() == MANIFEST_ENTRY {
-                    let mut m: PackageManifest =
-                        serde_json::from_reader(&mut entry).unwrap();
+                    let mut m: PackageManifest = serde_json::from_reader(&mut entry).unwrap();
                     m.sha256 = "0".repeat(64);
                     let bytes = serde_json::to_vec_pretty(&m).unwrap();
                     out_zip.start_file(MANIFEST_ENTRY, stored).unwrap();
@@ -734,8 +726,7 @@ mod tests {
         let pkg = tmp.path().join("bundle.moonlens-model");
         let mut tmpl = sample_template();
         tmpl.model_filename = "qwen2.5-7b-instruct-q4_k_m-00001-of-00002.gguf".into();
-        tmpl.extra_filenames =
-            vec!["qwen2.5-7b-instruct-q4_k_m-00002-of-00002.gguf".into()];
+        tmpl.extra_filenames = vec!["qwen2.5-7b-instruct-q4_k_m-00002-of-00002.gguf".into()];
         let manifest = build_package(&primary, &pkg, tmpl).expect("build");
         assert_eq!(manifest.parts.len(), 1);
         assert_eq!(
@@ -746,10 +737,9 @@ mod tests {
         let target = tmp.path().join("imported");
         let (final_path, applied) = apply_package(&pkg, &target).expect("apply");
         assert!(final_path.ends_with("qwen2.5-7b-instruct-q4_k_m-00001-of-00002.gguf"));
-        let recovered_part2 = std::fs::read(
-            target.join("qwen2.5-7b-instruct-q4_k_m-00002-of-00002.gguf"),
-        )
-        .expect("part 2 was extracted");
+        let recovered_part2 =
+            std::fs::read(target.join("qwen2.5-7b-instruct-q4_k_m-00002-of-00002.gguf"))
+                .expect("part 2 was extracted");
         assert_eq!(recovered_part2, b"PART2".repeat(700));
         assert_eq!(applied.parts.len(), 1);
     }

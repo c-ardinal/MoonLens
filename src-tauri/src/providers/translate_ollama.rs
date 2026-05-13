@@ -57,8 +57,7 @@ impl OllamaTranslator {
         };
         let get_f = |k: &str, d: f64| config.get(k).and_then(|v| v.as_f64()).unwrap_or(d) as f32;
         let get_u = |k: &str, d: u64| config.get(k).and_then(|v| v.as_u64()).unwrap_or(d) as u32;
-        let get_bool =
-            |k: &str, d: bool| config.get(k).and_then(|v| v.as_bool()).unwrap_or(d);
+        let get_bool = |k: &str, d: bool| config.get(k).and_then(|v| v.as_bool()).unwrap_or(d);
         let get_opt_u = |k: &str| config.get(k).and_then(|v| v.as_u64()).map(|v| v as u32);
         let examples: Vec<FewShotExample> = config
             .get("examples")
@@ -175,13 +174,12 @@ pub fn build_chat_messages(
         role: "system".into(),
         content: system_prompt.to_string(),
     });
-    let from_clause = if source_language.trim().is_empty()
-        || source_language.eq_ignore_ascii_case("auto")
-    {
-        String::new()
-    } else {
-        format!(" from {source_language}")
-    };
+    let from_clause =
+        if source_language.trim().is_empty() || source_language.eq_ignore_ascii_case("auto") {
+            String::new()
+        } else {
+            format!(" from {source_language}")
+        };
     for ex in examples {
         messages.push(ChatMessage {
             role: "user".into(),
@@ -309,8 +307,7 @@ impl OllamaTranslator {
             }
         })?;
 
-        let active_sink: Option<&StreamingChunkSink> =
-            sink_override.or(self.chunk_sink.as_ref());
+        let active_sink: Option<&StreamingChunkSink> = sink_override.or(self.chunk_sink.as_ref());
 
         let mut aggregated = String::new();
         let mut buffer = Vec::<u8>::new();
@@ -468,7 +465,8 @@ mod tests {
         let lines = vec![
             "{\"message\":{\"role\":\"assistant\",\"content\":\"Hel\"},\"done\":false}".to_string(),
             "{\"message\":{\"role\":\"assistant\",\"content\":\"lo\"},\"done\":false}".to_string(),
-            "{\"message\":{\"role\":\"assistant\",\"content\":\" world\"},\"done\":true}".to_string(),
+            "{\"message\":{\"role\":\"assistant\",\"content\":\" world\"},\"done\":true}"
+                .to_string(),
         ];
         assert_eq!(merge_chat_stream_chunks(lines), "Hello world");
     }
@@ -509,13 +507,7 @@ mod tests {
 
     #[test]
     fn build_chat_messages_places_system_first_then_user_for_simple_input() {
-        let msgs = build_chat_messages(
-            "You are a translator.",
-            &[],
-            "en",
-            "ja",
-            "Hello world",
-        );
+        let msgs = build_chat_messages("You are a translator.", &[], "en", "ja", "Hello world");
         assert_eq!(msgs.len(), 2, "no examples → [system, user]");
         assert_eq!(msgs[0].role, "system");
         assert_eq!(msgs[0].content, "You are a translator.");
@@ -543,13 +535,7 @@ mod tests {
                 target: "ありがとう".into(),
             },
         ];
-        let msgs = build_chat_messages(
-            "SYS",
-            &examples,
-            "en",
-            "ja",
-            "Goodbye",
-        );
+        let msgs = build_chat_messages("SYS", &examples, "en", "ja", "Goodbye");
         assert_eq!(msgs.len(), 6, "system + 2*(user+assistant) + final user");
         assert_eq!(msgs[0].role, "system");
         assert_eq!(msgs[1].role, "user");

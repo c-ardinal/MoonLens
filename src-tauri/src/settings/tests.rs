@@ -36,7 +36,10 @@ fn default_chains_do_not_require_external_servers() {
     // because that pipeline still requires the user to point at
     // an external whisper.cpp HTTP server.
     let s: Settings = toml::from_str(DEFAULT_TOML).expect("default.toml parses");
-    assert!(!s.providers.ocr.chain.is_empty(), "OCR has built-in providers");
+    assert!(
+        !s.providers.ocr.chain.is_empty(),
+        "OCR has built-in providers"
+    );
     assert!(
         !s.providers.qr_handler.chain.is_empty(),
         "QR handler has rqrr"

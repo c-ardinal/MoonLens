@@ -399,8 +399,10 @@ pub fn capture_lens(app: &AppHandle, registry: &LensRegistryHandle, id: &str) ->
         #[cfg(debug_assertions)]
         {
             if let Ok(outer) = outer_rect(&win) {
-                if outer.x != inner.x || outer.y != inner.y
-                    || outer.w != inner.w || outer.h != inner.h
+                if outer.x != inner.x
+                    || outer.y != inner.y
+                    || outer.w != inner.w
+                    || outer.h != inner.h
                 {
                     tracing::debug!(
                         "lens {id}: outer={:?} vs inner={:?} (using inner for capture)",
@@ -415,12 +417,7 @@ pub fn capture_lens(app: &AppHandle, registry: &LensRegistryHandle, id: &str) ->
             .ok_or_else(|| anyhow!("lens observation rect is empty"))?
     };
 
-    let result = capture::capture_global_rect(
-        rect_info.x,
-        rect_info.y,
-        rect_info.w,
-        rect_info.h,
-    );
+    let result = capture::capture_global_rect(rect_info.x, rect_info.y, rect_info.w, rect_info.h);
     let image = result?;
     capture::png_bytes(&image)
 }

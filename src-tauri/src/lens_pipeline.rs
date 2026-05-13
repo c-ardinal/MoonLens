@@ -59,13 +59,7 @@ pub trait LensInput: Send {
 /// and one `on_cards_ready` in between.
 pub trait LensSink: Send + Sync {
     fn on_flow_start(&self, flow_id: u64);
-    fn on_cards_ready(
-        &self,
-        flow_id: u64,
-        image_w: u32,
-        image_h: u32,
-        cards: &[LensOcrLine],
-    );
+    fn on_cards_ready(&self, flow_id: u64, image_w: u32, image_h: u32, cards: &[LensOcrLine]);
     fn on_line_chunk(&self, flow_id: u64, line_index: usize, delta: String, done: bool);
     fn on_flow_done(&self, flow_id: u64, line_count: usize);
     /// Optional hook the production path uses to hide the Lens
@@ -342,13 +336,7 @@ impl LensSink for RecordingSink {
     fn on_flow_start(&self, _flow_id: u64) {
         self.state.lock().unwrap().flow_start_fired = true;
     }
-    fn on_cards_ready(
-        &self,
-        _flow_id: u64,
-        image_w: u32,
-        image_h: u32,
-        cards: &[LensOcrLine],
-    ) {
+    fn on_cards_ready(&self, _flow_id: u64, image_w: u32, image_h: u32, cards: &[LensOcrLine]) {
         let mut s = self.state.lock().unwrap();
         s.image_w = image_w;
         s.image_h = image_h;
@@ -368,7 +356,11 @@ impl LensSink for RecordingSink {
         self.state.lock().unwrap().flow_done_line_count = Some(line_count);
     }
     fn on_mask(&self, flow_id: u64, masked: bool) {
-        self.state.lock().unwrap().mask_events.push((flow_id, masked));
+        self.state
+            .lock()
+            .unwrap()
+            .mask_events
+            .push((flow_id, masked));
     }
 }
 
@@ -483,13 +475,7 @@ mod tests {
             fn on_flow_start(&self, _f: u64) {
                 self.events.lock().unwrap().push("flow_start");
             }
-            fn on_cards_ready(
-                &self,
-                _f: u64,
-                _w: u32,
-                _h: u32,
-                _cards: &[LensOcrLine],
-            ) {
+            fn on_cards_ready(&self, _f: u64, _w: u32, _h: u32, _cards: &[LensOcrLine]) {
                 self.events.lock().unwrap().push("cards_ready");
             }
             fn on_line_chunk(&self, _f: u64, _i: usize, _d: String, _done: bool) {
@@ -536,7 +522,10 @@ mod tests {
         let cards_idx = events.iter().position(|e| *e == "cards_ready");
         let first_chunk_idx = events.iter().position(|e| *e == "line_chunk");
         assert!(cards_idx.is_some(), "cards_ready must fire, got {events:?}");
-        assert!(first_chunk_idx.is_some(), "line_chunk must fire, got {events:?}");
+        assert!(
+            first_chunk_idx.is_some(),
+            "line_chunk must fire, got {events:?}"
+        );
         assert!(
             cards_idx.unwrap() < first_chunk_idx.unwrap(),
             "cards_ready must fire BEFORE line_chunk — got {events:?}"

@@ -231,17 +231,34 @@ mod chain_streaming {
         let cfg_path = tmp.path().join("config.toml");
         // Seed the settings file so the chain assertion holds even
         // after `load_from` writes defaults: we re-save the value.
-        let mut settings: Settings =
-            toml::from_str(include_str!("settings/default.toml")).unwrap();
-        settings.providers.translate.chain =
-            chain.into_iter().map(|s| s.to_string()).collect();
+        let mut settings: Settings = toml::from_str(include_str!("settings/default.toml")).unwrap();
+        settings.providers.translate.chain = chain.into_iter().map(|s| s.to_string()).collect();
         // Drop the timeout so our error-path tests do not hang on
         // the real 30s default; 500 ms is plenty for in-process
         // mocks.
         settings.providers.translate.timeout_ms = 500;
+        // The chain-streaming tests exercise the LEGACY single-tier
+        // embedded cache (`Pipeline::embedded_cache`). Clearing
+        // `user_tier` keeps the pipeline on the legacy path, which
+        // is where the cache lives. Routing-aware tests construct
+        // their own settings with `user_tier = Some(...)`.
+        settings.providers.user_tier = None;
         let toml_text = toml::to_string_pretty(&settings).unwrap();
         std::fs::write(&cfg_path, toml_text).unwrap();
         let store = Arc::new(SettingsStore::load_from(cfg_path).expect("settings store"));
+        // `load_from` applies the layered merge with default.toml,
+        // which re-injects `user_tier = "standard"` even though we
+        // wrote the test TOML with `user_tier = None`. Push the
+        // None back into the in-memory snapshot explicitly so this
+        // test exercises the legacy single-tier embedded cache
+        // (the path the assertions below verify).
+        {
+            let mut snap = (*store.snapshot()).clone();
+            snap.providers.user_tier = None;
+            store
+                .save(snap)
+                .expect("force legacy user_tier=None for cache test");
+        }
         let storage = Arc::new(Storage::open_in_memory().expect("storage"));
         // Leak the tempdir so it outlives the test (not strictly
         // necessary because the Pipeline holds no fd, but avoids
@@ -370,8 +387,7 @@ mod chain_streaming {
     /// settings change (multi-second freeze per save).
     #[tokio::test]
     async fn rebuild_preserves_embedded_engine_when_path_unchanged() {
-        let pipeline =
-            pipeline_with_chain(vec!["embedded.llm"], HashMap::new());
+        let pipeline = pipeline_with_chain(vec!["embedded.llm"], HashMap::new());
 
         // Snapshot the cached embedded handle from the FIRST rebuild
         // (triggered inside pipeline_with_chain via SettingsStore::load_from
@@ -428,8 +444,7 @@ mod chain_streaming {
         // Suppress the unused-import warning when this test is
         // compiled in isolation — Settings is referenced through
         // pipeline_with_chain only.
-        let _: fn() -> Settings =
-            || -> Settings { toml::from_str("").unwrap_or_default() };
+        let _: fn() -> Settings = || -> Settings { toml::from_str("").unwrap_or_default() };
     }
 
     #[tokio::test]
@@ -455,8 +470,7 @@ mod chain_streaming {
             }),
         );
 
-        let pipeline =
-            pipeline_with_chain(vec!["first.fail", "second.ok"], map);
+        let pipeline = pipeline_with_chain(vec!["first.fail", "second.ok"], map);
 
         let captured: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
         let captured_for_sink = captured.clone();

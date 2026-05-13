@@ -30,6 +30,7 @@ pub mod services;
 pub mod settings;
 pub mod storage;
 pub mod subtitle;
+pub mod translation_router;
 
 use tracing_subscriber::{fmt, EnvFilter};
 

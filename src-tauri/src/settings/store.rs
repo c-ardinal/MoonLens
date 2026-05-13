@@ -38,11 +38,10 @@ impl SettingsStore {
 
         let settings = if config_path.exists() {
             match std::fs::read_to_string(&config_path) {
-                Ok(raw) => layer_user_over_defaults(&raw)
-                    .unwrap_or_else(|e| {
-                        tracing::warn!("user config invalid, falling back to defaults: {e}");
-                        toml::from_str(DEFAULT_TOML).expect("bundled default.toml is invalid")
-                    }),
+                Ok(raw) => layer_user_over_defaults(&raw).unwrap_or_else(|e| {
+                    tracing::warn!("user config invalid, falling back to defaults: {e}");
+                    toml::from_str(DEFAULT_TOML).expect("bundled default.toml is invalid")
+                }),
                 Err(e) => {
                     tracing::warn!("cannot read user config, using defaults: {e}");
                     toml::from_str(DEFAULT_TOML).context("bundled default.toml is invalid")?
@@ -75,8 +74,7 @@ impl SettingsStore {
     /// file-watcher for hot reload.
     pub fn reload_from_disk(&self) -> Result<bool> {
         let settings = if self.config_path.exists() {
-            let raw =
-                std::fs::read_to_string(&self.config_path).context("re-read user config")?;
+            let raw = std::fs::read_to_string(&self.config_path).context("re-read user config")?;
             match layer_user_over_defaults(&raw) {
                 Ok(s) => s,
                 Err(e) => {
@@ -111,8 +109,7 @@ impl SettingsStore {
         let serialized = toml::to_string_pretty(&new)?;
         *self.inner.write() = new.clone();
         let _ = self.tx.send(Arc::new(new));
-        std::fs::write(&self.config_path, serialized)
-            .context("write user config")?;
+        std::fs::write(&self.config_path, serialized).context("write user config")?;
         Ok(())
     }
 
@@ -143,8 +140,7 @@ impl SettingsStore {
 fn layer_user_over_defaults(user_raw: &str) -> Result<Settings> {
     let default_value: toml::Value =
         toml::from_str(DEFAULT_TOML).context("bundled default.toml is invalid")?;
-    let user_value: toml::Value =
-        toml::from_str(user_raw).context("parse user config")?;
+    let user_value: toml::Value = toml::from_str(user_raw).context("parse user config")?;
     let merged = deep_merge_toml(default_value, user_value);
     let merged_str = toml::to_string(&merged).context("re-serialise merged config")?;
     let settings: Settings =
@@ -156,14 +152,10 @@ fn layer_user_over_defaults(user_raw: &str) -> Result<Settings> {
 /// `model_registry::tests` to construct a `Settings` that matches a
 /// realistic user.toml without going through `SettingsStore::load_from`.
 #[cfg(test)]
-pub fn layer_user_over_defaults_for_test(
-    defaults: &str,
-    user_raw: &str,
-) -> Result<Settings> {
+pub fn layer_user_over_defaults_for_test(defaults: &str, user_raw: &str) -> Result<Settings> {
     let default_value: toml::Value =
         toml::from_str(defaults).context("default.toml parse for test")?;
-    let user_value: toml::Value =
-        toml::from_str(user_raw).context("user toml parse for test")?;
+    let user_value: toml::Value = toml::from_str(user_raw).context("user toml parse for test")?;
     let merged = deep_merge_toml(default_value, user_value);
     let merged_str = toml::to_string(&merged).context("re-serialise merged config")?;
     let settings: Settings =

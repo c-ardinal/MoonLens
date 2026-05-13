@@ -31,21 +31,27 @@
     downloadEmbeddedModel,
     embeddedModelStatus,
     getSettingsSchema,
-    listModelTiers,
     modelTierStatus,
     onBenchProgress,
     onEmbeddedModelProgress,
     pickAndApplyEmbeddedModelPackage,
     pickAndPackageEmbeddedModel,
     restartApp,
-    setModelTier,
+    getUserTier,
+    setUserTier,
+    previewRouting,
+    routedModelStatus,
+    downloadRoutedModel,
     type BenchOutcome,
     type BenchProgressEvent,
     type BenchSample,
     type EmbeddedModelStatus,
     type ModelProgress,
-    type ModelTier,
     type ModelTierStatus,
+    type UserTier,
+    type UserTierStatus,
+    type RoutingPreview,
+    type RoutedModelStatus,
   } from '$lib/ipc';
   import {
     currentSettings,
@@ -205,10 +211,43 @@
   let embeddedPackaging = $state(false);
   let embeddedImporting = $state(false);
   let embeddedPackageMessage = $state<string | null>(null);
-  let modelTiers = $state<ModelTier[]>([]);
+  // `tierStatus` is still consulted by:
+  //   - the "推奨" badge on the embedded.llm engine card
+  //     (compares the saved tier_id to the HW recommendation),
+  //   - the benchmark result panel (`expectedTokensPerSecondFor`),
+  //   - `tierDescriptionLine()` for the recommendation rationale.
+  // The standalone モデルティア dropdown that previously drove
+  // `selectedTierId` / `switchingTier` / `handleTierChange` /
+  // `formatTierSize` was removed when the 翻訳ティア picker took
+  // over, so those state vars + the related `modelTiers` /
+  // `setModelTier` / `listModelTiers` imports were dropped.
   let tierStatus = $state<ModelTierStatus | null>(null);
-  let selectedTierId = $state<string>('');
-  let switchingTier = $state(false);
+  // Routing tier state — separate from `selectedTierId` because the
+  // user picks ONE of three Tier names (Compact / Standard / Quality)
+  // here, and the routing matrix decides which underlying model
+  // (or model pair) handles each translate call.
+  let userTierStatus = $state<UserTierStatus | null>(null);
+  let switchingUserTier = $state(false);
+  // Per-model presence for the active routing tier. Standard /
+  // Quality need 2 GGUFs (a JA bridge + a multilingual model);
+  // the legacy `embeddedStatus.present` flag only inspects the
+  // single `embedded.llm` config block and misreports "ready"
+  // when only one of the routed models is on disk.
+  let routedModels = $state<RoutedModelStatus[]>([]);
+  // Three common pairs surfaced as a "what does each route to?"
+  // preview matrix beneath the picker. Lets the user verify the
+  // tier picks the model they expect before committing.
+  let routingPreviews = $state<Array<{
+    label: string;
+    src: string;
+    tgt: string;
+    preview: RoutingPreview | null;
+  }>>([
+    { label: '英→日', src: 'en', tgt: 'ja', preview: null },
+    { label: '中→日', src: 'zh-CN', tgt: 'ja', preview: null },
+    { label: '日→韓', src: 'ja', tgt: 'ko', preview: null },
+    { label: '仏→独', src: 'fr', tgt: 'de', preview: null },
+  ]);
   let benchRunning = $state(false);
   let benchResult = $state<BenchOutcome | null>(null);
   let benchError = $state<string | null>(null);
@@ -328,43 +367,85 @@
   }
 
   async function refreshTierState() {
+    // Only fetches the tier STATUS (current + recommended class)
+    // now; the full TIERS list isn't surfaced anywhere in the UI
+    // after the model-tier dropdown removal. The bench result
+    // panel and the recommended badge consult `tierStatus`
+    // directly.
     try {
-      const [tiers, status] = await Promise.all([
-        listModelTiers(),
-        modelTierStatus(),
-      ]);
-      modelTiers = tiers;
-      tierStatus = status;
-      // Snap the dropdown to whatever the backend reports as
-      // `current`. If the user has hand-edited user.toml to point at
-      // an unregistered coord, `current` is null and the dropdown
-      // shows "カスタム" via a synthetic option below.
-      selectedTierId = status?.current?.id ?? '__custom__';
+      tierStatus = await modelTierStatus();
     } catch (e) {
       console.warn('tier status load failed:', e);
     }
   }
 
-  async function handleTierChange(nextId: string) {
-    if (switchingTier || nextId === selectedTierId || nextId === '__custom__') return;
-    switchingTier = true;
-    embeddedError = null;
+  async function refreshUserTierState() {
     try {
-      await setModelTier(nextId);
-      selectedTierId = nextId;
-      await Promise.all([refreshEmbeddedStatus(), refreshTierState()]);
+      userTierStatus = await getUserTier();
+      await refreshRoutingPreviews(userTierStatus?.current ?? 'standard');
+      routedModels = await routedModelStatus();
     } catch (e) {
-      embeddedError = e instanceof Error ? e.message : String(e);
-      // Roll the dropdown back so it does not lie about backend state.
-      selectedTierId = tierStatus?.current?.id ?? '__custom__';
-    } finally {
-      switchingTier = false;
+      console.warn('user tier status load failed:', e);
     }
   }
 
-  function formatTierSize(mb: number): string {
+  function formatModelSize(mb: number): string {
     if (mb < 1024) return `${mb} MB`;
     return `${(mb / 1024).toFixed(1)} GB`;
+  }
+
+  /** Per-row in-flight flag so the user cannot double-tap the
+   * same row while a download is running. Keyed by tier_id. */
+  let downloadingTiers = $state<Record<string, boolean>>({});
+
+  async function handleDownloadRouted(tierId: string) {
+    if (downloadingTiers[tierId]) return;
+    downloadingTiers = { ...downloadingTiers, [tierId]: true };
+    try {
+      await downloadRoutedModel(tierId, false);
+      // Refresh per-model status so the row flips to "準備済み"
+      // without requiring a full page reload.
+      await refreshUserTierState();
+    } catch (e) {
+      console.warn(`download_routed_model(${tierId}) failed:`, e);
+    } finally {
+      downloadingTiers = { ...downloadingTiers, [tierId]: false };
+    }
+  }
+
+  async function refreshRoutingPreviews(tier: UserTier) {
+    try {
+      const next = await Promise.all(
+        routingPreviews.map(async (row) => ({
+          ...row,
+          preview: await previewRouting(row.src, row.tgt, tier),
+        })),
+      );
+      routingPreviews = next;
+    } catch (e) {
+      console.warn('routing preview load failed:', e);
+    }
+  }
+
+  async function handleUserTierChange(nextTier: UserTier) {
+    if (switchingUserTier) return;
+    switchingUserTier = true;
+    try {
+      await setUserTier(nextTier);
+      await refreshUserTierState();
+    } catch (e) {
+      console.warn('user tier switch failed:', e);
+    } finally {
+      switchingUserTier = false;
+    }
+  }
+
+  function renderRoutingPreview(p: RoutingPreview | null): string {
+    if (!p) return '—';
+    if (p.mode === 'direct') return `直接: ${p.display_name}`;
+    if (p.mode === 'pivot')
+      return `Pivot: ${p.stage1_display_name} → ${p.stage2_display_name}`;
+    return '✗ 未対応';
   }
 
   async function packageCurrentModel() {
@@ -451,6 +532,7 @@
     }
     void refreshEmbeddedStatus();
     void refreshTierState();
+    void refreshUserTierState();
     try {
       const off = await onEmbeddedModelProgress((p) => {
         embeddedProgress = p;
@@ -1067,9 +1149,8 @@
    *  detail body. Mirrors the previous tier-row behaviour but
    *  without the standalone embedded card. */
   function tierDescriptionLine(): string {
-    const t = tierStatus?.recommended;
     if (!tierStatus) return '';
-    return `${tierStatus.recommended_reason}`;
+    return tierStatus.recommended_reason;
   }
 </script>
 
@@ -1754,68 +1835,77 @@
                         {/if}
                       </div>
 
-                      {#if modelTiers.length > 0}
-                        <div class="detail-row">
-                          <label class="detail-label" for="embedded-tier-select">
-                            モデルティア
-                          </label>
-                          <select
-                            id="embedded-tier-select"
-                            class="preset-btn"
-                            value={selectedTierId}
-                            disabled={switchingTier ||
-                              embeddedDownloading ||
-                              embeddedImporting}
-                            onchange={(e) =>
-                              handleTierChange((e.target as HTMLSelectElement).value)}
-                            style="min-width: 16rem;"
-                          >
-                            {#each modelTiers as tier (tier.id)}
-                              <option value={tier.id}>
-                                {tier.display_name} — {formatTierSize(tier.size_mb)} (RAM≥{tier.min_ram_gb}GB)
-                                {tierStatus && tier.id === tierStatus.recommended.id
-                                  ? ' ⭐推奨'
-                                  : ''}
-                              </option>
-                            {/each}
-                            {#if !tierStatus?.current}
-                              <option value="__custom__" disabled>
-                                カスタム (user.toml 直接編集)
-                              </option>
-                            {/if}
-                          </select>
+                      <div class="detail-row">
+                        <label class="detail-label" for="user-tier-select">
+                          翻訳ティア
+                        </label>
+                        <select
+                          id="user-tier-select"
+                          class="preset-btn"
+                          value={userTierStatus?.current ?? 'standard'}
+                          disabled={switchingUserTier}
+                          onchange={(e) =>
+                            handleUserTierChange(
+                              (e.target as HTMLSelectElement).value as UserTier,
+                            )}
+                          style="min-width: 16rem;"
+                        >
+                          <option value="compact">Compact — 0.6 GB / EN↔JA 専用</option>
+                          <option value="standard">Standard — 4.2 GB / 多言語対応</option>
+                          <option value="quality">Quality — 6.1 GB / 最高品質</option>
+                        </select>
+                      </div>
+                      <div class="muted small">
+                        Tier を選ぶと言語ペアごとに最適なモデルが自動選択されます。
+                        ハードウェア: {userTierStatus?.hardware === 'gpu' ? 'GPU' : 'CPU'}。
+                      </div>
+                      <div class="routing-preview">
+                        {#each routingPreviews as row (row.label)}
+                          <div class="routing-preview-row">
+                            <span class="routing-preview-label">{row.label}</span>
+                            <span class="routing-preview-value">
+                              {renderRoutingPreview(row.preview)}
+                            </span>
+                          </div>
+                        {/each}
+                      </div>
+
+                      {#if routedModels.length > 0}
+                        <div class="routed-models">
+                          <div class="routed-models-header">
+                            必要なモデル
+                          </div>
+                          {#each routedModels as m (m.tier_id)}
+                            <div class="routed-models-row">
+                              <span class="routed-models-icon">
+                                {m.present ? '✅' : '⬇️'}
+                              </span>
+                              <span class="routed-models-name">
+                                {m.display_name}
+                              </span>
+                              <span class="routed-models-size">
+                                {formatModelSize(m.size_mb)}
+                              </span>
+                              {#if m.present}
+                                <span class="routed-models-status">
+                                  準備済み
+                                </span>
+                              {:else}
+                                <button
+                                  type="button"
+                                  class="routed-models-action"
+                                  disabled={downloadingTiers[m.tier_id]}
+                                  onclick={() =>
+                                    handleDownloadRouted(m.tier_id)}
+                                >
+                                  {downloadingTiers[m.tier_id]
+                                    ? 'ダウンロード中…'
+                                    : 'ダウンロード'}
+                                </button>
+                              {/if}
+                            </div>
+                          {/each}
                         </div>
-                        {#if tierStatus}
-                          <div class="muted small">
-                            {tierStatus.recommended_reason}
-                          </div>
-                        {/if}
-                        {#if tierStatus?.current_underpowered}
-                          <div class="hw-warning">
-                            <strong>⚠️ 性能不足の可能性</strong>
-                            お使いの PC (RAM
-                            {tierStatus.total_ram_gb.toFixed(1)} GB) は
-                            現在の {tierStatus.current?.display_name}
-                            ティア (RAM ≥ {tierStatus.current?.min_ram_gb} GB
-                            推奨) には不足しています。翻訳がタイムアウト
-                            する可能性が高いため、
-                            <strong>{tierStatus.recommended.display_name}</strong>
-                            への切替を推奨します。
-                            <button
-                              type="button"
-                              class="hw-warning-action"
-                              disabled={switchingTier ||
-                                embeddedDownloading ||
-                                embeddedImporting}
-                              onclick={() =>
-                                handleTierChange(
-                                  tierStatus!.recommended.id,
-                                )}
-                            >
-                              推奨ティアへ切替
-                            </button>
-                          </div>
-                        {/if}
                       {/if}
 
                       {#if embeddedDownloading && embeddedProgress}
@@ -2837,6 +2927,102 @@
   }
   .hw-warning-action:disabled {
     opacity: 0.5;
+    cursor: not-allowed;
+  }
+  /* Routing-preview matrix. Sat under the routing-tier picker so
+     the user can see at a glance which model handles each common
+     language pair before committing to the tier. */
+  .routing-preview {
+    margin-top: 0.5rem;
+    padding: 0.5rem 0.75rem;
+    border-radius: 8px;
+    border: 1px solid color-mix(in srgb, var(--ink) 12%, transparent);
+    background: color-mix(in srgb, var(--ink) 4%, transparent);
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+  }
+  .routing-preview-row {
+    display: flex;
+    gap: 0.75rem;
+    font-size: 0.8125rem;
+    line-height: 1.5;
+  }
+  .routing-preview-label {
+    min-width: 4rem;
+    color: color-mix(in srgb, var(--ink) 65%, transparent);
+  }
+  .routing-preview-value {
+    flex: 1;
+    color: color-mix(in srgb, var(--ink) 90%, transparent);
+  }
+  /* Per-model readiness panel for the active routing tier.
+     Distinct from `.routing-preview` because the routing matrix
+     and the per-model GGUF inventory answer different questions
+     ("which model runs for this pair?" vs "which GGUFs do I
+     still need to download?"). Both are scoped under the
+     embedded.llm detail body so they share the parent's
+     padding. */
+  .routed-models {
+    margin-top: 0.5rem;
+    padding: 0.5rem 0.75rem;
+    border-radius: 8px;
+    border: 1px solid color-mix(in srgb, var(--ink) 12%, transparent);
+    background: color-mix(in srgb, var(--ink) 4%, transparent);
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+  }
+  .routed-models-header {
+    font-size: 0.8125rem;
+    font-weight: 500;
+    color: color-mix(in srgb, var(--ink) 75%, transparent);
+    margin-bottom: 0.125rem;
+  }
+  .routed-models-row {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+    font-size: 0.8125rem;
+    line-height: 1.5;
+  }
+  .routed-models-icon {
+    width: 1.25rem;
+    text-align: center;
+  }
+  .routed-models-name {
+    flex: 1;
+    color: color-mix(in srgb, var(--ink) 90%, transparent);
+  }
+  .routed-models-size {
+    min-width: 4rem;
+    text-align: right;
+    color: color-mix(in srgb, var(--ink) 65%, transparent);
+    font-variant-numeric: tabular-nums;
+  }
+  .routed-models-status {
+    min-width: 5.5rem;
+    text-align: right;
+    color: color-mix(in srgb, var(--ink) 70%, transparent);
+  }
+  .routed-models-action {
+    min-width: 5.5rem;
+    padding: 0.25rem 0.625rem;
+    border-radius: 6px;
+    border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
+    background: color-mix(in srgb, var(--accent) 12%, transparent);
+    color: color-mix(in srgb, var(--accent) 100%, var(--ink));
+    font-size: 0.75rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 120ms ease, border-color 120ms ease;
+  }
+  .routed-models-action:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--accent) 22%, transparent);
+    border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  }
+  .routed-models-action:disabled {
+    opacity: 0.55;
     cursor: not-allowed;
   }
   .bench-section {

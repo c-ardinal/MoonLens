@@ -15,6 +15,8 @@ pub mod translate_deepl;
 pub mod translate_embedded_llm;
 pub mod translate_gemini;
 pub mod translate_ollama;
+pub mod translate_pivot;
+pub mod translate_routed;
 
 use std::sync::Arc;
 

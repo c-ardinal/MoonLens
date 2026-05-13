@@ -155,7 +155,10 @@ impl Provider for OcrsProvider {
                 let lock_ms = lock_start.elapsed().as_millis();
                 if guard.is_none() {
                     let load_start = std::time::Instant::now();
-                    tracing::info!("ocrs engine cold load in run() from {}", models_dir.display());
+                    tracing::info!(
+                        "ocrs engine cold load in run() from {}",
+                        models_dir.display()
+                    );
                     *guard = Some(try_load_engine(&models_dir)?);
                     tracing::info!(
                         "ocrs engine loaded (in run) in {}ms",

@@ -92,8 +92,8 @@ async fn lens_pipeline_on_english_fixture() {
                 streamed_sink.lock().push_str(&delta);
             }
         });
-        let translator = OllamaTranslator::new("ollama.gemma4", &serde_json::Value::Null)
-            .with_chunk_sink(sink);
+        let translator =
+            OllamaTranslator::new("ollama.gemma4", &serde_json::Value::Null).with_chunk_sink(sink);
         let t = Instant::now();
         let out = translator
             .run(TaskInput::Translate {

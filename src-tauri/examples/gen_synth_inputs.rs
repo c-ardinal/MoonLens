@@ -218,11 +218,8 @@ fn main() -> Result<()> {
     ];
 
     for scenario in scenarios {
-        let mut img = RgbaImage::from_pixel(
-            scenario.width,
-            scenario.height,
-            Rgba([248, 248, 250, 255]),
-        );
+        let mut img =
+            RgbaImage::from_pixel(scenario.width, scenario.height, Rgba([248, 248, 250, 255]));
         for block in scenario.blocks {
             render_block(&mut img, block, &regular, &bold);
         }

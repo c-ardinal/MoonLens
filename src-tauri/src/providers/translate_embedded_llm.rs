@@ -160,6 +160,26 @@ pub struct EmbeddedLlmTranslator {
     /// timed out every call. Adding the cap is what makes the
     /// embedded LLM path actually usable.
     max_predict_tokens: Option<usize>,
+    /// Sampling temperature. `0.0` = greedy (deterministic, fastest);
+    /// values >0 enable temperature-scaled sampling and bias the
+    /// model toward more idiomatic / less wooden phrasing at the
+    /// cost of run-to-run determinism. Read from the config's
+    /// `temperature` key (Ollama-compat). Defaults to 0.0 only when
+    /// the config explicitly omits it — `default.toml` ships 0.4 to
+    /// match the proven `ollama.gemma4` setting.
+    ///
+    /// Phase 27 Lens eval root cause: the previous runtime hard-
+    /// coded the sampler to greedy regardless of config, which made
+    /// the embedded translator silently 4x more rigid than the
+    /// Ollama path the user previously used (Gemma 4 E2B with
+    /// temperature 0.4). Reading the config here is what closes
+    /// that gap.
+    temperature: f32,
+    /// Top-p (nucleus) threshold. Pairs with `temperature`. Ignored
+    /// when `temperature == 0.0` (greedy short-circuits sampling).
+    /// Read from `top_p` config key. Defaults to 0.95 — the
+    /// Ollama-tested value for Gemma 4 / Qwen 2.5 / llm-jp 3.
+    top_p: f32,
     /// Chat template family the active GGUF expects. ChatML for
     /// Qwen / SmolLM family, Gemma for Google's Gemma variants.
     /// Resolved from the registry tier at construction time —
@@ -167,6 +187,28 @@ pub struct EmbeddedLlmTranslator {
     /// pair via `tier_by_coord` and picks up the template, falling
     /// back to ChatML when unknown.
     chat_template: crate::model_registry::ChatTemplate,
+    /// How many transformer layers to offload to the GPU at
+    /// model-load time. `0` = pure CPU; `99` (or any value >= the
+    /// model's layer count) = all layers on GPU. The runtime
+    /// surfaces this directly to `LlamaModelParams::with_n_gpu_layers`.
+    ///
+    /// Resolution precedence (highest wins):
+    ///   1. `MOONLENS_GPU_LAYERS` environment variable — power-user /
+    ///      debug override. Honoured even when settings disable GPU,
+    ///      so support sessions can force-toggle from the shell.
+    ///   2. `Settings.performance.use_gpu_if_available` — the user-
+    ///      facing toggle in the UI's Performance section, threaded
+    ///      through `Pipeline::rebuild_providers` via
+    ///      `with_gpu_layers`. `true` AND the binary built with at
+    ///      least one GPU-backend feature → 99 (all layers); else 0.
+    ///   3. Default `0` when neither source is set — keeps the
+    ///      "fast on CPU" product promise on fresh installs.
+    ///
+    /// Pre-Phase-27 bug: the worker only consulted the env var,
+    /// so the settings toggle had no runtime effect — users
+    /// flipping GPU on in the UI still ran the model entirely on
+    /// CPU. Threading the field here closes that gap.
+    gpu_layers: u32,
     /// Optional speculative-decoding drafter on disk. When present
     /// the worker loads BOTH this and the main model, then runs
     /// every inference through a spec-decode loop (drafter predicts
@@ -223,6 +265,22 @@ impl EmbeddedLlmTranslator {
             .get("system_prompt")
             .and_then(|v| v.as_str())
             .unwrap_or(
+                // Aligned with the proven `ollama.gemma4` system
+                // prompt. The previous embedded prompt was an
+                // expanded Phase 25 variant that added paranoid
+                // language-locking directives ("100% target
+                // language only / no Chinese 简体...") to mitigate
+                // the Qwen 3.5 0.8B/2B Chinese-leakage failure
+                // mode. Phase 27 Lens eval surfaced that those
+                // additions caused the smaller llm-jp model to
+                // become overly cautious — producing wooden
+                // translations and odd word choices instead of
+                // idiomatic phrasing. Going back to the Ollama-
+                // tested shape restores natural register; the
+                // Chinese-leakage failure mode is now mitigated by
+                // few-shots (see `build_translation_few_shots`)
+                // and the runtime stop-suffix scrubbing rather
+                // than by a paranoid system message.
                 "You are a professional translator. Render the user's text \
                  naturally and idiomatically in the target language — match \
                  the meaning, tone, and register a native reader would expect, \
@@ -247,6 +305,23 @@ impl EmbeddedLlmTranslator {
             .and_then(|v| v.as_u64())
             .map(|v| v as usize)
             .or(Some(512));
+        // Read sampling temperature + top-p. Ollama-compat key
+        // names (`temperature`, `top_p`) so a user.toml override
+        // shaped after the ollama.gemma4 block transfers cleanly.
+        // Default 0.4 / 0.95 matches the proven ollama.gemma4
+        // baseline; greedy stays available by setting
+        // `temperature = 0.0` for power users who want determinism
+        // (e.g. CI benches that diff outputs across builds).
+        let temperature = config
+            .get("temperature")
+            .and_then(|v| v.as_f64())
+            .map(|v| v as f32)
+            .unwrap_or(0.4);
+        let top_p = config
+            .get("top_p")
+            .and_then(|v| v.as_f64())
+            .map(|v| v as f32)
+            .unwrap_or(0.95);
         // Resolve chat template via the registry. Two layers:
         //   1. `chat_template` config override — power users can pin
         //      a template independent of the registered tier.
@@ -265,8 +340,7 @@ impl EmbeddedLlmTranslator {
             .or_else(|| {
                 let repo = config.get("repo").and_then(|v| v.as_str())?;
                 let filename = config.get("filename_remote").and_then(|v| v.as_str())?;
-                crate::model_registry::tier_by_coord(repo, filename)
-                    .map(|t| t.chat_template)
+                crate::model_registry::tier_by_coord(repo, filename).map(|t| t.chat_template)
             })
             .unwrap_or(crate::model_registry::ChatTemplate::ChatMl);
         // Resolve speculative-decoding drafter, if any. Two layers
@@ -313,6 +387,13 @@ impl EmbeddedLlmTranslator {
             model_path,
             system_prompt,
             max_predict_tokens,
+            temperature,
+            top_p,
+            // 0 = pure CPU. Pipeline rebuild flips this via
+            // `with_gpu_layers` based on the user's Performance
+            // settings; env var override happens later in the
+            // worker.
+            gpu_layers: 0,
             chat_template,
             drafter_path,
             drafter_n_draft,
@@ -320,6 +401,17 @@ impl EmbeddedLlmTranslator {
             #[cfg(feature = "embedded-llm")]
             engine: tokio::sync::Mutex::new(None),
         }
+    }
+
+    /// Override how many transformer layers the worker offloads
+    /// to the GPU. Called by `Pipeline::rebuild_providers` from
+    /// the settings' `performance.use_gpu_if_available` toggle so
+    /// flipping the UI control in Settings → Performance takes
+    /// effect on the next provider rebuild. See the field docs
+    /// for the precedence between this and `MOONLENS_GPU_LAYERS`.
+    pub fn with_gpu_layers(mut self, gpu_layers: u32) -> Self {
+        self.gpu_layers = gpu_layers;
+        self
     }
 
     /// Override the model path post-construction. The pipeline calls
@@ -343,6 +435,15 @@ impl EmbeddedLlmTranslator {
 
     pub fn model_path(&self) -> &Path {
         &self.model_path
+    }
+
+    /// Read-only accessor for the resolved GPU layer count. Used by
+    /// `Pipeline::embedded_handle` to invalidate its cache when
+    /// the user flips `performance.use_gpu_if_available` — the
+    /// model_path may not have changed but the engine needs to
+    /// reload onto the GPU (or back onto the CPU).
+    pub fn gpu_layers(&self) -> u32 {
+        self.gpu_layers
     }
 
     /// Best-effort presence check. Consulted by the settings UI to
@@ -523,6 +624,16 @@ struct InferenceRequest {
     /// Token cap for this request. Honors the per-call override
     /// (bench uses 64, production uses 512+).
     max_predict: usize,
+    /// Sampling temperature for this request. `0.0` = greedy
+    /// (deterministic, fastest); >0 = scaled sampling. Passed per
+    /// request so different call sites can override the
+    /// EmbeddedLlmTranslator's default (e.g. bench fixtures pin
+    /// `temperature = 0.0` for diff-stability, production Lens
+    /// uses the config's default of 0.4).
+    temperature: f32,
+    /// Top-p (nucleus) threshold for this request. Ignored when
+    /// `temperature == 0.0`.
+    top_p: f32,
     /// Optional per-token sink. `None` for non-streaming calls. The
     /// closure must be `Send` because it crosses the channel into
     /// the worker thread.
@@ -559,6 +670,7 @@ impl EngineWorkerHandle {
         model_path: PathBuf,
         drafter_path: Option<PathBuf>,
         drafter_n_draft: u32,
+        gpu_layers: u32,
         load_notifier: Option<EmbeddedLoadNotifier>,
     ) -> Result<Self, ProviderError> {
         use std::sync::mpsc;
@@ -575,6 +687,7 @@ impl EngineWorkerHandle {
                     model_path,
                     drafter_path,
                     drafter_n_draft,
+                    gpu_layers,
                     load_notifier,
                     ready_tx,
                     req_rx,
@@ -601,6 +714,8 @@ impl EngineWorkerHandle {
         &self,
         prompt: String,
         max_predict: usize,
+        temperature: f32,
+        top_p: f32,
         on_token: Option<Box<dyn FnMut(String) + Send>>,
     ) -> Result<String, ProviderError> {
         use tokio::sync::oneshot;
@@ -608,6 +723,8 @@ impl EngineWorkerHandle {
         let req = InferenceRequest {
             prompt,
             max_predict,
+            temperature,
+            top_p,
             on_token,
             response_tx: tx,
         };
@@ -616,12 +733,66 @@ impl EngineWorkerHandle {
             .map_err(|_| ProviderError::Other("embedded LLM worker shut down".into()))?;
         match rx.await {
             Ok(Ok(text)) => Ok(text),
-            Ok(Err(msg)) => Err(ProviderError::Other(format!("embedded LLM inference: {msg}"))),
+            Ok(Err(msg)) => Err(ProviderError::Other(format!(
+                "embedded LLM inference: {msg}"
+            ))),
             Err(_) => Err(ProviderError::Other(
                 "embedded LLM worker dropped response channel".into(),
             )),
         }
     }
+}
+
+/// Build a llama-cpp-2 sampler chain matching the requested
+/// `temperature` / `top_p`. Two regimes:
+///
+/// - **Greedy** (`temperature <= 0.0`): single `greedy()` link.
+///   Deterministic, fastest. Used by bench harnesses that need
+///   bit-for-bit identical outputs across runs.
+/// - **Temperature + top-p** (`temperature > 0.0`): nucleus
+///   filter, then temperature scaling, then `dist` to pick a
+///   token. Matches the Ollama `gemma4`/`qwen2.5` default
+///   sampling shape, which is what the user's pre-Phase-27
+///   experience trained their quality expectations on.
+///
+/// The `dist` sampler picks its RNG seed from the system clock by
+/// default in llama-cpp-2, so consecutive calls with the same
+/// inputs still produce slightly different outputs — this is
+/// intended for production translation where idiomatic variety
+/// is a feature; tests that need determinism should pass
+/// `temperature = 0.0`.
+#[cfg(feature = "embedded-llm")]
+fn build_sampler(temperature: f32, top_p: f32) -> llama_cpp_2::sampling::LlamaSampler {
+    use llama_cpp_2::sampling::LlamaSampler;
+    if temperature <= 0.0 {
+        return LlamaSampler::chain_simple([LlamaSampler::greedy()]);
+    }
+    // Repetition penalty guards against the "I I I I I I…" /
+    // "「e「e「e…" collapse mode Phase 27 D-fix eval surfaced on
+    // small models (llm-jp 1.8B, even Gemma 4 E2B) when paired
+    // with noisy OCR input and temperature > 0. Penalty values
+    // are the llama.cpp defaults from `common/sampling.cpp`:
+    //   penalty_last_n = 64    (look-back window)
+    //   repeat_penalty = 1.10  (multiplicative weight on tokens
+    //                           seen inside that window)
+    //   freq_penalty   = 0.0   (off — repeat_penalty alone)
+    //   presence_penalty = 0.0 (off)
+    // The penalty link sits BEFORE top_p / temp so the
+    // candidate set is already de-emphasised when nucleus
+    // filtering runs.
+    //
+    // `dist` takes a u32 RNG seed; llama-cpp-2 0.1.145 does NOT
+    // expose `LlamaSampler::DEFAULT_SEED`, so we pass the
+    // upstream llama.cpp sentinel value (LLAMA_DEFAULT_SEED =
+    // 0xFFFFFFFF), which the sampler interprets as "seed from
+    // system entropy" — same semantics as Ollama's default.
+    const LLAMA_DEFAULT_SEED: u32 = 0xFFFF_FFFF;
+    LlamaSampler::chain_simple([
+        LlamaSampler::penalties(64, 1.10, 0.0, 0.0),
+        LlamaSampler::top_p(top_p, 1),
+        LlamaSampler::temp(temperature),
+        LlamaSampler::dist(LLAMA_DEFAULT_SEED),
+    ])
 }
 
 /// Worker thread main. Owns the model + context for the lifetime of
@@ -633,6 +804,7 @@ fn worker_main(
     model_path: PathBuf,
     drafter_path: Option<PathBuf>,
     drafter_n_draft: u32,
+    gpu_layers_setting: u32,
     load_notifier: Option<EmbeddedLoadNotifier>,
     ready_tx: tokio::sync::oneshot::Sender<Result<(), String>>,
     req_rx: std::sync::mpsc::Receiver<InferenceRequest>,
@@ -671,16 +843,20 @@ fn worker_main(
         }
     };
 
-    // GPU offload (opt-in). Default 0 = pure CPU (the product
-    // spec is "fast on CPU"). When built with the `embedded-llm-vulkan`
-    // or `embedded-llm-cuda` feature, set `MOONLENS_GPU_LAYERS=N`
-    // (or 99 for "all layers") to offload tensors to the GPU.
-    // Reads at worker spawn time; per-tier override is via the
-    // settings UI / config rather than per-request.
+    // GPU offload resolution (highest precedence first):
+    //   1. `MOONLENS_GPU_LAYERS` env var — debug / support override.
+    //   2. `gpu_layers` argument threaded from `EmbeddedLlmTranslator`
+    //      (`Settings.performance.use_gpu_if_available` reaches us
+    //      via `with_gpu_layers`).
+    //   3. Default `0` (pure CPU) — matches the "fast on CPU" spec.
+    //
+    // The env-var override survives because power users and the
+    // bench harness rely on it; the settings path is what fixes
+    // the UI toggle that previously had no runtime effect.
     let gpu_layers: u32 = std::env::var("MOONLENS_GPU_LAYERS")
         .ok()
         .and_then(|v| v.parse().ok())
-        .unwrap_or(0);
+        .unwrap_or(gpu_layers_setting);
     let model_params = LlamaModelParams::default().with_n_gpu_layers(gpu_layers);
     let model_params = std::pin::Pin::new(&model_params);
     let model = match LlamaModel::load_from_file(backend, &model_path, &model_params) {
@@ -730,7 +906,14 @@ fn worker_main(
         }
     };
 
-    let mut sampler = LlamaSampler::chain_simple([LlamaSampler::greedy()]);
+    // Sampler is REBUILT per request from `InferenceRequest`'s
+    // `temperature` + `top_p`. The previous design pinned a single
+    // greedy sampler at startup, which silently ignored the
+    // config's `temperature` value and made the embedded path 4x
+    // more wooden than the Ollama path that the user benchmarked
+    // against (Phase 27 Lens eval finding). Initial value is
+    // greedy — replaced before the first inference call below.
+    let mut sampler = build_sampler(0.0, 0.95);
 
     // Optional speculative-decoding drafter. Loaded once at worker
     // startup; spec_decode_inference uses (model, ctx) as the
@@ -775,9 +958,8 @@ fn worker_main(
             // for the full inference, which it does (the tuple is
             // a local on the worker thread, dropped only on
             // worker exit).
-            let drafter_static: &'static LlamaModel = unsafe {
-                std::mem::transmute::<&LlamaModel, &'static LlamaModel>(&drafter_model)
-            };
+            let drafter_static: &'static LlamaModel =
+                unsafe { std::mem::transmute::<&LlamaModel, &'static LlamaModel>(&drafter_model) };
             let drafter_ctx = match drafter_static.new_context(backend, dctx_params) {
                 Ok(c) => c,
                 Err(e) => {
@@ -859,10 +1041,14 @@ fn worker_main(
     // channel is closed (last handle dropped). When the channel
     // closes we exit, dropping ctx + model + sampler in that order.
     while let Ok(req) = req_rx.recv() {
-        // Reset KV cache + sampler so the new request starts fresh
-        // without re-paying the per-context-creation cost.
+        // Reset KV cache and rebuild the sampler per request so
+        // `temperature` / `top_p` from the InferenceRequest take
+        // effect. Rebuild rather than reset+reconfigure because
+        // llama-cpp-2's sampler chain has no public mutator for
+        // its inner sampler list; dropping and recreating is the
+        // documented way to swap sampling strategies.
         ctx.clear_kv_cache();
-        sampler.reset();
+        sampler = build_sampler(req.temperature, req.top_p);
         let result = if let Some((drafter_model, drafter_ctx)) = drafter_pair.as_mut() {
             drafter_ctx.clear_kv_cache();
             run_inference_in_context_spec(
@@ -893,6 +1079,184 @@ fn worker_main(
 
 /// Per-request inference body. Runs inside the worker thread, given
 /// a borrowed `LlamaContext` that survives across requests.
+/// Chat-template stop markers we treat as terminal regardless of
+/// whether the model's GGUF tags them as EOG. mmnga's llm-jp 3.x /
+/// 3.1 mirrors ship ChatML's `<|im_end|>` token but do NOT register
+/// it as EOG, so generation falls through `is_eog_token` and runs
+/// to `max_predict`, padding the translation with trailing garbage
+/// (Phase 25 / 27 evidence — `Hello, world名無し<|im_end|>` outputs).
+/// Detecting the literal suffix keeps the runtime termination-aware
+/// without needing per-model GGUF metadata patches. The list covers
+/// every chat template family currently in `model_registry::TIERS`.
+///
+/// Phase 27 v3 evidence: llm-jp 3.1 emits the ChatML terminator
+/// asymmetrically — well-formed `<|im_end|>` for `en→ja` outputs
+/// but `|im_end|>` (no leading `<`) for `ja→en` outputs. The bare-
+/// form variant must also be matched. Risk: a translation of
+/// literal ChatML documentation that ends with `|im_end|>` as
+/// content would be truncated. Acceptable trade-off for natural-
+/// language translation; the special-form variants are vanishingly
+/// rare in user-supplied source text.
+/// Inference-stop suffixes recognised by the runtime AND by the
+/// pivot translator wrapper when cleaning the intermediate-stage
+/// output before feeding it into the second stage. Sharing this
+/// list across both call sites is what keeps the "Step 1 emits
+/// `|im_end|>` and Step 2 dutifully translates it" bug fixed —
+/// the pivot wrapper's cleanup MUST recognise the same suffix
+/// shapes the runtime is willing to emit, otherwise the second
+/// stage gets a contaminated prompt.
+///
+/// Suffix shapes:
+/// - `<|im_end|>` — canonical ChatML EOS (Qwen, llm-jp 3 well-
+///   formed output).
+/// - `|im_end|>` — bare-form leak observed from JA-Std+ on
+///   ja→en (Phase 27); the model occasionally emits the EOS
+///   minus its leading `<`. Kept as a separate entry so the
+///   matcher catches it without resorting to `ends_with(any_of)`
+///   in a loop.
+/// - `<end_of_turn>` — Gemma family EOS (canonical form).
+/// - `end_of_turn` — bare-form leak observed from Gemma 4 E4B
+///   on long-paragraph OCR input (Phase 27 D-fix eval). When
+///   the tokeniser fails to emit the EOS as a single special
+///   token the model spills the marker as text, mirroring the
+///   llm-jp 3.1 `|im_end|>` bug; without catching this the
+///   model proceeds to translate the few-shot examples
+///   themselves verbatim into the output (the conversation
+///   pattern from the prompt teaches it to continue with the
+///   next `<start_of_turn>user\n…` block).
+/// - `<end_of_turn` — partial leak (closing `>` missing). Same
+///   defensive shape as the angle-bracket-stripped variants.
+pub const STOP_SUFFIXES: &[&str] = &[
+    "<|im_end|>",
+    "|im_end|>",
+    "<end_of_turn>",
+    "end_of_turn",
+    "<end_of_turn",
+];
+
+/// If `aggregated` ends with any [`STOP_SUFFIXES`] entry, strip it
+/// in place and return `true`. Caller breaks the generation loop.
+///
+/// Public so the pivot translator wrapper can run the same
+/// cleanup on Stage-1 output before feeding it to Stage 2.
+pub fn check_and_strip_stop_suffix(aggregated: &mut String) -> bool {
+    for stop in STOP_SUFFIXES {
+        if aggregated.ends_with(stop) {
+            let new_len = aggregated.len() - stop.len();
+            aggregated.truncate(new_len);
+            return true;
+        }
+    }
+    false
+}
+
+/// Lookahead size for the streaming-emit deferral below. Must be
+/// at least as large as the longest entry in `STOP_SUFFIXES` so a
+/// stop marker emitted across multiple tokens can be caught
+/// before any of its bytes reach the chunk sink. The current
+/// longest is `<end_of_turn>` (13 bytes); 16 leaves a small margin
+/// for a future suffix without bumping the constant.
+const STOP_SUFFIX_LOOKAHEAD: usize = 16;
+
+/// Find the largest byte offset `<= max` that lies on a UTF-8 char
+/// boundary in `s`. Equivalent to the unstable `floor_char_boundary`
+/// in std. Used by the streaming emitter to avoid splitting a
+/// multi-byte codepoint when it slices the lookahead window.
+fn floor_char_boundary(s: &str, max: usize) -> usize {
+    if max >= s.len() {
+        return s.len();
+    }
+    let mut i = max;
+    while i > 0 && !s.is_char_boundary(i) {
+        i -= 1;
+    }
+    i
+}
+
+/// Streaming-safe flush: emit any unemitted aggregated bytes
+/// outside the lookahead window via `on_token`. Holds back the
+/// last `STOP_SUFFIX_LOOKAHEAD` bytes so that, if a future token
+/// reveals those bytes were the leading edge of a stop suffix,
+/// the caller can drop them by simply NOT flushing the buffered
+/// tail before breaking.
+///
+/// Returns the new emit cursor (byte offset into `aggregated` past
+/// the last byte emitted).
+fn flush_streaming_safe(
+    aggregated: &str,
+    emit_cursor: usize,
+    on_token: Option<&mut Box<dyn FnMut(String) + Send>>,
+) -> usize {
+    let safe_end = aggregated.len().saturating_sub(STOP_SUFFIX_LOOKAHEAD);
+    let safe_end = floor_char_boundary(aggregated, safe_end);
+    if safe_end <= emit_cursor {
+        return emit_cursor;
+    }
+    if let Some(cb) = on_token {
+        cb(aggregated[emit_cursor..safe_end].to_string());
+    }
+    safe_end
+}
+
+/// Final flush after the generation loop exits. Emits everything
+/// still buffered in the lookahead window.
+///
+/// Two invocation cases:
+/// 1. **Stop suffix hit**: `check_and_strip_stop_suffix` already
+///    removed the suffix bytes from `aggregated`. The held-back
+///    tail `[emit_cursor..aggregated.len()]` is now the CLEAN
+///    prefix bytes that happened to sit inside the lookahead
+///    window when the suffix landed. They must be emitted —
+///    otherwise the last ~16 bytes of every translation that
+///    ended with a stop suffix would silently disappear.
+/// 2. **Natural end** (EOG / `max_predict`): no strip happened.
+///    The tail might end with a *partial* stop suffix prefix
+///    (e.g. `"<end_of_tur"` if the model timed out one token
+///    short of completing the marker). To avoid leaking that,
+///    this function also checks whether the tail bytes are a
+///    proper prefix of any `STOP_SUFFIXES` entry and trims them
+///    if so.
+fn flush_streaming_final(
+    aggregated: &str,
+    emit_cursor: usize,
+    on_token: Option<&mut Box<dyn FnMut(String) + Send>>,
+) {
+    if aggregated.len() <= emit_cursor {
+        return;
+    }
+    // Conservative tail trim: if the trailing run is a prefix of
+    // any known stop suffix, drop it. Two-pass scan because the
+    // longest matching prefix wins (otherwise stripping the short
+    // prefix would leave longer-suffix bytes around).
+    let mut safe_end = aggregated.len();
+    for stop in STOP_SUFFIXES {
+        // For each progressively-shorter prefix of `stop`, check
+        // if `aggregated` ends with it. Pick the longest match.
+        let mut take = stop.len().min(aggregated.len() - emit_cursor);
+        while take > 0 {
+            // Only consider tails that lie on a char boundary.
+            let cand = aggregated.len() - take;
+            if cand >= emit_cursor
+                && aggregated.is_char_boundary(cand)
+                && stop.is_char_boundary(take)
+                && &aggregated.as_bytes()[cand..] == &stop.as_bytes()[..take]
+            {
+                if cand < safe_end {
+                    safe_end = cand;
+                }
+                break;
+            }
+            take -= 1;
+        }
+    }
+    if safe_end <= emit_cursor {
+        return;
+    }
+    if let Some(cb) = on_token {
+        cb(aggregated[emit_cursor..safe_end].to_string());
+    }
+}
+
 #[cfg(feature = "embedded-llm")]
 fn run_inference_in_context(
     model: &llama_cpp_2::model::LlamaModel,
@@ -929,6 +1293,13 @@ fn run_inference_in_context(
     let mut produced = 0usize;
 
     let infer_started = std::time::Instant::now();
+    // Streaming-safe emission: buffer the last STOP_SUFFIX_LOOKAHEAD
+    // bytes so a stop marker emitted across multiple tokens is
+    // caught before any of its bytes are forwarded to the sink.
+    // Without this, Phase 27 Lens eval saw `<end_of_turn>` leak
+    // through to the rendered translation card on Gemma 4 outputs.
+    let mut emit_cursor: usize = 0;
+    let mut stop_hit = false;
     while produced < max_predict {
         let token = sampler.sample(ctx, batch.n_tokens() - 1);
         sampler.accept(token);
@@ -948,10 +1319,17 @@ fn run_inference_in_context(
             .unwrap_or_default();
         if !piece.is_empty() {
             aggregated.push_str(&piece);
-            if let Some(cb) = on_token.as_mut() {
-                cb(piece);
-            }
         }
+        // Soft stop: catch chat-template terminators that the GGUF
+        // failed to tag as EOG (mmnga llm-jp 3.1 mirror does this
+        // for `<|im_end|>` — see STOP_SUFFIXES comment). MUST run
+        // before flushing the streaming sink so any bytes belonging
+        // to the matched suffix never reach the consumer.
+        if check_and_strip_stop_suffix(&mut aggregated) {
+            stop_hit = true;
+            break;
+        }
+        emit_cursor = flush_streaming_safe(&aggregated, emit_cursor, on_token.as_mut());
 
         batch.clear();
         batch
@@ -962,6 +1340,16 @@ fn run_inference_in_context(
         n_cur += 1;
         produced += 1;
     }
+    // Drain the lookahead window in BOTH exit cases:
+    //   - Stop-suffix hit: the strip already removed the suffix
+    //     bytes from `aggregated`; everything between `emit_cursor`
+    //     and the (now-shorter) `aggregated.len()` is clean prefix
+    //     content that was merely held back by the lookahead.
+    //   - Natural end (EOG, max_predict): the tail might contain
+    //     a partial stop-suffix prefix; `flush_streaming_final`
+    //     trims it defensively.
+    let _ = stop_hit; // see comment above — both branches flush.
+    flush_streaming_final(&aggregated, emit_cursor, on_token.as_mut());
     let elapsed_ms = infer_started.elapsed().as_millis() as u64;
     let tps = if elapsed_ms > 0 {
         (produced as f64) / (elapsed_ms as f64) * 1000.0
@@ -1069,10 +1457,23 @@ fn run_inference_in_context_spec(
     let mut n_target_pos = i32::try_from(n_prompt).map_err(|e| format!("n_pos i32: {e}"))?;
     let mut n_drafter_pos = n_target_pos;
     let mut produced = 0usize;
+    // Lookahead-deferred streaming emission. See the autoregressive
+    // path (`run_inference_in_context`) for the rationale: stop
+    // suffixes that span multiple tokens MUST be caught before any
+    // of their bytes reach the chunk sink, so we buffer the last
+    // STOP_SUFFIX_LOOKAHEAD bytes of `aggregated` and only flush
+    // safely-past-the-window bytes per token.
+    let mut emit_cursor: usize = 0;
+    let mut suffix_hit = false;
 
     // Helper: emit a token (decode, push, sink callback). Returns
-    // true if we should stop (EOG or budget exhausted).
+    // true if we should stop (EOG, budget, or stop-suffix hit).
+    // `suffix_hit` outer flag is set when the cause is a stop
+    // suffix — callers MUST NOT do a final flush in that case
+    // because the held-back tail IS (or led up to) the suffix.
     let mut emit = |aggregated: &mut String,
+                    emit_cursor: &mut usize,
+                    suffix_hit: &mut bool,
                     produced: &mut usize,
                     decoder: &mut encoding_rs::Decoder,
                     on_token: &mut Option<Box<dyn FnMut(String) + Send>>,
@@ -1089,10 +1490,16 @@ fn run_inference_in_context_spec(
             .unwrap_or_default();
         if !piece.is_empty() {
             aggregated.push_str(&piece);
-            if let Some(cb) = on_token.as_mut() {
-                cb(piece);
-            }
         }
+        // Soft stop: see autoregressive path for rationale
+        // (mmnga llm-jp 3.1 mirror omits `<|im_end|>` EOG tag).
+        // Run BEFORE the streaming flush so suffix bytes never
+        // reach the sink.
+        if check_and_strip_stop_suffix(aggregated) {
+            *suffix_hit = true;
+            return Ok(true);
+        }
+        *emit_cursor = flush_streaming_safe(aggregated, *emit_cursor, on_token.as_mut());
         *produced += 1;
         Ok(*produced >= max_predict)
     };
@@ -1102,11 +1509,14 @@ fn run_inference_in_context_spec(
     sampler.accept(first);
     if emit(
         &mut aggregated,
+        &mut emit_cursor,
+        &mut suffix_hit,
         &mut produced,
         &mut decoder,
         &mut on_token,
         first,
     )? {
+        flush_streaming_final(&aggregated, emit_cursor, on_token.as_mut());
         return Ok(aggregated);
     }
     // Feed `first` into both contexts so their KV caches stay aligned.
@@ -1203,6 +1613,8 @@ fn run_inference_in_context_spec(
                 // Accept drafts[i].
                 if emit(
                     &mut aggregated,
+                    &mut emit_cursor,
+                    &mut suffix_hit,
                     &mut produced,
                     &mut decoder,
                     &mut on_token,
@@ -1213,7 +1625,14 @@ fn run_inference_in_context_spec(
                     n_target_pos += n_accepted_this_round as i32;
                     n_drafter_pos = drafter_start + n_accepted_this_round as i32;
                     total_accepted += n_accepted_this_round;
-                    log_spec_perf(infer_started, produced, total_drafted, total_accepted, n_prompt);
+                    log_spec_perf(
+                        infer_started,
+                        produced,
+                        total_drafted,
+                        total_accepted,
+                        n_prompt,
+                    );
+                    flush_streaming_final(&aggregated, emit_cursor, on_token.as_mut());
                     return Ok(aggregated);
                 }
                 sampler.accept(drafts[i]);
@@ -1222,6 +1641,8 @@ fn run_inference_in_context_spec(
                 // Mismatch: emit target's correction instead.
                 if emit(
                     &mut aggregated,
+                    &mut emit_cursor,
+                    &mut suffix_hit,
                     &mut produced,
                     &mut decoder,
                     &mut on_token,
@@ -1233,7 +1654,14 @@ fn run_inference_in_context_spec(
                     n_accepted_this_round += 1;
                     // Don't update positions yet — we'll roll back.
                     total_accepted += n_accepted_this_round;
-                    log_spec_perf(infer_started, produced, total_drafted, total_accepted, n_prompt);
+                    log_spec_perf(
+                        infer_started,
+                        produced,
+                        total_drafted,
+                        total_accepted,
+                        n_prompt,
+                    );
+                    flush_streaming_final(&aggregated, emit_cursor, on_token.as_mut());
                     return Ok(aggregated);
                 }
                 sampler.accept(target_pred);
@@ -1306,19 +1734,41 @@ fn run_inference_in_context_spec(
             // return path sees consistent state.
             if emit(
                 &mut aggregated,
+                &mut emit_cursor,
+                &mut suffix_hit,
                 &mut produced,
                 &mut decoder,
                 &mut on_token,
                 bonus,
             )? {
                 sampler.accept(bonus);
-                log_spec_perf(infer_started, produced, total_drafted, total_accepted, n_prompt);
+                log_spec_perf(
+                    infer_started,
+                    produced,
+                    total_drafted,
+                    total_accepted,
+                    n_prompt,
+                );
+                flush_streaming_final(&aggregated, emit_cursor, on_token.as_mut());
                 return Ok(aggregated);
             }
             sampler.accept(bonus);
         }
     }
-    log_spec_perf(infer_started, produced, total_drafted, total_accepted, n_prompt);
+    log_spec_perf(
+        infer_started,
+        produced,
+        total_drafted,
+        total_accepted,
+        n_prompt,
+    );
+    // Loop exited via `produced >= max_predict` (no stop suffix
+    // hit). Drain the lookahead window. The `if !suffix_hit` guard
+    // is unnecessary here because reaching this line means no
+    // early-return fired and therefore no suffix was detected, but
+    // mirroring the autoregressive path's shape keeps the two
+    // implementations diff-friendly.
+    flush_streaming_final(&aggregated, emit_cursor, on_token.as_mut());
     Ok(aggregated)
 }
 
@@ -1371,17 +1821,27 @@ fn build_user_prompt(input: &TaskInput) -> Result<String, ProviderError> {
             source_language,
             target_language,
         } => {
-            let from_clause = if source_language.trim().is_empty()
-                || source_language.eq_ignore_ascii_case("auto")
-            {
-                String::new()
-            } else {
-                format!(" from {source_language}")
-            };
+            // Minimal user-prompt shape: one short instruction
+            // header followed by the source text. The previous
+            // template wrapped each turn in "Target language: ja.
+            // Rewrite the following from en naturally in ja:\n\n…"
+            // — verbose boilerplate that consumed prompt eval
+            // budget AND, per the Phase 27 Lens eval, encouraged
+            // smaller models (llm-jp 3.1 1.8B) to translate the
+            // INSTRUCTION rather than the content (a "translate
+            // this" turn meta-leaks into JA outputs as
+            // "翻訳してください" / "次の文を訳してください" /
+            // similar). Keeping the wrapper to one short line
+            // mirrors what `ollama.gemma4` ships with —
+            // production Ollama Lens use confirmed this shape
+            // produces idiomatic output. `source_language` is
+            // honoured when provided but elided in the prompt for
+            // `auto` because spelling it out as
+            // "from auto" reads like garbage to the model.
+            let _ = source_language; // see comment above — kept on the signature for upstream callers
             Ok(format!(
-                "Target language: {tgt}. Rewrite the following{from} naturally in {tgt}:\n\n{src}",
+                "Translate the following text into {tgt}:\n\n{src}",
                 tgt = target_language,
-                from = from_clause,
                 src = text,
             ))
         }
@@ -1393,9 +1853,105 @@ fn build_user_prompt(input: &TaskInput) -> Result<String, ProviderError> {
     }
 }
 
-/// Render the (system + user) → final prompt for the model's chat
-/// template family. We render by hand instead of using the GGUF's
-/// embedded Jinja so:
+/// Build the few-shot example turns to prepend to the live user
+/// turn for translation tasks. Small Qwen 3.5 variants (0.8B / 2B)
+/// have leaked Chinese characters and English fragments into ja
+/// outputs in our v23 bench despite the system prompt forbidding
+/// it — concrete demonstrations of the desired (input, output)
+/// shape anchor the model on the target language far more
+/// reliably than instructions alone. The examples mirror the live
+/// user-prompt format exactly (`build_user_prompt`) so the model
+/// sees a homogeneous request shape across the few-shot block and
+/// the actual query. Returns `Vec::new()` for target languages we
+/// don't currently provide demos for — those tiers fall back to
+/// the system-prompt-only behaviour (no regression).
+#[cfg(feature = "embedded-llm")]
+fn build_translation_few_shots(target_language: &str) -> Vec<(String, String)> {
+    let target_lower = target_language.trim().to_lowercase();
+    // Each tuple: (source_text, translated_text). Examples are
+    // delivered as bare source / target pairs (no "Translate this:"
+    // boilerplate) because the runtime user template below is
+    // already minimal — wrapping examples with verbose instructions
+    // would teach the model to expect that boilerplate around
+    // every live turn, then drift when the runtime omits it.
+    //
+    // Three examples per direction, ported from the proven
+    // `ollama.gemma4` defaults in default.toml. They cover:
+    //   - Idiomatic counter words (6さじ for scoopful portions,
+    //     5枚 for flat slices, 3つ for loose items).
+    //   - Omitted subjects ("三つの赤い袋に詰めてくれるでしょう"
+    //     for "scoop these things into three red bags").
+    //   - Direct noun translation (snow peas → スナップエンドウ,
+    //     toy frog → カエルのおもちゃ).
+    // The Phase 27 Lens eval showed the previous 2-anchor set
+    // ("Hello world / Performance varies") was too thin to keep
+    // smaller models (llm-jp 3.1 1.8B) idiomatic on paragraph-
+    // length OCR input — they reverted to wooden, literal output
+    // and invented words (e.g. `cover to cover`→`コヴォ`).
+    let examples: &[(&str, &str)] = match target_lower.as_str() {
+        "ja" | "japanese" | "jp" => &[
+            (
+                "Please call Stella. Ask her to bring these things with her from the store: \
+                 Six spoons of fresh snow peas, five thick slabs of blue cheese, and \
+                 maybe a snack for her brother Bob.",
+                "ステラに電話してください。これらのものをお店で買ってきてもらうように頼んでください。\
+                 新鮮なスナップエンドウを6さじ、厚切りのブルーチーズを5枚、\
+                 それから弟のボブのおやつも。",
+            ),
+            (
+                "We also need a small plastic snake and a big toy frog for the kids.",
+                "子供たちのために、小さなプラスチック製のヘビと大きなカエルのおもちゃも必要です。",
+            ),
+            (
+                "She can scoop these things into three red bags, and we will go meet her \
+                 Wednesday at the train station.",
+                "彼女はこれらを赤い袋3つに詰めてくれるでしょう。水曜日に駅で待ち合わせましょう。",
+            ),
+        ],
+        "en" | "english" => &[
+            (
+                "ステラに電話してください。これらのものをお店で買ってきてもらうように頼んでください。\
+                 新鮮なスナップエンドウを6さじ、厚切りのブルーチーズを5枚、\
+                 それから弟のボブのおやつも。",
+                "Please call Stella. Ask her to bring these things with her from the store: \
+                 Six spoons of fresh snow peas, five thick slabs of blue cheese, and \
+                 maybe a snack for her brother Bob.",
+            ),
+            (
+                "子供たちのために、小さなプラスチック製のヘビと大きなカエルのおもちゃも必要です。",
+                "We also need a small plastic snake and a big toy frog for the kids.",
+            ),
+            (
+                "彼女はこれらを赤い袋3つに詰めてくれるでしょう。水曜日に駅で待ち合わせましょう。",
+                "She can scoop these things into three red bags, and we will go meet her \
+                 Wednesday at the train station.",
+            ),
+        ],
+        _ => &[],
+    };
+    examples
+        .iter()
+        .map(|(src_text, tgt_text)| ((*src_text).to_string(), (*tgt_text).to_string()))
+        .collect()
+}
+
+/// Select the few-shot block for a given task input. Only
+/// translation tasks get demonstrations — explain/summarize use
+/// the system prompt alone (their output is open-ended enough
+/// that fixed examples would bias the model in unhelpful ways).
+#[cfg(feature = "embedded-llm")]
+fn build_few_shots(input: &TaskInput) -> Vec<(String, String)> {
+    match input {
+        TaskInput::Translate {
+            target_language, ..
+        } => build_translation_few_shots(target_language),
+        _ => Vec::new(),
+    }
+}
+
+/// Render the (system + few-shots + user) → final prompt for the
+/// model's chat template family. We render by hand instead of
+/// using the GGUF's embedded Jinja so:
 ///   1. The exact shape is independent of any per-build template
 ///      bug in the GGUF metadata (we have hit one of those before
 ///      with split-file Qwen 7B).
@@ -1406,63 +1962,103 @@ fn build_user_prompt(input: &TaskInput) -> Result<String, ProviderError> {
 fn render_prompt(
     template: crate::model_registry::ChatTemplate,
     system: &str,
+    few_shots: &[(String, String)],
     user: &str,
 ) -> String {
     use crate::model_registry::ChatTemplate;
     match template {
-        ChatTemplate::ChatMl => render_chatml(system, user),
-        ChatTemplate::ChatMlQwen3NoThink => render_chatml_qwen3_no_think(system, user),
-        ChatTemplate::Gemma => render_gemma(system, user),
+        ChatTemplate::ChatMl => render_chatml(system, few_shots, user),
+        ChatTemplate::ChatMlQwen3NoThink => render_chatml_qwen3_no_think(system, few_shots, user),
+        ChatTemplate::Gemma => render_gemma(system, few_shots, user),
     }
 }
 
 /// ChatML — used by Qwen 2.5 / Qwen 3 / SmolLM 2 / many other
 /// open-weight families. Format matches the upstream Qwen release
 /// notes: `<|im_start|>` / `<|im_end|>` markers wrapping each turn,
-/// `<|im_start|>assistant\n` to prime the response.
+/// `<|im_start|>assistant\n` to prime the response. Few-shot turns
+/// (if any) are inserted between the system block and the live
+/// user turn as fully-completed assistant responses.
 #[cfg(feature = "embedded-llm")]
-fn render_chatml(system: &str, user: &str) -> String {
-    format!(
-        "<|im_start|>system\n{system}<|im_end|>\n\
-         <|im_start|>user\n{user}<|im_end|>\n\
-         <|im_start|>assistant\n",
-    )
+fn render_chatml(system: &str, few_shots: &[(String, String)], user: &str) -> String {
+    let mut out = format!("<|im_start|>system\n{system}<|im_end|>\n");
+    for (u, a) in few_shots {
+        out.push_str(&format!(
+            "<|im_start|>user\n{u}<|im_end|>\n<|im_start|>assistant\n{a}<|im_end|>\n"
+        ));
+    }
+    out.push_str(&format!(
+        "<|im_start|>user\n{user}<|im_end|>\n<|im_start|>assistant\n"
+    ));
+    out
 }
 
 /// ChatML for Qwen 3 with reasoning mode disabled. Identical to
-/// `render_chatml` except the assistant primer pre-emits empty
+/// `render_chatml` except every assistant turn — both the
+/// completed few-shot demos and the live primer — pre-emits empty
 /// `<think></think>` tags. Qwen 3 ships with deliberative reasoning
 /// on by default — without this primer the model spends the entire
 /// 64-token bench budget thinking out loud and never reaches the
 /// translation. See HF Qwen 3 release notes for the
 /// `enable_thinking=False` flag (this is the manual-render
 /// equivalent: pre-filling the think turn with empty content tells
-/// the model "no thinking required, proceed to answer").
+/// the model "no thinking required, proceed to answer"). The same
+/// empty-think shape on few-shot turns keeps the demonstration
+/// consistent with what we ask of the live turn.
 #[cfg(feature = "embedded-llm")]
-fn render_chatml_qwen3_no_think(system: &str, user: &str) -> String {
-    format!(
-        "<|im_start|>system\n{system}<|im_end|>\n\
-         <|im_start|>user\n{user}<|im_end|>\n\
-         <|im_start|>assistant\n<think>\n\n</think>\n\n",
-    )
+fn render_chatml_qwen3_no_think(
+    system: &str,
+    few_shots: &[(String, String)],
+    user: &str,
+) -> String {
+    let mut out = format!("<|im_start|>system\n{system}<|im_end|>\n");
+    for (u, a) in few_shots {
+        out.push_str(&format!(
+            "<|im_start|>user\n{u}<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n{a}<|im_end|>\n"
+        ));
+    }
+    out.push_str(&format!(
+        "<|im_start|>user\n{user}<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n"
+    ));
+    out
 }
 
 /// Gemma — used by Gemma 2 / 3 / 4 (incl. nano e2b/e4b).
 /// `<start_of_turn>role\ncontent<end_of_turn>` markers, no system
 /// role on the wire. The Gemma chat template inlines the system
 /// prompt into the first user turn (separated by a blank line) and
-/// primes the response with `<start_of_turn>model\n`.
+/// primes the response with `<start_of_turn>model\n`. Few-shot
+/// turns piggy-back on the same structure: the first user turn
+/// (which carries the merged system prefix) gets the first
+/// demonstration's user content; subsequent demos and the live
+/// user turn follow as plain user/model pairs.
 #[cfg(feature = "embedded-llm")]
-fn render_gemma(system: &str, user: &str) -> String {
-    let user_block = if system.trim().is_empty() {
-        user.to_string()
+fn render_gemma(system: &str, few_shots: &[(String, String)], user: &str) -> String {
+    // The first user-side payload (the one that inherits the
+    // system prefix) is the first few-shot user prompt when we
+    // have demonstrations, otherwise the live user prompt.
+    let first_user_payload = few_shots.first().map(|(u, _)| u.as_str()).unwrap_or(user);
+    let first_user_block = if system.trim().is_empty() {
+        first_user_payload.to_string()
     } else {
-        format!("{system}\n\n{user}")
+        format!("{system}\n\n{first_user_payload}")
     };
-    format!(
-        "<start_of_turn>user\n{user_block}<end_of_turn>\n\
-         <start_of_turn>model\n",
-    )
+    let mut out = format!("<start_of_turn>user\n{first_user_block}<end_of_turn>\n");
+
+    if let Some((_, first_a)) = few_shots.first() {
+        out.push_str(&format!("<start_of_turn>model\n{first_a}<end_of_turn>\n"));
+        for (u, a) in &few_shots[1..] {
+            out.push_str(&format!(
+                "<start_of_turn>user\n{u}<end_of_turn>\n<start_of_turn>model\n{a}<end_of_turn>\n"
+            ));
+        }
+        out.push_str(&format!(
+            "<start_of_turn>user\n{user}<end_of_turn>\n<start_of_turn>model\n"
+        ));
+    } else {
+        out.push_str("<start_of_turn>model\n");
+    }
+    out
 }
 
 /// Resolve (or lazily spawn) the per-translator worker thread that
@@ -1503,6 +2099,7 @@ async fn ensure_engine(
         provider.model_path.clone(),
         drafter_path,
         provider.drafter_n_draft,
+        provider.gpu_layers,
         provider.load_notifier.clone(),
     )
     .await?;
@@ -1538,9 +2135,23 @@ async fn run_inference(
 ) -> Result<TaskOutput, ProviderError> {
     let worker = ensure_engine(provider).await?;
     let user = build_user_prompt(&input)?;
-    let prompt = render_prompt(provider.chat_template, &provider.system_prompt, &user);
+    let few_shots = build_few_shots(&input);
+    let prompt = render_prompt(
+        provider.chat_template,
+        &provider.system_prompt,
+        &few_shots,
+        &user,
+    );
     let max_predict = provider.max_predict_tokens.unwrap_or(512);
-    let aggregated = worker.submit(prompt, max_predict, None).await?;
+    let aggregated = worker
+        .submit(
+            prompt,
+            max_predict,
+            provider.temperature,
+            provider.top_p,
+            None,
+        )
+        .await?;
     Ok(TaskOutput::Text(aggregated))
 }
 
@@ -1552,7 +2163,13 @@ async fn run_inference_streaming(
 ) -> Result<TaskOutput, ProviderError> {
     let worker = ensure_engine(provider).await?;
     let user = build_user_prompt(&input)?;
-    let prompt = render_prompt(provider.chat_template, &provider.system_prompt, &user);
+    let few_shots = build_few_shots(&input);
+    let prompt = render_prompt(
+        provider.chat_template,
+        &provider.system_prompt,
+        &few_shots,
+        &user,
+    );
     let max_predict = provider.max_predict_tokens.unwrap_or(512);
 
     // Bridge the worker's per-token callback into the async sink.
@@ -1563,7 +2180,15 @@ async fn run_inference_streaming(
     let on_token: Box<dyn FnMut(String) + Send> = Box::new(move |piece: String| {
         sink_arc(piece, false);
     });
-    let aggregated = worker.submit(prompt, max_predict, Some(on_token)).await?;
+    let aggregated = worker
+        .submit(
+            prompt,
+            max_predict,
+            provider.temperature,
+            provider.top_p,
+            Some(on_token),
+        )
+        .await?;
     sink(String::new(), true);
     Ok(TaskOutput::Text(aggregated))
 }
@@ -1680,31 +2305,49 @@ mod tests {
     #[cfg(feature = "embedded-llm")]
     #[test]
     fn build_user_prompt_translate_includes_target_language_and_text() {
+        // The Ollama-aligned shape: short header + source text on a
+        // new line. Phase 27 Lens eval surfaced that the previous
+        // verbose template ("Target language: ja. Rewrite the
+        // following from en naturally in ja:\n\n…") encouraged
+        // smaller models to translate the instruction itself.
         let prompt = build_user_prompt(&TaskInput::Translate {
             text: "Hello".into(),
             source_language: "en".into(),
             target_language: "ja".into(),
         })
         .unwrap();
-        assert!(prompt.contains("Target language: ja"), "got: {prompt}");
-        assert!(prompt.contains("from en"), "got: {prompt}");
+        assert!(
+            prompt.starts_with("Translate the following text into ja:"),
+            "got: {prompt}"
+        );
         assert!(prompt.ends_with("Hello"), "got: {prompt}");
     }
 
     #[cfg(feature = "embedded-llm")]
     #[test]
-    fn build_user_prompt_translate_omits_from_clause_when_auto() {
-        // Source-language=auto / empty must NOT inject "from auto"
-        // into the rendered prompt — it would steer the model into
-        // Latin-script output even when the source is, e.g., Japanese.
-        for source in ["", "  ", "auto", "AUTO"] {
+    fn build_user_prompt_translate_shape_is_stable_across_source_languages() {
+        // The new prompt template does not include `source_language`
+        // in the rendered text (the model infers source from the
+        // content). The signature still accepts it so callers don't
+        // have to thread an `Option`. Output text must be identical
+        // regardless of what the caller passes here — guards against
+        // a future revert that silently re-leaks "from auto" into
+        // the prompt.
+        let target = "ja";
+        let baseline = build_user_prompt(&TaskInput::Translate {
+            text: "x".into(),
+            source_language: "en".into(),
+            target_language: target.into(),
+        })
+        .unwrap();
+        for source in ["", "  ", "auto", "AUTO", "ja", "Japanese"] {
             let prompt = build_user_prompt(&TaskInput::Translate {
                 text: "x".into(),
                 source_language: source.into(),
-                target_language: "ja".into(),
+                target_language: target.into(),
             })
             .unwrap();
-            assert!(!prompt.contains(" from "), "source={source:?} prompt={prompt}");
+            assert_eq!(prompt, baseline, "source={source:?} drifted");
         }
     }
 
@@ -1726,7 +2369,7 @@ mod tests {
         // the system prompt MUST be merged into the first user turn,
         // separated by a blank line. Skipping this would leave the
         // model with no system instruction at all.
-        let s = render_gemma("you are helpful", "translate this");
+        let s = render_gemma("you are helpful", &[], "translate this");
         assert!(
             s.starts_with("<start_of_turn>user\nyou are helpful\n\ntranslate this<end_of_turn>"),
             "system+user merge missing or malformed: {s}"
@@ -1741,23 +2384,32 @@ mod tests {
         // user turn should NOT begin with two blank lines (the
         // model treats those as a literal part of the turn and
         // sometimes echoes them back).
-        let s = render_gemma("", "x");
-        assert!(s.starts_with("<start_of_turn>user\nx<end_of_turn>"), "got: {s}");
+        let s = render_gemma("", &[], "x");
+        assert!(
+            s.starts_with("<start_of_turn>user\nx<end_of_turn>"),
+            "got: {s}"
+        );
     }
 
     #[cfg(feature = "embedded-llm")]
     #[test]
     fn render_prompt_dispatches_by_template_family() {
         use crate::model_registry::ChatTemplate;
-        let chatml = render_prompt(ChatTemplate::ChatMl, "sys", "hi");
+        let chatml = render_prompt(ChatTemplate::ChatMl, "sys", &[], "hi");
         assert!(chatml.contains("<|im_start|>system\nsys<|im_end|>"));
-        let gemma = render_prompt(ChatTemplate::Gemma, "sys", "hi");
+        let gemma = render_prompt(ChatTemplate::Gemma, "sys", &[], "hi");
         assert!(gemma.contains("<start_of_turn>user\nsys\n\nhi<end_of_turn>"));
-        let qwen3 = render_prompt(ChatTemplate::ChatMlQwen3NoThink, "sys", "hi");
+        let qwen3 = render_prompt(ChatTemplate::ChatMlQwen3NoThink, "sys", &[], "hi");
         assert!(qwen3.contains("<|im_start|>system\nsys<|im_end|>"));
         // The two formats must NOT bleed into each other.
-        assert!(!chatml.contains("<start_of_turn>"), "chatml leaked Gemma markers: {chatml}");
-        assert!(!gemma.contains("<|im_start|>"), "gemma leaked ChatML markers: {gemma}");
+        assert!(
+            !chatml.contains("<start_of_turn>"),
+            "chatml leaked Gemma markers: {chatml}"
+        );
+        assert!(
+            !gemma.contains("<|im_start|>"),
+            "gemma leaked ChatML markers: {gemma}"
+        );
     }
 
     #[cfg(feature = "embedded-llm")]
@@ -1770,11 +2422,14 @@ mod tests {
         // model "thinking already done, proceed to answer". If a
         // future change drops this, every Qwen 3 tier silently
         // regresses to ~10% effective decode throughput.
-        let s = render_chatml_qwen3_no_think("sys", "translate");
-        assert!(s.contains("<|im_start|>assistant\n<think>\n\n</think>\n\n"),
-            "no-think primer missing or malformed: {s}");
+        let s = render_chatml_qwen3_no_think("sys", &[], "translate");
+        assert!(
+            s.contains("<|im_start|>assistant\n<think>\n\n</think>\n\n"),
+            "no-think primer missing or malformed: {s}"
+        );
         // Sanity: empty think pair is between user end and answer.
-        let user_end = s.find("<|im_start|>user\ntranslate<|im_end|>")
+        let user_end = s
+            .find("<|im_start|>user\ntranslate<|im_end|>")
             .expect("user turn missing");
         let asst_start = s.find("<|im_start|>assistant").expect("asst start missing");
         assert!(user_end < asst_start, "user must come before assistant");
@@ -1787,13 +2442,307 @@ mod tests {
         // shape must NOT drift from what Qwen 2.5 expects. If a
         // future refactor swaps to a different chat template
         // mechanism, this test pins the contract.
-        let s = render_chatml("you are helpful", "translate this");
+        let s = render_chatml("you are helpful", &[], "translate this");
         // System block.
         assert!(s.contains("<|im_start|>system\nyou are helpful<|im_end|>"));
         // User block.
         assert!(s.contains("<|im_start|>user\ntranslate this<|im_end|>"));
         // Assistant primer (no `<|im_end|>` — the model fills it in).
         assert!(s.ends_with("<|im_start|>assistant\n"));
+    }
+
+    #[cfg(feature = "embedded-llm")]
+    #[test]
+    fn check_and_strip_stop_suffix_handles_chatml_and_gemma() {
+        // The two chat templates currently registered in
+        // model_registry::TIERS emit different terminators. If a
+        // future registry change introduces a third family, this
+        // test pins the expectation that STOP_SUFFIXES covers it.
+        let mut a = String::from("Hello, world.<|im_end|>");
+        assert!(check_and_strip_stop_suffix(&mut a));
+        assert_eq!(a, "Hello, world.");
+
+        let mut b = String::from("こんにちは、世界。<end_of_turn>");
+        assert!(check_and_strip_stop_suffix(&mut b));
+        assert_eq!(b, "こんにちは、世界。");
+
+        // No-match: should NOT touch the string.
+        let mut c = String::from("Hello, world.");
+        assert!(!check_and_strip_stop_suffix(&mut c));
+        assert_eq!(c, "Hello, world.");
+
+        // Internal occurrence (not at end) MUST NOT be stripped —
+        // only suffix counts. Otherwise translation output that
+        // legitimately contains the marker as content (e.g. a
+        // documentation translation about ChatML itself) would
+        // get truncated.
+        let mut d = String::from("The marker <|im_end|> ends a turn.");
+        assert!(!check_and_strip_stop_suffix(&mut d));
+        assert_eq!(d, "The marker <|im_end|> ends a turn.");
+
+        // Bare-form `|im_end|>` (no leading `<`) — emitted by
+        // llm-jp 3.1 for ja→en outputs. Phase 27 v3 evidence:
+        // without matching this variant the model runs to
+        // `max_predict` with trailing garbage.
+        let mut e = String::from("Hello, world名無し|im_end|>");
+        assert!(check_and_strip_stop_suffix(&mut e));
+        assert_eq!(e, "Hello, world名無し");
+    }
+
+    #[test]
+    fn floor_char_boundary_returns_largest_safe_offset() {
+        // ASCII: every index is a char boundary.
+        let s = "Hello";
+        assert_eq!(floor_char_boundary(s, 3), 3);
+        assert_eq!(floor_char_boundary(s, 100), 5);
+
+        // UTF-8 multi-byte: "あ" is 3 bytes (0xE3 0x81 0x82). The
+        // boundary scan must back off to byte 0 (or to the previous
+        // valid boundary) when `max` lands in the middle.
+        let s = "あい";
+        assert_eq!(floor_char_boundary(s, 0), 0);
+        assert_eq!(floor_char_boundary(s, 1), 0); // mid-codepoint → back off
+        assert_eq!(floor_char_boundary(s, 2), 0);
+        assert_eq!(floor_char_boundary(s, 3), 3);
+        assert_eq!(floor_char_boundary(s, 5), 3); // mid-codepoint
+        assert_eq!(floor_char_boundary(s, 6), 6);
+    }
+
+    #[test]
+    fn streaming_lookahead_holds_back_pending_suffix_bytes() {
+        // Simulate the runtime emission pattern that the Lens eval
+        // exposed as a bug: pieces appended one at a time, with
+        // the lookahead deferral preventing partially-formed
+        // stop suffixes from reaching the sink.
+        use std::sync::Mutex;
+        let emitted = std::sync::Arc::new(Mutex::new(String::new()));
+        let emitted_clone = emitted.clone();
+        let mut cb: Option<Box<dyn FnMut(String) + Send>> = Some(Box::new(move |s: String| {
+            emitted_clone.lock().unwrap().push_str(&s);
+        }));
+        let mut agg = String::new();
+        let mut cursor = 0usize;
+        // Stream the tokens that make up `Hello, world.<end_of_turn>`
+        // piece-by-piece. Real inference might emit the suffix as
+        // a single token; either way the deferral must produce
+        // identical pre-stop output.
+        for piece in ["Hello", ", ", "world", ".", "<end", "_of", "_turn", ">"] {
+            agg.push_str(piece);
+            if check_and_strip_stop_suffix(&mut agg) {
+                break;
+            }
+            cursor = flush_streaming_safe(&agg, cursor, cb.as_mut());
+        }
+        // Mirror the runtime contract: after the loop exits — for
+        // either reason — call `flush_streaming_final` to drain
+        // the lookahead window. On a stop-suffix hit the strip
+        // already removed the suffix bytes from `agg`; the held-
+        // back tail `[cursor..agg.len()]` is now clean prefix
+        // content that should reach the sink.
+        flush_streaming_final(&agg, cursor, cb.as_mut());
+        // Sink saw the full clean message — none of the EOS-marker
+        // bytes reached the boundary. That's the actual contract
+        // the streaming buffer is here to enforce.
+        //
+        // `agg`'s final state is intentionally NOT asserted here:
+        // depending on which entry in `STOP_SUFFIXES` matches
+        // first, the strip may remove either the full canonical
+        // suffix or just the bare-form trailing run, leaving an
+        // orphan `<` in `agg` (e.g. when `end_of_turn` fires before
+        // `>` arrives, stripping 11 bytes off "Hello, world.<end_of_turn"
+        // leaves "Hello, world.<"). The sink's content is what
+        // matters; `flush_streaming_final`'s partial-prefix-trim
+        // makes sure the orphan never reaches it.
+        assert_eq!(*emitted.lock().unwrap(), "Hello, world.");
+    }
+
+    #[test]
+    fn streaming_final_flush_trims_partial_stop_suffix_prefix() {
+        // Natural-end exit (no full stop suffix detected) where the
+        // tail bytes happen to spell the START of a stop suffix.
+        // This is the max_predict-cuts-off-mid-suffix edge case.
+        // The final flush must trim the partial prefix so the sink
+        // never sees `"<end_of_tur"` as content.
+        use std::sync::Mutex;
+        let emitted = std::sync::Arc::new(Mutex::new(String::new()));
+        let emitted_clone = emitted.clone();
+        let mut cb: Option<Box<dyn FnMut(String) + Send>> = Some(Box::new(move |s: String| {
+            emitted_clone.lock().unwrap().push_str(&s);
+        }));
+        let agg = String::from("Hello, world.<end_of_tur");
+        let cursor: usize = 0;
+        // Simulate "loop exited without stop suffix detected, drain
+        // the lookahead window now".
+        flush_streaming_final(&agg, cursor, cb.as_mut());
+        // The trailing `<end_of_tur` is a prefix of `<end_of_turn>`
+        // and must be trimmed off.
+        assert_eq!(*emitted.lock().unwrap(), "Hello, world.");
+    }
+
+    #[test]
+    fn streaming_lookahead_drains_when_loop_exits_without_stop() {
+        // Counterpart to the above: when the loop exits naturally
+        // (no stop suffix detected), `flush_streaming_final` must
+        // drain the held-back tail so the sink sees the full
+        // output. Otherwise the last 16 bytes of every translation
+        // would silently disappear.
+        use std::sync::Mutex;
+        let emitted = std::sync::Arc::new(Mutex::new(String::new()));
+        let emitted_clone = emitted.clone();
+        let mut cb: Option<Box<dyn FnMut(String) + Send>> = Some(Box::new(move |s: String| {
+            emitted_clone.lock().unwrap().push_str(&s);
+        }));
+        let mut agg = String::new();
+        let mut cursor = 0usize;
+        for piece in ["Hello", ", ", "world", "."] {
+            agg.push_str(piece);
+            cursor = flush_streaming_safe(&agg, cursor, cb.as_mut());
+        }
+        // Without final flush, the sink only saw the empty prefix
+        // (everything inside the lookahead window). Drain now.
+        flush_streaming_final(&agg, cursor, cb.as_mut());
+        assert_eq!(*emitted.lock().unwrap(), "Hello, world.");
+    }
+
+    #[cfg(feature = "embedded-llm")]
+    #[test]
+    fn build_translation_few_shots_returns_pairs_for_ja_target() {
+        // Anchor: the ja target MUST get at least one (user, asst)
+        // example whose assistant side is written in Japanese kana.
+        // This is the primary mitigation for the Qwen 3.5 0.8B/2B
+        // Chinese-leakage failure mode logged in bench v23, kept as
+        // a regression guard even though the prompt-template
+        // simplification (Phase 27) means the `user` side is now
+        // bare source text rather than the previous verbose
+        // "Target language: ja. Rewrite the following from en…"
+        // boilerplate.
+        let shots = build_translation_few_shots("ja");
+        assert!(!shots.is_empty(), "ja must have at least one few-shot");
+        for (_user, asst) in &shots {
+            // At least one hiragana or katakana char in the asst side.
+            let has_kana = asst.chars().any(|c| {
+                let cp = c as u32;
+                (0x3040..=0x309F).contains(&cp) || (0x30A0..=0x30FF).contains(&cp)
+            });
+            assert!(has_kana, "ja asst must include kana, got: {asst}");
+        }
+    }
+
+    #[cfg(feature = "embedded-llm")]
+    #[test]
+    fn build_translation_few_shots_is_empty_for_unknown_target() {
+        // Targets we have no demos for must return empty so the
+        // render path falls back to system-prompt-only behaviour.
+        for target in ["zh", "ko", "es", "klingon"] {
+            assert!(
+                build_translation_few_shots(target).is_empty(),
+                "expected empty few-shots for target {target}"
+            );
+        }
+    }
+
+    #[cfg(feature = "embedded-llm")]
+    #[test]
+    fn render_chatml_includes_few_shot_turns_between_system_and_live_user() {
+        let shots = vec![
+            ("demo-u-1".to_string(), "demo-a-1".to_string()),
+            ("demo-u-2".to_string(), "demo-a-2".to_string()),
+        ];
+        let s = render_chatml("sys", &shots, "live-user");
+        // Each demo round trip must appear, in order.
+        let p_system = s
+            .find("<|im_start|>system\nsys<|im_end|>")
+            .expect("system block missing");
+        let p_demo1_u = s
+            .find("<|im_start|>user\ndemo-u-1<|im_end|>")
+            .expect("demo1 user missing");
+        let p_demo1_a = s
+            .find("<|im_start|>assistant\ndemo-a-1<|im_end|>")
+            .expect("demo1 asst missing");
+        let p_demo2_u = s
+            .find("<|im_start|>user\ndemo-u-2<|im_end|>")
+            .expect("demo2 user missing");
+        let p_demo2_a = s
+            .find("<|im_start|>assistant\ndemo-a-2<|im_end|>")
+            .expect("demo2 asst missing");
+        let p_live_u = s
+            .find("<|im_start|>user\nlive-user<|im_end|>")
+            .expect("live user missing");
+        assert!(
+            p_system < p_demo1_u
+                && p_demo1_u < p_demo1_a
+                && p_demo1_a < p_demo2_u
+                && p_demo2_u < p_demo2_a
+                && p_demo2_a < p_live_u,
+            "demos must sit between system and live user, in order: {s}"
+        );
+        // Live primer trails — assistant turn left open for the model.
+        assert!(s.ends_with("<|im_start|>assistant\n"), "got: {s}");
+    }
+
+    #[cfg(feature = "embedded-llm")]
+    #[test]
+    fn render_chatml_qwen3_no_think_applies_empty_think_to_demo_turns() {
+        // Few-shot demos under the no-think render MUST also wrap
+        // their assistant content with the empty `<think></think>`
+        // prelude so the model sees a uniform "no thinking required"
+        // shape across the entire prompt. Dropping this on the
+        // demos would teach the model to think for the live turn.
+        let shots = vec![("demo-u".to_string(), "demo-a".to_string())];
+        let s = render_chatml_qwen3_no_think("sys", &shots, "live");
+        let expected_demo = "<|im_start|>assistant\n<think>\n\n</think>\n\ndemo-a<|im_end|>";
+        assert!(
+            s.contains(expected_demo),
+            "demo turn missing empty-think primer: {s}"
+        );
+        // Live primer remains open.
+        assert!(
+            s.ends_with("<|im_start|>assistant\n<think>\n\n</think>\n\n"),
+            "live primer malformed: {s}"
+        );
+    }
+
+    #[cfg(feature = "embedded-llm")]
+    #[test]
+    fn render_gemma_few_shot_merges_system_into_first_demo_user() {
+        // Gemma has no system role on the wire — the system
+        // prefix must ride on the FIRST user turn, which is the
+        // first few-shot user when demos are present (not the
+        // live user). Otherwise the system instruction never
+        // reaches the model.
+        let shots = vec![
+            ("demo-u-1".to_string(), "demo-a-1".to_string()),
+            ("demo-u-2".to_string(), "demo-a-2".to_string()),
+        ];
+        let s = render_gemma("sys", &shots, "live");
+        assert!(
+            s.starts_with("<start_of_turn>user\nsys\n\ndemo-u-1<end_of_turn>"),
+            "system must merge into first demo user, got: {s}"
+        );
+        // Second demo user MUST NOT carry the system prefix again.
+        assert!(
+            s.contains("<start_of_turn>user\ndemo-u-2<end_of_turn>"),
+            "second demo user should be plain: {s}"
+        );
+        // Live user must be plain (no system prefix re-injection).
+        assert!(
+            s.contains("<start_of_turn>user\nlive<end_of_turn>"),
+            "live user should be plain: {s}"
+        );
+        assert!(s.ends_with("<start_of_turn>model\n"), "got: {s}");
+    }
+
+    #[cfg(feature = "embedded-llm")]
+    #[test]
+    fn build_few_shots_returns_empty_for_non_translate_inputs() {
+        let empty = build_few_shots(&TaskInput::Summarize { text: "x".into() });
+        assert!(empty.is_empty(), "summarize should not get few-shots");
+        let translate = build_few_shots(&TaskInput::Translate {
+            text: "x".into(),
+            source_language: "en".into(),
+            target_language: "ja".into(),
+        });
+        assert!(!translate.is_empty(), "translate ja MUST get few-shots");
     }
 
     #[tokio::test]

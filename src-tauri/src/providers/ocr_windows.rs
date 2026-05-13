@@ -71,11 +71,9 @@ impl Provider for WindowsOcrProvider {
         );
         // WinRT calls are blocking w.r.t. the Rust thread (they go
         // through COM apartments), so hop off the async runtime.
-        let lines = tokio::task::spawn_blocking(
-            move || -> Result<Vec<OcrLine>, ProviderError> {
-                run_ocr(&image_png, preferred.as_deref())
-            },
-        )
+        let lines = tokio::task::spawn_blocking(move || -> Result<Vec<OcrLine>, ProviderError> {
+            run_ocr(&image_png, preferred.as_deref())
+        })
         .await
         .map_err(|e| ProviderError::Other(format!("join error: {e}")))?;
 
@@ -136,10 +134,7 @@ pub fn run_ocr(image_png: &[u8], preferred: Option<&str>) -> Result<Vec<OcrLine>
             Ok(l) => l,
             Err(_) => continue,
         };
-        let line_text = line
-            .Text()
-            .map(|h| h.to_string_lossy())
-            .unwrap_or_default();
+        let line_text = line.Text().map(|h| h.to_string_lossy()).unwrap_or_default();
         if line_text.trim().is_empty() {
             continue;
         }
@@ -325,13 +320,12 @@ fn try_create_engine(preferred: Option<&str>) -> Result<OcrEngine, ProviderError
              via Settings > Time & Language > Language. Falling back to profile default."
         );
     }
-    let engine = OcrEngine::TryCreateFromUserProfileLanguages().map_err(|e| {
-        ProviderError::Other(format!(
-            "TryCreateFromUserProfileLanguages: {e}"
-        ))
-    })?;
+    let engine = OcrEngine::TryCreateFromUserProfileLanguages()
+        .map_err(|e| ProviderError::Other(format!("TryCreateFromUserProfileLanguages: {e}")))?;
     if engine.as_raw().is_null() {
-        tracing::warn!("WindowsOcr: profile-default engine is null, no OCR language pack installed");
+        tracing::warn!(
+            "WindowsOcr: profile-default engine is null, no OCR language pack installed"
+        );
         return Err(ProviderError::LowConfidence);
     }
     tracing::info!("WindowsOcr: engine created from profile default");
@@ -344,27 +338,25 @@ fn try_create_engine(preferred: Option<&str>) -> Result<OcrEngine, ProviderError
 fn log_available_languages_once() {
     use std::sync::Once;
     static ONCE: Once = Once::new();
-    ONCE.call_once(|| {
-        match OcrEngine::AvailableRecognizerLanguages() {
-            Ok(langs) => {
-                let count = langs.Size().unwrap_or(0);
-                let mut names: Vec<String> = Vec::with_capacity(count as usize);
-                for i in 0..count {
-                    if let Ok(lang) = langs.GetAt(i) {
-                        if let Ok(tag) = lang.LanguageTag() {
-                            names.push(tag.to_string_lossy());
-                        }
+    ONCE.call_once(|| match OcrEngine::AvailableRecognizerLanguages() {
+        Ok(langs) => {
+            let count = langs.Size().unwrap_or(0);
+            let mut names: Vec<String> = Vec::with_capacity(count as usize);
+            for i in 0..count {
+                if let Ok(lang) = langs.GetAt(i) {
+                    if let Ok(tag) = lang.LanguageTag() {
+                        names.push(tag.to_string_lossy());
                     }
                 }
-                tracing::info!(
-                    "WindowsOcr: {} OCR language pack(s) available: {:?}",
-                    count,
-                    names
-                );
             }
-            Err(e) => {
-                tracing::warn!("WindowsOcr: AvailableRecognizerLanguages failed: {e}");
-            }
+            tracing::info!(
+                "WindowsOcr: {} OCR language pack(s) available: {:?}",
+                count,
+                names
+            );
+        }
+        Err(e) => {
+            tracing::warn!("WindowsOcr: AvailableRecognizerLanguages failed: {e}");
         }
     });
 }
@@ -376,9 +368,11 @@ fn decode_png_to_software_bitmap(png: &[u8]) -> Result<SoftwareBitmap, ProviderE
     // bytes to the decoder.
     let stream = InMemoryRandomAccessStream::new()
         .map_err(|e| ProviderError::Other(format!("InMemoryRandomAccessStream: {e}")))?;
-    let writer = DataWriter::CreateDataWriter(&stream.GetOutputStreamAt(0).map_err(|e| {
-        ProviderError::Other(format!("GetOutputStreamAt: {e}"))
-    })?)
+    let writer = DataWriter::CreateDataWriter(
+        &stream
+            .GetOutputStreamAt(0)
+            .map_err(|e| ProviderError::Other(format!("GetOutputStreamAt: {e}")))?,
+    )
     .map_err(|e| ProviderError::Other(format!("DataWriter::Create: {e}")))?;
     writer
         .WriteBytes(png)
@@ -485,9 +479,17 @@ mod tests {
     #[test]
     fn resolve_symbol_inherits_from_left_neighbour() {
         let mut words = vec![
-            ("本文ページ".into(), rect(0.0, 0.0, 10.0, 10.0), WordClass::Japanese),
+            (
+                "本文ページ".into(),
+                rect(0.0, 0.0, 10.0, 10.0),
+                WordClass::Japanese,
+            ),
             ("(".into(), rect(10.0, 0.0, 2.0, 10.0), WordClass::Symbol),
-            ("ページ最下部".into(), rect(12.0, 0.0, 20.0, 10.0), WordClass::Japanese),
+            (
+                "ページ最下部".into(),
+                rect(12.0, 0.0, 20.0, 10.0),
+                WordClass::Japanese,
+            ),
             (")".into(), rect(32.0, 0.0, 2.0, 10.0), WordClass::Symbol),
         ];
         resolve_symbol_classes(&mut words);
@@ -513,9 +515,17 @@ mod tests {
         // Japanese. Left-first policy keeps the paren in the Latin run,
         // so "English (" is translated but "日本語 )" is skipped.
         let mut words = vec![
-            ("English".into(), rect(0.0, 0.0, 10.0, 10.0), WordClass::Other),
+            (
+                "English".into(),
+                rect(0.0, 0.0, 10.0, 10.0),
+                WordClass::Other,
+            ),
             ("(".into(), rect(10.0, 0.0, 2.0, 10.0), WordClass::Symbol),
-            ("日本語".into(), rect(12.0, 0.0, 10.0, 10.0), WordClass::Japanese),
+            (
+                "日本語".into(),
+                rect(12.0, 0.0, 10.0, 10.0),
+                WordClass::Japanese,
+            ),
             (")".into(), rect(22.0, 0.0, 2.0, 10.0), WordClass::Symbol),
         ];
         resolve_symbol_classes(&mut words);
@@ -525,11 +535,8 @@ mod tests {
 
     #[test]
     fn resolve_symbol_defaults_to_other_when_no_neighbour() {
-        let mut words = vec![
-            ("---".into(), rect(0.0, 0.0, 10.0, 10.0), WordClass::Symbol),
-        ];
+        let mut words = vec![("---".into(), rect(0.0, 0.0, 10.0, 10.0), WordClass::Symbol)];
         resolve_symbol_classes(&mut words);
         assert_eq!(words[0].2, WordClass::Other);
     }
 }
-

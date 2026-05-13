@@ -137,7 +137,36 @@ windows = { version = "0.58", features = [
 # backend via llama-cpp-2" — the production runtime. The legacy
 # mistralrs backend is kept behind `embedded-llm-mistralrs` for
 # A/B comparison only; it is NOT in the default set.
-default = ["audio", "ocrs-engine", "embedded-llm"]
+# Default features ship the CPU-only embedded LLM. GPU offload
+# (`embedded-llm-vulkan`) is reserved for **release** builds via
+# `npm run tauri:build` or `cargo build --release --features
+# embedded-llm-vulkan`.
+#
+# Why GPU is opt-in rather than default:
+# Phase 27 investigation (2026-05-13) tried making
+# `embedded-llm-vulkan` the default. Release builds worked; debug
+# builds (which Tauri's `npm run tauri:dev` produces) consistently
+# fail in `llama-cpp-sys-2`'s nested `vulkan-shaders-gen`
+# ExternalProject build with either:
+#   - Visual Studio generator: race between configure/build/install
+#     of vulkan-shaders-gen vcxproj
+#   - Ninja generator: `LNK1104: cannot open intermediate.manifest`
+#     from CMake's `vs_link_exe` wrapper during the inner cmake's
+#     C compiler probe
+# The wrapper is upstream-controlled; neither
+# `CMAKE_EXE_LINKER_FLAGS_INIT=/MANIFEST:NO` nor
+# `CMAKE_GENERATOR=Ninja` plus a fully-pinned MSVC env got the
+# debug build through. End users producing installers via
+# `tauri:build` (release) get GPU automatically; developers
+# iterating via `tauri:dev` get the CPU fallback that links cleanly.
+#
+# To opt into a GPU dev build anyway (and accept the
+# vulkan-shaders-gen build flake):
+#   `cargo build --no-default-features --features
+#    audio,ocrs-engine,embedded-llm-vulkan`
+# A `tauri.conf.json` `beforeDevCommand` override can pin this
+# per-dev-machine if the build happens to work on that host.
+default = ["audio", "ocrs-engine", "embedded-llm-vulkan"]
 audio = ["dep:cpal"]
 ocrs-engine = ["dep:ocrs", "dep:rten"]
 embedded-llm = ["dep:llama-cpp-2"]

@@ -245,6 +245,92 @@ export const modelTierStatus = () =>
 export const setModelTier = (tierId: string) =>
   safeInvoke<void>('set_model_tier', { tierId });
 
+/* ---------------- translation routing tier ---------------- */
+
+/** The three user-facing routing tiers exposed by the matrix.
+ * Snake-case to match the Rust `UserTier` serde rename. */
+export type UserTier = 'compact' | 'standard' | 'quality';
+
+/** Hardware bucket the router uses. CPU mode picks single-step
+ * routes; GPU mode picks Pivot for ja↔X / X→Y pairs. Derived from
+ * the build's GPU feature flag. */
+export type Hardware = 'cpu' | 'gpu';
+
+/** Snapshot of the saved routing tier + detected hardware. When
+ * `current === null` the user has not opted into routing yet and
+ * the legacy single-tier `embedded.llm` path is still in effect. */
+export interface UserTierStatus {
+  current: UserTier | null;
+  hardware: Hardware;
+}
+
+/** One row of the routing-preview matrix surfaced by the settings
+ * UI. `mode` mirrors the Rust `RoutingPreview` enum. */
+export type RoutingPreview =
+  | { mode: 'direct'; tier_id: string; display_name: string }
+  | {
+      mode: 'pivot';
+      stage1_tier_id: string;
+      stage1_display_name: string;
+      stage2_tier_id: string;
+      stage2_display_name: string;
+    }
+  | { mode: 'unsupported' };
+
+export const getUserTier = () =>
+  safeInvoke<UserTierStatus | null>('get_user_tier', undefined, null);
+
+export const setUserTier = (tierId: UserTier) =>
+  safeInvoke<void>('set_user_tier', { tierId });
+
+export const clearUserTier = () => safeInvoke<void>('clear_user_tier', undefined);
+
+/** Resolve which model(s) the router would dispatch for one
+ * `(source, target)` pair. `tier_override` lets the picker preview
+ * a different tier without saving it. */
+export const previewRouting = (
+  source: string,
+  target: string,
+  tierOverride?: UserTier,
+) =>
+  safeInvoke<RoutingPreview | null>(
+    'preview_routing',
+    { source, target, tierOverride: tierOverride ?? null },
+    null,
+  );
+
+/** Per-model readiness for one entry in the user's active routing
+ * tier. Standard / Quality require 2 GGUFs; the settings UI
+ * renders one row per entry so users can see which are
+ * downloaded and which need to be fetched. */
+export interface RoutedModelStatus {
+  tier_id: string;
+  display_name: string;
+  size_mb: number;
+  present: boolean;
+  license: string;
+  repo: string;
+  primary_filename: string;
+}
+
+/** Aggregate model status for the routing tier the user has
+ * selected. Returns `[]` (rather than null) when the IPC succeeds
+ * with an empty list (e.g. an unrecognised tier id); the caller
+ * just renders nothing in that case. */
+export const routedModelStatus = () =>
+  safeInvoke<RoutedModelStatus[]>('routed_model_status', undefined, []);
+
+/** Trigger download of a specific routing-tier model by id.
+ * Returns the resolved on-disk path on success. Progress arrives
+ * via the existing `moonlens://embedded-model-progress` event
+ * channel — subscribe with `onEmbeddedModelProgress`. */
+export const downloadRoutedModel = (tierId: string, force = false) =>
+  safeInvoke<string | null>(
+    'download_routed_model',
+    { tierId, force },
+    null,
+  );
+
 /** Per-sample result from the embedded-LLM benchmark.
  *
  * Two throughput numbers are reported per sample:

@@ -339,10 +339,7 @@ where
         // overridden `model_path` to a path outside the root, refuse
         // to download — a download command should not write anywhere
         // it pleases.
-        if !resolved
-            .model_path
-            .starts_with(self.storage.models_dir())
-        {
+        if !resolved.model_path.starts_with(self.storage.models_dir()) {
             return Err(ModelServiceError::Invalid(format!(
                 "model_path {} is outside the models dir {}; download refused",
                 resolved.model_path.display(),
@@ -475,6 +472,117 @@ where
         })
     }
 
+    /// Download a GGUF by its `model_registry::TIERS` tier id —
+    /// the routing equivalent of `download_current`. Used by the
+    /// settings UI's "不足モデルをダウンロード" action when the
+    /// user's selected `user_tier` requires a GGUF outside the
+    /// legacy `embedded.llm` config block (e.g. Standard needs
+    /// BOTH JA-Std+ and Edge E2B; the legacy `download_current`
+    /// only knows about one of them at a time).
+    ///
+    /// Differs from `download_current` in that it:
+    ///   - Resolves the (repo, filenames) pair from the static
+    ///     `TIERS` registry, NOT from user.toml.
+    ///   - Always writes to the canonical
+    ///     `<models_dir>/<filename>` paths — power-user
+    ///     `model_path` overrides only apply to the single tier
+    ///     the legacy picker manages.
+    ///   - Does NOT mutate the saved `embedded.llm` config block
+    ///     (routing maintains its own per-tier config in-memory).
+    pub async fn download_tier_by_id(
+        &self,
+        tier_id: &str,
+        force: bool,
+        on_progress: Option<ProgressCallback>,
+    ) -> Result<DownloadOutcome, ModelServiceError> {
+        let tier = crate::model_registry::tier_by_id(tier_id).ok_or_else(|| {
+            ModelServiceError::Invalid(format!("tier_id `{tier_id}` not in registry"))
+        })?;
+        let models_dir = self.storage.models_dir().to_path_buf();
+        let total_parts = tier.filenames.len();
+
+        // Early-return if every part is already present (skips
+        // the network round-trip entirely on warm-cache restarts).
+        if !force {
+            let mut all_present = true;
+            let mut total_size: u64 = 0;
+            for filename in tier.filenames {
+                let m = self.storage.meta(filename).await?;
+                if !m.exists {
+                    all_present = false;
+                    break;
+                }
+                total_size += m.size_bytes;
+            }
+            if all_present {
+                return Ok(DownloadOutcome {
+                    path: models_dir.join(tier.primary_filename()),
+                    size_bytes: total_size,
+                    was_already_present: true,
+                });
+            }
+        }
+
+        let mut total_size: u64 = 0;
+        for (idx, filename) in tier.filenames.iter().enumerate() {
+            if !force {
+                let m = self.storage.meta(filename).await?;
+                if m.exists {
+                    total_size += m.size_bytes;
+                    continue;
+                }
+            }
+            let url = format!(
+                "https://huggingface.co/{repo}/resolve/main/{filename}",
+                repo = tier.repo,
+                filename = filename,
+            );
+            let req = DownloadRequest {
+                url,
+                filename: (*filename).to_string(),
+            };
+            // Aggregate bytes across parts so the UI's progress
+            // bar advances monotonically over the whole tier's
+            // download. See `download_current` for the same
+            // bookkeeping pattern.
+            let prev_bytes = total_size;
+            let part_progress: Option<ProgressCallback> = on_progress.clone().map(|cb| {
+                let cb = cb.clone();
+                let part_idx = idx;
+                let total_parts = total_parts;
+                std::sync::Arc::new(move |p: DownloadProgress| {
+                    cb(DownloadProgress {
+                        downloaded: prev_bytes + p.downloaded,
+                        total: p.total,
+                    });
+                    let _ = (part_idx, total_parts);
+                }) as ProgressCallback
+            });
+            let result = self
+                .downloader
+                .download(req, &self.storage, part_progress)
+                .await?;
+            total_size += result.size_bytes;
+        }
+        if let Some(cb) = on_progress.as_ref() {
+            cb(DownloadProgress {
+                downloaded: total_size,
+                total: Some(total_size),
+            });
+        }
+
+        // No pipeline rebuild here — the routing path picks up
+        // newly-downloaded GGUFs lazily on the next translate
+        // call (each inner translator lazy-loads its engine on
+        // first inference). Forcing a rebuild would drop any
+        // already-loaded engine state for unrelated tiers.
+        Ok(DownloadOutcome {
+            path: models_dir.join(tier.primary_filename()),
+            size_bytes: total_size,
+            was_already_present: false,
+        })
+    }
+
     /// Build a `.moonlens-model` package from the currently-installed
     /// model. Heavy work (sha256 + zip) runs in
     /// `tokio::task::spawn_blocking` so the runtime is not blocked.
@@ -542,11 +650,12 @@ where
     ) -> Result<ImportOutcome, ModelServiceError> {
         let target_dir = self.storage.models_dir().to_path_buf();
         let pkg = package_path.clone();
-        let (final_path, manifest) =
-            tokio::task::spawn_blocking(move || embedded_model_package::apply_package(&pkg, &target_dir))
-                .await
-                .map_err(|e| ModelServiceError::Package(format!("import task panicked: {e}")))?
-                .map_err(|e| ModelServiceError::Package(e.to_string()))?;
+        let (final_path, manifest) = tokio::task::spawn_blocking(move || {
+            embedded_model_package::apply_package(&pkg, &target_dir)
+        })
+        .await
+        .map_err(|e| ModelServiceError::Package(format!("import task panicked: {e}")))?
+        .map_err(|e| ModelServiceError::Package(e.to_string()))?;
         if let Some(p) = self.pipeline.as_ref() {
             p.rebuild_providers();
             // Mirror download_current: kick off a background preload
@@ -694,8 +803,8 @@ where
         on_progress: Option<BenchProgressCallback>,
     ) -> Result<BenchOutcome, ModelServiceError> {
         use crate::providers::{
-            translate_embedded_llm::EmbeddedLlmTranslator, Provider, StreamingChunkSink,
-            TaskInput, TaskOutput,
+            translate_embedded_llm::EmbeddedLlmTranslator, Provider, StreamingChunkSink, TaskInput,
+            TaskOutput,
         };
         use parking_lot::Mutex;
         use std::time::Instant;
@@ -709,12 +818,10 @@ where
             )));
         }
 
-        let tier_display_name = crate::model_registry::tier_by_coord(
-            &resolved.repo,
-            &resolved.filename_remote,
-        )
-        .map(|t| t.display_name.to_string())
-        .unwrap_or_else(|| format!("custom: {}", resolved.coord()));
+        let tier_display_name =
+            crate::model_registry::tier_by_coord(&resolved.repo, &resolved.filename_remote)
+                .map(|t| t.display_name.to_string())
+                .unwrap_or_else(|| format!("custom: {}", resolved.coord()));
 
         if let Some(cb) = on_progress.as_ref() {
             cb(BenchProgressEvent::Started {
@@ -774,12 +881,7 @@ where
                     fixture_text: text.clone(),
                 });
             }
-            tracing::info!(
-                "bench: sample {}/{} started — input: {:?}",
-                i + 1,
-                n,
-                text
-            );
+            tracing::info!("bench: sample {}/{} started — input: {:?}", i + 1, n, text);
 
             let token_count = Arc::new(Mutex::new(0u32));
             let preview = Arc::new(Mutex::new(String::new()));
@@ -897,7 +999,9 @@ where
             // UI will see the discrepancy and can warn.
             let _ = match res {
                 Ok(TaskOutput::Text(_)) => Ok(()),
-                Ok(_) => Err(ModelServiceError::Invalid("bench: unexpected output kind".into())),
+                Ok(_) => Err(ModelServiceError::Invalid(
+                    "bench: unexpected output kind".into(),
+                )),
                 Err(e) => Err(ModelServiceError::Invalid(format!("bench sample {i}: {e}"))),
             };
             let sample = BenchSample {
@@ -989,10 +1093,7 @@ pub(crate) fn compute_bench_aggregates(samples: &[BenchSample]) -> BenchAggregat
         };
     }
     let mut tps: Vec<f64> = samples.iter().map(|s| s.tokens_per_second).collect();
-    let mut decode_tps: Vec<f64> = samples
-        .iter()
-        .map(|s| s.decode_tokens_per_second)
-        .collect();
+    let mut decode_tps: Vec<f64> = samples.iter().map(|s| s.decode_tokens_per_second).collect();
     let mut ms: Vec<u64> = samples.iter().map(|s| s.total_ms).collect();
     tps.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
     decode_tps.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
@@ -1042,7 +1143,20 @@ fn now_rfc3339() -> String {
             y += 1;
         }
         let leap = (y % 4 == 0 && y % 100 != 0) || y % 400 == 0;
-        let dim = [31, if leap { 29 } else { 28 }, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+        let dim = [
+            31,
+            if leap { 29 } else { 28 },
+            31,
+            30,
+            31,
+            30,
+            31,
+            31,
+            30,
+            31,
+            30,
+            31,
+        ];
         let mut m = 0;
         while m < 11 && days >= dim[m] {
             days -= dim[m];
@@ -1063,7 +1177,7 @@ fn now_rfc3339() -> String {
 mod tests {
     use super::*;
     use crate::services::hardware_probe::FixedProbe;
-    use crate::services::model_downloader::{ScriptedDownloader, scripted::ScriptedResponse};
+    use crate::services::model_downloader::{scripted::ScriptedResponse, ScriptedDownloader};
     use crate::services::model_storage::InMemoryStorage;
     use crate::settings::SettingsStore;
     use crate::storage::Storage;
@@ -1113,8 +1227,10 @@ mod tests {
         let storage = InMemoryStorage::new();
         let payload = vec![0xABu8; 2048];
         let url = "https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/qwen2.5-1.5b-instruct-q4_k_m.gguf";
-        let downloader = ScriptedDownloader::new()
-            .respond_to(url, ScriptedResponse::ok(payload.clone()).with_chunk_size(512));
+        let downloader = ScriptedDownloader::new().respond_to(
+            url,
+            ScriptedResponse::ok(payload.clone()).with_chunk_size(512),
+        );
         let svc = build_service(8.0, 4, downloader, storage);
 
         let outcome = svc.download_current(false, None).await.unwrap();
@@ -1128,17 +1244,20 @@ mod tests {
 
     #[tokio::test]
     async fn second_download_is_a_noop_unless_force_is_set() {
-        let storage = InMemoryStorage::new()
-            .with_file("qwen2.5-1.5b-instruct-q4_k_m.gguf", vec![1u8; 1024]);
+        let storage =
+            InMemoryStorage::new().with_file("qwen2.5-1.5b-instruct-q4_k_m.gguf", vec![1u8; 1024]);
         let url = "https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/qwen2.5-1.5b-instruct-q4_k_m.gguf";
-        let downloader = ScriptedDownloader::new()
-            .respond_to(url, ScriptedResponse::ok(vec![2u8; 1024]));
+        let downloader =
+            ScriptedDownloader::new().respond_to(url, ScriptedResponse::ok(vec![2u8; 1024]));
         let svc = build_service(8.0, 4, downloader, storage);
 
         // No-force: short-circuits, downloader is NOT called.
         let outcome = svc.download_current(false, None).await.unwrap();
         assert!(outcome.was_already_present);
-        assert!(svc.downloader.urls_called().is_empty(), "no force → no fetch");
+        assert!(
+            svc.downloader.urls_called().is_empty(),
+            "no force → no fetch"
+        );
 
         // Force: downloader IS called.
         let outcome = svc.download_current(true, None).await.unwrap();
@@ -1156,11 +1275,17 @@ mod tests {
         );
         let svc = build_service(8.0, 4, downloader, storage);
 
-        let err = svc.download_current(false, None).await.expect_err("must fail");
+        let err = svc
+            .download_current(false, None)
+            .await
+            .expect_err("must fail");
         assert!(matches!(err, ModelServiceError::Download(_)));
 
         let s = svc.status().await.unwrap();
-        assert!(!s.present, "failed download MUST not leave a partial visible");
+        assert!(
+            !s.present,
+            "failed download MUST not leave a partial visible"
+        );
     }
 
     #[tokio::test]
@@ -1282,8 +1407,8 @@ mod tests {
                 prompt_eval_ms: 700,
                 decode_ms: 80,
                 output_tokens: 5,
-                tokens_per_second: 6.25,           // 5 / 0.8
-                decode_tokens_per_second: 50.0,    // 4 / 0.08
+                tokens_per_second: 6.25,        // 5 / 0.8
+                decode_tokens_per_second: 50.0, // 4 / 0.08
                 translated_preview: String::new(),
             },
             BenchSample {
@@ -1292,8 +1417,8 @@ mod tests {
                 prompt_eval_ms: 700,
                 decode_ms: 280,
                 output_tokens: 15,
-                tokens_per_second: 15.0,           // 15 / 1.0
-                decode_tokens_per_second: 50.0,    // 14 / 0.28
+                tokens_per_second: 15.0,        // 15 / 1.0
+                decode_tokens_per_second: 50.0, // 14 / 0.28
                 translated_preview: String::new(),
             },
             BenchSample {
@@ -1314,10 +1439,12 @@ mod tests {
         // Wall-clock aggregates: each sample is meaningfully lower.
         // p50 (sorted [6.25, 11.11, 15.0]) = 11.11.
         assert!((aggs.p50_tps - 11.11).abs() < 0.01);
-        assert!(aggs.mean_tps < aggs.mean_decode_tps,
+        assert!(
+            aggs.mean_tps < aggs.mean_decode_tps,
             "wall-clock mean ({:.2}) must be < decode mean ({:.2})",
             aggs.mean_tps,
-            aggs.mean_decode_tps);
+            aggs.mean_decode_tps
+        );
     }
 
     #[tokio::test]
@@ -1340,12 +1467,18 @@ mod tests {
         svc.set_tier("qwen2.5-0.5b-instruct-q4_k_m").await.unwrap();
         let resolved = svc.resolved();
         assert_eq!(resolved.repo, "Qwen/Qwen2.5-0.5B-Instruct-GGUF");
-        assert_eq!(resolved.filename_remote, "qwen2.5-0.5b-instruct-q4_k_m.gguf");
+        assert_eq!(
+            resolved.filename_remote,
+            "qwen2.5-0.5b-instruct-q4_k_m.gguf"
+        );
         // Switching tier MUST drop any pinned model_path so the
         // resolution falls through to <app_data>/models/<filename>.
         let snap = svc.settings.snapshot();
         let cfg = snap.providers.configs.get("embedded.llm").unwrap();
-        assert!(cfg.get("model_path").is_none(), "set_tier must clear model_path override");
+        assert!(
+            cfg.get("model_path").is_none(),
+            "set_tier must clear model_path override"
+        );
     }
 
     #[tokio::test]
@@ -1365,10 +1498,13 @@ mod tests {
     async fn e2e_fresh_install_through_first_translation_ready() {
         // Phase 21 ordering: Qwen 3 0.6B is the recommended Compact
         // for fresh installs (first Compact-class tier in TIERS).
-        let url = "https://huggingface.co/unsloth/Qwen3-0.6B-GGUF/resolve/main/Qwen3-0.6B-Q4_K_M.gguf";
+        let url =
+            "https://huggingface.co/unsloth/Qwen3-0.6B-GGUF/resolve/main/Qwen3-0.6B-Q4_K_M.gguf";
         let storage = InMemoryStorage::new();
-        let downloader = ScriptedDownloader::new()
-            .respond_to(url, ScriptedResponse::ok(vec![9u8; 4096]).with_chunk_size(512));
+        let downloader = ScriptedDownloader::new().respond_to(
+            url,
+            ScriptedResponse::ok(vec![9u8; 4096]).with_chunk_size(512),
+        );
         // 4 GB host → recommended Compact tier.
         let svc = build_service(4.0, 4, downloader, storage);
 

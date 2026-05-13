@@ -138,9 +138,7 @@ impl LensStreamWatchers {
                     if let Some(c) = cur {
                         if last_pos.map(|l| l != c).unwrap_or(false) {
                             trigger_for_poll.notify_one();
-                            tracing::debug!(
-                                "lens {id_for_poll}: position-poll trigger ({c:?})"
-                            );
+                            tracing::debug!("lens {id_for_poll}: position-poll trigger ({c:?})");
                         }
                         last_pos = Some(c);
                     }
@@ -163,10 +161,7 @@ impl LensStreamWatchers {
             let id_for_auto = lens_id.clone();
             tauri::async_runtime::spawn(async move {
                 loop {
-                    let interval_ms = settings_for_auto
-                        .snapshot()
-                        .performance
-                        .lens_auto_poll_ms;
+                    let interval_ms = settings_for_auto.snapshot().performance.lens_auto_poll_ms;
                     if interval_ms == 0 {
                         // Re-check every 1 s — the user can turn
                         // auto-poll on from settings without needing a
@@ -186,8 +181,7 @@ impl LensStreamWatchers {
             });
         }
         let handle = tauri::async_runtime::spawn(async move {
-            run_capture_loop(id_clone, app, pipeline, lenses, settings, stop_t, trigger_t)
-                .await;
+            run_capture_loop(id_clone, app, pipeline, lenses, settings, stop_t, trigger_t).await;
         });
         self.inner.lock().insert(
             lens_id,
@@ -515,13 +509,7 @@ fn detect_rim_gradient_cardinals(
 /// Sample the mean RGB of ONE edge strip of the rim (top/bottom/
 /// left/right of the 2 px border around `bbox`). Small and cheap —
 /// each call iterates ≤ 2 × max(bbox_w, bbox_h) pixels.
-fn sample_edge(
-    img: &image::DynamicImage,
-    x0: i32,
-    y0: i32,
-    x1: i32,
-    y1: i32,
-) -> Option<[u8; 3]> {
+fn sample_edge(img: &image::DynamicImage, x0: i32, y0: i32, x1: i32, y1: i32) -> Option<[u8; 3]> {
     let rgb = img.to_rgb8();
     let (w, h) = (rgb.width() as i32, rgb.height() as i32);
     let x0 = x0.max(0);
@@ -659,12 +647,7 @@ fn refine_gradient_from_bbox(
 /// photos / patterns violate it wildly, and shipping a linear
 /// gradient over a patterned source produces exactly the
 /// "wrong-colour block" artefact the user reported.
-fn rim_is_clean_linear_gradient(
-    tl: [u8; 3],
-    tr: [u8; 3],
-    bl: [u8; 3],
-    br: [u8; 3],
-) -> bool {
+fn rim_is_clean_linear_gradient(tl: [u8; 3], tr: [u8; 3], bl: [u8; 3], br: [u8; 3]) -> bool {
     // Midpoint predicted by a true linear gradient along either
     // diagonal should be the average of the opposite corners.
     let diag_mid = average_rgb(tl, br);
@@ -705,14 +688,7 @@ pub fn sample_rim_edges(
     let mid_h = (bh / 3).max(1);
     let cx = x + bw / 2;
     let cy = y + bh / 2;
-    let top = sample_edge(
-        img,
-        cx - mid_w / 2,
-        y - RIM,
-        cx + mid_w / 2,
-        y - 1,
-    )
-    .unwrap_or(solid);
+    let top = sample_edge(img, cx - mid_w / 2, y - RIM, cx + mid_w / 2, y - 1).unwrap_or(solid);
     let bottom = sample_edge(
         img,
         cx - mid_w / 2,
@@ -721,14 +697,7 @@ pub fn sample_rim_edges(
         y + bh + RIM - 1,
     )
     .unwrap_or(solid);
-    let left = sample_edge(
-        img,
-        x - RIM,
-        cy - mid_h / 2,
-        x - 1,
-        cy + mid_h / 2,
-    )
-    .unwrap_or(solid);
+    let left = sample_edge(img, x - RIM, cy - mid_h / 2, x - 1, cy + mid_h / 2).unwrap_or(solid);
     let right = sample_edge(
         img,
         x + bw,
@@ -741,10 +710,8 @@ pub fn sample_rim_edges(
     // Corner patches just outside each bbox corner — these detect
     // diagonal lighting that the edge midpoints alone cannot.
     let tl = sample_edge(img, x - CORNER, y - CORNER, x - 1, y - 1).unwrap_or(solid);
-    let tr = sample_edge(img, x + bw, y - CORNER, x + bw + CORNER - 1, y - 1)
-        .unwrap_or(solid);
-    let bl = sample_edge(img, x - CORNER, y + bh, x - 1, y + bh + CORNER - 1)
-        .unwrap_or(solid);
+    let tr = sample_edge(img, x + bw, y - CORNER, x + bw + CORNER - 1, y - 1).unwrap_or(solid);
+    let bl = sample_edge(img, x - CORNER, y + bh, x - 1, y + bh + CORNER - 1).unwrap_or(solid);
     let br = sample_edge(
         img,
         x + bw,
@@ -762,8 +729,7 @@ pub fn sample_rim_edges(
         return (solid, None);
     }
 
-    let mut gradient =
-        detect_rim_gradient(top, bottom, left, right, tl, tr, bl, br);
+    let mut gradient = detect_rim_gradient(top, bottom, left, right, tl, tr, bl, br);
     // When the rim detector picked a cardinal axis, we can do
     // better: resample the inside of the bbox for multi-stop
     // gradients that capture vignettes and non-linear fades. The
@@ -777,8 +743,7 @@ pub fn sample_rim_edges(
             90 => (left, right),
             _ => (g.from, g.to),
         };
-        if let Some(inner_stops) =
-            refine_gradient_from_bbox(img, bbox, rim_start, rim_end, g.angle)
+        if let Some(inner_stops) = refine_gradient_from_bbox(img, bbox, rim_start, rim_end, g.angle)
         {
             g.from = *inner_stops.first().unwrap();
             g.to = *inner_stops.last().unwrap();
@@ -832,11 +797,7 @@ fn sample_rim_color(img: &image::DynamicImage, bbox: [f32; 4]) -> [u8; 3] {
     if n == 0 {
         return [128, 128, 128];
     }
-    [
-        (r_sum / n) as u8,
-        (g_sum / n) as u8,
-        (b_sum / n) as u8,
-    ]
+    [(r_sum / n) as u8, (g_sum / n) as u8, (b_sum / n) as u8]
 }
 
 /// Linearise one sRGB channel (0..=255) to linear light 0..=1 using
@@ -938,11 +899,7 @@ fn sample_text_color(img: &image::DynamicImage, bbox: [f32; 4], bg: [u8; 3]) -> 
     // Check the sampled mean actually reads against bg — pathological
     // cases (e.g. a gradient bg) can produce a "text" mean that sits
     // right on top of the bg. Fall back when contrast is insufficient.
-    let mean = [
-        (r_sum / n) as u8,
-        (g_sum / n) as u8,
-        (b_sum / n) as u8,
-    ];
+    let mean = [(r_sum / n) as u8, (g_sum / n) as u8, (b_sum / n) as u8];
     let dr = mean[0] as i32 - br;
     let dg = mean[1] as i32 - bgg;
     let db = mean[2] as i32 - bb;
@@ -1118,9 +1075,7 @@ pub fn compute_card_region(
 
     let x0 = (sx - pad_h).max(left_boundary).max(0.0);
     let y0 = (sy - pad_v).max(0.0);
-    let x1 = (sx + sw + pad_h)
-        .min(right_boundary)
-        .min(image_w as f32);
+    let x1 = (sx + sw + pad_h).min(right_boundary).min(image_w as f32);
     let y1 = (sy + sh + pad_v).min(image_h as f32);
     let w = (x1 - x0).max(0.0);
     let h = (y1 - y0).max(0.0);
@@ -1140,10 +1095,7 @@ pub fn preprocess_png_for_ocr(png_bytes: &[u8], scale: u32) -> anyhow::Result<Ve
         image::imageops::FilterType::Lanczos3,
     );
     let mut out = Vec::with_capacity(png_bytes.len() * (scale as usize).pow(2));
-    upscaled.write_to(
-        &mut std::io::Cursor::new(&mut out),
-        image::ImageFormat::Png,
-    )?;
+    upscaled.write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png)?;
     Ok(out)
 }
 
@@ -1326,8 +1278,12 @@ pub fn compute_lens_cards(
         // inpaint step would then erase the Japanese that should
         // have been left visible. Each sub-group becomes an
         // independent card with its own bbox, text, and translation.
-        let sub_groups =
-            split_paragraph_by_skipped_intrusions(&paragraph.members, &rendered, ocr_lines, skip_flags);
+        let sub_groups = split_paragraph_by_skipped_intrusions(
+            &paragraph.members,
+            &rendered,
+            ocr_lines,
+            skip_flags,
+        );
         let has_single_subgroup = sub_groups.len() == 1;
 
         for members in sub_groups {
@@ -1391,8 +1347,7 @@ pub fn compute_lens_cards(
             let font_size_px = median_h;
             let line_height = source_line_height_ratio(&members, &rendered);
             let source_line_count = members.len() as u32;
-            let text_align =
-                detect_text_align(&members, &rendered, paragraph.block_bbox);
+            let text_align = detect_text_align(&members, &rendered, paragraph.block_bbox);
             // Card render bbox = inpaint bbox extended toward the
             // layout block in the direction OPPOSITE the alignment.
             // Right-aligned text grows the card LEFTWARD so the
@@ -1861,10 +1816,8 @@ fn paragraph_card_region(
         // neighbour.
         let cx = (other_l + other_r) / 2.0;
         let cy = (other_top + other_bottom) / 2.0;
-        let inside_self = cx > sx + 0.5
-            && cx < sx + sw - 0.5
-            && cy > sy + 0.5
-            && cy < sy + sh - 0.5;
+        let inside_self =
+            cx > sx + 0.5 && cx < sx + sw - 0.5 && cy > sy + 0.5 && cy < sy + sh - 0.5;
         if inside_self {
             continue;
         }
@@ -1926,10 +1879,7 @@ fn encode_inpaint_patch(
     }
     let mut png = Vec::new();
     image::DynamicImage::ImageRgb8(patch)
-        .write_to(
-            &mut std::io::Cursor::new(&mut png),
-            image::ImageFormat::Png,
-        )
+        .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
         .ok()?;
     Some(base64::engine::general_purpose::STANDARD.encode(&png))
 }
@@ -1953,12 +1903,10 @@ fn encode_inpaint_patch(
 /// under 0.10 because it combines letters that never adjacent in
 /// English (e.g. `bz`, `dh`, `zk`).
 const COMMON_ENGLISH_DIGRAMS: &[[u8; 2]] = &[
-    *b"th", *b"he", *b"in", *b"er", *b"an", *b"re", *b"nd", *b"at",
-    *b"on", *b"nt", *b"ha", *b"es", *b"st", *b"en", *b"ed", *b"to",
-    *b"it", *b"ou", *b"ea", *b"hi", *b"is", *b"or", *b"ti", *b"as",
-    *b"te", *b"et", *b"ng", *b"of", *b"al", *b"de", *b"se", *b"le",
-    *b"sa", *b"si", *b"ar", *b"ve", *b"ra", *b"ld", *b"ur", *b"me",
-    *b"ne", *b"ce", *b"ic", *b"co", *b"ma", *b"om", *b"ll", *b"li",
+    *b"th", *b"he", *b"in", *b"er", *b"an", *b"re", *b"nd", *b"at", *b"on", *b"nt", *b"ha", *b"es",
+    *b"st", *b"en", *b"ed", *b"to", *b"it", *b"ou", *b"ea", *b"hi", *b"is", *b"or", *b"ti", *b"as",
+    *b"te", *b"et", *b"ng", *b"of", *b"al", *b"de", *b"se", *b"le", *b"sa", *b"si", *b"ar", *b"ve",
+    *b"ra", *b"ld", *b"ur", *b"me", *b"ne", *b"ce", *b"ic", *b"co", *b"ma", *b"om", *b"ll", *b"li",
     *b"ho", *b"we",
 ];
 
@@ -1967,15 +1915,13 @@ const COMMON_ENGLISH_DIGRAMS: &[[u8; 2]] = &[
 /// common UI verbs so "save", "delete", "cancel" etc. aren't
 /// wrongly flagged as gibberish.
 const COMMON_ENGLISH_WORDS: &[&str] = &[
-    "the", "and", "of", "to", "in", "is", "it", "for", "on", "with",
-    "this", "that", "you", "he", "she", "we", "they", "be", "are", "was",
-    "were", "has", "have", "not", "but", "from", "or", "an", "as", "at",
-    "by", "if", "so", "do", "did", "done", "will", "can", "could", "would",
-    "should", "may", "might", "must", "all", "any", "some", "no", "yes",
-    "one", "two", "new", "now", "how", "who", "what", "when", "where",
-    "why", "open", "close", "save", "load", "edit", "delete", "cancel",
-    "ok", "yes", "no", "help", "about", "file", "settings", "menu",
-    "hello", "world", "please", "thank", "thanks", "name", "user", "time",
+    "the", "and", "of", "to", "in", "is", "it", "for", "on", "with", "this", "that", "you", "he",
+    "she", "we", "they", "be", "are", "was", "were", "has", "have", "not", "but", "from", "or",
+    "an", "as", "at", "by", "if", "so", "do", "did", "done", "will", "can", "could", "would",
+    "should", "may", "might", "must", "all", "any", "some", "no", "yes", "one", "two", "new",
+    "now", "how", "who", "what", "when", "where", "why", "open", "close", "save", "load", "edit",
+    "delete", "cancel", "ok", "yes", "no", "help", "about", "file", "settings", "menu", "hello",
+    "world", "please", "thank", "thanks", "name", "user", "time",
 ];
 
 /// Fraction of consecutive alphabetic pairs that match one of the
@@ -1988,10 +1934,7 @@ fn english_digram_density(text: &str) -> f32 {
     for win in bytes.windows(2) {
         if win[0].is_ascii_alphabetic() && win[1].is_ascii_alphabetic() {
             total += 1;
-            let pair = [
-                win[0].to_ascii_lowercase(),
-                win[1].to_ascii_lowercase(),
-            ];
+            let pair = [win[0].to_ascii_lowercase(), win[1].to_ascii_lowercase()];
             if COMMON_ENGLISH_DIGRAMS.iter().any(|p| *p == pair) {
                 matches += 1;
             }
@@ -2063,8 +2006,8 @@ pub fn looks_like_ocr_noise(text: &str) -> bool {
         .copied()
         .filter(|c| c.is_ascii_alphabetic())
         .collect();
-    let latin_dominant = latin_letters.len() >= 4
-        && (latin_letters.len() as f32 / total as f32) > 0.55;
+    let latin_dominant =
+        latin_letters.len() >= 4 && (latin_letters.len() as f32 / total as f32) > 0.55;
     if latin_dominant {
         // Signal 1: vowel ratio far from English's ~38%. Real
         // English sits in [0.25, 0.60]; outside that range means
@@ -2139,10 +2082,7 @@ pub fn text_is_already_target(text: &str, target_language: &str) -> bool {
                         || (0x4E00..=0x9FFF).contains(&u) // CJK Unified
                 })
                 .count();
-            let latin_letters = all_chars
-                .iter()
-                .filter(|c| c.is_ascii_alphabetic())
-                .count();
+            let latin_letters = all_chars.iter().filter(|c| c.is_ascii_alphabetic()).count();
             // No Japanese at all → definitely needs translation.
             if jp_chars == 0 {
                 return false;
@@ -2361,12 +2301,8 @@ pub fn group_paragraphs(lines: &[OcrLine]) -> Vec<Paragraph> {
     // corpus (every Rainbow Passage line clears 50+ chars; every
     // 04ea spec row is under 25).
     const SHORT_LABEL_LIMIT: usize = 30;
-    let label_terminator = |c: char| -> bool {
-        matches!(
-            c,
-            ':' | '：' | '.' | '。' | '!' | '?' | '！' | '？'
-        )
-    };
+    let label_terminator =
+        |c: char| -> bool { matches!(c, ':' | '：' | '.' | '。' | '!' | '?' | '！' | '？') };
     let ends_paragraph = |text: &str| -> bool {
         let trimmed = text.trim_end();
         let last = match trimmed.chars().last() {
@@ -2479,8 +2415,13 @@ pub fn group_paragraphs(lines: &[OcrLine]) -> Vec<Paragraph> {
         // smaller glyph height — 1.2× covers typical 1.5-2× line-
         // height body text.
         let gap = (curr[1] - current.max_bottom).max(0.0);
-        let group_h = (current.max_bottom - current.members.first().map(|&i| lines[i].bbox[1]).unwrap_or(current.max_bottom))
-            .max(curr_h);
+        let group_h = (current.max_bottom
+            - current
+                .members
+                .first()
+                .map(|&i| lines[i].bbox[1])
+                .unwrap_or(current.max_bottom))
+        .max(curr_h);
         let min_h = group_h.min(curr_h).max(curr_h);
         let close_vertically = gap <= 1.2 * min_h;
 
@@ -2566,10 +2507,7 @@ pub fn group_paragraphs(lines: &[OcrLine]) -> Vec<Paragraph> {
             // because the comment said short lines "ride along"
             // their paragraph; in practice they should still ride
             // along the SAME COLUMN.
-            close_vertically
-                && horizontally_aligned
-                && !prev_finished
-                && !curr_label
+            close_vertically && horizontally_aligned && !prev_finished && !curr_label
         } else {
             false
         };
@@ -2733,7 +2671,12 @@ fn parse_numbered_segments(text: &str, line_count: usize) -> Option<Vec<String>>
     Some(
         slots
             .into_iter()
-            .map(|s| s.unwrap_or_default().trim().trim_start_matches(|c: char| c == ':' || c.is_whitespace()).to_string())
+            .map(|s| {
+                s.unwrap_or_default()
+                    .trim()
+                    .trim_start_matches(|c: char| c == ':' || c.is_whitespace())
+                    .to_string()
+            })
             .collect(),
     )
 }
@@ -2798,11 +2741,7 @@ impl FlowAccumulator {
     /// are joined in `line_index` order and separated by newlines so
     /// the history detail pane can display them as paragraphs.
     pub(crate) fn finalize(self) -> (String, String) {
-        let source = self
-            .sources
-            .into_values()
-            .collect::<Vec<_>>()
-            .join("\n");
+        let source = self.sources.into_values().collect::<Vec<_>>().join("\n");
         let translation = self
             .translations
             .into_values()
@@ -2828,7 +2767,9 @@ impl LensSink for TauriLensSink {
         // Reset any stale accumulator for this flow_id (defensive: the
         // watcher reuses ids only across distinct lens windows but a
         // hot-reload during dev can leave residue).
-        self.flows.lock().insert(flow_id, FlowAccumulator::default());
+        self.flows
+            .lock()
+            .insert(flow_id, FlowAccumulator::default());
         let _ = self.app.emit(
             "moonlens://lens-flow-start",
             LensFlowStart {
@@ -2837,13 +2778,7 @@ impl LensSink for TauriLensSink {
             },
         );
     }
-    fn on_cards_ready(
-        &self,
-        flow_id: u64,
-        image_w: u32,
-        image_h: u32,
-        cards: &[LensOcrLine],
-    ) {
+    fn on_cards_ready(&self, flow_id: u64, image_w: u32, image_h: u32, cards: &[LensOcrLine]) {
         {
             let mut guard = self.flows.lock();
             let acc = guard.entry(flow_id).or_default();
@@ -3032,10 +2967,7 @@ async fn run_capture_loop(
         let snapshot = settings.snapshot();
         let config = PipelineConfig {
             target_language: snapshot.subtitle.target_language.clone(),
-            max_concurrent_translate: snapshot
-                .performance
-                .max_concurrent_tasks
-                .max(1) as usize,
+            max_concurrent_translate: snapshot.performance.max_concurrent_tasks.max(1) as usize,
             // 3× upscale recovers small body-text recognition (see
             // PipelineConfig::default for the rationale).
             ocr_scale: 3,
@@ -3060,15 +2992,8 @@ async fn run_capture_loop(
         // capture flow — the user's settings finally win.
         let translator = Arc::new(ChainBackedLensTranslator::new(pipeline.clone()));
 
-        if let Err(e) = run_lens_pipeline(
-            &mut input,
-            sink.clone(),
-            ocr,
-            translator,
-            &config,
-            flow_id,
-        )
-        .await
+        if let Err(e) =
+            run_lens_pipeline(&mut input, sink.clone(), ocr, translator, &config, flow_id).await
         {
             tracing::warn!("lens {lens_id}: pipeline run failed: {e}");
         }
@@ -3124,11 +3049,7 @@ async fn translate_paragraph_streaming(
     // markers so the LLM's output stays parseable even if it
     // reshuffles internal newlines. The system prompt still asks
     // for newlines, but the markers are the belt.
-    let members_text: Vec<String> = paragraph
-        .text
-        .split('\n')
-        .map(|s| s.to_string())
-        .collect();
+    let members_text: Vec<String> = paragraph.text.split('\n').map(|s| s.to_string()).collect();
     let members_text = if members_text.len() == paragraph.members.len() {
         members_text
     } else {
@@ -3150,12 +3071,11 @@ async fn translate_paragraph_streaming(
     // showing until we swap in the new paragraph.
     let buffer = Arc::new(parking_lot::Mutex::new(String::new()));
     let buffer_for_sink = buffer.clone();
-    let sink: Arc<dyn Fn(String, bool) + Send + Sync> =
-        Arc::new(move |delta, _done| {
-            if !delta.is_empty() {
-                buffer_for_sink.lock().push_str(&delta);
-            }
-        });
+    let sink: Arc<dyn Fn(String, bool) + Send + Sync> = Arc::new(move |delta, _done| {
+        if !delta.is_empty() {
+            buffer_for_sink.lock().push_str(&delta);
+        }
+    });
 
     let pipeline = app.state::<crate::app::AppState>().pipeline.clone();
     let res = pipeline
@@ -3194,10 +3114,7 @@ async fn translate_paragraph_streaming(
             paragraph.members.len()
         );
         for (i, &line_idx) in paragraph.members.iter().enumerate() {
-            let line_text = members_text
-                .get(i)
-                .cloned()
-                .unwrap_or_default();
+            let line_text = members_text.get(i).cloned().unwrap_or_default();
             if let Err(e) = translate_line_streaming(
                 app.clone(),
                 lens_id.clone(),
@@ -3428,8 +3345,7 @@ mod tests {
         let tl = [20, 20, 20];
         let br = [235, 235, 235];
         let tr_bl = [128, 128, 128]; // roughly mid for the anti-diagonal
-        let g = detect_rim_gradient(mid, mid, mid, mid, tl, tr_bl, tr_bl, br)
-            .expect("gradient");
+        let g = detect_rim_gradient(mid, mid, mid, mid, tl, tr_bl, tr_bl, br).expect("gradient");
         assert_eq!(g.angle, 135);
         assert_eq!(g.from, tl);
         assert_eq!(g.to, br);
@@ -3487,14 +3403,9 @@ mod tests {
         // anchors so the filter tolerates a 200-unit gradient span.
         let rim_start = [40u8, 40, 40];
         let rim_end = [240u8, 240, 240];
-        let stops = refine_gradient_from_bbox(
-            &dynamic,
-            [0.0, 0.0, 40.0, 80.0],
-            rim_start,
-            rim_end,
-            180,
-        )
-        .expect("stops sampled");
+        let stops =
+            refine_gradient_from_bbox(&dynamic, [0.0, 0.0, 40.0, 80.0], rim_start, rim_end, 180)
+                .expect("stops sampled");
         assert_eq!(stops.len(), 5);
         // First stop should be dark, last should be bright.
         assert!(stops[0][0] < 90, "top stop: {:?}", stops[0]);
@@ -3507,8 +3418,7 @@ mod tests {
         let mid = [128u8, 128, 128];
         let tr = [15, 15, 15];
         let bl = [240, 240, 240];
-        let g = detect_rim_gradient(mid, mid, mid, mid, mid, tr, bl, mid)
-            .expect("gradient");
+        let g = detect_rim_gradient(mid, mid, mid, mid, mid, tr, bl, mid).expect("gradient");
         assert_eq!(g.angle, 45);
         assert_eq!(g.from, bl);
         assert_eq!(g.to, tr);
@@ -3616,10 +3526,7 @@ mod tests {
         // One marker's payload spans two raw output lines — the
         // parser must treat everything up to the next `[N]` as one
         // segment.
-        let segs = split_paragraph_translation(
-            "[1] first line\ncontinued\n[2] second line",
-            2,
-        );
+        let segs = split_paragraph_translation("[1] first line\ncontinued\n[2] second line", 2);
         assert_eq!(segs.len(), 2);
         assert!(segs[0].contains("first line") && segs[0].contains("continued"));
         assert_eq!(segs[1], "second line");
@@ -3757,15 +3664,12 @@ mod tests {
         // together; both lines below clear that threshold.
         let lines = vec![
             OcrLine {
-                text:
-                    "Of all the senses, sight must be the most delightful."
-                        .into(),
+                text: "Of all the senses, sight must be the most delightful.".into(),
                 bbox: [10.0, 10.0, 480.0, 20.0],
                 confidence: 1.0,
             },
             OcrLine {
-                text: "Few things give us greater pleasure than to see again."
-                    .into(),
+                text: "Few things give us greater pleasure than to see again.".into(),
                 bbox: [10.0, 32.0, 480.0, 20.0],
                 confidence: 1.0,
             },
@@ -3952,7 +3856,10 @@ mod tests {
         let paragraphs = group_by_layout_blocks(&lines, &blocks, 0.5);
         assert_eq!(paragraphs.len(), 2);
         let top = paragraphs.iter().find(|p| p.members == vec![0, 1]).unwrap();
-        assert!(top.block_bbox.is_some(), "block-based paragraph has block_bbox");
+        assert!(
+            top.block_bbox.is_some(),
+            "block-based paragraph has block_bbox"
+        );
         assert_eq!(top.text, "Line A\nLine B");
         let bottom = paragraphs.iter().find(|p| p.members == vec![2]).unwrap();
         assert_eq!(bottom.text, "tiny");
@@ -3998,7 +3905,10 @@ mod tests {
 
     #[test]
     fn coverage_is_zero_when_disjoint() {
-        assert_eq!(coverage([0.0, 0.0, 10.0, 10.0], [50.0, 50.0, 10.0, 10.0]), 0.0);
+        assert_eq!(
+            coverage([0.0, 0.0, 10.0, 10.0], [50.0, 50.0, 10.0, 10.0]),
+            0.0
+        );
     }
 
     #[test]
@@ -4030,12 +3940,8 @@ mod tests {
             },
         ];
         let skip_flags = vec![false, false, false];
-        let groups = split_paragraph_by_skipped_intrusions(
-            &[0, 1, 2],
-            &rendered,
-            &rendered,
-            &skip_flags,
-        );
+        let groups =
+            split_paragraph_by_skipped_intrusions(&[0, 1, 2], &rendered, &rendered, &skip_flags);
         assert_eq!(groups.len(), 1);
         assert_eq!(groups[0], vec![0, 1, 2]);
     }
@@ -4077,12 +3983,8 @@ mod tests {
             },
         ];
         let skip_flags = vec![false, true, false];
-        let groups = split_paragraph_by_skipped_intrusions(
-            &[0, 1],
-            &rendered,
-            &ocr_lines,
-            &skip_flags,
-        );
+        let groups =
+            split_paragraph_by_skipped_intrusions(&[0, 1], &rendered, &ocr_lines, &skip_flags);
         assert_eq!(
             groups.len(),
             2,
@@ -4128,12 +4030,8 @@ mod tests {
             },
         ];
         let skip_flags = vec![false, true, false];
-        let groups = split_paragraph_by_skipped_intrusions(
-            &[0, 1],
-            &rendered,
-            &ocr_lines,
-            &skip_flags,
-        );
+        let groups =
+            split_paragraph_by_skipped_intrusions(&[0, 1], &rendered, &ocr_lines, &skip_flags);
         assert_eq!(groups.len(), 1, "disjoint column must not trigger split");
         assert_eq!(groups[0], vec![0, 1]);
     }
@@ -4519,7 +4417,10 @@ mod tests {
         let fg = sample_text_color(&dynamic, [0.0, 0.0, 20.0, 20.0], bg);
         // Sampler should land somewhere in the red ballpark, not the
         // white bg and not fall back to the contrast pick (#0a0a0a).
-        assert!(fg[0] > 180 && fg[1] < 80 && fg[2] < 80, "expected red-ish, got {fg:?}");
+        assert!(
+            fg[0] > 180 && fg[1] < 80 && fg[2] < 80,
+            "expected red-ish, got {fg:?}"
+        );
     }
 
     #[test]

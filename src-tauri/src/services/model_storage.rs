@@ -73,10 +73,7 @@ pub trait ModelStorage: Send + Sync {
     ///
     /// Implementations must verify the dest path is under the
     /// storage root.
-    async fn open_write(
-        &self,
-        filename: &str,
-    ) -> Result<Box<dyn ModelWrite + Send>, StorageError>;
+    async fn open_write(&self, filename: &str) -> Result<Box<dyn ModelWrite + Send>, StorageError>;
 
     /// Atomically swap a separately-prepared file (e.g. extracted
     /// from a package) into the storage.  `source` must already be
@@ -146,10 +143,7 @@ impl ModelStorage for FileSystemStorage {
         Ok(())
     }
 
-    async fn open_write(
-        &self,
-        filename: &str,
-    ) -> Result<Box<dyn ModelWrite + Send>, StorageError> {
+    async fn open_write(&self, filename: &str) -> Result<Box<dyn ModelWrite + Send>, StorageError> {
         if filename.contains(['/', '\\']) {
             return Err(StorageError::OutsideRoot(PathBuf::from(filename)));
         }
@@ -197,10 +191,7 @@ struct FsModelWrite {
 impl ModelWrite for FsModelWrite {
     async fn write_all(&mut self, data: &[u8]) -> Result<(), StorageError> {
         use tokio::io::AsyncWriteExt;
-        let file = self
-            .file
-            .as_mut()
-            .expect("write_all after commit/discard");
+        let file = self.file.as_mut().expect("write_all after commit/discard");
         file.write_all(data).await?;
         Ok(())
     }
@@ -355,9 +346,10 @@ mod in_memory {
         }
 
         async fn commit(mut self: Box<Self>) -> Result<PathBuf, StorageError> {
-            self.files
-                .lock()
-                .insert(std::mem::take(&mut self.filename), std::mem::take(&mut self.buffer));
+            self.files.lock().insert(
+                std::mem::take(&mut self.filename),
+                std::mem::take(&mut self.buffer),
+            );
             self.committed = true;
             Ok(self.final_path.clone())
         }
@@ -430,7 +422,10 @@ mod tests {
         let final_path = s.import_from(&src, "model.gguf").await.unwrap();
         assert_eq!(final_path, s.resolve("model.gguf"));
         let snap = s.snapshot();
-        assert_eq!(snap.get("model.gguf").map(|v| v.as_slice()), Some(b"package contents".as_ref()));
+        assert_eq!(
+            snap.get("model.gguf").map(|v| v.as_slice()),
+            Some(b"package contents".as_ref())
+        );
     }
 
     #[tokio::test]
@@ -468,6 +463,9 @@ mod tests {
         // No final file, no partial file.
         assert!(!s.meta("model.gguf").await.unwrap().exists);
         let partial = tmp.path().join("model.gguf.partial");
-        assert!(!partial.exists(), "partial file must be cleaned up on discard");
+        assert!(
+            !partial.exists(),
+            "partial file must be cleaned up on discard"
+        );
     }
 }

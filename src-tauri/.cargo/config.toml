@@ -9,6 +9,12 @@
 # directory containing libclang.dll/libclang.so. Without it the
 # `llama-cpp-sys-2` build script fails with "libclang not found".
 #
+# The `embedded-llm-vulkan` feature (default since Phase 27,
+# 2026-05-12) additionally needs `VULKAN_SDK` so cmake can locate
+# `vulkan-shaders-gen` and the Vulkan headers. The SDK install
+# ships shader compile tools that llama.cpp consumes during its
+# CMake configure step.
+#
 # CMake is expected to be on the system PATH (install via
 # `winget install Kitware.CMake` on Windows, `apt install cmake`
 # on Linux, `brew install cmake` on macOS). We do NOT inject CMake
@@ -23,3 +29,38 @@
 # `force = false` (default) means an existing env var wins, which
 # is the behavior we want for CI / non-Windows / custom installs.
 LIBCLANG_PATH = "C:\\Program Files\\LLVM\\bin"
+# Default Vulkan SDK location on Windows. Only consulted by builds
+# that explicitly opt into a GPU backend via
+# `--features embedded-llm-vulkan` (the default feature set ships
+# CPU-only — see Cargo.toml). Install the SDK from
+# https://vulkan.lunarg.com (the canonical Khronos build); the
+# version suffix changes between releases. Override per-developer
+# by exporting `VULKAN_SDK` in your shell before running `cargo`.
+VULKAN_SDK = "C:\\VulkanSDK\\1.4.341.1"
+# Skip cmake's compiler-test probe. The probe's link step uses
+# cmake's `vs_link_exe` wrapper which appends `/MANIFEST
+# /MANIFESTFILE:.../intermediate.manifest` flags; on Windows
+# debug builds the test compile fails to write that manifest
+# (LNK1104), blocking llama-cpp-sys-2's `vulkan-shaders-gen`
+# ExternalProject's inner cmake from completing configure.
+# Setting this env var points cmake at a tiny toolchain file
+# that sets `CMAKE_C_COMPILER_WORKS=1` /
+# `CMAKE_CXX_COMPILER_WORKS=1`, which short-circuits the probe
+# entirely. cmake will still actually compile + link the real
+# project (which works fine); only the throwaway compiler
+# test is skipped. See `skip-compiler-test.cmake` for the
+# full rationale.
+CMAKE_TOOLCHAIN_FILE = "C:\\_Workspace\\MoonLens\\src-tauri\\.cargo\\skip-compiler-test.cmake"
+# Force the Ninja generator. The Visual Studio 17 2022 generator
+# has a documented race between ExternalProject configure/build/
+# install steps and MSBuild's task scheduler; the
+# vulkan-shaders-gen subproject regularly fails with "not a CMake
+# build directory (missing CMakeCache.txt)" on first build.
+# Ninja serialises ExternalProject steps via its dependency
+# graph. Prerequisite: `ninja.exe` must be on PATH. Run
+# `winget install Ninja-build.Ninja` once per dev machine, then
+# copy `ninja.exe` into a stable PATH dir (e.g.
+# `$env:USERPROFILE\.cargo\bin\`) because WinGet's package path
+# is per-install and not reliably on PATH for child processes
+# inside ExternalProject builds.
+CMAKE_GENERATOR = "Ninja"

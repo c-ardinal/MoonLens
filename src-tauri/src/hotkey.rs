@@ -175,20 +175,22 @@ pub fn register_all(
     let subtitle_s = subtitle.clone();
     let toggle_subtitle_accel = s.hotkeys.toggle_subtitle.clone();
     if is_bindable(&toggle_subtitle_accel) {
-        if let Err(e) = shortcut_mgr.on_shortcut(toggle_subtitle_accel.as_str(), move |_a, _s, e| {
-            if !matches!(e.state(), ShortcutState::Pressed) {
-                return;
-            }
-            match subtitle_s.toggle(&app_s) {
-                Ok(running) => {
-                    tracing::info!("subtitle running={running}");
+        if let Err(e) =
+            shortcut_mgr.on_shortcut(toggle_subtitle_accel.as_str(), move |_a, _s, e| {
+                if !matches!(e.state(), ShortcutState::Pressed) {
+                    return;
                 }
-                Err(err) => {
-                    tracing::warn!("subtitle toggle failed: {err:?}");
-                    let _ = app_s.emit("moonlens://hotkey", "toggle_subtitle_failed");
+                match subtitle_s.toggle(&app_s) {
+                    Ok(running) => {
+                        tracing::info!("subtitle running={running}");
+                    }
+                    Err(err) => {
+                        tracing::warn!("subtitle toggle failed: {err:?}");
+                        let _ = app_s.emit("moonlens://hotkey", "toggle_subtitle_failed");
+                    }
                 }
-            }
-        }) {
+            })
+        {
             tracing::warn!(
                 "hotkey 'toggle_subtitle' registration failed: accel='{toggle_subtitle_accel}' error={e:?}"
             );
@@ -204,52 +206,52 @@ pub fn register_all(
     let app_stop = app.clone();
     let stop_all_accel = s.hotkeys.stop_all.clone();
     if is_bindable(&stop_all_accel) {
-    if let Err(e) = shortcut_mgr.on_shortcut(stop_all_accel.as_str(), move |_a, _s, e| {
-        if !matches!(e.state(), ShortcutState::Pressed) {
-            return;
-        }
-        let app = app_stop.clone();
-        let state = app.state::<AppState>();
-        // Snapshot before teardown so the event payload reflects what
-        // was running when the button was hit.
-        let lens_ids: Vec<String> = state.lenses.list().into_iter().map(|d| d.id).collect();
-        let subtitle_was_running = state.subtitle.is_running();
-        let overlay_was_open = app
-            .get_webview_window("overlay")
-            .and_then(|w| w.is_visible().ok())
-            .unwrap_or(false);
-        state.lens_watchers.stop_all();
-        let mut lens_count = 0usize;
-        for id in &lens_ids {
-            match crate::lens::close(&app, &state.lenses, id) {
-                Ok(()) => lens_count += 1,
-                Err(err) => tracing::warn!("stop_all hotkey: close lens {id} failed: {err:?}"),
+        if let Err(e) = shortcut_mgr.on_shortcut(stop_all_accel.as_str(), move |_a, _s, e| {
+            if !matches!(e.state(), ShortcutState::Pressed) {
+                return;
             }
+            let app = app_stop.clone();
+            let state = app.state::<AppState>();
+            // Snapshot before teardown so the event payload reflects what
+            // was running when the button was hit.
+            let lens_ids: Vec<String> = state.lenses.list().into_iter().map(|d| d.id).collect();
+            let subtitle_was_running = state.subtitle.is_running();
+            let overlay_was_open = app
+                .get_webview_window("overlay")
+                .and_then(|w| w.is_visible().ok())
+                .unwrap_or(false);
+            state.lens_watchers.stop_all();
+            let mut lens_count = 0usize;
+            for id in &lens_ids {
+                match crate::lens::close(&app, &state.lenses, id) {
+                    Ok(()) => lens_count += 1,
+                    Err(err) => tracing::warn!("stop_all hotkey: close lens {id} failed: {err:?}"),
+                }
+            }
+            if let Err(err) = state.subtitle.stop(&app) {
+                tracing::warn!("stop_all hotkey: stop subtitle failed: {err:?}");
+            }
+            if let Err(err) = overlay::hide(&app) {
+                tracing::warn!("stop_all hotkey: hide overlay failed: {err:?}");
+            }
+            let payload = serde_json::json!({
+                "lens_count": lens_count,
+                "subtitle_was_running": subtitle_was_running,
+                "overlay_was_open": overlay_was_open,
+            });
+            let _ = app.emit("moonlens://stop-all", payload);
+            tracing::info!(
+                "stop_all hotkey fired: {} lens closed, subtitle={}, overlay={}",
+                lens_count,
+                subtitle_was_running,
+                overlay_was_open
+            );
+        }) {
+            tracing::warn!(
+                "hotkey 'stop_all' registration failed: accel='{stop_all_accel}' error={e:?}"
+            );
+            report.push("stop_all", stop_all_accel, e.to_string());
         }
-        if let Err(err) = state.subtitle.stop(&app) {
-            tracing::warn!("stop_all hotkey: stop subtitle failed: {err:?}");
-        }
-        if let Err(err) = overlay::hide(&app) {
-            tracing::warn!("stop_all hotkey: hide overlay failed: {err:?}");
-        }
-        let payload = serde_json::json!({
-            "lens_count": lens_count,
-            "subtitle_was_running": subtitle_was_running,
-            "overlay_was_open": overlay_was_open,
-        });
-        let _ = app.emit("moonlens://stop-all", payload);
-        tracing::info!(
-            "stop_all hotkey fired: {} lens closed, subtitle={}, overlay={}",
-            lens_count,
-            subtitle_was_running,
-            overlay_was_open
-        );
-    }) {
-        tracing::warn!(
-            "hotkey 'stop_all' registration failed: accel='{stop_all_accel}' error={e:?}"
-        );
-        report.push("stop_all", stop_all_accel, e.to_string());
-    }
     }
 
     // All other hotkeys just surface an intent; the frontend routes them.

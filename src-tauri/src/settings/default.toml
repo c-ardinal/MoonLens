@@ -89,6 +89,17 @@ lens_auto_poll_ms = 1500
 # chain that depends on an external daemon being already running.
 # ---------------------------------------------------------------------------
 
+[providers]
+# Translation tier the router drives. Fresh installs get
+# `standard` (≈4.2 GB total: JA-Std+ + Edge E2B); users can
+# switch to `compact` (0.6 GB, EN↔JA only) or `quality`
+# (≈6.1 GB, Edge+ E4B for multilingual) from the settings UI.
+# Pinned here so the canonical default round-trips through the
+# settings migration as a no-op (the migration only derives a
+# tier when the field is genuinely absent — i.e. a pre-routing
+# user.toml from before this knob existed).
+user_tier = "standard"
+
 [providers.translate]
 # Local-first chain. The default ships with the in-process embedded
 # LLM runtime (`embedded.llm`) so a fresh install translates out
@@ -242,15 +253,26 @@ license_url = "https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/blob/main/
 # as a single chunk (useful for evaluator runs where partial state
 # is undesirable).
 stream = true
-# Sampling: Qwen 2.5 instruction-tuned defaults. Pinned here so the
-# Lens streaming path does not silently regress when the upstream
-# `mistralrs` defaults shift between versions. `temperature = 0.0`
-# (greedy) makes per-line translations deterministic and ~10-20%
-# faster on weak hardware where sampling overhead matters.
-temperature = 0.0
+# Sampling: aligned with the proven `ollama.gemma4` defaults
+# below. Earlier embedded-LLM defaults pinned `temperature = 0.0`
+# for determinism, but the Phase 27 Lens eval surfaced that greedy
+# decoding produced rigid translations on multi-line OCR input
+# (made-up words like "コヴォ" from `cover to cover`, mechanical
+# `paper`→`紙` instead of context-aware `新聞`). Matching the
+# Ollama path's `0.4 / 0.95` here restores idiomatic phrasing
+# without compromising stability — the few-shot examples below
+# pin the format, the temperature controls how creative the
+# model is allowed to be inside that format.
+#
+# Context budgets bumped to match Ollama too: a single Lens
+# paragraph (Rainbow Passage class, ~1400 source chars) already
+# tokenises near 1100 input tokens and produces a ~2500-token
+# Japanese translation. 4096 silently capped these mid-sentence;
+# 8192 / 4096 covers any single screen-paragraph with headroom.
+temperature = 0.4
 top_p = 0.95
-num_ctx = 4096
-num_predict = 2048
+num_ctx = 8192
+num_predict = 4096
 
 [providers.configs."ollama.gemma4"]
 endpoint = "http://127.0.0.1:11434"

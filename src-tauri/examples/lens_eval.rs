@@ -41,15 +41,18 @@ use serde::Serialize;
 use moonlens_lib::{
     lens_inpaint,
     lens_pipeline::{
-        run_lens_pipeline, CapturedFrame, LensSink, OllamaLensTranslator, PipelineConfig,
+        run_lens_pipeline, CapturedFrame, LensSink, LensTranslator, PipelineConfig,
         PreCapturedInput, ProviderLensOcr, RecordingSink,
     },
     lens_watcher::{text_is_already_target, LensOcrLine},
+    model_registry::{tier_by_id, ModelTier},
     providers::{
-        ocr_ocrs::default_models_dir, ocr_windows::run_ocr,
-        ocr_windows::WindowsOcrProvider, translate_ollama::OllamaTranslator, OcrLine, Provider,
-        TaskInput, TaskOutput,
+        ocr_ocrs::default_models_dir, ocr_windows::run_ocr, ocr_windows::WindowsOcrProvider,
+        translate_embedded_llm::EmbeddedLlmTranslator, translate_ollama::OllamaTranslator,
+        translate_routed::RoutedTranslator, OcrLine, Provider, TaskInput, TaskOutput,
     },
+    services::hardware_probe::GPU_FEATURE_ENABLED,
+    translation_router::{Hardware, UserTier},
 };
 
 /// Offline fallback translator: the evaluator runs with or without
@@ -58,6 +61,48 @@ use moonlens_lib::{
 /// rest of the pipeline is untouched — the PNG render just shows
 /// OCR text in the translation panel, flagged by the probe warning.
 struct EchoTranslator;
+
+/// Bridges a generic `Provider` (single embedded model or a
+/// `RoutedTranslator`) onto the `LensTranslator` trait the eval
+/// pipeline expects. Lets the evaluator drive the same routing
+/// surface the production app uses for Lens lines, so the side-
+/// by-side PNGs reflect the user-visible translation quality.
+struct ProviderLensAdapter {
+    inner: Arc<dyn Provider>,
+}
+
+#[async_trait]
+impl LensTranslator for ProviderLensAdapter {
+    async fn translate(
+        &self,
+        text: String,
+        target_language: String,
+        chunk_sink: Arc<dyn Fn(String, bool) + Send + Sync>,
+    ) -> Result<String> {
+        let out = self
+            .inner
+            .run_streaming(
+                TaskInput::Translate {
+                    text,
+                    // The router accepts BCP-47 / ISO codes; "auto" is
+                    // not a recognised source so the matrix falls into
+                    // the "Other" bucket and goes through the multi
+                    // model. WinRT OCR fixtures we eval are English/JA
+                    // screenshots, both of which classify correctly.
+                    source_language: "auto".into(),
+                    target_language,
+                },
+                chunk_sink,
+            )
+            .await
+            .map_err(|e| anyhow::anyhow!("translate: {e}"))?;
+        match out {
+            TaskOutput::Text(t) => Ok(t),
+            TaskOutput::TextChunk { delta, .. } => Ok(delta),
+            other => anyhow::bail!("unexpected TaskOutput shape: {other:?}"),
+        }
+    }
+}
 
 #[async_trait]
 impl moonlens_lib::lens_pipeline::LensTranslator for EchoTranslator {
@@ -158,19 +203,102 @@ fn main() -> Result<()> {
     // paths never drift: any change to the prompt or few-shot
     // examples automatically flows to both the evaluator and the
     // shipped Lens runtime.
-    let translator_cfg = load_default_ollama_gemma4_config()
-        .context("load default.toml ollama.gemma4 config")?;
+    let translator_cfg =
+        load_default_ollama_gemma4_config().context("load default.toml ollama.gemma4 config")?;
     let translator = OllamaTranslator::new("ollama.gemma4", &translator_cfg);
-    // Quick liveness probe: try a tiny translate to confirm Ollama
-    // is up before the per-image loop. Failures fall back to
-    // source-text placeholder so the eval still produces output
-    // even offline (with a warning in the summary).
-    let translator_ok = probe_translator(&translate_runtime, &translator);
-    if !translator_ok {
-        eprintln!(
-            "note: Ollama translation unreachable — right panel will show OCR text placeholder"
-        );
-    }
+    // Translator selection (in priority order):
+    //   1. `MOONLENS_EVAL_FORCE_TIER=<tier_id>` — bypass the routing
+    //      matrix entirely and run every translate call through one
+    //      specific tier id (e.g. `gemma-4-e2b-it-q4_k_m`). Used by
+    //      the multi-model comparison workflow: run the same fixture
+    //      set 3× with different forced tiers, diff the resulting
+    //      summaries. The output dir is the same `tests/output/` —
+    //      callers are expected to rename / snapshot between runs.
+    //   2. `MOONLENS_EVAL_LENS_TIER=compact|standard|quality` — drive
+    //      the eval through `RoutedTranslator` using local GGUFs from
+    //      the production app-data dir. Picks the model the matrix
+    //      would select per `(src, tgt)` pair, including pivot routes
+    //      on GPU builds.
+    //   3. Otherwise: keep the legacy Ollama probe. Online → real
+    //      translations via `ollama.gemma4`; offline → echo source
+    //      text so the cards-only rendering pipeline still produces
+    //      a comparable PNG.
+    let routed_translator: Option<Arc<dyn Provider>> =
+        if let Ok(forced_id) = std::env::var("MOONLENS_EVAL_FORCE_TIER") {
+            let forced_id = forced_id.trim().to_string();
+            let tier = tier_by_id(&forced_id)
+                .with_context(|| format!("MOONLENS_EVAL_FORCE_TIER={forced_id:?} not in TIERS"))?;
+            let app_data = resolve_app_data_dir().context(
+                "resolve app-data dir for embedded models \
+             (set MOONLENS_EVAL_APP_DATA if running outside the installed app)",
+            )?;
+            println!(
+                "embedded force-tier: tier={} app_data={}",
+                forced_id,
+                app_data.display()
+            );
+            let cfg = config_for_eval_tier(tier);
+            let mut t = EmbeddedLlmTranslator::new(format!("embedded.llm.eval:{forced_id}"), &cfg);
+            t = t.with_app_data_dir(&app_data);
+            // Match production's GPU resolution: feature ON → all
+            // layers offloaded; feature OFF → CPU. The eval harness
+            // is most useful on a GPU-enabled build anyway.
+            let gpu_layers = if GPU_FEATURE_ENABLED { 99 } else { 0 };
+            t = t.with_gpu_layers(gpu_layers);
+            Some(Arc::new(t) as Arc<dyn Provider>)
+        } else {
+            match std::env::var("MOONLENS_EVAL_LENS_TIER")
+                .ok()
+                .and_then(|s| UserTier::from_id(s.trim().to_ascii_lowercase().as_str()))
+            {
+                Some(tier) => {
+                    let app_data = resolve_app_data_dir().context(
+                        "resolve app-data dir for embedded models \
+                     (set MOONLENS_EVAL_APP_DATA if running outside the installed app)",
+                    )?;
+                    let hw = if GPU_FEATURE_ENABLED {
+                        Hardware::Gpu
+                    } else {
+                        Hardware::Cpu
+                    };
+                    println!(
+                        "embedded routing: tier={tier:?} hw={hw:?} app_data={}",
+                        app_data.display()
+                    );
+                    // GPU layers: 99 when the binary was built with a
+                    // GPU backend feature (the eval harness sets the
+                    // feature explicitly via cargo --features), 0
+                    // otherwise. Keeps the eval consistent with the
+                    // production `Pipeline::resolved_gpu_layers` path.
+                    let gpu_layers = if GPU_FEATURE_ENABLED { 99 } else { 0 };
+                    let rt = RoutedTranslator::new(
+                        "embedded.llm",
+                        tier,
+                        hw,
+                        gpu_layers,
+                        Some(&app_data),
+                        None,
+                    );
+                    Some(Arc::new(rt) as Arc<dyn Provider>)
+                }
+                None => None,
+            }
+        };
+    // The Ollama probe is still useful as a fallback path when the
+    // embedded route is not selected. Skip it entirely on the
+    // embedded path so a missing Ollama daemon does not pollute
+    // logs.
+    let translator_ok = if routed_translator.is_some() {
+        true
+    } else {
+        let ok = probe_translator(&translate_runtime, &translator);
+        if !ok {
+            eprintln!(
+                "note: Ollama translation unreachable — right panel will show OCR text placeholder"
+            );
+        }
+        ok
+    };
 
     let paddle_engine = if detector_choice == SecondaryDetector::Paddle {
         match try_load_paddle_engine(project_root) {
@@ -254,6 +382,7 @@ fn main() -> Result<()> {
             &translate_runtime,
             &translator_cfg,
             translator_ok,
+            routed_translator.as_ref(),
         ) {
             Ok(report) => {
                 let residual_display = if report.residual_texts.is_empty() {
@@ -268,10 +397,7 @@ fn main() -> Result<()> {
                 };
                 summary.push_str(&format!(
                     "| {} | {} | {} | {} |\n",
-                    name,
-                    report.line_count,
-                    report.residual_char_count,
-                    residual_display,
+                    name, report.line_count, report.residual_char_count, residual_display,
                 ));
                 bench_rows.push_str(&format!(
                     "| {} | {:.0} | {:.0} | {:.0} | {:.1} | {:.0} | {:.0} | {:.0} | {:.0} |\n",
@@ -319,9 +445,7 @@ fn main() -> Result<()> {
     // glanceable without manually summing rows.
     if !reports.is_empty() {
         let n = reports.len() as f32;
-        let avg = |f: fn(&EvalReport) -> f32| -> f32 {
-            reports.iter().map(f).sum::<f32>() / n
-        };
+        let avg = |f: fn(&EvalReport) -> f32| -> f32 { reports.iter().map(f).sum::<f32>() / n };
         let avg_residuals = reports
             .iter()
             .map(|r| r.residual_char_count as f32)
@@ -507,6 +631,7 @@ fn evaluate_one(
     runtime: &tokio::runtime::Runtime,
     translator_cfg: &serde_json::Value,
     translator_ok: bool,
+    routed_translator: Option<&Arc<dyn Provider>>,
 ) -> Result<EvalReport> {
     use std::time::Instant;
     let t_start = Instant::now();
@@ -543,8 +668,19 @@ fn evaluate_one(
     let ocr: Arc<dyn moonlens_lib::lens_pipeline::LensOcr> =
         Arc::new(ProviderLensOcr::new(ocr_provider));
     let translator_for_pipeline: Arc<dyn moonlens_lib::lens_pipeline::LensTranslator> =
-        if translator_ok {
-            Arc::new(OllamaLensTranslator::new(translator_cfg.clone()))
+        if let Some(inner) = routed_translator {
+            Arc::new(ProviderLensAdapter {
+                inner: inner.clone(),
+            })
+        } else if translator_ok {
+            // The legacy `OllamaLensTranslator` wrapper was removed
+            // when the trait was generalised; ProviderLensAdapter
+            // covers the same use case by wrapping any `Provider`
+            // (here: the bundled-config OllamaTranslator) onto
+            // `LensTranslator`.
+            let ollama: Arc<dyn Provider> =
+                Arc::new(OllamaTranslator::new("ollama.gemma4", translator_cfg));
+            Arc::new(ProviderLensAdapter { inner: ollama })
         } else {
             Arc::new(EchoTranslator)
         };
@@ -611,14 +747,7 @@ fn evaluate_one(
     let empty_ocr: Vec<OcrLine> = Vec::new();
     let empty_skip: Vec<bool> = Vec::new();
 
-    let overlay = render_side_by_side(
-        &img,
-        &cards,
-        &empty_ocr,
-        &empty_skip,
-        &translations,
-        fonts,
-    );
+    let overlay = render_side_by_side(&img, &cards, &empty_ocr, &empty_skip, &translations, fonts);
     overlay
         .save(output_dir.join(format!("{stem}_eval.png")))
         .context("save overlay PNG")?;
@@ -715,11 +844,7 @@ fn evaluate_one(
     timings.total = t_start.elapsed().as_secs_f32() * 1000.0;
 
     let report = EvalReport {
-        image: input
-            .file_name()
-            .unwrap()
-            .to_string_lossy()
-            .to_string(),
+        image: input.file_name().unwrap().to_string_lossy().to_string(),
         image_w: w,
         image_h: h,
         line_count: cards.len(),
@@ -770,11 +895,7 @@ fn render_side_by_side(
     let (w, h) = src.dimensions();
     let gap: u32 = 24;
     let header_h: u32 = 30;
-    let mut canvas = RgbaImage::from_pixel(
-        w * 3 + gap * 2,
-        h + header_h,
-        Rgba([18, 18, 22, 255]),
-    );
+    let mut canvas = RgbaImage::from_pixel(w * 3 + gap * 2, h + header_h, Rgba([18, 18, 22, 255]));
 
     // Source pixels in plain RGB — read repeatedly by the
     // inpainter, cheaper than re-decoding on every card.
@@ -862,8 +983,7 @@ fn apply_inpainting(
     if region[2] < 3.0 || region[3] < 3.0 {
         return;
     }
-    let patch =
-        lens_inpaint::inpaint_text_in_bbox(src_rgb, region, card.bg_color, card.fg_color);
+    let patch = lens_inpaint::inpaint_text_in_bbox(src_rgb, region, card.bg_color, card.fg_color);
     let (pw, ph) = patch.dimensions();
     let bx = region[0].max(0.0) as u32;
     let by = region[1].max(0.0) as u32;
@@ -889,19 +1009,13 @@ fn apply_text_and_overlay(
     if sw <= 0.0 || sh <= 0.0 {
         return;
     }
-    let src_rect = Rect::at(sx as i32, sy as i32)
-        .of_size(sw.max(1.0) as u32, sh.max(1.0) as u32);
+    let src_rect = Rect::at(sx as i32, sy as i32).of_size(sw.max(1.0) as u32, sh.max(1.0) as u32);
     draw_hollow_rect_mut(img, src_rect, Rgba([255, 80, 80, 255]));
 
     let font_size = card.font_size_px.max(1.0);
     let scale = PxScale::from(font_size);
     let font = fonts.pick(card.font_weight);
-    let fg = Rgba([
-        card.fg_color[0],
-        card.fg_color[1],
-        card.fg_color[2],
-        255,
-    ]);
+    let fg = Rgba([card.fg_color[0], card.fg_color[1], card.fg_color[2], 255]);
     let y_offset = (font_size * 0.10) as i32;
     let text = if translation.is_empty() {
         &card.text
@@ -980,10 +1094,59 @@ fn apply_text_and_overlay(
 /// override it via the same config path, so there is a single
 /// source of truth for prompt, temperature, num_predict, and
 /// few-shot examples.
+/// Build the JSON config block `EmbeddedLlmTranslator::new`
+/// reads for a force-tier eval. Mirrors `translate_routed.rs`'s
+/// internal helper (kept private) — duplicating the 6 lines here
+/// rather than re-exporting it from the library keeps the
+/// production routing path unaware of the eval harness.
+fn config_for_eval_tier(tier: &ModelTier) -> serde_json::Value {
+    let mut obj = serde_json::Map::new();
+    obj.insert("repo".into(), serde_json::Value::String(tier.repo.into()));
+    obj.insert(
+        "filename_remote".into(),
+        serde_json::Value::String(tier.primary_filename().into()),
+    );
+    if tier.filenames.len() > 1 {
+        let extras: Vec<serde_json::Value> = tier
+            .filenames
+            .iter()
+            .skip(1)
+            .map(|f| serde_json::Value::String((*f).to_string()))
+            .collect();
+        obj.insert(
+            "filenames_remote_extra".into(),
+            serde_json::Value::Array(extras),
+        );
+    }
+    obj.insert(
+        "license".into(),
+        serde_json::Value::String(tier.license.into()),
+    );
+    serde_json::Value::Object(obj)
+}
+
+/// Locate the directory holding the production embedded-LLM
+/// GGUFs. The production app stores them under
+/// `<APPDATA>/io.moonlens.app/models/`. Power users can override
+/// via `MOONLENS_EVAL_APP_DATA` (path to the `app-data` root, not
+/// the `models/` subdir) when running the evaluator outside the
+/// installed app — useful for CI fixtures that ship a pre-built
+/// models directory.
+fn resolve_app_data_dir() -> Result<PathBuf> {
+    if let Ok(custom) = std::env::var("MOONLENS_EVAL_APP_DATA") {
+        return Ok(PathBuf::from(custom));
+    }
+    let appdata = std::env::var("APPDATA")
+        .or_else(|_| std::env::var("HOME"))
+        .context(
+            "neither MOONLENS_EVAL_APP_DATA, APPDATA, nor HOME is set; cannot locate models dir",
+        )?;
+    Ok(PathBuf::from(appdata).join("io.moonlens.app"))
+}
+
 fn load_default_ollama_gemma4_config() -> Result<serde_json::Value> {
     const DEFAULT_TOML: &str = include_str!("../src/settings/default.toml");
-    let root: toml::Value =
-        toml::from_str(DEFAULT_TOML).context("parse default.toml")?;
+    let root: toml::Value = toml::from_str(DEFAULT_TOML).context("parse default.toml")?;
     let cfg = root
         .get("providers")
         .and_then(|v| v.get("configs"))
@@ -1189,10 +1352,7 @@ fn try_load_ocrs_engine() -> Option<ocrs::OcrEngine> {
 /// pixel coordinates. Recognition is intentionally skipped — we
 /// use this as an additional DETECTOR only, since ocrs recognition
 /// on Japanese / stylised text is weaker than WinRT's.
-fn run_ocrs_detection(
-    img: &DynamicImage,
-    engine: &ocrs::OcrEngine,
-) -> Result<Vec<[f32; 4]>> {
+fn run_ocrs_detection(img: &DynamicImage, engine: &ocrs::OcrEngine) -> Result<Vec<[f32; 4]>> {
     let rgb = img.to_rgb8();
     let w = rgb.width();
     let h = rgb.height();
@@ -1266,17 +1426,10 @@ fn bbox_iou_over_area(a: &[f32; 4], b: &[f32; 4]) -> f32 {
 #[allow(dead_code)]
 fn preprocess_for_ocr(img: &DynamicImage, scale: u32) -> Result<Vec<u8>> {
     let (w, h) = img.dimensions();
-    let upscaled = img.resize_exact(
-        w * scale,
-        h * scale,
-        image::imageops::FilterType::Lanczos3,
-    );
+    let upscaled = img.resize_exact(w * scale, h * scale, image::imageops::FilterType::Lanczos3);
     let mut png = Vec::new();
     upscaled
-        .write_to(
-            &mut std::io::Cursor::new(&mut png),
-            image::ImageFormat::Png,
-        )
+        .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
         .context("encode preprocessed PNG")?;
     Ok(png)
 }
@@ -1406,11 +1559,9 @@ fn sauvola_binarize(img: &GrayImage, window: u32, k: f32) -> GrayImage {
         for x in 0..wu {
             let v = img.get_pixel(x as u32, y as u32).0[0] as u64;
             let idx = |xx: usize, yy: usize| -> usize { yy * stride + xx };
-            sum[idx(x + 1, y + 1)] =
-                v + sum[idx(x, y + 1)] + sum[idx(x + 1, y)] - sum[idx(x, y)];
+            sum[idx(x + 1, y + 1)] = v + sum[idx(x, y + 1)] + sum[idx(x + 1, y)] - sum[idx(x, y)];
             sum_sq[idx(x + 1, y + 1)] =
-                v * v + sum_sq[idx(x, y + 1)] + sum_sq[idx(x + 1, y)]
-                    - sum_sq[idx(x, y)];
+                v * v + sum_sq[idx(x, y + 1)] + sum_sq[idx(x + 1, y)] - sum_sq[idx(x, y)];
         }
     }
 
@@ -1425,9 +1576,8 @@ fn sauvola_binarize(img: &GrayImage, window: u32, k: f32) -> GrayImage {
             let y1 = ((y as i32 + half + 1).min(hu as i32)) as usize;
             let area = ((x1 - x0) * (y1 - y0)) as f32;
             let idx = |xx: usize, yy: usize| -> usize { yy * stride + xx };
-            let s = (sum[idx(x1, y1)] + sum[idx(x0, y0)]
-                - sum[idx(x1, y0)]
-                - sum[idx(x0, y1)]) as f32;
+            let s =
+                (sum[idx(x1, y1)] + sum[idx(x0, y0)] - sum[idx(x1, y0)] - sum[idx(x0, y1)]) as f32;
             let sq = (sum_sq[idx(x1, y1)] + sum_sq[idx(x0, y0)]
                 - sum_sq[idx(x1, y0)]
                 - sum_sq[idx(x0, y1)]) as f32;

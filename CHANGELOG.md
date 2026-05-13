@@ -8,9 +8,162 @@ the project adheres to [SemVer](https://semver.org/).
 
 ### Added
 
+- **Phase 27: Translation routing matrix + sampler/EOS overhaul**
+  (`src-tauri/src/translation_router.rs`,
+  `src-tauri/src/providers/translate_routed.rs`,
+  `src-tauri/src/providers/translate_pivot.rs`,
+  `docs/TRANSLATION_ROUTING_MATRIX.md`,
+  `docs/benchmarks/2026-05-12-phase27-*.md`)
+  - **User-facing tier picker** (`UserTier`: Compact / Standard /
+    Quality) replaces the previous per-model-ID dropdown. One
+    choice drives both the loaded GGUF set AND the per-language
+    routing decision. `Providers::user_tier` is the canonical
+    state; a migration in `migrate_legacy_embedded_settings`
+    derives it from any pre-routing `embedded.llm` config block
+    (Qwen 7B → Quality, Qwen 1.5B → Standard, etc.).
+  - **Routing matrix** (`translation_router::route`):
+    `(UserTier, Hardware, src, tgt)` → `RoutingDecision`
+    (`Direct { tier_id }` / `Pivot { stage1, stage2 }` /
+    `Unsupported`). en↔ja always goes through llm-jp (JA bridge);
+    other pairs route to Edge (Gemma 4 E2B/E4B) directly on CPU
+    or pivot via English on GPU. Compact tier degrades non-en/ja
+    to JA-Compact with a UI warning.
+  - **`RoutedTranslator`**: wrapper provider that owns one
+    `EmbeddedLlmTranslator` per tier_id the matrix can dispatch
+    to. The pipeline registers this under `embedded.llm` when
+    `user_tier` is set, otherwise falls back to the legacy
+    single-tier path.
+  - **`PivotTranslator`**: chains two embedded translators via
+    English. Strips `STOP_SUFFIXES` from Stage-1 output before
+    feeding Stage 2 (fix for the "translate the EOS marker
+    literally" bug that produced `名無し` / `Nameless` leaks).
+  - **`MOONLENS_EVAL_FORCE_TIER` env var** in
+    `examples/lens_eval.rs` for tier-by-tier quality comparison
+    (powers `scripts/run-lens-eval-3way.ps1` +
+    `scripts/compare-lens-eval-3way.ps1`).
+  - **Per-model readiness**: new `routed_model_status` IPC
+    returns the presence + size of every GGUF the active tier
+    needs; the settings UI renders one row per model with an
+    individual "ダウンロード" button (`download_routed_model`
+    IPC). The Onboarding modal sequences these downloads on
+    first launch.
+  - **422 → 424 → 424 unit tests pass** (added 21 routing /
+    sampler / migration regressions).
+
+### Changed
+
+- **Embedded LLM sampler is now config-driven**
+  (`src-tauri/src/providers/translate_embedded_llm.rs`,
+  `src-tauri/src/settings/default.toml`)
+  - Phase 27 Lens eval surfaced that the runtime hard-coded
+    `LlamaSampler::greedy()` regardless of `temperature` /
+    `top_p` config. Bumping `temperature = 0.4` (Ollama-aligned)
+    in default.toml had no effect — the embedded path was 4×
+    more rigid than the Ollama path users compared against.
+  - Sampler is now rebuilt per request from `InferenceRequest.
+    temperature` / `top_p`. `0.0` short-circuits to greedy;
+    `>0` builds `penalties(64, 1.10, 0, 0)` → `top_p` → `temp`
+    → `dist(LLAMA_DEFAULT_SEED)` chain. Repetition penalty
+    guards the "「e「e「e…" / "誰も「は「い…" repeat-loop modes
+    small models (llm-jp 1.8B, Gemma 4 E2B) collapse into on
+    noisy OCR input.
+  - `default.toml` now ships `temperature = 0.4`, `top_p = 0.95`,
+    `num_ctx = 8192`, `num_predict = 4096` — aligned with the
+    proven `ollama.gemma4` settings. System prompt simplified
+    back from the Phase 25 paranoid variant (no more "no
+    Chinese 简体/繁體" boilerplate; the few-shots + runtime
+    stop-suffix scrubbing handle that mitigation).
+  - Few-shot examples replaced with the 3 context-rich
+    Ollama-style fixtures (Stella / snake-frog / red-bags) for
+    both ja and en targets. User prompt template trimmed to
+    `Translate the following text into {tgt}:\n\n{src}` —
+    smaller models stopped translating the meta-instruction
+    when the boilerplate was removed.
+
+- **GPU toggle wired end-to-end**
+  (`src-tauri/src/pipeline.rs`,
+  `src-tauri/src/providers/translate_embedded_llm.rs`,
+  `src-tauri/src/providers/translate_routed.rs`)
+  - `Settings → Performance → "GPU を有効化"` toggle now reaches
+    the runtime via `Pipeline::resolved_gpu_layers()` →
+    `EmbeddedLlmTranslator::with_gpu_layers()` →
+    `LlamaModelParams::with_n_gpu_layers`. Pre-Phase-27 the
+    worker only consulted `MOONLENS_GPU_LAYERS` env var, so the
+    UI control silently no-op'd.
+  - `embedded_cache` invalidates on `gpu_layers` change too
+    (not just `model_path`), so flipping the toggle reloads
+    the engine instead of returning the stale CPU instance.
+  - `RoutedTranslator::new` propagates `gpu_layers` to every
+    inner translator — the matrix never wants one model on GPU
+    and the other on CPU (pivot latency would be dominated by
+    the slower half).
+  - Default features now include `embedded-llm-vulkan` so the
+    toggle has a runtime effect out of the box. Vulkan was
+    picked over CUDA because every modern Intel iGPU / AMD /
+    NVIDIA driver ships a Vulkan loader; CUDA is NVIDIA-only
+    and needs the CUDA Toolkit at build time.
+
+- **Streaming sink no longer leaks EOS markers**
+  (`src-tauri/src/providers/translate_embedded_llm.rs`)
+  - Phase 27 Lens eval caught `<end_of_turn>` reaching the
+    rendered translation card. Root cause: the runtime
+    streaming loop called `on_token(piece)` BEFORE running
+    `check_and_strip_stop_suffix` on the aggregate; once a
+    suffix's first bytes had been emitted, after-the-fact
+    stripping of the internal aggregate didn't undo the sink.
+  - Lookahead-deferred emission: buffer the last
+    `STOP_SUFFIX_LOOKAHEAD` (16) bytes of aggregated text;
+    only flush bytes outside that window per token. On stop
+    hit, the held-back tail's clean prefix is flushed; the
+    suffix bytes are dropped. On natural end (EOG, max_predict)
+    `flush_streaming_final` trims any trailing partial-suffix
+    prefix defensively.
+  - `STOP_SUFFIXES` extended with bare-form `end_of_turn` and
+    `<end_of_turn` to catch Gemma 4 tokeniser quirks where the
+    EOS marker is emitted as plain text rather than a single
+    special token. Same shape as the existing `|im_end|>`
+    llm-jp bare-form entry.
+
+### Build & tooling
+
+- **Tauri dev build with Vulkan unblocked**
+  (`src-tauri/.cargo/config.toml`,
+  `src-tauri/.cargo/skip-compiler-test.cmake`)
+  - `llama-cpp-sys-2 v0.1.145`'s `vulkan-shaders-gen`
+    ExternalProject spawns a nested cmake whose
+    `CMakeTestCCompiler.cmake` probe consistently fails on
+    Windows debug builds with
+    `LNK1104: cannot open intermediate.manifest`. The probe is
+    upstream-controlled; we side-step it by setting
+    `CMAKE_TOOLCHAIN_FILE` to a tiny toolchain that sets
+    `CMAKE_C_COMPILER_WORKS=1` / `CMAKE_CXX_COMPILER_WORKS=1`.
+  - `CMAKE_GENERATOR=Ninja` replaces the Visual Studio
+    generator project-wide; Ninja's dependency-graph step
+    serialisation avoids the MSBuild ExternalProject race
+    that plagued the VS generator.
+  - Prerequisite: `ninja.exe` must be on PATH for both outer
+    and inner cmake invocations. Copy from
+    `winget install Ninja-build.Ninja` into `~/.cargo/bin/`
+    (or use `choco install ninja`).
+
+- **Settings UI simplified to a single tier picker**
+  (`src/routes/settings/+page.svelte`,
+  `src/lib/components/EmbeddedModelOnboarding.svelte`)
+  - 「モデルティア」(legacy single-model dropdown) removed
+    from the embedded.llm detail body. 「翻訳ティア」(routing
+    UserTier) is the only user-facing knob now. The legacy
+    IPC commands (`set_model_tier`, `model_tier_status`,
+    `list_model_tiers`) stay registered for power-user
+    user.toml inspection but are no longer surfaced in the UI.
+  - Routing preview matrix shows the model the router would
+    pick for 4 common language pairs (en→ja, zh→ja, ja→ko,
+    fr→de) — lets users sanity-check the tier choice before
+    committing.
+
 - **Phase 24: GPU offload (Vulkan) + cold-start warmup**
   (`src-tauri/Cargo.toml`, `src-tauri/src/providers/translate_embedded_llm.rs`,
-  `bench_phase24_gpu.md`, `bench_phase24_gpu_warm.md`)
+  `docs/benchmarks/2026-05-11-phase24a-gpu-cold.md`,
+  `docs/benchmarks/2026-05-11-phase24b-gpu-warmup.md`)
   - 新 cargo features 追加: `embedded-llm-vulkan` / `embedded-llm-cuda`。
     既定の `embedded-llm` は CPU-only のまま (エンドユーザー配布の
     バイナリサイズと依存関係を最小化)、GPU offload は opt-in build。
@@ -28,7 +181,7 @@ the project adheres to [SemVer](https://semver.org/).
     - 全ティアで CPU 比 10-30 倍の高速化。
 
 - **Phase 23: ナレッジカットオフ後の新世代モデル調査**
-  (`src-tauri/src/model_registry.rs`, `bench_phase23.md`)
+  (`src-tauri/src/model_registry.rs`, `docs/benchmarks/2026-05-11-phase23-new-model-survey.md`)
   ユーザー指摘「あなたの 2026-01 ナレッジカットオフ後にも良いモデルが
   リリースされている可能性」を受けて HuggingFace の最新リリースを
   網羅調査。6 候補 (~7.6GB) を DL + 自動ベンチ。最終的に 2 ティアを
@@ -102,7 +255,7 @@ the project adheres to [SemVer](https://semver.org/).
 
 - **Phase 21 v2: ベンチ結果に基づくティア整理**
   (`src-tauri/src/model_registry.rs`, `src-tauri/src/providers/translate_embedded_llm.rs`,
-  `docs/EMBEDDED_LLM_PERF.md`, `bench_phase21.md`)
+  `docs/EMBEDDED_LLM_PERF.md`, `docs/benchmarks/2026-05-09-phase21-runtime-swap.md`)
   - **`ChatTemplate::ChatMlQwen3NoThink` 新設** — Qwen 3 base 系 (0.6B / 1.7B)
     の thinking mode (`<think>...</think>`) が翻訳タスクで暴走 (64-token 全部
     consume) する問題を解決。assistant primer に空 `<think>\n\n</think>\n\n` を

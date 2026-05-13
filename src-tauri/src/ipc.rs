@@ -69,10 +69,7 @@ pub async fn set_plugin_enabled(
 
 #[tauri::command]
 pub async fn uninstall_plugin(id: String, state: State<'_, AppState>) -> Result<(), String> {
-    state
-        .plugins
-        .uninstall(&id)
-        .map_err(|e| e.to_string())?;
+    state.plugins.uninstall(&id).map_err(|e| e.to_string())?;
     // Removing a plugin can drop providers that the active chains
     // referenced; refresh the pipeline so the next request resolves to
     // whatever is still installed.
@@ -333,7 +330,10 @@ pub async fn capture_and_process(
             return Err(emit_capture_error(&app, format!("キャプチャ失敗: {e}")));
         }
         Err(e) => {
-            return Err(emit_capture_error(&app, format!("キャプチャタスク失敗: {e}")));
+            return Err(emit_capture_error(
+                &app,
+                format!("キャプチャタスク失敗: {e}"),
+            ));
         }
     };
 
@@ -676,10 +676,7 @@ pub async fn capture_file(
     let png = match tokio::task::spawn_blocking(move || -> anyhow::Result<Vec<u8>> {
         let img = image::open(&path)?;
         let mut buf: Vec<u8> = Vec::new();
-        img.write_to(
-            &mut std::io::Cursor::new(&mut buf),
-            image::ImageFormat::Png,
-        )?;
+        img.write_to(&mut std::io::Cursor::new(&mut buf), image::ImageFormat::Png)?;
         Ok(buf)
     })
     .await
@@ -797,15 +794,43 @@ pub struct EmbeddedModelStatus {
     pub license_url: Option<String>,
 }
 
+/// One model's presence + size for the `routed_model_status` IPC.
+/// `Standard` and `Quality` tiers need 2 GGUFs (a JA bridge + a
+/// multilingual model); the UI iterates this list to surface
+/// per-model readiness rather than the single-file view the
+/// legacy `embedded_model_status` provides.
+#[derive(serde::Serialize, Clone)]
+pub struct RoutedModelStatus {
+    /// Registry id from `model_registry::TIERS` (`llm-jp-3.1-1.8b-instruct4-q4_k_m`
+    /// etc.). Stable; the UI uses it to key download progress events
+    /// to a specific row.
+    pub tier_id: String,
+    /// Human-readable label ("JA-Standard+ (llm-jp 3.1 1.8B)" etc.).
+    pub display_name: String,
+    /// Approximate on-disk size in MB. Pulled from the registry —
+    /// matches what the legacy single-tier picker showed.
+    pub size_mb: u32,
+    /// `true` when EVERY file in the tier's `filenames` list is on
+    /// disk. Multi-part GGUFs (Qwen 2.5 7B) only flip true after
+    /// both parts have downloaded.
+    pub present: bool,
+    /// SPDX-style license advert ("Apache-2.0", "Gemma-Terms-of-Use").
+    pub license: String,
+    /// HuggingFace repo (`mmnga/llm-jp-3.1-1.8b-instruct4-gguf` etc.)
+    /// — the UI uses this to pass to the existing
+    /// `downloadEmbeddedModel` IPC when a "ダウンロード" button is
+    /// clicked on a missing-model row.
+    pub repo: String,
+    /// Primary filename ("...-Q4_K_M.gguf"). Same purpose as `repo`
+    /// — round-tripped through the download IPC.
+    pub primary_filename: String,
+}
+
 #[tauri::command]
 pub async fn embedded_model_status(
     state: State<'_, AppState>,
 ) -> Result<EmbeddedModelStatus, String> {
-    let s = state
-        .models
-        .status()
-        .await
-        .map_err(|e| e.to_string())?;
+    let s = state.models.status().await.map_err(|e| e.to_string())?;
     Ok(EmbeddedModelStatus {
         path: s.path.display().to_string(),
         present: s.present,
@@ -821,8 +846,7 @@ pub async fn embedded_model_status(
 /// matches their hardware. The list mirrors `model_registry::TIERS`
 /// — the registry is the source of truth.
 #[tauri::command]
-pub async fn list_model_tiers(
-) -> Result<Vec<crate::model_registry::ModelTier>, String> {
+pub async fn list_model_tiers() -> Result<Vec<crate::model_registry::ModelTier>, String> {
     Ok(crate::model_registry::TIERS.to_vec())
 }
 
@@ -872,15 +896,201 @@ pub async fn model_tier_status(state: State<'_, AppState>) -> Result<ModelTierSt
 }
 
 #[tauri::command]
-pub async fn set_model_tier(
-    state: State<'_, AppState>,
-    tier_id: String,
-) -> Result<(), String> {
+pub async fn set_model_tier(state: State<'_, AppState>, tier_id: String) -> Result<(), String> {
     state
         .models
         .set_tier(&tier_id)
         .await
         .map_err(|e| e.to_string())
+}
+
+/* ---------------- user tier (translation routing) ---------------- */
+
+/// Snapshot of the routing tier state surfaced to the settings UI.
+/// The picker renders these three tiers as the only user-facing
+/// translation tier choices; per-language model selection happens
+/// inside the router based on this single value.
+#[derive(serde::Serialize, Clone)]
+pub struct UserTierStatus {
+    /// Currently-active routing tier, or `None` when the user has
+    /// not opted into routing yet (legacy single-tier path is
+    /// still in effect for that install).
+    pub current: Option<crate::translation_router::UserTier>,
+    /// Compile-time hardware bucket (GPU feature flags ON ⇒ Gpu,
+    /// else Cpu). The router uses this together with `current` to
+    /// pick model paths at translate time. Surfaced here so the UI
+    /// can render "CPU mode" / "GPU mode" alongside the tier.
+    pub hardware: crate::translation_router::Hardware,
+}
+
+/// Read the user's saved routing tier (and detected hardware).
+/// Returns `current = None` when the user has not yet opted into
+/// routing — in that state, the legacy single-tier surface
+/// (`set_model_tier`) is what controls which model loads.
+#[tauri::command]
+pub async fn get_user_tier(state: State<'_, AppState>) -> Result<UserTierStatus, String> {
+    use crate::services::hardware_probe::HardwareProbe;
+    let snap = state.settings.snapshot();
+    let current = snap.providers.user_tier;
+    let hardware = state.models.probe.capabilities().hw_kind();
+    Ok(UserTierStatus { current, hardware })
+}
+
+/// Persist the user's routing tier choice. `tier_id` must be one
+/// of `compact` / `standard` / `quality` — anything else is a
+/// validation error.
+///
+/// Side effects:
+/// 1. Writes `providers.user_tier` in `user.toml`.
+/// 2. Triggers a pipeline rebuild so the routing-aware provider
+///    is reconstructed for the new tier (and any newly-needed
+///    models are queued for preload). The rebuild path is the
+///    same one settings hot-reload uses, so this command never
+///    leaves the running pipeline in a half-applied state.
+#[tauri::command]
+pub async fn set_user_tier(state: State<'_, AppState>, tier_id: String) -> Result<(), String> {
+    let parsed = crate::translation_router::UserTier::from_id(&tier_id)
+        .ok_or_else(|| format!("unknown user tier `{tier_id}`"))?;
+    let mut s = (*state.settings.snapshot()).clone();
+    s.providers.user_tier = Some(parsed);
+    state.settings.save(s).map_err(|e| e.to_string())?;
+    state.pipeline.rebuild_providers();
+    Ok(())
+}
+
+/// Clear the routing tier so the install reverts to the legacy
+/// single-tier `embedded.llm` provider. Used by the settings UI's
+/// "ルーティング無効化" option (mostly for power users / bench
+/// comparisons) and by the migration path that lets users
+/// downgrade if a routing bug surfaces.
+#[tauri::command]
+pub async fn clear_user_tier(state: State<'_, AppState>) -> Result<(), String> {
+    let mut s = (*state.settings.snapshot()).clone();
+    s.providers.user_tier = None;
+    state.settings.save(s).map_err(|e| e.to_string())?;
+    state.pipeline.rebuild_providers();
+    Ok(())
+}
+
+/// One row of the preview matrix returned by [`preview_routing`].
+/// Mirrors `translation_router::RoutingDecision` but expands the
+/// tier IDs into display names so the UI does not need a second
+/// round-trip to enrich the labels.
+#[derive(serde::Serialize, Clone)]
+#[serde(tag = "mode", rename_all = "snake_case")]
+pub enum RoutingPreview {
+    Direct {
+        tier_id: String,
+        display_name: String,
+    },
+    Pivot {
+        stage1_tier_id: String,
+        stage1_display_name: String,
+        stage2_tier_id: String,
+        stage2_display_name: String,
+    },
+    Unsupported,
+}
+
+fn preview_from_decision(d: crate::translation_router::RoutingDecision) -> RoutingPreview {
+    use crate::translation_router::RoutingDecision as RD;
+    fn name_of(id: &str) -> String {
+        crate::model_registry::tier_by_id(id)
+            .map(|t| t.display_name.to_string())
+            .unwrap_or_else(|| id.to_string())
+    }
+    match d {
+        RD::Direct { tier_id } => RoutingPreview::Direct {
+            tier_id: tier_id.to_string(),
+            display_name: name_of(tier_id),
+        },
+        RD::Pivot {
+            stage1_tier,
+            stage2_tier,
+        } => RoutingPreview::Pivot {
+            stage1_tier_id: stage1_tier.to_string(),
+            stage1_display_name: name_of(stage1_tier),
+            stage2_tier_id: stage2_tier.to_string(),
+            stage2_display_name: name_of(stage2_tier),
+        },
+        RD::Unsupported => RoutingPreview::Unsupported,
+    }
+}
+
+/// Per-model readiness for the user's current `user_tier`. The
+/// settings UI calls this to render a row per model required by
+/// the active tier (1 for Compact, 2 for Standard / Quality) so
+/// users can see at a glance which GGUFs need downloading
+/// before translation works end-to-end. The legacy
+/// `embedded_model_status` only inspects the single
+/// `[providers.configs."embedded.llm"]` config block, which
+/// doesn't reflect the multi-model reality once routing is on.
+#[tauri::command]
+pub async fn routed_model_status(
+    state: State<'_, AppState>,
+) -> Result<Vec<RoutedModelStatus>, String> {
+    use crate::providers::translate_routed::RoutedTranslator;
+    let snap = state.settings.snapshot();
+    let user_tier = snap
+        .providers
+        .user_tier
+        .unwrap_or(crate::translation_router::UserTier::Standard);
+    let tier_ids = RoutedTranslator::tier_ids_for(user_tier);
+    let app_data = state
+        .pipeline
+        .app_data_dir()
+        .ok_or_else(|| "app data dir not set".to_string())?;
+    let models_dir = crate::providers::translate_embedded_llm::default_model_dir(&app_data);
+
+    let mut rows = Vec::with_capacity(tier_ids.len());
+    for tier_id in tier_ids {
+        let Some(tier) = crate::model_registry::tier_by_id(tier_id) else {
+            continue;
+        };
+        // Every part has to exist for a multi-part tier (Qwen 2.5 7B
+        // ships as two LFS files). A half-downloaded multi-part tier
+        // can't load, so we surface that as `present = false`.
+        let all_present = tier.filenames.iter().all(|f| models_dir.join(f).exists());
+        rows.push(RoutedModelStatus {
+            tier_id: tier_id.to_string(),
+            display_name: tier.display_name.to_string(),
+            size_mb: tier.size_mb,
+            present: all_present,
+            license: tier.license.to_string(),
+            repo: tier.repo.to_string(),
+            primary_filename: tier.primary_filename().to_string(),
+        });
+    }
+    Ok(rows)
+}
+
+/// Resolve which model(s) the router would dispatch for a given
+/// (source, target) pair under the currently-saved user tier.
+/// When no tier is saved yet, the preview falls back to
+/// `UserTier::Standard` so the UI can render a "you would get..."
+/// hint before the user commits to a choice. Surfaced via the
+/// settings UI's per-language preview matrix.
+#[tauri::command]
+pub async fn preview_routing(
+    state: State<'_, AppState>,
+    source: String,
+    target: String,
+    tier_override: Option<String>,
+) -> Result<RoutingPreview, String> {
+    use crate::services::hardware_probe::HardwareProbe;
+    let snap = state.settings.snapshot();
+    let tier = match tier_override {
+        Some(id) => crate::translation_router::UserTier::from_id(&id)
+            .ok_or_else(|| format!("unknown user tier `{id}`"))?,
+        None => snap
+            .providers
+            .user_tier
+            .unwrap_or(crate::translation_router::UserTier::Standard),
+    };
+    let hw = state.models.probe.capabilities().hw_kind();
+    Ok(preview_from_decision(crate::translation_router::route(
+        tier, hw, &source, &target,
+    )))
 }
 
 /// One bench sample, mirrored to JSON for the UI.
@@ -1091,8 +1301,7 @@ pub async fn pick_and_package_embedded_model(
     .map_err(|e| e.to_string())?;
     let Some(path) = chosen else { return Ok(None) };
     let target = path.into_path().map_err(|e| e.to_string())?;
-    let result =
-        package_embedded_model(state, target.to_string_lossy().to_string(), note).await?;
+    let result = package_embedded_model(state, target.to_string_lossy().to_string(), note).await?;
     Ok(Some(result))
 }
 
@@ -1118,8 +1327,7 @@ pub async fn pick_and_apply_embedded_model_package(
     .map_err(|e| e.to_string())?;
     let Some(path) = chosen else { return Ok(None) };
     let pkg = path.into_path().map_err(|e| e.to_string())?;
-    let imported =
-        apply_embedded_model_package(state, pkg.to_string_lossy().to_string()).await?;
+    let imported = apply_embedded_model_package(state, pkg.to_string_lossy().to_string()).await?;
     Ok(Some(imported))
 }
 
@@ -1203,6 +1411,64 @@ pub async fn download_embedded_model(
     // when no chunks fired (e.g. the file was already present).
     let payload = ModelProgress {
         filename: resolved.filename_remote.clone(),
+        downloaded: outcome.size_bytes,
+        total: Some(outcome.size_bytes),
+        fraction: Some(1.0),
+    };
+    let _ = app.emit("moonlens://embedded-model-progress", payload);
+
+    Ok(outcome.path.display().to_string())
+}
+
+/// Download a specific routing-tier GGUF by id. Companion to
+/// `routed_model_status`: the settings UI offers a "ダウンロード"
+/// button per missing model row, which calls this with the
+/// row's `tier_id`. Multi-part tiers (e.g. Qwen 2.5 7B) are
+/// fetched sequentially and reported as one aggregate progress
+/// stream on the same `moonlens://embedded-model-progress`
+/// channel the legacy download uses, so the frontend's progress
+/// bar code keeps working unchanged.
+#[tauri::command]
+pub async fn download_routed_model(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    tier_id: String,
+    force: bool,
+) -> Result<String, String> {
+    // Resolve the primary filename ahead of the async work so the
+    // progress callback closure does not have to look it up on
+    // each chunk emission.
+    let tier = crate::model_registry::tier_by_id(&tier_id)
+        .ok_or_else(|| format!("tier_id `{tier_id}` not in registry"))?;
+    let primary = tier.primary_filename().to_string();
+
+    let app_for_cb = app.clone();
+    let primary_for_cb = primary.clone();
+    let cb: crate::services::ProgressCallback = std::sync::Arc::new(move |p| {
+        let fraction = p.total.and_then(|t| {
+            if t == 0 {
+                None
+            } else {
+                Some((p.downloaded as f32 / t as f32).clamp(0.0, 1.0))
+            }
+        });
+        let payload = ModelProgress {
+            filename: primary_for_cb.clone(),
+            downloaded: p.downloaded,
+            total: p.total,
+            fraction,
+        };
+        let _ = app_for_cb.emit("moonlens://embedded-model-progress", payload);
+    });
+
+    let outcome = state
+        .models
+        .download_tier_by_id(&tier_id, force, Some(cb))
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let payload = ModelProgress {
+        filename: primary,
         downloaded: outcome.size_bytes,
         total: Some(outcome.size_bytes),
         fraction: Some(1.0),
@@ -1508,9 +1774,7 @@ pub async fn get_onboarding_status(state: State<'_, AppState>) -> Result<Onboard
 /// who change their mind work through the normal Settings → Providers
 /// card.
 #[tauri::command]
-pub async fn mark_embedded_model_setup_seen(
-    state: State<'_, AppState>,
-) -> Result<(), String> {
+pub async fn mark_embedded_model_setup_seen(state: State<'_, AppState>) -> Result<(), String> {
     let mut s = (*state.settings.snapshot()).clone();
     s.onboarding.embedded_model_setup_seen = true;
     state.settings.save(s).map_err(|e| e.to_string())
@@ -1609,10 +1873,7 @@ pub async fn new_lens_window(app: AppHandle, state: State<'_, AppState>) -> Resu
 /// source content changes without the lens window moving (live
 /// subtitles, scrolling pages, video frames).
 #[tauri::command]
-pub async fn refresh_lens(
-    id: String,
-    state: State<'_, AppState>,
-) -> Result<(), String> {
+pub async fn refresh_lens(id: String, state: State<'_, AppState>) -> Result<(), String> {
     state.lens_watchers.trigger(&id);
     Ok(())
 }

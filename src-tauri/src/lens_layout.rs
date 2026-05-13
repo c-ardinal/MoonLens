@@ -342,7 +342,7 @@ pub(crate) fn dilate_vertical(mask: &[u8], w: u32, h: u32, kernel_h: u32) -> Vec
                 running += mask[((add_y as u32) * w + x) as usize] as i32;
             }
             if drop_y >= 0 {
-                running -= mask[(((drop_y as u32) * w + x)) as usize] as i32;
+                running -= mask[((drop_y as u32) * w + x) as usize] as i32;
             }
             if running > 0 {
                 out[(y * w + x) as usize] = 1;
@@ -580,7 +580,11 @@ mod tests {
         fill_rect(&mut img, 20, 60, 150, 12, [30, 30, 30]);
         let dyn_img = DynamicImage::ImageRgb8(img);
         let blocks = detect_text_blocks(&dyn_img);
-        assert_eq!(blocks.len(), 2, "expected two paragraph blocks, got {blocks:?}");
+        assert_eq!(
+            blocks.len(),
+            2,
+            "expected two paragraph blocks, got {blocks:?}"
+        );
         for b in &blocks {
             assert_eq!(b.polarity, Polarity::Dark);
             assert!(b.bbox[2] >= 100.0);
@@ -591,7 +595,10 @@ mod tests {
     fn detect_text_blocks_returns_empty_for_blank_canvas() {
         let img = DynamicImage::ImageRgb8(solid(100, 100, [250, 250, 250]));
         let blocks = detect_text_blocks(&img);
-        assert!(blocks.is_empty(), "blank canvas → zero blocks, got {blocks:?}");
+        assert!(
+            blocks.is_empty(),
+            "blank canvas → zero blocks, got {blocks:?}"
+        );
     }
 
     #[test]

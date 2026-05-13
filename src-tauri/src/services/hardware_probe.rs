@@ -20,7 +20,39 @@ pub struct HostCapabilities {
     pub total_ram_gb: f64,
     /// Number of logical CPU cores (`sysinfo`'s `cpus().len()`).
     pub cpu_cores: usize,
+    /// Whether the inference runtime can offload to a GPU. Derived
+    /// at compile time from the active Cargo feature set: any of
+    /// `embedded-llm-vulkan` / `embedded-llm-cuda` / `embedded-llm-metal`
+    /// enables it. Tests use [`FixedProbe`] to override.
+    pub gpu_available: bool,
 }
+
+impl HostCapabilities {
+    /// Hardware bucket for the translation router. Maps the
+    /// boolean GPU flag onto the `translation_router::Hardware`
+    /// enum without dragging that module into the probe layer.
+    pub fn hw_kind(&self) -> crate::translation_router::Hardware {
+        if self.gpu_available {
+            crate::translation_router::Hardware::Gpu
+        } else {
+            crate::translation_router::Hardware::Cpu
+        }
+    }
+}
+
+/// True when the binary was compiled with at least one GPU
+/// backend feature enabled. This is a compile-time signal — it
+/// does NOT verify that a physical GPU is present at runtime
+/// (llama.cpp falls back to CPU silently when its requested
+/// backend cannot allocate a context). For the router, that
+/// degradation is fine: choosing Pivot on a host where GPU was
+/// expected but is missing still produces correct output, just
+/// slower than predicted.
+pub const GPU_FEATURE_ENABLED: bool = cfg!(any(
+    feature = "embedded-llm-vulkan",
+    feature = "embedded-llm-cuda",
+    feature = "embedded-llm-metal",
+));
 
 /// One-shot host capability probe. Production reads from `sysinfo`,
 /// tests inject [`FixedProbe`].
@@ -49,6 +81,7 @@ impl HardwareProbe for SysinfoProbe {
         HostCapabilities {
             total_ram_gb,
             cpu_cores,
+            gpu_available: GPU_FEATURE_ENABLED,
         }
     }
 }
@@ -69,8 +102,20 @@ impl FixedProbe {
             caps: HostCapabilities {
                 total_ram_gb,
                 cpu_cores,
+                // Tests default to CPU mode so router decisions
+                // are deterministic across CI machines (the GPU
+                // flag would otherwise depend on which feature
+                // set the test was compiled with).
+                gpu_available: false,
             },
         }
+    }
+
+    /// Override the GPU flag for tests that exercise the router's
+    /// Pivot decisions. Returns `self` for chaining.
+    pub fn with_gpu(mut self, gpu_available: bool) -> Self {
+        self.caps.gpu_available = gpu_available;
+        self
     }
 }
 
@@ -92,6 +137,19 @@ mod tests {
         let caps = probe.capabilities();
         assert_eq!(caps.total_ram_gb, 2.0);
         assert_eq!(caps.cpu_cores, 4);
+        // FixedProbe defaults to CPU mode so router tests built on
+        // top of it are deterministic across CI configurations.
+        assert!(!caps.gpu_available);
+    }
+
+    #[test]
+    fn with_gpu_override_flips_hw_kind() {
+        use crate::translation_router::Hardware;
+        let cpu = FixedProbe::new(16.0, 8).capabilities();
+        assert_eq!(cpu.hw_kind(), Hardware::Cpu);
+
+        let gpu = FixedProbe::new(16.0, 8).with_gpu(true).capabilities();
+        assert_eq!(gpu.hw_kind(), Hardware::Gpu);
     }
 
     #[test]

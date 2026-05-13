@@ -568,8 +568,7 @@ mod tests {
         // Production path: first load can OOM on weak HW, subsequent
         // attempts succeed once unrelated processes free memory. The
         // scripted engine simulates that.
-        let eng = ScriptedEngine::new(PathBuf::from("/x/m.gguf"))
-            .fail_load_for_first_n_attempts(2);
+        let eng = ScriptedEngine::new(PathBuf::from("/x/m.gguf")).fail_load_for_first_n_attempts(2);
         // First two calls fail.
         for _ in 0..2 {
             let err = eng.ensure_loaded().await.expect_err("must fail");

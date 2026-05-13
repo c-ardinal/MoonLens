@@ -12,8 +12,7 @@
 //! Exit status: 0 on completion, 1 on setup failure.
 
 use std::{
-    env,
-    fs,
+    env, fs,
     path::{Path, PathBuf},
     time::{Duration, Instant},
 };
@@ -159,7 +158,9 @@ fn pct(sorted_samples: &[u128], p: f64) -> u128 {
     // P50 of a 1-element set returning that element, and avoids a spurious
     // index-out-of-range at p = 1.0.
     let n = sorted_samples.len();
-    let rank = ((p * n as f64).ceil() as usize).saturating_sub(1).min(n - 1);
+    let rank = ((p * n as f64).ceil() as usize)
+        .saturating_sub(1)
+        .min(n - 1);
     sorted_samples[rank]
 }
 
@@ -322,7 +323,10 @@ async fn bench_ocr_provider(cfg: &BenchConfig, fixtures: &[Fixture]) -> Vec<(Str
     let provider = OcrsProvider::new("ocrs", &serde_json::Value::Null);
     let mut out = Vec::new();
     for fx in fixtures {
-        let label = format!("OCR (OcrsProvider) — {} ({}x{})", fx.name, fx.width, fx.height);
+        let label = format!(
+            "OCR (OcrsProvider) — {} ({}x{})",
+            fx.name, fx.width, fx.height
+        );
         let stats = bench_async(&label, cfg, || {
             let png = fx.png.clone();
             let p = &provider;
@@ -458,11 +462,7 @@ async fn bench_llm(cfg: &BenchConfig) -> Vec<(String, Stats)> {
 // ---------------------------------------------------------------------------
 // Stage 4: end-to-end
 
-async fn bench_e2e(
-    cfg: &BenchConfig,
-    fixtures: &[Fixture],
-    model: &str,
-) -> Vec<(String, Stats)> {
+async fn bench_e2e(cfg: &BenchConfig, fixtures: &[Fixture], model: &str) -> Vec<(String, Stats)> {
     let provider = OcrsProvider::new("ocrs", &serde_json::Value::Null);
     // Pre-warm so first-iter model load does not pollute results.
     let _ = provider
@@ -594,12 +594,14 @@ fn make_verdict(ocr: &[(String, Stats)], e2e: &[(String, Stats)]) -> Verdict {
     } else if e2e_small < 1200 {
         (
             "beta",
-            "続行前提、ただし S2 で DXGI + OCR 差し替え必須。ocrs 単独では SLO <0.5s は届かず。".to_string(),
+            "続行前提、ただし S2 で DXGI + OCR 差し替え必須。ocrs 単独では SLO <0.5s は届かず。"
+                .to_string(),
         )
     } else {
         (
             "gamma",
-            "SLO 達成困難。抜本再設計を検討（OCR engine 差し替え、モデル軽量化、アーキ再考）。".to_string(),
+            "SLO 達成困難。抜本再設計を検討（OCR engine 差し替え、モデル軽量化、アーキ再考）。"
+                .to_string(),
         )
     };
     Verdict {
@@ -614,7 +616,12 @@ fn make_verdict(ocr: &[(String, Stats)], e2e: &[(String, Stats)]) -> Verdict {
 fn format_report(r: &Report) -> String {
     use std::fmt::Write as _;
     let mut out = String::new();
-    writeln!(out, "# MoonLens Speed Feasibility Benchmark — {}", r.generated_at).ok();
+    writeln!(
+        out,
+        "# MoonLens Speed Feasibility Benchmark — {}",
+        r.generated_at
+    )
+    .ok();
     writeln!(out).ok();
     writeln!(out, "## Environment").ok();
     writeln!(out, "- Host: `{}`", r.host).ok();
@@ -646,7 +653,10 @@ fn format_report(r: &Report) -> String {
         &mut out,
         &[
             ("capture_primary_full+png (entire monitor)", &r.capture_full),
-            ("capture_global_rect(600x300)+png (lens-sized)", &r.capture_region),
+            (
+                "capture_global_rect(600x300)+png (lens-sized)",
+                &r.capture_region,
+            ),
         ],
     );
 
@@ -654,11 +664,8 @@ fn format_report(r: &Report) -> String {
     write_stats_table(&mut out, &[("thread::sleep(60ms)", &r.hide_sleep)]);
 
     writeln!(out, "## 3. OCR latency (OcrsProvider)").ok();
-    let ocr_refs: Vec<(String, &Stats)> = r
-        .ocr_provider
-        .iter()
-        .map(|(n, s)| (n.clone(), s))
-        .collect();
+    let ocr_refs: Vec<(String, &Stats)> =
+        r.ocr_provider.iter().map(|(n, s)| (n.clone(), s)).collect();
     let ocr_refs_slice: Vec<(&str, &Stats)> =
         ocr_refs.iter().map(|(n, s)| (n.as_str(), *s)).collect();
     write_stats_table(&mut out, &ocr_refs_slice);
@@ -674,8 +681,7 @@ fn format_report(r: &Report) -> String {
     write_stats_table(&mut out, &llm_refs_slice);
 
     writeln!(out, "## 5. End-to-end (hide-sleep + OCR + LLM first-token)").ok();
-    let e2e_refs: Vec<(String, &Stats)> =
-        r.e2e.iter().map(|(n, s)| (n.clone(), s)).collect();
+    let e2e_refs: Vec<(String, &Stats)> = r.e2e.iter().map(|(n, s)| (n.clone(), s)).collect();
     let e2e_refs_slice: Vec<(&str, &Stats)> =
         e2e_refs.iter().map(|(n, s)| (n.as_str(), *s)).collect();
     write_stats_table(&mut out, &e2e_refs_slice);
@@ -690,7 +696,11 @@ fn format_report(r: &Report) -> String {
     writeln!(out).ok();
 
     writeln!(out, "## Decision rule (plan.md Q18)").ok();
-    writeln!(out, "- `alpha`: E2E P50 < 600ms → ocrs + Ollama で MVP 着手").ok();
+    writeln!(
+        out,
+        "- `alpha`: E2E P50 < 600ms → ocrs + Ollama で MVP 着手"
+    )
+    .ok();
     writeln!(
         out,
         "- `beta`: 600-1200ms → 続行、S2 で DXGI + OCR 差し替え必須"
@@ -703,16 +713,8 @@ fn format_report(r: &Report) -> String {
 
 fn write_stats_table(out: &mut String, rows: &[(&str, &Stats)]) {
     use std::fmt::Write as _;
-    writeln!(
-        out,
-        "| label | n | min | P50 | P95 | P99 | max | mean |"
-    )
-    .ok();
-    writeln!(
-        out,
-        "|---|---:|---:|---:|---:|---:|---:|---:|"
-    )
-    .ok();
+    writeln!(out, "| label | n | min | P50 | P95 | P99 | max | mean |").ok();
+    writeln!(out, "|---|---:|---:|---:|---:|---:|---:|---:|").ok();
     for (label, s) in rows {
         writeln!(
             out,
@@ -735,7 +737,10 @@ async fn main() -> Result<()> {
         cfg.iters, cfg.warmup, cfg.models
     );
 
-    eprintln!("[1/5] preparing fixtures in {}...", cfg.fixtures_dir.display());
+    eprintln!(
+        "[1/5] preparing fixtures in {}...",
+        cfg.fixtures_dir.display()
+    );
     let fixtures = prepare_fixtures(&cfg.fixtures_dir)?;
 
     eprintln!("[2/5] capture + hide-sleep...");
@@ -833,7 +838,11 @@ fn format_date_time() -> String {
 /// (year, month, day). Avoids pulling in chrono.
 fn civil_from_days(z: i64) -> (i32, u32, u32) {
     let z = z + 719_468;
-    let era = if z >= 0 { z / 146_097 } else { (z - 146_096) / 146_097 };
+    let era = if z >= 0 {
+        z / 146_097
+    } else {
+        (z - 146_096) / 146_097
+    };
     let doe = (z - era * 146_097) as u64;
     let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
     let y = yoe as i64 + era * 400;

@@ -192,6 +192,26 @@ pub const TIERS: &[ModelTier] = &[
     // after benchmarking confirmed it produces gibberish on en→ja
     // (English-only training data); see docs/EMBEDDED_LLM_PERF.md
     // for the full rejection record.
+    //
+    // Phase 26 evaluation: llm-jp 3 small variants (150M / 440M)
+    // were locally-converted (HF safetensors → GGUF via synthesised
+    // tokenizer.model + llama.cpp's convert_hf_to_gguf.py) and
+    // bench-tested but REJECTED at every size below 980M:
+    //   - 150M base/Instruct2: instruction-following completely
+    //     absent. Base copies the last few-shot example verbatim
+    //     for every input; Instruct2 emits repeat-loops, English
+    //     pass-throughs, or unrelated instruction snippets.
+    //   - 440M base/Instruct2: marginally better but still 5/5
+    //     translation breaks (repeat loops, English pass-through,
+    //     meta-commentary instead of translation).
+    //   - 980M base: 1/5 English pass-through case; Instruct
+    //     variants required for reliable translation.
+    //   - 980M Instruct2 (locally-converted): equivalent quality
+    //     to mmnga's Instruct3 GGUF, but the locally-converted
+    //     path adds tokenizer.model synthesis risk; opted to keep
+    //     only the mmnga Instruct3 mirror.
+    // See docs/benchmarks/2026-05-12-phase26-llmjp3-small-
+    // quality-review.md for the full evidence.
     ModelTier {
         id: "qwen3-0.6b-q4_k_m",
         display_name: "Compact+ (Qwen 3 0.6B)",
@@ -230,14 +250,52 @@ pub const TIERS: &[ModelTier] = &[
         chat_template: ChatTemplate::ChatMl,
         drafter: None,
     },
-    // Qwen 3.5 0.8B and 2B were evaluated in Phase 23 v23c bench
-    // but rejected: with the no-think primer applied (their GGUF
-    // still triggers reasoning despite the "default OFF" claim
-    // in the model card), JA translation quality was inconsistent
-    // — 0.8B mixed in Chinese ("欢迎来到未来翻译的殿堂"); 2B
-    // produced semantic breaks ("急げんこつなうとんぼが lazy な
-    // ぬまを越す"). For per-line speed Compact+ (Qwen 3 0.6B) was
-    // faster anyway. Removed pending JA-quality investigation.
+    // Qwen 3.5 0.8B was rejected in Phase 23 v23c (Chinese leakage:
+    // "欢迎来到未来翻译的殿堂"). Re-added in Phase 25 to validate
+    // whether the new few-shot prompt + strengthened "no other
+    // scripts" system directive (see `build_translation_few_shots`
+    // and the system_prompt default in translate_embedded_llm.rs)
+    // can rescue this candidate. Keep or drop based on the v25
+    // bench evidence.
+    ModelTier {
+        id: "qwen3.5-0.8b-q4_k_m",
+        display_name: "Compact++ (Qwen 3.5 0.8B)",
+        description: "Qwen 3.5 系最小。Compact と Standard の間、Phase 25 few-shot で言語ロック検証中 (Apache 2.0)。",
+        repo: "unsloth/Qwen3.5-0.8B-GGUF",
+        filenames: &["Qwen3.5-0.8B-Q4_K_M.gguf"],
+        size_mb: 508,
+        min_ram_gb: 4,
+        license: "Apache-2.0",
+        license_url:
+            "https://huggingface.co/unsloth/Qwen3.5-0.8B-GGUF/blob/main/LICENSE",
+        class: ModelTierClass::Compact,
+        // See registry comment on qwen3.5-4b: model card claims
+        // thinking is default OFF but the GGUF still emits
+        // `<think>` blocks. Same no-think primer applies.
+        chat_template: ChatTemplate::ChatMlQwen3NoThink,
+        drafter: None,
+    },
+    // llm-jp 3 980m instruct3 — sub-1B JA-specialised tier
+    // (Phase 26 v1). mmnga's Q4_K_M is the canonical GGUF mirror;
+    // upstream llm-jp ships only safetensors for this size. base
+    // and instruct2 variants were locally-converted and bench-
+    // tested in Phase 26 v2 but rejected (see registry comment
+    // above for evidence).
+    ModelTier {
+        id: "llm-jp-3-980m-instruct3-q4_k_m",
+        display_name: "JA-Compact (llm-jp 3 980M)",
+        description: "llm-jp 3 系の 980M 日本語特化モデル (Apache 2.0)。Compact 帯に JA-first 選択肢を追加。",
+        repo: "mmnga/llm-jp-3-980m-instruct3-gguf",
+        filenames: &["llm-jp-3-980m-instruct3-Q4_K_M.gguf"],
+        size_mb: 597,
+        min_ram_gb: 4,
+        license: "Apache-2.0",
+        license_url:
+            "https://huggingface.co/llm-jp/llm-jp-3-980m-instruct3/blob/main/LICENSE",
+        class: ModelTierClass::Compact,
+        chat_template: ChatTemplate::ChatMl,
+        drafter: None,
+    },
     // RakutenAI 2.0 mini-instruct (1.53B Apache 2.0) was evaluated
     // in Phase 23 v1 bench but produced broken translations (echoes
     // system prompt, mixes EN/JA fragments, emits raw <|im_end|>
@@ -293,6 +351,26 @@ pub const TIERS: &[ModelTier] = &[
             "https://huggingface.co/llm-jp/llm-jp-3.1-1.8b/blob/main/LICENSE",
         class: ModelTierClass::Standard,
         chat_template: ChatTemplate::ChatMl,
+        drafter: None,
+    },
+    // Qwen 3.5 2B was rejected in Phase 23 v23c (semantic breaks:
+    // "急げんこつなうとんぼが lazy なぬまを越す"). Re-added in
+    // Phase 25 on the same basis as the 0.8B re-introduction —
+    // we want to confirm whether few-shot anchoring fixes the
+    // 狐→とんぼ kind of substitution noise.
+    ModelTier {
+        id: "qwen3.5-2b-q4_k_m",
+        display_name: "Standard++ (Qwen 3.5 2B)",
+        description: "Qwen 3.5 2B。Standard と Quality- の間、Phase 25 few-shot で品質再評価中 (Apache 2.0)。",
+        repo: "unsloth/Qwen3.5-2B-GGUF",
+        filenames: &["Qwen3.5-2B-Q4_K_M.gguf"],
+        size_mb: 1221,
+        min_ram_gb: 8,
+        license: "Apache-2.0",
+        license_url:
+            "https://huggingface.co/unsloth/Qwen3.5-2B-GGUF/blob/main/LICENSE",
+        class: ModelTierClass::Standard,
+        chat_template: ChatTemplate::ChatMlQwen3NoThink,
         drafter: None,
     },
     ModelTier {
@@ -417,6 +495,44 @@ pub const TIERS: &[ModelTier] = &[
 /// registry is its multi-tier replacement).
 pub const DEFAULT_TIER_ID: &str = "qwen2.5-1.5b-instruct-q4_k_m";
 
+/* ---------------- Translation router anchor tier IDs --------------- */
+//
+// The translation router (`translation_router.rs`) consults the
+// matrix in `docs/TRANSLATION_ROUTING_MATRIX.md` and resolves each
+// `(UserTier, Hardware, src, tgt)` triple to one or two of the IDs
+// below. Lifting the literals out of the router into named
+// constants here gives two benefits:
+//
+// 1. Type-safe single source of truth — every router decision goes
+//    through these constants, so renaming a tier id in TIERS only
+//    requires editing the constant, and the
+//    `router_anchor_ids_are_registered` regression test below
+//    catches any disconnect at compile-time (well, test-run-time).
+// 2. Grep-ability — a future maintainer searching for "which paths
+//    use the JA bridge?" finds every caller of
+//    `STANDARD_JA_BRIDGE_TIER_ID` instantly, without parsing the
+//    routing match arms.
+
+/// Compact tier's sole model. JA-Compact (llm-jp 3 980M Instruct3).
+/// Used for `en↔ja` plus the explicitly-degraded multilingual
+/// routes when the user opted into the smallest footprint.
+pub const COMPACT_JA_TIER_ID: &str = "llm-jp-3-980m-instruct3-q4_k_m";
+
+/// Standard / Quality tiers' Japanese bridge. JA-Standard+
+/// (llm-jp 3.1 1.8B Instruct4). Phase 27 measured 100% safety on
+/// en↔ja direct and serves as Stage 1 / Stage 2 in pivot routes.
+pub const STANDARD_JA_BRIDGE_TIER_ID: &str = "llm-jp-3.1-1.8b-instruct4-q4_k_m";
+
+/// Standard tier's multilingual model. Edge (Gemma 4 E2B).
+/// Direct single-step on CPU (2 GB-class effective) and pivot
+/// partner on GPU.
+pub const STANDARD_MULTI_TIER_ID: &str = "gemma-4-e2b-it-q4_k_m";
+
+/// Quality tier's multilingual model. Edge+ (Gemma 4 E4B).
+/// Highest measured multilingual safety (96% across 28 pairs in
+/// Phase 27); direct on CPU, pivot partner on GPU.
+pub const QUALITY_MULTI_TIER_ID: &str = "gemma-4-e4b-it-q4_k_m";
+
 /// Look up a tier by its stable id. Returns `None` for unknown ids
 /// — callers that need a fallback should pair this with [`default_tier`].
 pub fn tier_by_id(id: &str) -> Option<&'static ModelTier> {
@@ -430,10 +546,9 @@ pub fn tier_by_id(id: &str) -> Option<&'static ModelTier> {
 /// matches against ANY of the part filenames so a user.toml that
 /// records the second part still resolves correctly.
 pub fn tier_by_coord(repo: &str, filename: &str) -> Option<&'static ModelTier> {
-    TIERS.iter().find(|t| {
-        t.repo == repo
-            && t.filenames.iter().any(|f| *f == filename)
-    })
+    TIERS
+        .iter()
+        .find(|t| t.repo == repo && t.filenames.iter().any(|f| *f == filename))
 }
 
 /// Resolve the tier matching `repo` only — used by the legacy-config
@@ -458,11 +573,7 @@ pub fn migrate_legacy_embedded_config(cfg: &mut serde_json::Value) -> bool {
     let Some(obj) = cfg.as_object_mut() else {
         return false;
     };
-    let Some(repo) = obj
-        .get("repo")
-        .and_then(|v| v.as_str())
-        .map(str::to_string)
-    else {
+    let Some(repo) = obj.get("repo").and_then(|v| v.as_str()).map(str::to_string) else {
         return false;
     };
     let Some(filename_remote) = obj
@@ -532,9 +643,7 @@ pub const CURRENT_EMBEDDED_PROVIDER_ID: &str = "embedded.llm";
 /// Returns `true` when the settings were modified. The caller is
 /// expected to persist the snapshot via `SettingsStore::save` if
 /// `true` is returned.
-pub fn migrate_legacy_embedded_settings(
-    s: &mut crate::settings::schema::Settings,
-) -> bool {
+pub fn migrate_legacy_embedded_settings(s: &mut crate::settings::schema::Settings) -> bool {
     let mut changed = false;
 
     // Rename chain entries across every task chain. The translate
@@ -559,11 +668,7 @@ pub fn migrate_legacy_embedded_settings(
 
     // Move the per-provider config block. Done as a remove-then-
     // insert to avoid a clone when the entry is large.
-    if let Some(legacy) = s
-        .providers
-        .configs
-        .remove(LEGACY_EMBEDDED_PROVIDER_ID)
-    {
+    if let Some(legacy) = s.providers.configs.remove(LEGACY_EMBEDDED_PROVIDER_ID) {
         // CRITICAL: the merge layer (`layer_user_over_defaults`)
         // produces a Settings whose `configs` map contains BOTH
         // `embedded.gemma` (from user.toml, with the user's last
@@ -575,24 +680,63 @@ pub fn migrate_legacy_embedded_settings(
         // `or_insert` was silently rolling user's tier selection
         // back to the bundled Standard tier on every restart that
         // did a rename migration.
-        s.providers.configs.insert(
-            CURRENT_EMBEDDED_PROVIDER_ID.to_string(),
-            legacy,
-        );
+        s.providers
+            .configs
+            .insert(CURRENT_EMBEDDED_PROVIDER_ID.to_string(), legacy);
         changed = true;
     }
 
     // Now apply the synthetic-filename migration on the (possibly
     // just-renamed) embedded config. Done last so the function
     // operates on the canonical key.
-    if let Some(cfg) = s
-        .providers
-        .configs
-        .get_mut(CURRENT_EMBEDDED_PROVIDER_ID)
-    {
+    if let Some(cfg) = s.providers.configs.get_mut(CURRENT_EMBEDDED_PROVIDER_ID) {
         if migrate_legacy_embedded_config(cfg) {
             changed = true;
         }
+    }
+
+    // Derive the user-facing translation tier (Compact / Standard /
+    // Quality) from the legacy single-model coordinates if the
+    // user.toml predates the routing-tier picker. A pre-routing
+    // install had `user_tier = None`; the user picked their model
+    // via the now-deprecated "モデルティア" dropdown which wrote
+    // `[providers.configs."embedded.llm"]` repo + filename. We
+    // recover their intent by:
+    //
+    //   1. Reading `repo` + `filename_remote` from the config block.
+    //   2. Resolving the matching `ModelTier` via `tier_by_coord`.
+    //   3. Mapping `ModelTier::class` (Compact / Standard / Quality)
+    //      to the same-named `UserTier` variant.
+    //
+    // When no match is found (the user hand-edited user.toml to
+    // point at a custom GGUF), we leave `user_tier = None`. The
+    // `Providers::default` impl already returns `Some(Standard)`
+    // for *fresh* installs, but `migrate_legacy_embedded_settings`
+    // runs over a *parsed* Settings struct after layering — the
+    // user.toml side is authoritative, and a missing field there
+    // means we have to derive a value or fall back.
+    if s.providers.user_tier.is_none() {
+        let derived = s
+            .providers
+            .configs
+            .get(CURRENT_EMBEDDED_PROVIDER_ID)
+            .and_then(|cfg| {
+                let repo = cfg.get("repo").and_then(|v| v.as_str())?;
+                let filename = cfg.get("filename_remote").and_then(|v| v.as_str())?;
+                tier_by_coord(repo, filename)
+            })
+            .map(|t| match t.class {
+                ModelTierClass::Compact => crate::translation_router::UserTier::Compact,
+                ModelTierClass::Standard => crate::translation_router::UserTier::Standard,
+                ModelTierClass::Quality => crate::translation_router::UserTier::Quality,
+            })
+            // Anything we cannot resolve falls back to Standard —
+            // matching the bundled default. Using `unwrap_or_else`
+            // (not `or_else(|| Some(...))`) so this branch always
+            // produces a value when user_tier was absent.
+            .unwrap_or(crate::translation_router::UserTier::Standard);
+        s.providers.user_tier = Some(derived);
+        changed = true;
     }
 
     changed
@@ -635,6 +779,27 @@ pub fn recommended_tier_for_ram(total_ram_gb: f64) -> &'static ModelTier {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn router_anchor_ids_are_registered() {
+        // `translation_router::route` returns these IDs verbatim
+        // when it selects a model. If a tier is dropped or renamed
+        // in TIERS without updating the matching constant, the
+        // router would later look up a non-existent ID at runtime
+        // and silently degrade to the legacy fallback chain. This
+        // guard catches the disconnect at test-run-time.
+        for id in [
+            COMPACT_JA_TIER_ID,
+            STANDARD_JA_BRIDGE_TIER_ID,
+            STANDARD_MULTI_TIER_ID,
+            QUALITY_MULTI_TIER_ID,
+        ] {
+            assert!(
+                tier_by_id(id).is_some(),
+                "router anchor `{id}` not in TIERS",
+            );
+        }
+    }
 
     #[test]
     fn default_tier_id_resolves_to_a_registered_entry() {
@@ -889,8 +1054,7 @@ mod tests {
             filename_remote = "qwen2.5-1.5b-instruct-q4_k_m.gguf"
             license = "Apache-2.0"
         "#;
-        let defaults =
-            include_str!("settings/default.toml");
+        let defaults = include_str!("settings/default.toml");
         let mut s: crate::settings::schema::Settings =
             crate::settings::store::layer_user_over_defaults_for_test(defaults, toml)
                 .expect("layered settings parse");
@@ -898,15 +1062,27 @@ mod tests {
         assert!(migrated, "legacy id must trigger migration");
 
         assert!(
-            s.providers.translate.chain.iter().all(|e| e != "embedded.gemma"),
+            s.providers
+                .translate
+                .chain
+                .iter()
+                .all(|e| e != "embedded.gemma"),
             "no chain entry may remain as the legacy id"
         );
         assert!(
-            s.providers.translate.chain.iter().any(|e| e == "embedded.llm"),
+            s.providers
+                .translate
+                .chain
+                .iter()
+                .any(|e| e == "embedded.llm"),
             "translate chain must reference the new id"
         );
         assert!(
-            s.providers.explain.chain.iter().any(|e| e == "embedded.llm"),
+            s.providers
+                .explain
+                .chain
+                .iter()
+                .any(|e| e == "embedded.llm"),
             "explain chain must also be migrated"
         );
         assert!(
@@ -941,10 +1117,8 @@ mod tests {
             license = "Apache-2.0"
         "#;
         let defaults = include_str!("settings/default.toml");
-        let mut s = crate::settings::store::layer_user_over_defaults_for_test(
-            defaults, user_toml,
-        )
-        .expect("layered settings parse");
+        let mut s = crate::settings::store::layer_user_over_defaults_for_test(defaults, user_toml)
+            .expect("layered settings parse");
 
         // Sanity: before migration, BOTH keys must coexist (this is
         // exactly the merge state the bug was triggered by — without
@@ -1019,6 +1193,70 @@ mod tests {
         });
         let migrated = migrate_legacy_embedded_config(&mut cfg);
         assert!(!migrated, "unknown repo must not be migrated");
+    }
+
+    #[test]
+    fn settings_migration_derives_user_tier_from_legacy_embedded_config() {
+        // Pre-routing install: user.toml has the legacy embedded
+        // config block (with the user's picked tier_id encoded as
+        // repo + filename) but no `providers.user_tier`. The
+        // migration must derive a `UserTier` that matches the
+        // saved model's class so the user does not see their tier
+        // visibly "reset" on the first launch after upgrade.
+        let user_toml = r#"
+            [providers.translate]
+            chain = ["embedded.llm"]
+
+            [providers.configs."embedded.llm"]
+            repo = "Qwen/Qwen2.5-7B-Instruct-GGUF"
+            filename_remote = "qwen2.5-7b-instruct-q4_k_m-00001-of-00002.gguf"
+            filenames_remote_extra = ["qwen2.5-7b-instruct-q4_k_m-00002-of-00002.gguf"]
+            license = "Apache-2.0"
+        "#;
+        let defaults = include_str!("settings/default.toml");
+        let mut s = crate::settings::store::layer_user_over_defaults_for_test(defaults, user_toml)
+            .expect("layered settings parse");
+        // Pre-migration: user_tier should still default to whatever
+        // the layered default produced (Some(Standard) from
+        // `Providers::default`). Force it to None so the migration
+        // path can do its derivation work — we are simulating an
+        // even-older user.toml that predates the Default change.
+        s.providers.user_tier = None;
+        let migrated = migrate_legacy_embedded_settings(&mut s);
+        assert!(migrated, "user_tier derivation must report a change");
+        // The Qwen 2.5 7B tier's class is Quality → UserTier::Quality.
+        assert_eq!(
+            s.providers.user_tier,
+            Some(crate::translation_router::UserTier::Quality),
+        );
+    }
+
+    #[test]
+    fn settings_migration_falls_back_to_standard_for_custom_models() {
+        // Hand-edited user.toml points at a model we do not ship.
+        // The migration cannot match it to a tier class, so it must
+        // fall back to Standard rather than leaving `user_tier =
+        // None` (the routing-aware embedded provider would then
+        // refuse to load).
+        let user_toml = r#"
+            [providers.translate]
+            chain = ["embedded.llm"]
+
+            [providers.configs."embedded.llm"]
+            repo = "myorg/my-custom-finetune"
+            filename_remote = "custom.gguf"
+        "#;
+        let defaults = include_str!("settings/default.toml");
+        let mut s = crate::settings::store::layer_user_over_defaults_for_test(defaults, user_toml)
+            .expect("layered settings parse");
+        s.providers.user_tier = None;
+        let migrated = migrate_legacy_embedded_settings(&mut s);
+        assert!(migrated);
+        assert_eq!(
+            s.providers.user_tier,
+            Some(crate::translation_router::UserTier::Standard),
+            "unknown coord must fall back to Standard",
+        );
     }
 
     #[test]

@@ -316,7 +316,7 @@ impl Default for PerformanceSettings {
 
 /* -------------------------------- providers ------------------------------ */
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(default, deny_unknown_fields)]
 pub struct Providers {
     pub translate: TaskChain,
@@ -334,6 +334,43 @@ pub struct Providers {
     /// (for on-disk persistence) and JSON Schema (for the auto-generated
     /// settings UI). Provider constructors receive a `&serde_json::Value`.
     pub configs: BTreeMap<String, serde_json::Value>,
+    /// User-facing translation tier. Drives `RoutedTranslator`
+    /// model selection (which 1–2 GGUFs the embedded provider
+    /// loads) and the per-language routing matrix.
+    ///
+    /// `None` is still accepted for backwards-compat readability
+    /// (a hand-edited user.toml that omits the field), but the
+    /// settings layer treats absence as Standard via
+    /// `Providers::default` + the `migrate_legacy_embedded_settings`
+    /// migration. The frontend picker exposes only the three
+    /// `UserTier` variants — there is no "disabled" option from
+    /// the UI side.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub user_tier: Option<crate::translation_router::UserTier>,
+}
+
+impl Default for Providers {
+    fn default() -> Self {
+        Self {
+            translate: TaskChain::default(),
+            ocr: TaskChain::default(),
+            asr: TaskChain::default(),
+            explain: TaskChain::default(),
+            summarize: TaskChain::default(),
+            reverse_image_search: TaskChain::default(),
+            qr_handler: TaskChain::default(),
+            intent_classifier: TaskChain::default(),
+            configs: BTreeMap::new(),
+            // Fresh installs default to Standard. The settings UI
+            // shows only the three UserTier variants — every install
+            // ends up with one of them. Pre-routing installs that
+            // were saved with `user_tier = None` get migrated to a
+            // tier derived from the legacy `[providers.configs.
+            // "embedded.llm"]` block by
+            // `migrate_legacy_embedded_settings`.
+            user_tier: Some(crate::translation_router::UserTier::Standard),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
