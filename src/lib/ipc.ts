@@ -130,6 +130,11 @@ export const paddleOcrModelsStatus = () =>
 export const installPaddleOcrModels = (installKorean: boolean = true) =>
   safeInvoke<string>('install_paddleocr_models', { installKorean });
 
+export const onPaddleOcrModelProgress = (
+  handler: (p: ModelProgress) => void,
+): Promise<UnlistenFn> =>
+  listen<ModelProgress>('moonlens://paddleocr-model-progress', (e) => handler(e.payload));
+
 /** Status of the embedded LLM model on disk. Used by the settings
  * UI to decide whether to render the "ダウンロード" CTA or a
  * "準備済み" badge, and to surface the license advert so corporate

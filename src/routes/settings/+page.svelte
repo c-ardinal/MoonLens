@@ -42,12 +42,16 @@
     previewRouting,
     routedModelStatus,
     downloadRoutedModel,
+    installPaddleOcrModels,
+    paddleOcrModelsStatus,
+    onPaddleOcrModelProgress,
     type BenchOutcome,
     type BenchProgressEvent,
     type BenchSample,
     type EmbeddedModelStatus,
     type ModelProgress,
     type ModelTierStatus,
+    type PaddleOcrModelStatus,
     type UserTier,
     type UserTierStatus,
     type RoutingPreview,
@@ -211,6 +215,25 @@
   let embeddedPackaging = $state(false);
   let embeddedImporting = $state(false);
   let embeddedPackageMessage = $state<string | null>(null);
+
+  /** Phase 28 PaddleOCR model state. The primary OCR engine in the
+   * default chain is `paddle`; if these files are not on disk the
+   * pipeline falls through to `windows` (Windows-only WinRT) and
+   * `ocrs` (CPU-only Latin). The settings UI surfaces a single
+   * "ダウンロード" CTA + "準備済み NN.N MB" badge mirroring the
+   * embedded LLM model panel. */
+  let paddleStatus = $state<PaddleOcrModelStatus>({
+    dir: '',
+    multi_present: false,
+    korean_present: false,
+    total_bytes: 0,
+  });
+  let paddleProgress = $state<ModelProgress | null>(null);
+  let paddleDownloading = $state(false);
+  let paddleError = $state<string | null>(null);
+  let paddleInstallKorean = $state(true);
+  let paddleDetailOpen = $state(false);
+  let unlistenPaddleProgress: (() => void) | null = null;
   // `tierStatus` is still consulted by:
   //   - the "推奨" badge on the embedded.llm engine card
   //     (compares the saved tier_id to the HW recommendation),
@@ -509,6 +532,29 @@
     }
   }
 
+  async function refreshPaddleStatus() {
+    try {
+      paddleStatus = await paddleOcrModelsStatus();
+    } catch (e) {
+      console.warn('paddle model status failed:', e);
+    }
+  }
+
+  async function startPaddleDownload() {
+    if (paddleDownloading) return;
+    paddleDownloading = true;
+    paddleError = null;
+    paddleProgress = null;
+    try {
+      await installPaddleOcrModels(paddleInstallKorean);
+      await refreshPaddleStatus();
+    } catch (e) {
+      paddleError = e instanceof Error ? e.message : String(e);
+    } finally {
+      paddleDownloading = false;
+    }
+  }
+
   function formatBytes(bytes: number | null | undefined): string {
     if (bytes == null) return '不明';
     const mb = bytes / (1024 * 1024);
@@ -531,6 +577,7 @@
       appVersion = null;
     }
     void refreshEmbeddedStatus();
+    void refreshPaddleStatus();
     void refreshTierState();
     void refreshUserTierState();
     try {
@@ -541,6 +588,14 @@
     } catch (e) {
       console.warn('embedded progress listener failed:', e);
     }
+    try {
+      const off = await onPaddleOcrModelProgress((p) => {
+        paddleProgress = p;
+      });
+      unlistenPaddleProgress = off;
+    } catch (e) {
+      console.warn('paddle progress listener failed:', e);
+    }
   });
 
   onDestroy(() => {
@@ -548,6 +603,10 @@
     if (unlistenEmbeddedProgress) {
       unlistenEmbeddedProgress();
       unlistenEmbeddedProgress = null;
+    }
+    if (unlistenPaddleProgress) {
+      unlistenPaddleProgress();
+      unlistenPaddleProgress = null;
     }
     if (unlistenBench) {
       unlistenBench();
@@ -2367,6 +2426,7 @@
                 {@const enabled = engineEnabled(providerTab, engineId)}
                 {@const priority = enginePriority(providerTab, engineId)}
                 {@const hint = hintFor(engineId)}
+                {@const isPaddle = providerTab === 'ocr' && engineId === 'paddle'}
                 <EngineCard
                   title={hint.label}
                   subtitle={hint.description}
@@ -2375,8 +2435,14 @@
                   {enabled}
                   {priority}
                   enabledCount={currentChainIds.length}
-                  status={null}
-                  detailOpen={false}
+                  status={isPaddle
+                    ? (paddleDownloading
+                      ? { label: 'ダウンロード中…', tone: 'pending' as const }
+                      : paddleStatus.multi_present
+                        ? { label: `準備済み ${formatBytes(paddleStatus.total_bytes)}`, tone: 'ok' as const }
+                        : { label: '未ダウンロード', tone: 'warn' as const })
+                    : null}
+                  detailOpen={isPaddle ? paddleDetailOpen : false}
                   onToggle={(next) =>
                     setEngineEnabled(providerTab, engineId, next)}
                   onMoveUp={priority && priority > 1
@@ -2386,8 +2452,91 @@
                   priority < currentChainIds.length
                     ? () => moveEngineDown(providerTab, engineId)
                     : null}
-                  onToggleDetail={null}
-                />
+                  onToggleDetail={isPaddle
+                    ? () => (paddleDetailOpen = !paddleDetailOpen)
+                    : null}
+                >
+                  {#if isPaddle}
+                    <div class="detail-grid">
+                      <div class="detail-status">
+                        {#if paddleStatus.multi_present}
+                          <strong>準備済み</strong> ·
+                          {formatBytes(paddleStatus.total_bytes)}
+                          {#if paddleStatus.korean_present}
+                            · 韓国語サポート 有効
+                          {:else}
+                            · 韓国語サポート 無効 (再ダウンロードで追加可能)
+                          {/if}
+                          <div class="muted small mono">{paddleStatus.dir}</div>
+                          <div class="muted small">
+                            ライセンス:
+                            <strong>Apache-2.0</strong>
+                            (PaddleOCR PP-OCRv5 mobile, ONNX 変換版)
+                          </div>
+                        {:else}
+                          約 34 MB の ONNX モデルを
+                          <strong>ダウンロード</strong>
+                          すると、英語・日本語・中国語・フランス語・ドイツ語
+                          (韓国語サポート有効時はさらに韓国語) を
+                          高精度に認識できます。GPU
+                          (<code>performance.use_gpu_if_available</code>)
+                          有効時は DirectML で 3-5× 高速化します。
+                        {/if}
+                      </div>
+
+                      <div class="detail-row">
+                        <label
+                          style="display: inline-flex; align-items: center; gap: 0.5rem; cursor: pointer;"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={paddleInstallKorean}
+                            disabled={paddleDownloading}
+                            onchange={(e) =>
+                              (paddleInstallKorean = (e.target as HTMLInputElement).checked)}
+                          />
+                          韓国語サポートを同時にダウンロード (+13 MB)
+                        </label>
+                      </div>
+
+                      <div class="detail-row">
+                        <button
+                          class="btn"
+                          type="button"
+                          onclick={startPaddleDownload}
+                          disabled={paddleDownloading}
+                        >
+                          {#if paddleDownloading}
+                            <Sparkles class="h-3.5 w-3.5" aria-hidden="true" />
+                            ダウンロード中…
+                          {:else if paddleStatus.multi_present}
+                            <Sparkles class="h-3.5 w-3.5" aria-hidden="true" />
+                            再ダウンロード
+                          {:else}
+                            <Sparkles class="h-3.5 w-3.5" aria-hidden="true" />
+                            モデルをダウンロード
+                          {/if}
+                        </button>
+                      </div>
+
+                      {#if paddleProgress}
+                        <div class="muted small">
+                          {paddleProgress.filename}:
+                          {formatBytes(paddleProgress.downloaded)}
+                          {#if paddleProgress.total != null}
+                            / {formatBytes(paddleProgress.total)}
+                          {/if}
+                          {#if paddleProgress.fraction != null}
+                            ({(paddleProgress.fraction * 100).toFixed(0)}%)
+                          {/if}
+                        </div>
+                      {/if}
+                      {#if paddleError}
+                        <div class="detail-error">エラー: {paddleError}</div>
+                      {/if}
+                    </div>
+                  {/if}
+                </EngineCard>
               {/each}
 
               <div class="chain-add">
