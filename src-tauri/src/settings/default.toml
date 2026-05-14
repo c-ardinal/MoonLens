@@ -139,7 +139,14 @@ sticky_session_ms = 30000
 # etc.). Non-Windows builds skip `windows` silently — it's a
 # cfg-gated compile.
 [providers.ocr]
-chain = ["windows", "ocrs", "paddle"]
+# Phase 28 (2026-05-14): `paddle` (PP-OCRv5 via oar-ocr) is the new
+# primary. It wins on every language tested by 5× CER over `ocrs`
+# (see docs/benchmarks/2026-05-14-ocr-bench-iter5.md) and runs
+# 3-5× faster on DirectML GPU than CPU. `windows` (Windows.Media.Ocr)
+# stays as a Japanese-strong fallback on Windows; `ocrs` is the
+# pure-Rust last-resort fallback for hosts where the PaddleOCR ONNX
+# files have not been downloaded yet.
+chain = ["paddle", "windows", "ocrs"]
 parallel_race = false
 fallback_on = ["low_confidence", "error"]
 # First OCR call after a cold start has to load ~60MB of rten models
@@ -373,7 +380,24 @@ recognition_threshold = 0.5
 # runtime to the same default keeps the two paths aligned.
 
 [providers.configs.paddle]
-endpoint = "http://127.0.0.1:9003"
+# PaddleOCR PP-OCRv5 (in-process via `oar-ocr` + ONNX Runtime).
+# Phase 28 (2026-05-14): replaces the earlier sidecar-style
+# `endpoint = "http://127.0.0.1:9003"` placeholder. There is no
+# external HTTP service any more.
+#
+# `enable_korean` lazily loads PaddleOCR's `korean_PP-OCRv5_mobile_rec`
+# alongside the multilingual recogniser. At inference time, each
+# detected bbox is read by both rec models and the Korean output
+# wins iff it contains Hangul (best-of-two router from
+# docs/benchmarks/2026-05-14-ocr-bench-iter5.md). Costs about
+# 30 MB RAM and one extra rec session; cheap.
+enable_korean = true
+
+# GPU offload follows the global `performance.use_gpu_if_available`
+# toggle plus compile-time `paddleocr-directml` feature. There is no
+# per-provider `use_gpu` knob — flipping the global is the single
+# source of truth so users do not have to reason about which OCR
+# engine is wired where.
 
 [providers.configs."browser.google_images"]
 url_template = "https://www.google.com/searchbyimage?image_url={image_url}"

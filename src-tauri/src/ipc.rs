@@ -769,6 +769,88 @@ pub async fn install_ocr_models(app: AppHandle) -> Result<String, String> {
     Ok(dir.display().to_string())
 }
 
+/// Download PP-OCRv5 multilingual + Korean model files from
+/// `monkt/paddleocr-onnx` (Apache 2.0). The Korean recogniser is
+/// fetched alongside the multilingual one by default — it costs 13
+/// MB extra and powers the Hangul-routed best-of-two pass.
+///
+/// Progress events stream on `moonlens://paddleocr-model-progress`
+/// with the same `ModelProgress` shape as ocrs / embedded LLM, so
+/// the frontend can reuse the existing progress badge component.
+#[cfg(feature = "paddleocr-engine")]
+#[tauri::command]
+pub async fn install_paddleocr_models(
+    app: AppHandle,
+    install_korean: Option<bool>,
+) -> Result<String, String> {
+    use crate::providers::ocr_paddle;
+    let dir = ocr_paddle::default_models_dir().ok_or("no data dir")?;
+    let app_for_cb = app.clone();
+    let cb: Box<ocr_paddle::ProgressCb> = Box::new(move |filename, downloaded, total| {
+        let fraction = total.and_then(|t| {
+            if t == 0 {
+                None
+            } else {
+                Some((downloaded as f32 / t as f32).clamp(0.0, 1.0))
+            }
+        });
+        let payload = ModelProgress {
+            filename: filename.to_string(),
+            downloaded,
+            total,
+            fraction,
+        };
+        let _ = app_for_cb.emit("moonlens://paddleocr-model-progress", payload);
+    });
+    ocr_paddle::install_models_with_progress(&dir, install_korean.unwrap_or(true), Some(&*cb))
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(dir.display().to_string())
+}
+
+/// Whether the PaddleOCR model files are present on disk. The
+/// settings UI uses this to decide between "ダウンロード" and
+/// "準備済み" without making the user click and find out.
+#[derive(serde::Serialize, Clone)]
+pub struct PaddleOcrModelStatus {
+    pub dir: String,
+    pub multi_present: bool,
+    pub korean_present: bool,
+    pub total_bytes: u64,
+}
+
+#[cfg(feature = "paddleocr-engine")]
+#[tauri::command]
+pub fn paddleocr_models_status() -> Result<PaddleOcrModelStatus, String> {
+    use crate::providers::ocr_paddle;
+    let dir = ocr_paddle::default_models_dir().ok_or("no data dir")?;
+    let files_multi = ["det.onnx", "rec_multi.onnx", "dict_multi.txt"];
+    let files_ko = ["rec_ko.onnx", "dict_ko.txt"];
+    let total = |files: &[&str]| -> (bool, u64) {
+        let mut all = true;
+        let mut sum = 0u64;
+        for f in files {
+            let p = dir.join(f);
+            match std::fs::metadata(&p) {
+                Ok(m) if m.len() > 0 => sum += m.len(),
+                _ => {
+                    all = false;
+                    break;
+                }
+            }
+        }
+        (all, sum)
+    };
+    let (multi_present, multi_bytes) = total(&files_multi);
+    let (korean_present, ko_bytes) = total(&files_ko);
+    Ok(PaddleOcrModelStatus {
+        dir: dir.display().to_string(),
+        multi_present,
+        korean_present,
+        total_bytes: multi_bytes + ko_bytes,
+    })
+}
+
 /// Status snapshot for the embedded LLM model file. Used by the
 /// settings UI to decide whether to surface the "ダウンロード" CTA
 /// or the "準備済み" badge without round-tripping the path through

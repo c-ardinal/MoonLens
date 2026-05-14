@@ -104,6 +104,32 @@ export const revealPluginFolder = (id: string) =>
   safeInvoke<void>('reveal_plugin_folder', { id });
 export const installOcrModels = () => safeInvoke<string>('install_ocr_models');
 
+/** Status of the PaddleOCR PP-OCRv5 model files on disk. The
+ * settings UI uses this to render either a "ダウンロード" CTA or
+ * a "準備済み" badge with the on-disk size. */
+export interface PaddleOcrModelStatus {
+  dir: string;
+  multi_present: boolean;
+  korean_present: boolean;
+  total_bytes: number;
+}
+
+export const paddleOcrModelsStatus = () =>
+  safeInvoke<PaddleOcrModelStatus>('paddleocr_models_status', undefined, {
+    dir: '',
+    multi_present: false,
+    korean_present: false,
+    total_bytes: 0,
+  });
+
+/** Trigger the model download for the new Phase 28 PP-OCRv5 primary
+ * OCR engine. `installKorean=true` (default) fetches the extra
+ * Korean recogniser alongside the multilingual one for the
+ * best-of-two Hangul router. Listens on
+ * `moonlens://paddleocr-model-progress` for per-chunk events. */
+export const installPaddleOcrModels = (installKorean: boolean = true) =>
+  safeInvoke<string>('install_paddleocr_models', { installKorean });
+
 /** Status of the embedded LLM model on disk. Used by the settings
  * UI to decide whether to render the "ダウンロード" CTA or a
  * "準備済み" badge, and to surface the license advert so corporate

@@ -666,9 +666,9 @@
       description: 'http://127.0.0.1:9002 で稼働する音声認識サーバ'
     },
     paddle: {
-      kind: 'external',
-      label: 'PaddleOCR',
-      description: '別途起動した PaddleOCR サーバ'
+      kind: 'local',
+      label: 'PaddleOCR (PP-OCRv5)',
+      description: '組み込み多言語 OCR — ja/en/zh/ko/Latin。GPU (DirectML) 対応'
     },
     // Cloud APIs
     deepl: {

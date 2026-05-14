@@ -98,6 +98,24 @@ impl OarOcrProvider {
         Self::new(id, dir, use_gpu, enable_korean)
     }
 
+    /// Pipeline entry point. Reads `enable_korean` from the per-id
+    /// `[providers.configs.<id>]` block (defaults to `true`), takes
+    /// the global GPU toggle as `gpu_hint`, and resolves
+    /// `paddleocr-directml` feature-availability at compile time
+    /// before promising GPU offload.
+    pub fn from_config(
+        id: impl Into<String>,
+        cfg: &serde_json::Value,
+        gpu_hint: bool,
+    ) -> Self {
+        let enable_korean = cfg
+            .get("enable_korean")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
+        let use_gpu = gpu_hint && cfg!(feature = "paddleocr-directml");
+        Self::from_default_dir(id, use_gpu, enable_korean)
+    }
+
     pub fn models_dir(&self) -> &Path {
         &self.models_dir
     }

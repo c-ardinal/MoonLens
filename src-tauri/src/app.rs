@@ -50,6 +50,10 @@ macro_rules! all_commands {
             ipc::pin_overlay,
             ipc::unpin_overlay,
             ipc::install_ocr_models,
+            #[cfg(feature = "paddleocr-engine")]
+            ipc::install_paddleocr_models,
+            #[cfg(feature = "paddleocr-engine")]
+            ipc::paddleocr_models_status,
             ipc::embedded_model_status,
             ipc::download_embedded_model,
             ipc::package_embedded_model,

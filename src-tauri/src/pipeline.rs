@@ -349,6 +349,14 @@ impl Pipeline {
                     Some(Arc::new(WhisperCppProvider::new(id, &cfg)))
                 }
                 "ocrs" => Some(Arc::new(OcrsProvider::new(id, &cfg))),
+                #[cfg(feature = "paddleocr-engine")]
+                "paddle" => Some(Arc::new(
+                    crate::providers::ocr_paddle::OarOcrProvider::from_config(
+                        id,
+                        &cfg,
+                        s.performance.use_gpu_if_available,
+                    ),
+                )),
                 #[cfg(target_os = "windows")]
                 "windows" => Some(Arc::new(
                     crate::providers::ocr_windows::WindowsOcrProvider::new(id, &cfg),
@@ -390,6 +398,28 @@ impl Pipeline {
             );
             tracing::info!(
                 "pipeline: auto-registered `windows` OCR provider (user.toml lacked the section)"
+            );
+        }
+        // Same auto-register treatment for the Phase 28 PP-OCRv5
+        // (`paddle`) provider. Users upgrading from pre-Phase-28
+        // installs may still have a chain that lacks the
+        // `[providers.configs.paddle]` block — without this fallback
+        // the chain's "paddle" id would resolve to "not registered"
+        // and we would fall through to ocrs, defeating the whole
+        // migration.
+        #[cfg(feature = "paddleocr-engine")]
+        if !map.contains_key("paddle") {
+            let default_cfg = serde_json::json!({});
+            map.insert(
+                "paddle".into(),
+                Arc::new(crate::providers::ocr_paddle::OarOcrProvider::from_config(
+                    "paddle",
+                    &default_cfg,
+                    s.performance.use_gpu_if_available,
+                )),
+            );
+            tracing::info!(
+                "pipeline: auto-registered `paddle` OCR provider (user.toml lacked the section)"
             );
         }
         // Ensure any id referenced in a chain without a configs entry still
