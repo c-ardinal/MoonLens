@@ -7,6 +7,8 @@
 
 pub mod asr_whisper;
 pub mod ocr_ocrs;
+#[cfg(feature = "paddleocr-engine")]
+pub mod ocr_paddle;
 #[cfg(target_os = "windows")]
 pub mod ocr_windows;
 pub mod qr_rqrr;

@@ -58,6 +58,7 @@ src-tauri/tests/fixtures/bench/*.png
 tests/output/
 tests/output_3way/
 tests/output_pre_eos_fix/
+tests/output_ocr_bench/
 
 # Vite's dev-server cache timestamp file. Picked up by node's ESM
 # loader for HMR; rotates on every restart and is never useful in

@@ -72,6 +72,15 @@ xcap = "0.9"
 ocrs = { version = "0.8", optional = true }
 rten = { version = "0.13", optional = true }
 rqrr = "0.7"
+# PP-OCRv5 (DBNet + SVTR) via ONNX Runtime. Replaces the ocrs
+# baseline as the primary OCR engine (see
+# docs/benchmarks/2026-05-14-ocr-bench-iter5.md — wins on every
+# language tested by 5× CER margin). Optional + feature-gated to
+# keep CPU-smoke / no-default-features builds fast.
+oar-ocr = { version = "0.6", optional = true }
+oar-ocr-core = { version = "0.6", optional = true }
+ort = { version = "2.0.0-rc.12", optional = true }
+ndarray = { version = "0.16", optional = true }
 
 # Embedded local LLM inference. Switched 2026-05-09 from mistralrs
 # (Pure Rust) to llama-cpp-2 (FFI to llama.cpp) after the in-app
@@ -166,9 +175,27 @@ windows = { version = "0.58", features = [
 #    audio,ocrs-engine,embedded-llm-vulkan`
 # A `tauri.conf.json` `beforeDevCommand` override can pin this
 # per-dev-machine if the build happens to work on that host.
-default = ["audio", "ocrs-engine", "embedded-llm-vulkan"]
+default = [
+    "audio",
+    "ocrs-engine",
+    "embedded-llm-vulkan",
+    "paddleocr-engine",
+    "paddleocr-directml",
+]
 audio = ["dep:cpal"]
 ocrs-engine = ["dep:ocrs", "dep:rten"]
+# PaddleOCR PP-OCRv5 via oar-ocr + ONNX Runtime. `paddleocr-engine`
+# pulls in the CPU runtime; `paddleocr-directml` enables the
+# DirectML execution provider so `OarOcrProvider::with_gpu(true)`
+# can offload to any DirectX 12 GPU on Windows (NVIDIA / AMD /
+# Intel). Mirrors the embedded-llm-vulkan opt-in pattern.
+paddleocr-engine = [
+    "dep:oar-ocr",
+    "dep:oar-ocr-core",
+    "dep:ort",
+    "dep:ndarray",
+]
+paddleocr-directml = ["paddleocr-engine", "oar-ocr/directml"]
 embedded-llm = ["dep:llama-cpp-2"]
 # GPU-offload variants. The `embedded-llm` base feature builds
 # llama.cpp CPU-only; adding `-vulkan` or `-cuda` pulls in the

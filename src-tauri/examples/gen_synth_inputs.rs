@@ -228,7 +228,220 @@ fn main() -> Result<()> {
             .with_context(|| format!("save {}", path.display()))?;
         println!("wrote {}", path.display());
     }
+
+    generate_multilingual_panels(&out_dir)?;
+    render_vertical_ja(&out_dir)?;
+    render_decorative_ja(&out_dir)?;
     Ok(())
+}
+
+/// Render single-language paragraph panels for the OCR bench (ocr_bench.rs).
+/// Covers JA-only, ZH-CN, KO, FR, DE — the languages we want to measure once
+/// `ocrs` (Latin-trained) is taken off its English-dominant home turf.
+fn generate_multilingual_panels(out_dir: &Path) -> Result<()> {
+    let noto_jp = read_first_font(&["C:/Windows/Fonts/NotoSansJP-Regular.ttf"])?;
+    let malgun_ko = read_first_font(&["C:/Windows/Fonts/malgun.ttf"])?;
+    let yahei_zh = read_ttc_font(&[("C:/Windows/Fonts/msyh.ttc", 0)])?;
+    let latin = read_first_font(&[
+        "C:/Windows/Fonts/arial.ttf",
+        "C:/Windows/Fonts/NotoSansJP-Regular.ttf",
+    ])?;
+
+    let panels: &[MultiPanel] = &[
+        MultiPanel {
+            name: "synth_ja_paragraph",
+            width: 880,
+            height: 220,
+            font_px: 18.0,
+            line_height: 1.6,
+            lang_label: "ja",
+            lines: &[
+                "吾輩は猫である。名前はまだ無い。",
+                "どこで生れたかとんと見当がつかぬ。",
+                "何でも薄暗いじめじめした所でニャーニャー泣いていた事だけは記憶している。",
+                "吾輩はここで始めて人間というものを見た。",
+            ],
+        },
+        MultiPanel {
+            name: "synth_zh_paragraph",
+            width: 880,
+            height: 220,
+            font_px: 18.0,
+            line_height: 1.6,
+            lang_label: "zh",
+            lines: &[
+                "春眠不觉晓，处处闻啼鸟。",
+                "夜来风雨声，花落知多少。",
+                "举头望明月，低头思故乡。",
+                "床前明月光，疑是地上霜。",
+            ],
+        },
+        MultiPanel {
+            name: "synth_ko_paragraph",
+            width: 880,
+            height: 220,
+            font_px: 18.0,
+            line_height: 1.6,
+            lang_label: "ko",
+            lines: &[
+                "동해 물과 백두산이 마르고 닳도록",
+                "하느님이 보우하사 우리나라 만세",
+                "무궁화 삼천리 화려 강산",
+                "대한 사람 대한으로 길이 보전하세",
+            ],
+        },
+        MultiPanel {
+            name: "synth_fr_paragraph",
+            width: 880,
+            height: 220,
+            font_px: 18.0,
+            line_height: 1.6,
+            lang_label: "fr",
+            lines: &[
+                "Aujourd'hui, maman est morte. Ou peut-être hier, je ne sais pas.",
+                "J'ai reçu un télégramme de l'asile : « Mère décédée. »",
+                "Enterrement demain. Sentiments distingués.",
+                "Cela ne veut rien dire. C'était peut-être hier.",
+            ],
+        },
+        MultiPanel {
+            name: "synth_de_paragraph",
+            width: 880,
+            height: 220,
+            font_px: 18.0,
+            line_height: 1.6,
+            lang_label: "de",
+            lines: &[
+                "Als Gregor Samsa eines Morgens aus unruhigen Träumen erwachte,",
+                "fand er sich in seinem Bett zu einem ungeheuren Ungeziefer verwandelt.",
+                "Er lag auf seinem panzerartig harten Rücken und sah,",
+                "wenn er den Kopf ein wenig hob, seinen gewölbten, braunen Bauch.",
+            ],
+        },
+    ];
+
+    for panel in panels {
+        let font = match panel.lang_label {
+            "ja" => &noto_jp,
+            "zh" => &yahei_zh,
+            "ko" => &malgun_ko,
+            _ => &latin,
+        };
+        let mut img =
+            RgbaImage::from_pixel(panel.width, panel.height, Rgba([248, 248, 250, 255]));
+        let scale = PxScale::from(panel.font_px);
+        let scaled = font.as_scaled(scale);
+        let ink = Rgba([34, 34, 38, 255]);
+        let line_advance = (panel.font_px * panel.line_height).round() as i32;
+        let baseline_offset = scaled.ascent().round() as i32;
+        let x = 24i32;
+        let y0 = 24i32;
+        for (i, line) in panel.lines.iter().enumerate() {
+            let y = y0 + baseline_offset - scaled.ascent().round() as i32
+                + (i as i32) * line_advance;
+            draw_text_mut(&mut img, ink, x, y, scale, font, line);
+        }
+        let path = out_dir.join(format!("{}.png", panel.name));
+        img.save(&path)
+            .with_context(|| format!("save {}", path.display()))?;
+        println!("wrote {}", path.display());
+    }
+    Ok(())
+}
+
+struct MultiPanel {
+    name: &'static str,
+    width: u32,
+    height: u32,
+    font_px: f32,
+    line_height: f32,
+    lang_label: &'static str,
+    lines: &'static [&'static str],
+}
+
+/// Render a tategaki (vertical) Japanese panel: each character is
+/// painted into its own row, advancing top-to-bottom along the
+/// column. Column advances right-to-left. No native CJK vertical
+/// layout in ab_glyph — this is the manual approximation that ocrs
+/// / PaddleOCR / manga-ocr all "see" as well as a real CJK reader.
+fn render_vertical_ja(out_dir: &Path) -> Result<()> {
+    let font = read_first_font(&["C:/Windows/Fonts/NotoSansJP-Regular.ttf"])?;
+    let columns: &[&[char]] = &[
+        &['吾', '輩', 'は', '猫', 'で', 'あ', 'る', '。'],
+        &['名', '前', 'は', 'ま', 'だ', '無', 'い', '。'],
+        &['ど', 'こ', 'で', '生', 'れ', 'た', 'か'],
+        &['と', 'ん', 'と', '見', '当', 'が', 'つ', 'か', 'ぬ', '。'],
+    ];
+    let font_px: f32 = 22.0;
+    let line_height: f32 = 1.4;
+    let col_advance = (font_px * 1.7_f32).round() as i32; // a touch of column air
+    let row_advance = (font_px * line_height).round() as i32;
+    let width: u32 = (columns.len() as i32 * col_advance + 48) as u32;
+    let max_chars = columns.iter().map(|c| c.len()).max().unwrap_or(8) as i32;
+    let height: u32 = (max_chars * row_advance + 48) as u32;
+    let mut img = RgbaImage::from_pixel(width, height, Rgba([248, 248, 250, 255]));
+    let scale = PxScale::from(font_px);
+    let scaled = font.as_scaled(scale);
+    let ink = Rgba([34, 34, 38, 255]);
+    let ascent = scaled.ascent().round() as i32;
+    let right_margin = 24i32;
+    for (col_idx, col) in columns.iter().enumerate() {
+        // Tategaki advances RIGHT-TO-LEFT. col 0 is rightmost.
+        let x = width as i32 - right_margin - (col_idx as i32 + 1) * col_advance;
+        for (row_idx, ch) in col.iter().enumerate() {
+            let y = 24 + (row_idx as i32) * row_advance + ascent
+                - scaled.ascent().round() as i32;
+            draw_text_mut(&mut img, ink, x, y, scale, &font, &ch.to_string());
+        }
+    }
+    let path = out_dir.join("synth_ja_vertical.png");
+    img.save(&path)
+        .with_context(|| format!("save {}", path.display()))?;
+    println!("wrote {}", path.display());
+    Ok(())
+}
+
+/// Decorative JA: large bold title + smaller body. Mimics the game
+/// UI / poster look where manga-ocr's training data should help.
+fn render_decorative_ja(out_dir: &Path) -> Result<()> {
+    let regular = read_first_font(&["C:/Windows/Fonts/NotoSansJP-Regular.ttf"])?;
+    let bold = read_first_font(&[
+        "C:/Windows/Fonts/NotoSansJP-Bold.ttf",
+        "C:/Windows/Fonts/NotoSansJP-Regular.ttf",
+    ])?;
+    let width = 720u32;
+    let height = 260u32;
+    let mut img = RgbaImage::from_pixel(width, height, Rgba([248, 248, 250, 255]));
+    let title_scale = PxScale::from(44.0);
+    let body_scale = PxScale::from(20.0);
+    let ink = Rgba([34, 34, 38, 255]);
+    draw_text_mut(&mut img, ink, 32, 24, title_scale, &bold, "新章「月光」開幕！");
+    let body_lines = [
+        "主人公が立ち上がり、",
+        "世界は再び動き始める。",
+        "今こそ、運命を選び取れ。",
+    ];
+    let body_line_h = 28i32;
+    for (i, line) in body_lines.iter().enumerate() {
+        let y = 100 + (i as i32) * body_line_h;
+        draw_text_mut(&mut img, ink, 32, y, body_scale, &regular, line);
+    }
+    let path = out_dir.join("synth_ja_decorative.png");
+    img.save(&path)
+        .with_context(|| format!("save {}", path.display()))?;
+    println!("wrote {}", path.display());
+    Ok(())
+}
+
+fn read_ttc_font(candidates: &[(&str, u32)]) -> Result<FontVec> {
+    for (p, idx) in candidates {
+        if let Ok(bytes) = fs::read(p) {
+            if let Ok(font) = FontVec::try_from_vec_and_index(bytes, *idx) {
+                return Ok(font);
+            }
+        }
+    }
+    anyhow::bail!("no usable TTC font in {:?}", candidates)
 }
 
 struct Scenario {
