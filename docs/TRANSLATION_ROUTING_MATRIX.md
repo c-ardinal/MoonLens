@@ -209,3 +209,4 @@ pub fn route(
 - **Pivot 中間言語の en 固定**: 一部ペア (例: zh→ko) では中国語経由が直接的な可能性。比較ベンチで効果見えれば中間言語選択ロジック追加余地。
 - **Tier 切替時の自動 DL は半自動**: Onboarding modal は first-run で sequential DL するが、設定画面での tier 変更時は per-model 「ダウンロード」ボタン押下式。「不足モデルをまとめて DL」ボタン化は UX 改善余地あり。
 - **VRAM 量プローブ**: 現在 `gpu_layers = 99` 固定 (llama.cpp が実モデル層数に clamp)。実 VRAM を probe して Quality tier では Edge+ を CPU/GPU 分割する等の選択肢余地。
+- **Phase 29 候補: 用語事前抽出 + 任意の Review pass**: 多行 Lens 入力 (≥5 行) で固有名詞の訳語をピン留めし行間ブレを抑える + Quality tier opt-in で 2 段目の評価/推敲パス。外部参考: 7shi `multilingual-reader`。詳細とトリアージは [`2026-05-14-translation-glossary-research.md`](./2026-05-14-translation-glossary-research.md) を参照。
