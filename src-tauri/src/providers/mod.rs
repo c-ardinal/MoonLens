@@ -6,6 +6,7 @@
 //! same trait so [`crate::pipeline`] does not care which is which.
 
 pub mod asr_whisper;
+pub mod glossary;
 pub mod ocr_ocrs;
 #[cfg(feature = "paddleocr-engine")]
 pub mod ocr_paddle;
@@ -69,6 +70,19 @@ pub enum TaskInput {
         text: String,
         source_language: String,
         target_language: String,
+        /// Per-request glossary entries (Phase 29): the lens layer
+        /// extracts proper-noun + technical-term renderings from the
+        /// full batch of source lines BEFORE the per-line translate
+        /// loop, and passes the agreed-on glossary into every line's
+        /// `TaskInput::Translate`. Providers that understand it
+        /// splice it into the system prompt so every occurrence of
+        /// the same source term renders identically across lines.
+        ///
+        /// Empty for single-line / batch-of-one calls and for legacy
+        /// callers — kept as `#[serde(default)]` so existing on-disk
+        /// task records continue to deserialise.
+        #[serde(default)]
+        glossary: Vec<(String, String)>,
     },
     Ocr {
         image_png: Vec<u8>,
@@ -174,6 +188,30 @@ pub trait Provider: Send + Sync {
     /// Default: noop. Called at app startup from [`crate::pipeline::Pipeline::preload_all`].
     async fn preload(&self) -> Result<(), ProviderError> {
         Ok(())
+    }
+
+    /// Optional glossary-extraction hook (Phase 29). When the lens
+    /// layer has a batch of source lines and wants to lock down the
+    /// renderings of recurring proper nouns / technical terms, it
+    /// asks the translate chain to extract a glossary via this
+    /// method. The returned entries are then passed back through
+    /// `TaskInput::Translate { glossary, .. }` on each per-line call
+    /// so every line uses the same target rendering for the same
+    /// source term.
+    ///
+    /// Default returns `None` — only providers that have a
+    /// general-purpose generative LLM behind them (the embedded
+    /// llama.cpp runtime and Ollama) bother. Cloud APIs like DeepL
+    /// have no free-form prompt path and should keep the default.
+    /// Callers should treat `Ok(None)` as "this provider can't help,
+    /// try the next one in chain".
+    async fn extract_glossary(
+        &self,
+        _lines: &[&str],
+        _source_language: &str,
+        _target_language: &str,
+    ) -> Result<Option<Vec<(String, String)>>, ProviderError> {
+        Ok(None)
     }
 }
 

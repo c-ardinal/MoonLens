@@ -295,6 +295,7 @@ mod chain_streaming {
                     text: "hello world".into(),
                     source_language: "en".into(),
                     target_language: "ja".into(),
+                    glossary: Vec::new(),
                 },
                 sink,
             )
@@ -342,6 +343,7 @@ mod chain_streaming {
                     text: "hi".into(),
                     source_language: "en".into(),
                     target_language: "ja".into(),
+                    glossary: Vec::new(),
                 },
             )
             .await
@@ -485,6 +487,7 @@ mod chain_streaming {
                     text: "x".into(),
                     source_language: "en".into(),
                     target_language: "ja".into(),
+                    glossary: Vec::new(),
                 },
                 sink,
             )

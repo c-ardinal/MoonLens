@@ -508,6 +508,7 @@ mod tests {
                 text: "Hola".into(),
                 source_language: "fr".into(),
                 target_language: "de".into(),
+                glossary: Vec::new(),
             })
             .await
             .unwrap_err();

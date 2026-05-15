@@ -280,6 +280,7 @@ mod tests {
                     text: "hi".into(),
                     source_language: "en".into(),
                     target_language: "ja".into(),
+                    glossary: Vec::new(),
                 },
             },
         };

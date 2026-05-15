@@ -240,6 +240,7 @@ impl OllamaTranslator {
                 text,
                 source_language,
                 target_language,
+                ..
             } => Ok(build_chat_messages(
                 &self.system_prompt,
                 &self.examples,

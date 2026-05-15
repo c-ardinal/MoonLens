@@ -347,6 +347,22 @@ pub struct Providers {
     /// the UI side.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub user_tier: Option<crate::translation_router::UserTier>,
+
+    /// Phase 29 glossary feature. When a batch of OCR / audio lines
+    /// has at least this many entries, the lens layer asks the
+    /// translator chain for a glossary of proper nouns + technical
+    /// terms upfront, then injects it into every per-line translate
+    /// call so the same source term renders the same way each time.
+    /// `0` disables the gate (every translation pays glossary
+    /// latency). A large value like `u32::MAX` disables the feature.
+    /// Default `5` — see `lens_pipeline::PipelineConfig::default` for
+    /// the rationale on the cut-off.
+    #[serde(default = "default_glossary_min_lines")]
+    pub glossary_min_lines: u32,
+}
+
+fn default_glossary_min_lines() -> u32 {
+    5
 }
 
 impl Default for Providers {
@@ -369,6 +385,7 @@ impl Default for Providers {
             // "embedded.llm"]` block by
             // `migrate_legacy_embedded_settings`.
             user_tier: Some(crate::translation_router::UserTier::Standard),
+            glossary_min_lines: default_glossary_min_lines(),
         }
     }
 }

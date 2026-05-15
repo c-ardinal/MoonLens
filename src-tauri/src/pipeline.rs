@@ -459,6 +459,52 @@ impl Pipeline {
 
     /// Run a task through the configured chain, respecting privacy gates,
     /// timeouts, fallback conditions, and session stickiness.
+    /// Extract a per-request glossary from a batch of source lines
+    /// by walking the translate chain in priority order and asking
+    /// each provider via [`Provider::extract_glossary`]. Returns the
+    /// first non-empty `Some(entries)` reply; falls back to `Vec::new()`
+    /// when no provider can help (cloud APIs, missing models). Errors
+    /// from individual providers are swallowed into a debug log so a
+    /// glossary failure never blocks the per-line translation path
+    /// that follows.
+    ///
+    /// This is the entry point the lens pipeline calls before kicking
+    /// off the per-line translate spawn loop (Phase 29).
+    pub async fn extract_glossary(
+        &self,
+        lines: &[&str],
+        source_language: &str,
+        target_language: &str,
+    ) -> Vec<(String, String)> {
+        if lines.is_empty() {
+            return Vec::new();
+        }
+        let s = self.settings.snapshot();
+        let chain = s.providers.translate.chain.clone();
+        let providers = self.providers.read().clone();
+        for id in chain {
+            let Some(p) = providers.get(&id) else {
+                continue;
+            };
+            match p.extract_glossary(lines, source_language, target_language).await {
+                Ok(Some(entries)) => {
+                    tracing::debug!(
+                        "glossary: {} entries from {id} ({} lines, {source_language}->{target_language})",
+                        entries.len(),
+                        lines.len()
+                    );
+                    return entries;
+                }
+                Ok(None) => continue,
+                Err(e) => {
+                    tracing::debug!("glossary: {id} failed: {e}");
+                    continue;
+                }
+            }
+        }
+        Vec::new()
+    }
+
     pub async fn run(
         &self,
         capability: Capability,
@@ -684,6 +730,7 @@ impl Pipeline {
                     text: ocr_text.clone(),
                     source_language: "auto".into(),
                     target_language: s.subtitle.target_language.clone(),
+                    glossary: Vec::new(),
                 },
             )
             .await?;

@@ -586,6 +586,49 @@ impl Provider for EmbeddedLlmTranslator {
             Ok(())
         }
     }
+
+    async fn extract_glossary(
+        &self,
+        lines: &[&str],
+        source_language: &str,
+        target_language: &str,
+    ) -> Result<Option<Vec<(String, String)>>, ProviderError> {
+        #[cfg(feature = "embedded-llm")]
+        {
+            use crate::providers::glossary;
+            if lines.is_empty() {
+                return Ok(Some(Vec::new()));
+            }
+            let worker = ensure_engine(self).await?;
+            let user_msg = glossary::build_prompt(lines, source_language, target_language);
+            // Glossary needs a different system prompt than the
+            // translator's natural-language one — its job is
+            // structured `src=tgt` extraction, not idiomatic prose.
+            let prompt = render_prompt(
+                self.chat_template,
+                glossary::SYSTEM_PROMPT,
+                &[],
+                &user_msg,
+            );
+            // Bound output at 512 tokens — small batches need ~10
+            // entries × ~10 tokens = 100, large batches still fit
+            // comfortably. Temperature 0 for deterministic extraction.
+            let raw = worker.submit(prompt, 512, 0.0, 1.0, None).await?;
+            let source_text = lines.join("\n");
+            let entries = glossary::parse_response(&raw, Some(&source_text));
+            Ok(Some(
+                entries
+                    .into_iter()
+                    .map(|e| (e.source, e.target))
+                    .collect(),
+            ))
+        }
+        #[cfg(not(feature = "embedded-llm"))]
+        {
+            let _ = (lines, source_language, target_language);
+            Ok(None)
+        }
+    }
 }
 
 /// Process-wide llama.cpp backend. The crate's `LlamaBackend::init`
@@ -1820,6 +1863,7 @@ fn build_user_prompt(input: &TaskInput) -> Result<String, ProviderError> {
             text,
             source_language,
             target_language,
+            ..
         } => {
             // Minimal user-prompt shape: one short instruction
             // header followed by the source text. The previous
@@ -2136,9 +2180,10 @@ async fn run_inference(
     let worker = ensure_engine(provider).await?;
     let user = build_user_prompt(&input)?;
     let few_shots = build_few_shots(&input);
+    let system = system_prompt_with_glossary(&provider.system_prompt, &input);
     let prompt = render_prompt(
         provider.chat_template,
-        &provider.system_prompt,
+        &system,
         &few_shots,
         &user,
     );
@@ -2155,6 +2200,30 @@ async fn run_inference(
     Ok(TaskOutput::Text(aggregated))
 }
 
+/// Append the per-request glossary as a system-prompt fragment when
+/// the input carries one. Returns a Cow so the common no-glossary
+/// path doesn't allocate.
+#[cfg(feature = "embedded-llm")]
+fn system_prompt_with_glossary<'a>(
+    base: &'a str,
+    input: &TaskInput,
+) -> std::borrow::Cow<'a, str> {
+    if let TaskInput::Translate { glossary, .. } = input {
+        if !glossary.is_empty() {
+            let entries: Vec<crate::providers::glossary::GlossaryEntry> = glossary
+                .iter()
+                .map(|(s, t)| crate::providers::glossary::GlossaryEntry {
+                    source: s.clone(),
+                    target: t.clone(),
+                })
+                .collect();
+            let fragment = crate::providers::glossary::render_for_system_prompt(&entries);
+            return std::borrow::Cow::Owned(format!("{base}{fragment}"));
+        }
+    }
+    std::borrow::Cow::Borrowed(base)
+}
+
 #[cfg(feature = "embedded-llm")]
 async fn run_inference_streaming(
     provider: &EmbeddedLlmTranslator,
@@ -2164,9 +2233,10 @@ async fn run_inference_streaming(
     let worker = ensure_engine(provider).await?;
     let user = build_user_prompt(&input)?;
     let few_shots = build_few_shots(&input);
+    let system = system_prompt_with_glossary(&provider.system_prompt, &input);
     let prompt = render_prompt(
         provider.chat_template,
-        &provider.system_prompt,
+        &system,
         &few_shots,
         &user,
     );
@@ -2243,6 +2313,7 @@ mod tests {
                 text: "hi".into(),
                 source_language: "en".into(),
                 target_language: "ja".into(),
+                glossary: Vec::new(),
             })
             .await;
         let err = res.expect_err("should fail without model file");
@@ -2262,6 +2333,7 @@ mod tests {
                     text: "hi".into(),
                     source_language: "en".into(),
                     target_language: "ja".into(),
+                    glossary: Vec::new(),
                 },
                 sink,
             )
@@ -2314,6 +2386,7 @@ mod tests {
             text: "Hello".into(),
             source_language: "en".into(),
             target_language: "ja".into(),
+            glossary: Vec::new(),
         })
         .unwrap();
         assert!(
@@ -2338,6 +2411,7 @@ mod tests {
             text: "x".into(),
             source_language: "en".into(),
             target_language: target.into(),
+            glossary: Vec::new(),
         })
         .unwrap();
         for source in ["", "  ", "auto", "AUTO", "ja", "Japanese"] {
@@ -2345,6 +2419,7 @@ mod tests {
                 text: "x".into(),
                 source_language: source.into(),
                 target_language: target.into(),
+                glossary: Vec::new(),
             })
             .unwrap();
             assert_eq!(prompt, baseline, "source={source:?} drifted");
@@ -2741,6 +2816,7 @@ mod tests {
             text: "x".into(),
             source_language: "en".into(),
             target_language: "ja".into(),
+            glossary: Vec::new(),
         });
         assert!(!translate.is_empty(), "translate ja MUST get few-shots");
     }

@@ -118,6 +118,7 @@ impl Provider for PivotTranslator {
                 text,
                 source_language,
                 target_language,
+                ..
             } => (text, source_language, target_language),
             _ => {
                 return Err(ProviderError::Other(
@@ -133,6 +134,7 @@ impl Provider for PivotTranslator {
                 text,
                 source_language,
                 target_language: "en".to_string(),
+                glossary: Vec::new(),
             })
             .await?;
         let intermediate = match stage1_out {
@@ -155,6 +157,7 @@ impl Provider for PivotTranslator {
                 text: cleaned,
                 source_language: "en".to_string(),
                 target_language,
+                glossary: Vec::new(),
             })
             .await
     }
@@ -169,6 +172,7 @@ impl Provider for PivotTranslator {
                 text,
                 source_language,
                 target_language,
+                ..
             } => (text, source_language, target_language),
             _ => {
                 return Err(ProviderError::Other(
@@ -188,6 +192,7 @@ impl Provider for PivotTranslator {
                 text,
                 source_language,
                 target_language: "en".to_string(),
+                glossary: Vec::new(),
             })
             .await?;
         let intermediate = match stage1_out {
@@ -210,6 +215,7 @@ impl Provider for PivotTranslator {
                     text: cleaned,
                     source_language: "en".to_string(),
                     target_language,
+                    glossary: Vec::new(),
                 },
                 sink,
             )
@@ -281,6 +287,7 @@ mod tests {
             text: text.into(),
             source_language: src.into(),
             target_language: tgt.into(),
+            glossary: Vec::new(),
         }
     }
 
@@ -311,6 +318,7 @@ mod tests {
                 text,
                 source_language,
                 target_language,
+                ..
             } => {
                 assert_eq!(text, "こんにちは");
                 assert_eq!(source_language, "ja");
@@ -328,6 +336,7 @@ mod tests {
                 text,
                 source_language,
                 target_language,
+                ..
             } => {
                 assert_eq!(text, "Hello, world.");
                 assert_eq!(source_language, "en");

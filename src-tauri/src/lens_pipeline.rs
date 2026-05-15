@@ -91,6 +91,35 @@ pub trait LensTranslator: Send + Sync {
         target_language: String,
         chunk_sink: Arc<dyn Fn(String, bool) + Send + Sync>,
     ) -> Result<String>;
+
+    /// Like [`translate`] but with a per-request glossary that the
+    /// underlying provider can splice into its system prompt. Default
+    /// impl drops the glossary so legacy translators (echo, mocks)
+    /// keep working unchanged.
+    async fn translate_with_glossary(
+        &self,
+        text: String,
+        target_language: String,
+        glossary: Vec<(String, String)>,
+        chunk_sink: Arc<dyn Fn(String, bool) + Send + Sync>,
+    ) -> Result<String> {
+        let _ = glossary;
+        self.translate(text, target_language, chunk_sink).await
+    }
+
+    /// Build a glossary for a batch of source lines that will be
+    /// translated in sequence. Default returns empty (no glossary).
+    /// The chain-backed implementation forwards to
+    /// [`crate::pipeline::Pipeline::extract_glossary`].
+    async fn extract_glossary(
+        &self,
+        lines: &[&str],
+        source_language: &str,
+        target_language: &str,
+    ) -> Vec<(String, String)> {
+        let _ = (lines, source_language, target_language);
+        Vec::new()
+    }
 }
 
 /// Tunables the pipeline reads on every run. Intentionally a plain
@@ -101,6 +130,15 @@ pub struct PipelineConfig {
     pub target_language: String,
     pub max_concurrent_translate: usize,
     pub ocr_scale: u32,
+    /// Minimum number of OCR lines required before the Phase 29
+    /// glossary pre-pass kicks in. Below this, the upfront LLM
+    /// call adds latency without any inter-line consistency
+    /// problem to fix — for a single-line lens there are no
+    /// "other lines" to keep aligned. Set to 0 to disable the
+    /// gate entirely (every translation pays glossary latency).
+    /// Set to a value larger than realistic line counts (e.g.
+    /// `u32::MAX`) to disable the feature.
+    pub glossary_min_lines: usize,
 }
 
 impl Default for PipelineConfig {
@@ -118,6 +156,12 @@ impl Default for PipelineConfig {
             // 4× for sub-10 px UI text. 3× is the sweet spot
             // before processing time grows quadratically.
             ocr_scale: 3,
+            // 5 lines is the inflection point per the iter5 OCR
+            // bench fixtures: paragraph-shaped Lens captures hit
+            // 4-7 lines typically; below 5 the model rarely has
+            // ambiguous proper nouns AND the glossary call's
+            // ~300 ms latency would dominate the per-line decode.
+            glossary_min_lines: 5,
         }
     }
 }
@@ -189,6 +233,30 @@ pub async fn run_lens_pipeline(
     let max_concurrent = config.max_concurrent_translate.max(1);
     let semaphore = Arc::new(tokio::sync::Semaphore::new(max_concurrent));
     let target_lang = config.target_language.clone();
+
+    // Phase 29: build a per-batch glossary so the same proper noun
+    // renders the same way across every line in this capture. Gate
+    // on `min_lines` — single-line / two-line lenses have nothing
+    // to disambiguate and the upfront LLM call would just waste
+    // ~300 ms. Producers that hit the gate but fail to return a
+    // glossary fall through to `Vec::new()`.
+    let glossary = if cards.len() >= config.glossary_min_lines.max(1) {
+        let line_refs: Vec<&str> =
+            cards.iter().map(|c| c.text.as_str()).collect();
+        translator
+            .extract_glossary(&line_refs, "auto", &target_lang)
+            .await
+    } else {
+        Vec::new()
+    };
+    if !glossary.is_empty() {
+        tracing::info!(
+            "lens glossary: {} entries from {} lines",
+            glossary.len(),
+            cards.len()
+        );
+    }
+
     let mut tasks: Vec<tokio::task::JoinHandle<()>> = Vec::with_capacity(cards.len());
     for card in cards.iter() {
         let sem = semaphore.clone();
@@ -197,6 +265,7 @@ pub async fn run_lens_pipeline(
         let text = card.text.clone();
         let line_index = card.line_index;
         let sink_c = sink.clone();
+        let glossary_c = glossary.clone();
         let chunk_sink: Arc<dyn Fn(String, bool) + Send + Sync> = {
             let sink_for_chunk = sink.clone();
             Arc::new(move |delta, done| {
@@ -208,7 +277,10 @@ pub async fn run_lens_pipeline(
                 Ok(p) => p,
                 Err(_) => return,
             };
-            if let Err(e) = translator.translate(text, target_c, chunk_sink).await {
+            if let Err(e) = translator
+                .translate_with_glossary(text, target_c, glossary_c, chunk_sink)
+                .await
+            {
                 tracing::info!("translate failed for line {line_index}: {e}");
             }
             let _ = sink_c;
@@ -654,6 +726,17 @@ impl LensTranslator for ChainBackedLensTranslator {
         target_language: String,
         chunk_sink: Arc<dyn Fn(String, bool) + Send + Sync>,
     ) -> Result<String> {
+        self.translate_with_glossary(text, target_language, Vec::new(), chunk_sink)
+            .await
+    }
+
+    async fn translate_with_glossary(
+        &self,
+        text: String,
+        target_language: String,
+        glossary: Vec<(String, String)>,
+        chunk_sink: Arc<dyn Fn(String, bool) + Send + Sync>,
+    ) -> Result<String> {
         use crate::providers::{Capability, TaskInput, TaskOutput};
         let res = self
             .pipeline
@@ -663,6 +746,7 @@ impl LensTranslator for ChainBackedLensTranslator {
                     text,
                     source_language: "auto".into(),
                     target_language,
+                    glossary,
                 },
                 chunk_sink,
             )
@@ -672,5 +756,16 @@ impl LensTranslator for ChainBackedLensTranslator {
             TaskOutput::Text(s) => Ok(s),
             _ => anyhow::bail!("translator returned non-Text output"),
         }
+    }
+
+    async fn extract_glossary(
+        &self,
+        lines: &[&str],
+        source_language: &str,
+        target_language: &str,
+    ) -> Vec<(String, String)> {
+        self.pipeline
+            .extract_glossary(lines, source_language, target_language)
+            .await
     }
 }

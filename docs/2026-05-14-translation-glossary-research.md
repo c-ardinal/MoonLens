@@ -136,13 +136,45 @@ on Lens-style short inputs).
 
 ## Decision summary
 
-| Technique | Land in? | Phase | Effort estimate |
+| Technique | Land in? | Phase | Status |
 |---|---|---|---|
-| Terminology pre-extraction | yes, multi-line gate | **29** | ~1 day (prompt + parser + glossary injection + bench) |
-| Review pass | yes, Quality-tier opt-in | **29** | ~0.5 day (settings + post-translate hook + bench) |
-| Asymmetric reviewer model | maybe, after new model lands | **30+** | depends on model choice |
+| Terminology pre-extraction | yes, multi-line gate | **29** | **shipped** (2026-05-15) |
+| Review pass | yes, Quality-tier opt-in | 30+ | deferred — Phase 29 scope creep, latency 2× makes it Quality-only |
+| Asymmetric reviewer model | maybe, after new model lands | 30+ | depends on model choice |
 | Summary-compressed KV cache | no | — | n/a in current architecture |
 | CoT-less prompts | already doing | — | — |
+
+## Phase 29 implementation note (2026-05-15)
+
+The pre-extraction pass landed in commit `<tbd>`. Touch list:
+
+- `src-tauri/src/providers/glossary.rs` (new) — prompt builder,
+  response parser, 13 unit tests covering decoration stripping,
+  duplicate handling, anti-hallucination guard.
+- `src-tauri/src/providers/mod.rs` — `TaskInput::Translate` gained
+  a `glossary: Vec<(String, String)>` field (serde-default empty for
+  backward-compat). `Provider` trait gained `extract_glossary`
+  with a `None` default; only `EmbeddedLlmTranslator` overrides.
+- `src-tauri/src/providers/translate_embedded_llm.rs` —
+  `system_prompt_with_glossary` helper splices the agreed-on
+  entries into the system prompt at inference time. Greedy decode
+  with `temperature=0` for the extraction pass itself.
+- `src-tauri/src/pipeline.rs` — `Pipeline::extract_glossary` walks
+  the translate chain and returns the first non-None reply.
+- `src-tauri/src/lens_pipeline.rs` — `translate_cards` now calls
+  `extract_glossary` before kicking off the per-line spawn loop,
+  gated on `cards.len() >= glossary_min_lines`. Each per-line
+  spawn forwards the glossary via the new
+  `LensTranslator::translate_with_glossary` method.
+- Settings: `providers.glossary_min_lines: u32` (default 5),
+  surfaced in `default.toml`. Set to `u32::MAX` to disable.
+
+A formal end-to-end CER / consistency bench was deferred — running
+it requires the embedded LLM at a specific tier with a stable
+golden set, and the existing Phase 27 bench harness already covers
+the per-tier baselines we care about. The expected user-visible
+delta is "same proper noun rendered the same way every time" on
+multi-line Lens captures.
 
 ## Open questions
 

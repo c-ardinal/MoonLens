@@ -212,6 +212,7 @@ fn to_wit_input(input: TaskInput) -> wit_types::TaskInput {
             text,
             source_language,
             target_language,
+            ..
         } => W::Translate(wit_types::TranslateInput {
             text,
             source_language,

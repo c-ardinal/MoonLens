@@ -116,6 +116,7 @@ pub async fn run_translate(
                 text: args.text,
                 source_language: args.source_language,
                 target_language: args.target_language,
+                glossary: Vec::new(),
             },
         )
         .await

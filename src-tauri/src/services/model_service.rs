@@ -954,6 +954,7 @@ where
                         text: text.clone(),
                         source_language: "en".into(),
                         target_language: "ja".into(),
+                        glossary: Vec::new(),
                     },
                     sink,
                 )

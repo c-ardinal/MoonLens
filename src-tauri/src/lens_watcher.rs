@@ -2971,6 +2971,7 @@ async fn run_capture_loop(
             // 3× upscale recovers small body-text recognition (see
             // PipelineConfig::default for the rationale).
             ocr_scale: 3,
+            glossary_min_lines: snapshot.providers.glossary_min_lines as usize,
         };
 
         let mut input = PreCapturedInput::new(CapturedFrame {
@@ -3085,6 +3086,7 @@ async fn translate_paragraph_streaming(
                 text: numbered,
                 source_language: "auto".into(),
                 target_language: target_language.clone(),
+                glossary: Vec::new(),
             },
             sink,
         )
@@ -3190,6 +3192,7 @@ async fn translate_line_streaming(
                 text,
                 source_language: "auto".into(),
                 target_language,
+                glossary: Vec::new(),
             },
             sink,
         )

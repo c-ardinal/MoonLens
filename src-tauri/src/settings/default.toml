@@ -100,6 +100,16 @@ lens_auto_poll_ms = 1500
 # user.toml from before this knob existed).
 user_tier = "standard"
 
+# Phase 29 glossary feature: when an OCR / audio batch has at least
+# `glossary_min_lines` source lines, MoonLens asks the translator
+# chain to extract a proper-noun + technical-term glossary upfront,
+# then injects it into every per-line translate so the same source
+# term renders the same way across the batch. Set to a very large
+# value (e.g. 4294967295) to disable the feature; set to 0 to
+# always run the glossary pass even on single-line lenses (rarely
+# useful, just adds ~300 ms upfront).
+glossary_min_lines = 5
+
 [providers.translate]
 # Local-first chain. The default ships with the in-process embedded
 # LLM runtime (`embedded.llm`) so a fresh install translates out
