@@ -16,6 +16,14 @@ pub struct Settings {
     pub hotkeys: Hotkeys,
     pub overlay: OverlaySettings,
     pub subtitle: SubtitleSettings,
+    /// Global translation defaults applied wherever the user has not
+    /// explicitly overridden the language pair — Lens window cards,
+    /// the mini launcher, the capture overlay's re-translate action,
+    /// and any other ad-hoc translate path.  Subtitles have their own
+    /// pair under `subtitle.*` since subtitle workflows often want a
+    /// language different from the user's typical screen-capture
+    /// target.
+    pub translation: TranslationSettings,
     pub clipboard: ClipboardSettings,
     pub privacy: PrivacySettings,
     pub storage: StorageSettings,
@@ -25,6 +33,28 @@ pub struct Settings {
     pub onboarding: OnboardingState,
     /// Active profile name; profiles are additional TOML files that overlay.
     pub active_profile: Option<String>,
+}
+
+/* ------------------------------ translation ------------------------------ */
+
+/// Global default language pair shared by every non-subtitle translation
+/// entrypoint. `"auto"` source means the backend's script detector
+/// decides per-flow; the value is still surfaced verbatim in the UI so
+/// the user can see what mode they're in (`auto → JA`).
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(default, deny_unknown_fields)]
+pub struct TranslationSettings {
+    pub default_source_language: String,
+    pub default_target_language: String,
+}
+
+impl Default for TranslationSettings {
+    fn default() -> Self {
+        Self {
+            default_source_language: "auto".into(),
+            default_target_language: "ja".into(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
@@ -105,6 +135,16 @@ pub struct Hotkeys {
     /// the subtitle pipeline, and hides the overlay. Useful when
     /// output floods the screen and the user just wants quiet.
     pub stop_all: String,
+    /// Spawn a fresh Lens overlay window. Empty by default — the UI
+    /// hides the hint chip when no shortcut is bound so we don't
+    /// advertise a key that does nothing. The settings UI exposes
+    /// this so power users can wire it up.
+    pub new_lens: String,
+    /// Open the main app's Settings page from anywhere (main window
+    /// foreground / tray). Empty by default; opt-in.
+    pub open_settings: String,
+    /// Open the main app's Home tab. Empty by default.
+    pub open_home: String,
     /// Free-form additional bindings keyed by plugin/action id.
     pub custom: BTreeMap<String, String>,
 }
@@ -120,6 +160,14 @@ impl Default for Hotkeys {
             open_history: "CommandOrControl+Shift+H".into(),
             reverse_image_search: "CommandOrControl+Shift+G".into(),
             stop_all: "CommandOrControl+Alt+Escape".into(),
+            // The opt-in shortcuts default to empty: registering them
+            // would collide with browser / window-manager defaults
+            // that users haven't asked us to override (Cmd+L is the
+            // address bar, Cmd+, is system prefs on macOS, etc.).
+            // The settings UI lets users opt in explicitly.
+            new_lens: String::new(),
+            open_settings: String::new(),
+            open_home: String::new(),
             custom: BTreeMap::new(),
         }
     }

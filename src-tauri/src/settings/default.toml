@@ -33,6 +33,17 @@ line_height = 1.5
 follow_source = true
 position = "near_source"
 
+# Global default language pair used by every non-subtitle translation
+# surface (Lens cards, mini launcher, capture overlay re-translate). Set
+# `default_source_language = "auto"` to let the backend detect per-flow;
+# any ISO-style code (`en`, `zh`, `ko`, etc.) pins detection to that
+# language. `default_target_language` is the user's preferred output;
+# `ja` ships as the default because MoonLens leads with EN/multi → JA
+# but it can be changed freely without affecting subtitle workflow.
+[translation]
+default_source_language = "auto"
+default_target_language = "ja"
+
 [subtitle]
 source_language = "auto"
 target_language = "ja"
