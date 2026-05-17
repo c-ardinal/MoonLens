@@ -485,6 +485,15 @@
   .list-search {
     display: flex;
     gap: 8px;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+  .list-search :global(.search-wrap) {
+    flex: 1 1 12rem;
+    min-width: 0;
+  }
+  .list-search :global(.btn) {
+    flex: 0 0 auto;
   }
   .search-wrap {
     position: relative;
@@ -676,6 +685,11 @@
     border-top: 1px solid var(--line);
     display: flex;
     gap: 8px;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+  .detail-foot :global(.btn) {
+    flex: 0 0 auto;
   }
   .detail-empty {
     flex: 1;
