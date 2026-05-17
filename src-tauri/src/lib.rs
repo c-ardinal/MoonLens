@@ -11,6 +11,7 @@ pub mod embedded_model_package;
 pub mod hotkey;
 pub mod intent;
 pub mod ipc;
+pub mod launcher;
 pub mod lens;
 pub mod lens_inpaint;
 pub mod lens_layout;

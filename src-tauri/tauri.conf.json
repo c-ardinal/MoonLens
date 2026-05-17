@@ -66,6 +66,23 @@
         "visible": false,
         "fullscreen": false,
         "url": "/select"
+      },
+      {
+        "label": "launcher",
+        "title": "MoonLens Launcher",
+        "width": 520,
+        "height": 220,
+        "minWidth": 420,
+        "minHeight": 180,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "resizable": false,
+        "center": true,
+        "focus": true,
+        "visible": false,
+        "url": "/launcher"
       }
     ],
     "security": {

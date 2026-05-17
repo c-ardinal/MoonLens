@@ -20,7 +20,7 @@
   // chromeless by design and render their page directly without the
   // shell. `/lens/` is the management page inside the main app and
   // intentionally renders WITH the shell.
-  const FLOATING_PREFIXES = ['/overlay', '/subtitle', '/select', '/lens-frame'];
+  const FLOATING_PREFIXES = ['/overlay', '/subtitle', '/select', '/lens-frame', '/launcher'];
 
   const isFloating = $derived(
     FLOATING_PREFIXES.some((p) => $page.url.pathname.startsWith(p))
@@ -115,6 +115,7 @@
     width: 100%;
     height: 100%;
     display: grid;
+    grid-template-columns: minmax(0, 1fr);
     grid-template-rows: 36px 1fr;
     background: var(--bg-0);
     color: var(--ink-0);
@@ -124,10 +125,17 @@
     border: 1px solid var(--line);
     position: relative;
   }
+  /* Grid items default to `min-width: auto` (= min-content). Without an
+     explicit `min-width: 0`, the body's min-content (long no-wrap text
+     inside history rows, mono inset values, etc.) inflates the grid
+     track past the viewport, which pushes `.ml-main` and everything
+     inside it (PageHeader actions, content padding) out of view. */
   .ml-body {
     display: flex;
     min-height: 0;
+    min-width: 0;
     height: 100%;
+    width: 100%;
   }
   .ml-main {
     flex: 1;
@@ -147,14 +155,30 @@
    * via the `scroll-y` modifier. */
   .ml-main :global(.ml-content) {
     flex: 1;
+    min-width: 0;
     min-height: 0;
+    width: 100%;
+    max-width: 100%;
     padding: 4px 28px 24px;
     overflow: hidden;
     display: flex;
     flex-direction: column;
+    box-sizing: border-box;
   }
   .ml-main :global(.ml-content.scroll-y) {
     overflow-y: auto;
     overflow-x: hidden;
+  }
+  /* Belt-and-braces: every direct child of the page body must also
+     respect the available content width, otherwise an inner grid/flex
+     can still inflate the row. */
+  .ml-main :global(.ml-content) > :global(*) {
+    max-width: 100%;
+    min-width: 0;
+  }
+  .ml-main :global(.ml-pageheader) {
+    width: 100%;
+    max-width: 100%;
+    box-sizing: border-box;
   }
 </style>

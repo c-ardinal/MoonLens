@@ -728,8 +728,18 @@ impl Pipeline {
                 Capability::Translate,
                 TaskInput::Translate {
                     text: ocr_text.clone(),
-                    source_language: "auto".into(),
-                    target_language: s.subtitle.target_language.clone(),
+                    // Capture flow honours the GLOBAL translation pair
+                    // (`translation.default_*`) — `subtitle.*` is reserved
+                    // for the audio transcription path so users can run
+                    // different pairs side-by-side (screen EN→JA,
+                    // audio ZH→EN, etc.). Source defaults to `auto`
+                    // unless the user explicitly pins a script.
+                    source_language: if s.translation.default_source_language.trim().is_empty() {
+                        "auto".into()
+                    } else {
+                        s.translation.default_source_language.clone()
+                    },
+                    target_language: s.translation.default_target_language.clone(),
                     glossary: Vec::new(),
                 },
             )

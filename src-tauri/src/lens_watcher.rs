@@ -1013,6 +1013,86 @@ fn estimate_font_weight(img: &image::DynamicImage, bbox: [f32; 4], bg: [u8; 3]) 
     }
 }
 
+/// Robust paragraph weight: estimate weight per member line and
+/// take the median. Single-member paragraphs collapse to a single
+/// `estimate_font_weight` call (no overhead beyond the original
+/// path). Multi-member paragraphs that survived the height-
+/// discontinuity split are still allowed to contain mixed weights
+/// (e.g., a quoted bold word inside body text); the median picks
+/// the dominant style without one outlier flipping the entire card
+/// into the wrong bucket.
+fn estimate_paragraph_font_weight(
+    img: &image::DynamicImage,
+    members: &[usize],
+    rendered: &[OcrLine],
+    bg: [u8; 3],
+) -> u16 {
+    if members.is_empty() {
+        return 400;
+    }
+    if members.len() == 1 {
+        return estimate_font_weight(img, rendered[members[0]].bbox, bg);
+    }
+    let mut weights: Vec<u16> = members
+        .iter()
+        .map(|&m| estimate_font_weight(img, rendered[m].bbox, bg))
+        .collect();
+    weights.sort_unstable();
+    weights[weights.len() / 2]
+}
+
+/// Split a paragraph sub-group whenever adjacent member line
+/// heights differ by more than the configured ratio. Members come
+/// in reading order (top → bottom). The split keeps consecutive
+/// similar-height runs together — that preserves the body
+/// paragraph's wrap context while peeling off the bold heading the
+/// column-continuity grouper accidentally swept in.
+///
+/// The threshold (1.6×) was chosen empirically against the iter5
+/// fixture set: title→body transitions sit in the 1.8–2.4× range,
+/// while body-internal variation (descender outliers, italic runs)
+/// stays under 1.3×. Bumping below 1.5× starts shattering normal
+/// paragraphs; bumping above 1.7× lets title+body slip through
+/// again.
+fn split_subgroup_by_height_discontinuity(
+    members: &[usize],
+    rendered: &[OcrLine],
+) -> Vec<Vec<usize>> {
+    if members.len() <= 1 {
+        return vec![members.to_vec()];
+    }
+    const HEIGHT_RATIO_THRESHOLD: f32 = 1.6;
+    let mut out: Vec<Vec<usize>> = Vec::new();
+    let mut current: Vec<usize> = Vec::new();
+    for (i, &m) in members.iter().enumerate() {
+        if i == 0 {
+            current.push(m);
+            continue;
+        }
+        let prev = members[i - 1];
+        let prev_h = rendered[prev].bbox[3].max(1.0);
+        let curr_h = rendered[m].bbox[3].max(1.0);
+        let ratio = if curr_h >= prev_h {
+            curr_h / prev_h
+        } else {
+            prev_h / curr_h
+        };
+        if ratio >= HEIGHT_RATIO_THRESHOLD {
+            // Found a discontinuity — flush the accumulated run
+            // and start fresh. The current member becomes the seed
+            // of the next group.
+            if !current.is_empty() {
+                out.push(std::mem::take(&mut current));
+            }
+        }
+        current.push(m);
+    }
+    if !current.is_empty() {
+        out.push(current);
+    }
+    out
+}
+
 /// Compute the inpaint / card region for a single OCR line.
 /// Returns `[x, y, w, h]` in image pixel coordinates. Pads around
 /// `source_bbox` to capture glyph descenders / ascenders and
@@ -1278,12 +1358,26 @@ pub fn compute_lens_cards(
         // inpaint step would then erase the Japanese that should
         // have been left visible. Each sub-group becomes an
         // independent card with its own bbox, text, and translation.
-        let sub_groups = split_paragraph_by_skipped_intrusions(
+        let initial_sub_groups = split_paragraph_by_skipped_intrusions(
             &paragraph.members,
             &rendered,
             ocr_lines,
             skip_flags,
         );
+        // Further split each sub-group at sharp font-size
+        // discontinuities. A "title (bold, 28px) + body (regular,
+        // 14px)" pair that `group_paragraphs` merged on column
+        // continuity would otherwise produce ONE card whose single
+        // estimated font-weight ends up bolding the body, and whose
+        // single line-height grossly mis-sizes one of the two. The
+        // split here is intentionally conservative (>1.6× height
+        // ratio) so genuine paragraph-internal variation — italics,
+        // small caps, the occasional ascender/descender outlier —
+        // still flows through as a single translation unit.
+        let mut sub_groups: Vec<Vec<usize>> = Vec::with_capacity(initial_sub_groups.len());
+        for group in initial_sub_groups {
+            sub_groups.extend(split_subgroup_by_height_discontinuity(&group, &rendered));
+        }
         let has_single_subgroup = sub_groups.len() == 1;
 
         for members in sub_groups {
@@ -1331,8 +1425,17 @@ pub fn compute_lens_cards(
                 Some(img) => sample_text_color(img, anchor_bbox, bg),
                 None => contrast_text(bg),
             };
+            // Estimate weight per member and take the median. Using
+            // only `members[0]` (the prior behaviour) was wrong when
+            // the first OCR line happened to be a different weight
+            // than the rest — typical for "label: value" rows where
+            // the label is semibold but the value is regular, and
+            // also after the height-discontinuity split above when
+            // the residue of a misgrouped paragraph still contains
+            // mixed weights. The median is robust to one or two
+            // outlier rows without needing per-line CSS output.
             let font_weight = match image_decoded {
-                Some(img) => estimate_font_weight(img, anchor_bbox, bg),
+                Some(img) => estimate_paragraph_font_weight(img, &members, &rendered, bg),
                 None => 400,
             };
 
@@ -1561,12 +1664,37 @@ pub(crate) fn expand_card_for_alignment(
     };
     let inpaint_left = inpaint_bbox[0];
     let inpaint_right = inpaint_bbox[0] + inpaint_bbox[2];
+    let inpaint_w = inpaint_bbox[2].max(0.0);
     let block_left = block[0].max(0.0);
     let block_right = (block[0] + block[2]).min(image_w as f32);
+    // Bound the slack: extending the card all the way to the block
+    // edge is fine for short headings (one OCR line, plenty of empty
+    // column to grow into) but ruins long body paragraphs where the
+    // source already nearly fills its column — the translation then
+    // wraps differently from the source and spills past the original
+    // glyph row. We cap horizontal growth at `MAX_SLACK_RATIO` of the
+    // source width: enough room for typical EN→JA expansion (~25%
+    // char-count delta on body text) without overrunning the source
+    // layout. The block edge stays the outer cap so we never grow
+    // beyond what the block could legitimately hold.
+    const MAX_SLACK_RATIO: f32 = 0.25;
+    let slack = inpaint_w * MAX_SLACK_RATIO;
     let (new_left, new_right) = match align {
-        TextAlign::Left => (inpaint_left, block_right.max(inpaint_right)),
-        TextAlign::Right => (block_left.min(inpaint_left), inpaint_right),
-        TextAlign::Center => (block_left.min(inpaint_left), block_right.max(inpaint_right)),
+        TextAlign::Left => (
+            inpaint_left,
+            (inpaint_right + slack).min(block_right.max(inpaint_right)),
+        ),
+        TextAlign::Right => (
+            (inpaint_left - slack).max(block_left.min(inpaint_left)),
+            inpaint_right,
+        ),
+        TextAlign::Center => {
+            let half = slack * 0.5;
+            (
+                (inpaint_left - half).max(block_left.min(inpaint_left)),
+                (inpaint_right + half).min(block_right.max(inpaint_right)),
+            )
+        }
     };
     let y = inpaint_bbox[1].max(0.0);
     let h = inpaint_bbox[3].min(image_h as f32 - y);
@@ -2965,8 +3093,25 @@ async fn run_capture_loop(
         // meaningful when we are literally watching a live window;
         // the pipeline itself never observes them.
         let snapshot = settings.snapshot();
+        // The lens translation pair is the GLOBAL default
+        // (`translation.default_*`), NOT the subtitle pair.
+        // Previously we read `subtitle.target_language`, which
+        // silently bound the visual translation language to the
+        // user's audio-transcription target — a counter-intuitive
+        // cross-feature dependency. The new top-level field
+        // decouples the two so each workflow can be set
+        // independently.  Source is similarly honoured so the user
+        // can pin (e.g.) "en" to skip provider script detection
+        // when they already know the source.
         let config = PipelineConfig {
-            target_language: snapshot.subtitle.target_language.clone(),
+            source_language: snapshot
+                .translation
+                .default_source_language
+                .clone(),
+            target_language: snapshot
+                .translation
+                .default_target_language
+                .clone(),
             max_concurrent_translate: snapshot.performance.max_concurrent_tasks.max(1) as usize,
             // 3× upscale recovers small body-text recognition (see
             // PipelineConfig::default for the rationale).
@@ -3028,6 +3173,7 @@ async fn translate_paragraph_streaming(
     lens_id: String,
     flow_id: u64,
     paragraph: Paragraph,
+    source_language: String,
     target_language: String,
     settings: Arc<SettingsStore>,
 ) -> Result<String, ProviderError> {
@@ -3040,6 +3186,7 @@ async fn translate_paragraph_streaming(
             flow_id,
             paragraph.members[0],
             paragraph.text,
+            source_language,
             target_language,
             settings,
         )
@@ -3084,7 +3231,11 @@ async fn translate_paragraph_streaming(
             Capability::Translate,
             TaskInput::Translate {
                 text: numbered,
-                source_language: "auto".into(),
+                source_language: if source_language.trim().is_empty() {
+                    "auto".into()
+                } else {
+                    source_language.clone()
+                },
                 target_language: target_language.clone(),
                 glossary: Vec::new(),
             },
@@ -3123,6 +3274,7 @@ async fn translate_paragraph_streaming(
                 flow_id,
                 line_idx,
                 line_text,
+                source_language.clone(),
                 target_language.clone(),
                 settings.clone(),
             )
@@ -3166,6 +3318,7 @@ async fn translate_line_streaming(
     flow_id: u64,
     line_index: usize,
     text: String,
+    source_language: String,
     target_language: String,
     _settings: Arc<SettingsStore>,
 ) -> Result<String, ProviderError> {
@@ -3190,7 +3343,11 @@ async fn translate_line_streaming(
             Capability::Translate,
             TaskInput::Translate {
                 text,
-                source_language: "auto".into(),
+                source_language: if source_language.trim().is_empty() {
+                    "auto".into()
+                } else {
+                    source_language
+                },
                 target_language,
                 glossary: Vec::new(),
             },
@@ -4457,5 +4614,113 @@ mod tests {
         let b = w.next_flow_id(); // wraps to 0
         assert_eq!(a, u64::MAX);
         assert_eq!(b, 0);
+    }
+
+    /// Helper for the split-by-height tests below. Each `(y, h)` pair
+    /// becomes one synthetic OCR line whose width is fixed and whose
+    /// text is empty — the splitter only consults `bbox[3]` so the
+    /// other fields don't matter.
+    fn make_ocr_lines_for_heights(heights: &[(f32, f32)]) -> Vec<OcrLine> {
+        heights
+            .iter()
+            .map(|(y, h)| OcrLine {
+                text: String::new(),
+                bbox: [0.0, *y, 100.0, *h],
+                confidence: 1.0,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn split_subgroup_by_height_isolates_title_from_body() {
+        // Heading (h=32) directly above body lines (h=14) — the kind
+        // of layout that would otherwise produce one card with the
+        // body coming out bold.
+        let lines = make_ocr_lines_for_heights(&[
+            (0.0, 32.0),
+            (40.0, 14.0),
+            (58.0, 14.0),
+            (76.0, 14.0),
+        ]);
+        let groups = split_subgroup_by_height_discontinuity(&[0, 1, 2, 3], &lines);
+        assert_eq!(groups.len(), 2);
+        assert_eq!(groups[0], vec![0]);
+        assert_eq!(groups[1], vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn split_subgroup_by_height_keeps_uniform_paragraph() {
+        // All four lines within 10% of each other — should NOT
+        // split. Standard body paragraph.
+        let lines = make_ocr_lines_for_heights(&[
+            (0.0, 14.0),
+            (18.0, 14.5),
+            (36.5, 14.0),
+            (54.5, 13.5),
+        ]);
+        let groups = split_subgroup_by_height_discontinuity(&[0, 1, 2, 3], &lines);
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0], vec![0, 1, 2, 3]);
+    }
+
+    #[test]
+    fn split_subgroup_by_height_handles_single_member() {
+        let lines = make_ocr_lines_for_heights(&[(0.0, 20.0)]);
+        let groups = split_subgroup_by_height_discontinuity(&[0], &lines);
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0], vec![0]);
+    }
+
+    #[test]
+    fn split_subgroup_by_height_handles_empty() {
+        let lines = make_ocr_lines_for_heights(&[]);
+        let groups = split_subgroup_by_height_discontinuity(&[], &lines);
+        assert_eq!(groups, vec![Vec::<usize>::new()]);
+    }
+
+    #[test]
+    fn split_subgroup_by_height_below_threshold_does_not_split() {
+        // 1.5× — just below the 1.6× threshold. Should stay merged.
+        let lines = make_ocr_lines_for_heights(&[(0.0, 14.0), (18.0, 21.0)]);
+        let groups = split_subgroup_by_height_discontinuity(&[0, 1], &lines);
+        assert_eq!(groups.len(), 1);
+    }
+
+    #[test]
+    fn expand_card_for_alignment_caps_slack_for_long_body() {
+        // Long body paragraph (e.g. 600px wide) inside a 1000px-wide
+        // block. With `text_align: Left`, the OLD behaviour grew the
+        // card to the full block right edge (1000px), making the
+        // card 400px wider than the source. The cap ensures growth
+        // is bounded to 25% of source width = 150px.
+        let inpaint = [50.0_f32, 100.0, 600.0, 30.0];
+        let block = Some([20.0_f32, 80.0, 1000.0, 400.0]);
+        let card = expand_card_for_alignment(inpaint, TextAlign::Left, block, 1920, 1080);
+        let card_right = card[0] + card[2];
+        let inpaint_right = inpaint[0] + inpaint[2]; // 650
+        let slack = card_right - inpaint_right;
+        assert!(
+            slack >= 0.0 && slack <= 600.0 * 0.25 + 0.5,
+            "left-aligned card slack {slack} exceeded 25% cap (source width 600px)"
+        );
+        // Left edge stays anchored at the source's left.
+        assert!((card[0] - inpaint[0]).abs() < 0.5);
+    }
+
+    #[test]
+    fn expand_card_for_alignment_centers_slack_for_centered_text() {
+        let inpaint = [400.0_f32, 50.0, 200.0, 28.0];
+        let block = Some([0.0_f32, 0.0, 1000.0, 200.0]);
+        let card = expand_card_for_alignment(inpaint, TextAlign::Center, block, 1920, 1080);
+        let left_slack = inpaint[0] - card[0];
+        let right_slack = (card[0] + card[2]) - (inpaint[0] + inpaint[2]);
+        assert!(left_slack > 0.0 && right_slack > 0.0);
+        // Center alignment should grow about equally on both sides.
+        assert!(
+            (left_slack - right_slack).abs() < 0.5,
+            "center card slack unbalanced: left={left_slack}, right={right_slack}"
+        );
+        // Total growth still capped at 25% of source width.
+        assert!(left_slack + right_slack <= 200.0 * 0.25 + 0.5);
     }
 }

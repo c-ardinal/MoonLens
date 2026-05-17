@@ -4,6 +4,7 @@
   import PrivacyBadge from '$lib/components/PrivacyBadge.svelte';
   import ActionRibbon from '$lib/components/ActionRibbon.svelte';
   import {
+    getDefaultLanguagePair,
     hideOverlay,
     onOverlay,
     pinOverlay,
@@ -16,6 +17,10 @@
     type OverlayEvent,
     type TaskResult
   } from '$lib/ipc';
+  import { currentSettings } from '$lib/stores/settingsStore';
+  import { hotkeyFor } from '$lib/hotkey';
+
+  const captureHint = $derived(hotkeyFor('capture_region', $currentSettings));
   import { extractText } from '$lib/result';
 
   let source = $state<string | null>(null);
@@ -121,10 +126,15 @@
         status = 'processing';
         statusMessage = '翻訳中…';
         try {
+          // Read the user's preferred pair fresh on every re-translate
+          // so a settings change between the original capture and the
+          // re-translate click actually takes effect (the whole point
+          // of the action is to re-run with the new target).
+          const pair = await getDefaultLanguagePair();
           const r = await runTranslate({
             text: source,
-            source_language: 'auto',
-            target_language: 'ja'
+            source_language: pair.source,
+            target_language: pair.target
           });
           translation = extractText(r);
           viaCloud = r.via_cloud;
@@ -212,6 +222,8 @@
     <p class="whitespace-pre-wrap text-sm leading-relaxed">{translation}</p>
     <ActionRibbon {intent} onAction={onRibbonAction} />
   {:else}
-    <p class="text-sm text-ink-faint">⌘⇧Space でキャプチャ…</p>
+    <p class="text-sm text-ink-faint">
+      {#if captureHint}{captureHint}{:else}キャプチャ翻訳{/if} でキャプチャ…
+    </p>
   {/if}
 </section>

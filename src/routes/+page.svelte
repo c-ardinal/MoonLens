@@ -20,6 +20,17 @@
   import PageHeader from '$lib/components/PageHeader.svelte';
   import Pill from '$lib/components/Pill.svelte';
   import MoonLensMark from '$lib/components/MoonLensMark.svelte';
+  import { currentSettings } from '$lib/stores/settingsStore';
+  import { hotkeyFor } from '$lib/hotkey';
+
+  /** Hotkey chip strings, resolved from the live settings store
+   *  so a Settings remap propagates here without remount. Empty
+   *  string when the user hasn't bound the action — the template
+   *  hides the chip in that case rather than show a fictional
+   *  default that wouldn't actually fire. */
+  const captureHint = $derived(hotkeyFor('capture_region', $currentSettings));
+  const newLensHint = $derived(hotkeyFor('new_lens', $currentSettings));
+  const subtitleHint = $derived(hotkeyFor('toggle_subtitle', $currentSettings));
 
   let running = $state(false);
   let lastError = $state<string | null>(null);
@@ -255,22 +266,32 @@
         >
           <Camera class="h-3.5 w-3.5" aria-hidden="true" />
           {running ? '処理中…' : 'キャプチャ翻訳'}
-          <span class="hero-kbd">⌘⇧S</span>
+          {#if captureHint}
+            <span class="hero-kbd">{captureHint}</span>
+          {/if}
         </button>
         <button class="btn lg" onclick={createLens} type="button">
           <Focus class="h-3.5 w-3.5" aria-hidden="true" />
           Lens起動
-          <span class="hero-kbd">⌘L</span>
+          {#if newLensHint}
+            <span class="hero-kbd">{newLensHint}</span>
+          {/if}
         </button>
         {#if subtitleRunning}
           <button class="btn lg" onclick={stopSub} type="button">
             <Mic class="h-3.5 w-3.5" aria-hidden="true" />
             字幕停止
+            {#if subtitleHint}
+              <span class="hero-kbd">{subtitleHint}</span>
+            {/if}
           </button>
         {:else}
           <button class="btn lg" onclick={startSub} type="button">
             <Mic class="h-3.5 w-3.5" aria-hidden="true" />
             音声字幕
+            {#if subtitleHint}
+              <span class="hero-kbd">{subtitleHint}</span>
+            {/if}
           </button>
         {/if}
       </div>
@@ -356,7 +377,10 @@
       {#if recents.length === 0}
         <div class="recent-empty">
           <MoonLensMark size={28} />
-          <p>まだ履歴がありません。⌘⇧S でキャプチャすると追加されます。</p>
+          <p>
+            まだ履歴がありません。{#if captureHint}{captureHint}{:else}キャプチャ翻訳{/if}
+            でキャプチャすると追加されます。
+          </p>
         </div>
       {:else}
         {#each recents as r, i (r.id)}
@@ -402,7 +426,7 @@
     gap: 16px;
     margin-bottom: 24px;
   }
-  @media (max-width: 920px) {
+  @media (max-width: 1024px) {
     .home-grid {
       grid-template-columns: 1fr;
     }
@@ -535,14 +559,9 @@
 
   .stats-grid {
     display: grid;
-    grid-template-columns: repeat(4, 1fr);
+    grid-template-columns: repeat(auto-fit, minmax(min(140px, 100%), 1fr));
     gap: 12px;
     margin-bottom: 24px;
-  }
-  @media (max-width: 920px) {
-    .stats-grid {
-      grid-template-columns: repeat(2, 1fr);
-    }
   }
   .stat {
     padding: 14px;

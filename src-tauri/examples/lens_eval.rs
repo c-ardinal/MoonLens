@@ -76,6 +76,7 @@ impl LensTranslator for ProviderLensAdapter {
     async fn translate(
         &self,
         text: String,
+        source_language: String,
         target_language: String,
         chunk_sink: Arc<dyn Fn(String, bool) + Send + Sync>,
     ) -> Result<String> {
@@ -84,12 +85,16 @@ impl LensTranslator for ProviderLensAdapter {
             .run_streaming(
                 TaskInput::Translate {
                     text,
-                    // The router accepts BCP-47 / ISO codes; "auto" is
-                    // not a recognised source so the matrix falls into
-                    // the "Other" bucket and goes through the multi
-                    // model. WinRT OCR fixtures we eval are English/JA
-                    // screenshots, both of which classify correctly.
-                    source_language: "auto".into(),
+                    // The router accepts BCP-47 / ISO codes; empty /
+                    // whitespace falls back to "auto" so the matrix
+                    // takes the multi-model path. WinRT OCR fixtures
+                    // we eval are English/JA screenshots, both of
+                    // which classify correctly.
+                    source_language: if source_language.trim().is_empty() {
+                        "auto".into()
+                    } else {
+                        source_language
+                    },
                     target_language,
                 },
                 chunk_sink,
@@ -109,6 +114,7 @@ impl moonlens_lib::lens_pipeline::LensTranslator for EchoTranslator {
     async fn translate(
         &self,
         text: String,
+        _source_language: String,
         _target_language: String,
         chunk_sink: std::sync::Arc<dyn Fn(String, bool) + Send + Sync>,
     ) -> Result<String> {
@@ -653,6 +659,7 @@ fn evaluate_one(
     // production loop uses; `RecordingSink` captures the flow so
     // we can render it into the side-by-side PNG below.
     let pipeline_config = PipelineConfig {
+        source_language: "auto".to_string(),
         target_language: TARGET_LANGUAGE.to_string(),
         max_concurrent_translate: 2,
         ocr_scale: 3,

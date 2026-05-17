@@ -818,7 +818,26 @@ pub struct PaddleOcrModelStatus {
     pub multi_present: bool,
     pub korean_present: bool,
     pub total_bytes: u64,
+    /// Expected on-disk size of the multi-language ONNX bundle
+    /// (det + rec_multi + dict). Reported even when the files are
+    /// not yet downloaded so the UI can render a real "ダウンロード
+    /// — 34 MB" estimate from a single source of truth instead of
+    /// the previously-hardcoded 34 MB literal.
+    pub expected_multi_bytes: u64,
+    /// Expected size of the Korean rec + dict pair. Same rationale
+    /// as `expected_multi_bytes`.
+    pub expected_korean_bytes: u64,
 }
+
+/// Approximate sizes for the PP-OCRv5 mobile bundle. Pegged to the
+/// versions MoonLens currently downloads from upstream; if the
+/// pinned model URLs change in `ocr_paddle::download_models`, this
+/// number changes alongside them in a single edit. Keeping the
+/// constants here rather than in two separate UI literals (Svelte
+/// + Rust) prevents future "the label says 34 MB but the actual
+/// download is 41 MB" drift.
+pub const PADDLE_EXPECTED_MULTI_BYTES: u64 = 34 * 1024 * 1024;
+pub const PADDLE_EXPECTED_KOREAN_BYTES: u64 = 13 * 1024 * 1024;
 
 #[cfg(feature = "paddleocr-engine")]
 #[tauri::command]
@@ -844,11 +863,28 @@ pub fn paddleocr_models_status() -> Result<PaddleOcrModelStatus, String> {
     };
     let (multi_present, multi_bytes) = total(&files_multi);
     let (korean_present, ko_bytes) = total(&files_ko);
+    // When the files are already on disk we report their REAL
+    // size — that's the most accurate number. Otherwise fall
+    // back to the upstream-pinned estimate so the user sees a
+    // sensible "this will download ~34 MB" message rather than
+    // 0 bytes or a placeholder.
+    let expected_multi_bytes = if multi_present {
+        multi_bytes
+    } else {
+        PADDLE_EXPECTED_MULTI_BYTES
+    };
+    let expected_korean_bytes = if korean_present {
+        ko_bytes
+    } else {
+        PADDLE_EXPECTED_KOREAN_BYTES
+    };
     Ok(PaddleOcrModelStatus {
         dir: dir.display().to_string(),
         multi_present,
         korean_present,
         total_bytes: multi_bytes + ko_bytes,
+        expected_multi_bytes,
+        expected_korean_bytes,
     })
 }
 
@@ -1145,6 +1181,42 @@ pub async fn routed_model_status(
         });
     }
     Ok(rows)
+}
+
+/// Per-user-tier download sizes. The settings UI uses this to
+/// render `"Compact — 0.4 GB / EN↔JA 専用"`-style dropdown labels
+/// from real metadata instead of stale hardcoded sizes. Each entry
+/// sums every model tier id required for that user tier (multi-
+/// model tiers like Standard contribute 2+ entries).
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct UserTierSize {
+    pub user_tier: String,
+    pub total_size_mb: u64,
+    pub display_names: Vec<String>,
+}
+
+#[tauri::command]
+pub async fn user_tier_sizes() -> Result<Vec<UserTierSize>, String> {
+    use crate::providers::translate_routed::RoutedTranslator;
+    use crate::translation_router::UserTier;
+    let mut out = Vec::with_capacity(3);
+    for tier in [UserTier::Compact, UserTier::Standard, UserTier::Quality] {
+        let tier_ids = RoutedTranslator::tier_ids_for(tier);
+        let mut total: u64 = 0;
+        let mut names: Vec<String> = Vec::with_capacity(tier_ids.len());
+        for id in tier_ids {
+            if let Some(t) = crate::model_registry::tier_by_id(id) {
+                total += t.size_mb as u64;
+                names.push(t.display_name.to_string());
+            }
+        }
+        out.push(UserTierSize {
+            user_tier: tier.as_id().to_string(),
+            total_size_mb: total,
+            display_names: names,
+        });
+    }
+    Ok(out)
 }
 
 /// Resolve which model(s) the router would dispatch for a given
@@ -1673,6 +1745,70 @@ pub async fn show_main(app: AppHandle) -> Result<(), String> {
         w.set_focus().map_err(|e| e.to_string())?;
     }
     Ok(())
+}
+
+/// Bring the main window forward and navigate to a specific in-app
+/// route. Used by floating windows (launcher, lens-frame) so their
+/// secondary controls (Settings cog, ⌘S history save) can hand off to
+/// the right page without duplicating SvelteKit routing logic.
+///
+/// The path is normalised to a leading slash and routed via the same
+/// `location.pathname` rewrite the tray menu uses, so behaviour stays
+/// in lockstep across all entry points.
+#[tauri::command]
+pub async fn show_main_route(app: AppHandle, path: String) -> Result<(), String> {
+    let trimmed = path.trim();
+    let normalised = if trimmed.starts_with('/') {
+        trimmed.to_string()
+    } else {
+        format!("/{trimmed}")
+    };
+    if let Some(w) = app.get_webview_window("main") {
+        w.eval(format!(
+            "location.hash = '#{normalised}'; location.pathname = '{normalised}';"
+        ))
+        .map_err(|e| e.to_string())?;
+        w.show().map_err(|e| e.to_string())?;
+        w.set_focus().map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+/// Hide the launcher window. Called from the launcher frontend when
+/// the user presses Esc / Enter or the window loses focus. The window
+/// itself is kept alive so the next open is instantaneous.
+#[tauri::command]
+pub async fn hide_launcher(app: AppHandle) -> Result<(), String> {
+    crate::launcher::hide(&app).map_err(|e| e.to_string())
+}
+
+/// Append a manual translation result to the history. Used by the
+/// mini launcher's "履歴に保存" action so the user's ad-hoc quick
+/// translations show up alongside the lens / capture flow entries.
+///
+/// `kind` is a free-form tag rendered in the history list ("launcher"
+/// for the mini-launcher path, but kept generic so future entrypoints
+/// can reuse this same endpoint).
+#[tauri::command]
+pub async fn add_history_entry(
+    kind: String,
+    source_text: Option<String>,
+    result_text: Option<String>,
+    provider: Option<String>,
+    via_cloud: Option<bool>,
+    state: State<'_, AppState>,
+) -> Result<i64, String> {
+    state
+        .storage
+        .append(
+            &kind,
+            source_text.as_deref(),
+            result_text.as_deref(),
+            provider.as_deref(),
+            via_cloud.unwrap_or(false),
+            None,
+        )
+        .map_err(|e| e.to_string())
 }
 
 /// Relaunch the application. Used when the user toggled a setting

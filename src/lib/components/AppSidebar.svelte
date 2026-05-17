@@ -29,23 +29,63 @@
   import { onDestroy, onMount } from 'svelte';
   import { getVersion } from '@tauri-apps/api/app';
   import MoonLensMark from './MoonLensMark.svelte';
+  import { currentSettings } from '$lib/stores/settingsStore';
+  import { hotkeyFor, type HotkeyAction } from '$lib/hotkey';
 
   type NavEntry =
-    | { kind: 'item'; href: string; label: string; icon: typeof Home; hint?: string; badge?: string }
+    | {
+        kind: 'item';
+        href: string;
+        label: string;
+        icon: typeof Home;
+        /** Settings hotkey action this nav entry corresponds to. The
+         *  display chip pulls from `settings.hotkeys[action]` so a
+         *  remap in Settings instantly updates the chip — no more
+         *  hard-coded `'⌘L'` chips that don't reflect what the user
+         *  has actually bound. */
+        hotkey?: HotkeyAction;
+        badge?: string;
+      }
     | { kind: 'section'; label: string };
 
   const items: NavEntry[] = [
     { kind: 'section', label: '機能' },
-    { kind: 'item', href: '/', label: 'ホーム', icon: Home, hint: '⌘1' },
-    { kind: 'item', href: '/capture/', label: '画像翻訳', icon: Camera, hint: '⌘⇧S' },
-    { kind: 'item', href: '/lens/', label: 'Lensウィンドウ', icon: Focus, hint: '⌘L' },
-    { kind: 'item', href: '/audio/', label: '音声字幕', icon: Mic, hint: '⌘⇧A' },
+    { kind: 'item', href: '/', label: 'ホーム', icon: Home, hotkey: 'open_home' },
+    {
+      kind: 'item',
+      href: '/capture/',
+      label: '画像翻訳',
+      icon: Camera,
+      hotkey: 'capture_region',
+    },
+    { kind: 'item', href: '/lens/', label: 'Lensウィンドウ', icon: Focus, hotkey: 'new_lens' },
+    {
+      kind: 'item',
+      href: '/audio/',
+      label: '音声字幕',
+      icon: Mic,
+      hotkey: 'toggle_subtitle',
+    },
     { kind: 'section', label: 'ライブラリ' },
-    { kind: 'item', href: '/history/', label: '翻訳履歴', icon: History, hint: '⌘⇧H' },
+    { kind: 'item', href: '/history/', label: '翻訳履歴', icon: History, hotkey: 'open_history' },
     { kind: 'item', href: '/plugins/', label: 'プラグイン', icon: Puzzle },
     { kind: 'section', label: 'システム' },
-    { kind: 'item', href: '/settings/', label: '設定', icon: SettingsIcon, hint: '⌘,' }
+    { kind: 'item', href: '/settings/', label: '設定', icon: SettingsIcon, hotkey: 'open_settings' }
   ];
+
+  /** Resolved hotkey display strings for the current settings.
+   *  Empty when the user hasn't bound the action — the template
+   *  guards on truthiness so unbound items get no chip. */
+  const hotkeyHint = $derived((action: HotkeyAction | undefined): string => {
+    if (!action) return '';
+    return hotkeyFor(action, $currentSettings);
+  });
+
+  /** Stop-all chip is rendered both in the title attribute and as
+   *  a kbd glyph; compute once here so the footer template doesn't
+   *  need an inline `{@const}` (which Svelte only allows inside
+   *  block helpers, not arbitrary parent positions). */
+  const stopAllHint = $derived(hotkeyFor('stop_all', $currentSettings));
 
   const STORAGE_KEY = 'moonlens.sidebar.collapsed';
 
@@ -188,8 +228,11 @@
             <span class="ml-nav-label">{entry.label}</span>
             {#if entry.badge}
               <span class="ml-nav-badge">{entry.badge}</span>
-            {:else if entry.hint}
-              <span class="ml-nav-kbd">{entry.hint}</span>
+            {:else}
+              {@const hint = hotkeyHint(entry.hotkey)}
+              {#if hint}
+                <span class="ml-nav-kbd">{hint}</span>
+              {/if}
             {/if}
           {/if}
         </button>
@@ -217,12 +260,18 @@
       onclick={panicStopAll}
       disabled={stopping}
       aria-label="全停止"
-      title={collapsed ? '全停止' : '全 Lens + 字幕 + Overlay を停止 (⌘⌥Esc)'}
+      title={collapsed
+        ? '全停止'
+        : stopAllHint
+          ? `全 Lens + 字幕 + Overlay を停止 (${stopAllHint})`
+          : '全 Lens + 字幕 + Overlay を停止'}
     >
       <OctagonX class="h-4 w-4" aria-hidden="true" />
       {#if !collapsed}
         <span>{stopping ? '停止中…' : '全停止'}</span>
-        <span class="ml-nav-kbd">⌘⌥Esc</span>
+        {#if stopAllHint}
+          <span class="ml-nav-kbd">{stopAllHint}</span>
+        {/if}
       {/if}
     </button>
 

@@ -69,9 +69,13 @@ macro_rules! all_commands {
             ipc::clear_user_tier,
             ipc::preview_routing,
             ipc::routed_model_status,
+            ipc::user_tier_sizes,
             ipc::download_routed_model,
             ipc::bench_embedded_translate,
             ipc::show_main,
+            ipc::show_main_route,
+            ipc::hide_launcher,
+            ipc::add_history_entry,
             ipc::restart_app,
             ipc::hide_overlay,
             ipc::start_region_selection,
@@ -313,7 +317,7 @@ pub fn build() -> Result<()> {
                 subtitle.clone(),
             )?;
             hotkey::notify_failures(&handle, &hotkey_report);
-            build_tray(&handle)?;
+            build_tray(&handle, settings.clone())?;
             install_main_window_close_to_tray(&handle);
 
             app.manage(AppState {
@@ -335,26 +339,98 @@ pub fn build() -> Result<()> {
     Ok(())
 }
 
-fn build_tray(app: &AppHandle) -> Result<()> {
+fn build_tray(app: &AppHandle, settings: Arc<SettingsStore>) -> Result<()> {
+    // Match the Claude Design 2026.05 tray spec: ordered action groups
+    // separated by hairlines. Group 1 is quick actions (capture / lens /
+    // subtitle / clipboard), group 2 is navigation into the main app,
+    // group 3 is the destructive quit.
+    //
+    // Accelerator labels are built from the LIVE settings snapshot so
+    // a user who has remapped (e.g.) the capture shortcut sees their
+    // own keys in the tray menu — not a hard-coded `⌘⇧Space` that
+    // would silently lie. Items without a bound shortcut omit the
+    // accelerator string entirely; an empty label after a tab would
+    // render an awkward trailing whitespace block.
+    let snap = settings.snapshot();
+    let label = |text: &str, accel: &str| -> String {
+        let formatted = format_accelerator(accel);
+        if formatted.is_empty() {
+            text.to_string()
+        } else {
+            format!("{text}\t{formatted}")
+        }
+    };
+
     let open = MenuItem::with_id(app, "open", "MoonLens を開く", true, None::<&str>)?;
-    let capture = MenuItem::with_id(app, "capture", "キャプチャ (⌘⇧Space)", true, None::<&str>)?;
-    let lens = MenuItem::with_id(
+    let header_sep = tauri::menu::PredefinedMenuItem::separator(app)?;
+
+    // Quick actions — first group.
+    let capture = MenuItem::with_id(
         app,
-        "new_lens",
-        "Lens ウィンドウを新規作成",
+        "capture",
+        label("キャプチャ翻訳", &snap.hotkeys.capture_region),
         true,
         None::<&str>,
     )?;
-    let subtitle = MenuItem::with_id(app, "subtitle", "字幕オーバーレイ", true, None::<&str>)?;
+    let lens = MenuItem::with_id(
+        app,
+        "new_lens",
+        label("Lensウィンドウを開く", &snap.hotkeys.new_lens),
+        true,
+        None::<&str>,
+    )?;
+    let subtitle = MenuItem::with_id(
+        app,
+        "subtitle",
+        label("音声字幕を開始", &snap.hotkeys.toggle_subtitle),
+        true,
+        None::<&str>,
+    )?;
+    let launcher = MenuItem::with_id(
+        app,
+        "launcher",
+        label("クリップボードを翻訳", &snap.hotkeys.open_command_palette),
+        true,
+        None::<&str>,
+    )?;
+    let actions_sep = tauri::menu::PredefinedMenuItem::separator(app)?;
+
+    // Navigation — second group.
+    let history = MenuItem::with_id(
+        app,
+        "history",
+        label("履歴を開く", &snap.hotkeys.open_history),
+        true,
+        None::<&str>,
+    )?;
     let plugins = MenuItem::with_id(app, "plugins", "プラグイン", true, None::<&str>)?;
-    let history = MenuItem::with_id(app, "history", "履歴", true, None::<&str>)?;
-    let sep = tauri::menu::PredefinedMenuItem::separator(app)?;
-    let quit = MenuItem::with_id(app, "quit", "終了", true, None::<&str>)?;
+    let settings_item = MenuItem::with_id(
+        app,
+        "settings",
+        label("設定…", &snap.hotkeys.open_settings),
+        true,
+        None::<&str>,
+    )?;
+    let nav_sep = tauri::menu::PredefinedMenuItem::separator(app)?;
+
+    // Destructive — third group.
+    let quit = MenuItem::with_id(app, "quit", "MoonLens を終了", true, None::<&str>)?;
 
     let menu = Menu::with_items(
         app,
         &[
-            &open, &capture, &lens, &subtitle, &plugins, &history, &sep, &quit,
+            &open,
+            &header_sep,
+            &capture,
+            &lens,
+            &subtitle,
+            &launcher,
+            &actions_sep,
+            &history,
+            &plugins,
+            &settings_item,
+            &nav_sep,
+            &quit,
         ],
     )?;
 
@@ -412,8 +488,14 @@ fn build_tray(app: &AppHandle) -> Result<()> {
                     tracing::warn!("subtitle toggle failed: {e:?}");
                 }
             }
+            "launcher" => {
+                if let Err(e) = crate::launcher::show(app) {
+                    tracing::warn!("launcher show failed: {e:?}");
+                }
+            }
             "plugins" => route_main(app, "/plugins/"),
             "history" => route_main(app, "/history/"),
+            "settings" => route_main(app, "/settings/"),
             "quit" => app.exit(0),
             _ => {}
         })
@@ -469,5 +551,62 @@ fn route_main(app: &AppHandle, path: &str) {
         ));
         let _ = w.show();
         let _ = w.set_focus();
+    }
+}
+
+/// Convert a Tauri accelerator string like `"CommandOrControl+Shift+Space"`
+/// into the compact glyph form (`"⌘⇧Space"`) used by the tray and
+/// command palette. Mirrors `src/lib/hotkey.ts::formatAccelerator` so
+/// the same shortcut renders identically in the tray, the in-app
+/// command palette, and the keyboard hint chips throughout the
+/// sidebar / home / launcher.
+///
+/// Returns an empty string for empty / whitespace input so the tray
+/// label builder can omit the accelerator column rather than render
+/// an awkward trailing tab.
+fn format_accelerator(accel: &str) -> String {
+    let trimmed = accel.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    trimmed
+        .split('+')
+        .map(|part| match part {
+            "CommandOrControl" | "Cmd" | "Command" | "Meta" | "Super" => "⌘",
+            "Control" | "Ctrl" => "⌃",
+            "Option" | "Alt" => "⌥",
+            "Shift" => "⇧",
+            "Escape" => "Esc",
+            "Return" | "Enter" => "↵",
+            "Tab" => "⇥",
+            "Backspace" => "⌫",
+            "ArrowUp" => "↑",
+            "ArrowDown" => "↓",
+            "ArrowLeft" => "←",
+            "ArrowRight" => "→",
+            other => other,
+        })
+        .collect::<String>()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn format_accelerator_mirrors_frontend_format() {
+        // Matches the JS test in src/lib/hotkey.test.ts so the tray
+        // and the in-app chip can never visually drift.
+        assert_eq!(format_accelerator("CommandOrControl+Shift+Space"), "⌘⇧Space");
+        assert_eq!(format_accelerator("Control+K"), "⌃K");
+        assert_eq!(format_accelerator("Shift+F1"), "⇧F1");
+        assert_eq!(format_accelerator("Control+ArrowLeft"), "⌃←");
+    }
+
+    #[test]
+    fn format_accelerator_empty_inputs_collapse() {
+        assert_eq!(format_accelerator(""), "");
+        assert_eq!(format_accelerator("   "), "");
+        assert_eq!(format_accelerator("\t\n"), "");
     }
 }

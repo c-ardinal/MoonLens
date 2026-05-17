@@ -85,9 +85,16 @@ pub trait LensOcr: Send + Sync {
 /// the same stream of tokens.
 #[async_trait]
 pub trait LensTranslator: Send + Sync {
+    /// Translate a card's text into `target_language`. `source_language`
+    /// is the user's configured source — typically `"auto"` so the
+    /// provider runs its own script detector, but the channel is open
+    /// so callers can pin a specific source (`"en"`, `"zh"`, …) when
+    /// the user has set `translation.default_source_language` to a
+    /// non-auto value.
     async fn translate(
         &self,
         text: String,
+        source_language: String,
         target_language: String,
         chunk_sink: Arc<dyn Fn(String, bool) + Send + Sync>,
     ) -> Result<String>;
@@ -99,12 +106,14 @@ pub trait LensTranslator: Send + Sync {
     async fn translate_with_glossary(
         &self,
         text: String,
+        source_language: String,
         target_language: String,
         glossary: Vec<(String, String)>,
         chunk_sink: Arc<dyn Fn(String, bool) + Send + Sync>,
     ) -> Result<String> {
         let _ = glossary;
-        self.translate(text, target_language, chunk_sink).await
+        self.translate(text, source_language, target_language, chunk_sink)
+            .await
     }
 
     /// Build a glossary for a batch of source lines that will be
@@ -127,6 +136,13 @@ pub trait LensTranslator: Send + Sync {
 /// construct one without pulling in the full settings machinery.
 #[derive(Debug, Clone)]
 pub struct PipelineConfig {
+    /// Source language code (`"auto"` to let the provider's
+    /// detector decide, or an ISO code like `"en"` / `"zh"` /
+    /// `"ko"` when the user has pinned the source). Threaded into
+    /// every translate + glossary call below so the pipeline
+    /// honours the user's `translation.default_source_language`
+    /// setting end-to-end.
+    pub source_language: String,
     pub target_language: String,
     pub max_concurrent_translate: usize,
     pub ocr_scale: u32,
@@ -144,6 +160,9 @@ pub struct PipelineConfig {
 impl Default for PipelineConfig {
     fn default() -> Self {
         Self {
+            // Matches the schema's `translation.default_source_language`
+            // default so tests and production agree on the seed value.
+            source_language: "auto".into(),
             target_language: "ja".into(),
             max_concurrent_translate: 2,
             // 3× Lanczos upscale: at 2× the OCR engine struggled
@@ -232,6 +251,16 @@ pub async fn run_lens_pipeline(
 
     let max_concurrent = config.max_concurrent_translate.max(1);
     let semaphore = Arc::new(tokio::sync::Semaphore::new(max_concurrent));
+    // Normalise the source code: an empty / whitespace-only setting
+    // is treated as `"auto"` so the provider's detector still runs.
+    // Any other value passes through verbatim — the embedded LLM,
+    // DeepL, and Gemini providers all consume it for their prompt /
+    // API payload.
+    let source_lang = if config.source_language.trim().is_empty() {
+        "auto".to_string()
+    } else {
+        config.source_language.clone()
+    };
     let target_lang = config.target_language.clone();
 
     // Phase 29: build a per-batch glossary so the same proper noun
@@ -244,7 +273,7 @@ pub async fn run_lens_pipeline(
         let line_refs: Vec<&str> =
             cards.iter().map(|c| c.text.as_str()).collect();
         translator
-            .extract_glossary(&line_refs, "auto", &target_lang)
+            .extract_glossary(&line_refs, &source_lang, &target_lang)
             .await
     } else {
         Vec::new()
@@ -261,6 +290,7 @@ pub async fn run_lens_pipeline(
     for card in cards.iter() {
         let sem = semaphore.clone();
         let translator = translator.clone();
+        let source_c = source_lang.clone();
         let target_c = target_lang.clone();
         let text = card.text.clone();
         let line_index = card.line_index;
@@ -278,7 +308,7 @@ pub async fn run_lens_pipeline(
                 Err(_) => return,
             };
             if let Err(e) = translator
-                .translate_with_glossary(text, target_c, glossary_c, chunk_sink)
+                .translate_with_glossary(text, source_c, target_c, glossary_c, chunk_sink)
                 .await
             {
                 tracing::info!("translate failed for line {line_index}: {e}");
@@ -710,6 +740,7 @@ impl LensTranslator for EchoLensTranslator {
     async fn translate(
         &self,
         text: String,
+        _source_language: String,
         _target_language: String,
         chunk_sink: Arc<dyn Fn(String, bool) + Send + Sync>,
     ) -> Result<String> {
@@ -723,16 +754,24 @@ impl LensTranslator for ChainBackedLensTranslator {
     async fn translate(
         &self,
         text: String,
+        source_language: String,
         target_language: String,
         chunk_sink: Arc<dyn Fn(String, bool) + Send + Sync>,
     ) -> Result<String> {
-        self.translate_with_glossary(text, target_language, Vec::new(), chunk_sink)
-            .await
+        self.translate_with_glossary(
+            text,
+            source_language,
+            target_language,
+            Vec::new(),
+            chunk_sink,
+        )
+        .await
     }
 
     async fn translate_with_glossary(
         &self,
         text: String,
+        source_language: String,
         target_language: String,
         glossary: Vec<(String, String)>,
         chunk_sink: Arc<dyn Fn(String, bool) + Send + Sync>,
@@ -744,7 +783,7 @@ impl LensTranslator for ChainBackedLensTranslator {
                 Capability::Translate,
                 TaskInput::Translate {
                     text,
-                    source_language: "auto".into(),
+                    source_language,
                     target_language,
                     glossary,
                 },

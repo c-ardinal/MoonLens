@@ -21,6 +21,20 @@
     stopSubtitle,
     subtitleState
   } from '$lib/ipc';
+  import { currentSettings } from '$lib/stores/settingsStore';
+  import { hotkeyFor } from '$lib/hotkey';
+
+  /** Per-command hotkey hints, pulled live from settings so a
+   *  Settings remap reaches the command-palette row without
+   *  reload. Empty when the user hasn't bound the action — the
+   *  row renders without a chip rather than advertise a key
+   *  that wouldn't actually fire from here. */
+  const captureHint = $derived(hotkeyFor('capture_region', $currentSettings));
+  const subtitleHint = $derived(hotkeyFor('toggle_subtitle', $currentSettings));
+  const settingsHint = $derived(hotkeyFor('open_settings', $currentSettings));
+  const historyHint = $derived(hotkeyFor('open_history', $currentSettings));
+  const stopAllHint = $derived(hotkeyFor('stop_all', $currentSettings));
+  const newLensHint = $derived(hotkeyFor('new_lens', $currentSettings));
 
   type Command = {
     id: string;
@@ -70,15 +84,21 @@
     {
       id: 'capture',
       label: '領域をキャプチャ',
-      hint: '⌘⇧Space',
+      hint: captureHint || undefined,
       icon: Camera,
       run: runCapture
     },
-    { id: 'lens', label: 'Lens ウィンドウを開く', icon: Focus, run: runOpenLens },
+    {
+      id: 'lens',
+      label: 'Lens ウィンドウを開く',
+      hint: newLensHint || undefined,
+      icon: Focus,
+      run: runOpenLens
+    },
     {
       id: 'subtitle',
       label: subtitleRunning ? 'ライブ字幕を停止' : 'ライブ字幕を開始',
-      hint: '⌘⇧S',
+      hint: subtitleHint || undefined,
       icon: subtitleRunning ? MicOff : Mic,
       run: toggleSub
     },
@@ -91,7 +111,7 @@
     {
       id: 'settings',
       label: '設定を開く',
-      hint: '⌘,',
+      hint: settingsHint || undefined,
       icon: SettingsIcon,
       run: () => {
         open = false;
@@ -101,7 +121,7 @@
     {
       id: 'history',
       label: '履歴を開く',
-      hint: '⌘⇧H',
+      hint: historyHint || undefined,
       icon: History,
       run: () => {
         open = false;
@@ -120,7 +140,7 @@
     {
       id: 'stop_all',
       label: '全停止 (Lens・字幕・Overlay)',
-      hint: '⌘⌥Esc',
+      hint: stopAllHint || undefined,
       icon: OctagonX,
       run: panicStopAll
     }

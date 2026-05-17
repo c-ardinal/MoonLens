@@ -29,6 +29,10 @@
   import PageHeader from '$lib/components/PageHeader.svelte';
   import Pill from '$lib/components/Pill.svelte';
   import Segmented from '$lib/components/Segmented.svelte';
+  import { currentSettings } from '$lib/stores/settingsStore';
+  import { hotkeyFor } from '$lib/hotkey';
+
+  const captureHint = $derived(hotkeyFor('capture_region', $currentSettings));
 
   type Mode = 'region' | 'window' | 'fullscreen' | 'file';
 
@@ -264,8 +268,8 @@
             <Camera class="h-3.5 w-3.5" aria-hidden="true" />
           {/if}
           {buttonLabel}
-          {#if !isBusy}
-            <span class="kbd-inline">⌘⇧S</span>
+          {#if !isBusy && captureHint}
+            <span class="kbd-inline">{captureHint}</span>
           {/if}
         </button>
       </div>
@@ -522,10 +526,16 @@
   }
   .capture-grid {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) 320px;
+    grid-template-columns: minmax(0, 1fr) minmax(260px, 320px);
     gap: 16px;
     height: 100%;
     min-height: 0;
+  }
+  @media (max-width: 920px) {
+    .capture-grid {
+      grid-template-columns: minmax(0, 1fr);
+      grid-template-rows: minmax(0, 1fr) auto;
+    }
   }
 
   .canvas-pane {
@@ -874,7 +884,7 @@
   .window-modal {
     width: 100%;
     max-width: 560px;
-    max-height: 70vh;
+    max-height: min(70vh, calc(100vh - 80px));
     padding: 0;
     display: flex;
     flex-direction: column;

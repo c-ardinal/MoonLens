@@ -21,6 +21,10 @@
   import PageHeader from '$lib/components/PageHeader.svelte';
   import Pill from '$lib/components/Pill.svelte';
   import Kbd from '$lib/components/Kbd.svelte';
+  import { currentSettings } from '$lib/stores/settingsStore';
+  import { hotkeyFor } from '$lib/hotkey';
+
+  const newLensHint = $derived(hotkeyFor('new_lens', $currentSettings));
 
   let lenses = $state<LensDescriptor[]>([]);
   let recentLensHistory = $state<HistoryEntry[]>([]);
@@ -129,7 +133,9 @@
     >
       <Plus class="h-3.5 w-3.5" aria-hidden="true" />
       {creating ? '作成中…' : '新規Lens'}
-      <span class="kbd-inline">⌘L</span>
+      {#if newLensHint}
+        <span class="kbd-inline">{newLensHint}</span>
+      {/if}
     </button>
   {/snippet}
 </PageHeader>
@@ -160,7 +166,14 @@
         <Focus class="h-8 w-8 muted" aria-hidden="true" />
         <p>表示中のLensウィンドウはありません。</p>
         <p class="muted">
-          「新規Lens」ボタンか <Kbd label="⌘L" /> で起動できます。
+          {#if newLensHint}
+            「新規Lens」ボタンか <Kbd label={newLensHint} /> で起動できます。
+          {:else}
+            「新規Lens」ボタンで起動できます。
+            <span class="faint">
+              (設定 → ホットキーで「新規Lens」にショートカットを割り当てると、ここから起動できます)
+            </span>
+          {/if}
         </p>
       </div>
     {:else}
@@ -280,12 +293,23 @@
     min-width: 0;
     width: 100%;
   }
+  .lens > * {
+    /* Every direct child (section, aside) must respect the flow width.
+       Without this, `<section>` and `<aside>` defaults can let inner
+       fixed-width content (mono inset values, long history text) push
+       the container past 100% of the scrollable column. */
+    max-width: 100%;
+    min-width: 0;
+    box-sizing: border-box;
+  }
 
   .section-head {
     display: flex;
-    align-items: baseline;
+    align-items: center;
     gap: 12px;
     margin-bottom: 12px;
+    flex-wrap: wrap;
+    row-gap: 6px;
   }
   .section-kicker {
     font-size: 10.5px;
@@ -404,12 +428,17 @@
     flex-direction: column;
     gap: 6px;
     min-width: 0;
+    width: 100%;
   }
   .history-row {
     padding: 12px 14px;
     display: flex;
     gap: 12px;
     align-items: flex-start;
+    min-width: 0;
+    width: 100%;
+    box-sizing: border-box;
+    overflow: hidden;
   }
   .history-icon {
     width: 28px;
@@ -455,6 +484,18 @@
     display: flex;
     gap: 12px;
     align-items: flex-start;
+    min-width: 0;
+    width: 100%;
+    box-sizing: border-box;
+  }
+  .hint-card > div {
+    min-width: 0;
+    flex: 1;
+  }
+  .hint-card p {
+    margin: 0;
+    word-break: break-word;
+    overflow-wrap: anywhere;
   }
   .hint-title {
     font-size: 12.5px;

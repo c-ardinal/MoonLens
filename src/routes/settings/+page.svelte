@@ -6,6 +6,7 @@
     Save,
     Settings as SettingsIcon,
     Cpu,
+    Languages,
     Layers,
     Mic,
     Keyboard,
@@ -41,6 +42,7 @@
     setUserTier,
     previewRouting,
     routedModelStatus,
+    userTierSizes,
     downloadRoutedModel,
     installPaddleOcrModels,
     paddleOcrModelsStatus,
@@ -89,6 +91,7 @@
   type Section =
     | 'appearance'
     | 'hotkeys'
+    | 'translation'
     | 'subtitle'
     | 'overlay'
     | 'clipboard'
@@ -117,6 +120,7 @@
     {
       group: '機能',
       items: [
+        { id: 'translation', label: '翻訳', icon: Languages },
         { id: 'subtitle', label: '音声字幕', icon: Mic },
         { id: 'overlay', label: 'オーバーレイ・Lens', icon: Layers },
         { id: 'clipboard', label: 'クリップボード', icon: Clipboard }
@@ -227,6 +231,8 @@
     multi_present: false,
     korean_present: false,
     total_bytes: 0,
+    expected_multi_bytes: 0,
+    expected_korean_bytes: 0,
   });
   let paddleProgress = $state<ModelProgress | null>(null);
   let paddleDownloading = $state(false);
@@ -257,6 +263,12 @@
   // single `embedded.llm` config block and misreports "ready"
   // when only one of the routed models is on disk.
   let routedModels = $state<RoutedModelStatus[]>([]);
+  /** Total download size per user-tier, fetched from the new
+   *  `user_tier_sizes` IPC. Lets the dropdown render
+   *  `"Compact — 0.4 GB / EN↔JA 専用"` from REAL metadata so the
+   *  size never lies after a model swap or quantisation refresh.
+   *  Keyed by `user_tier` id (`compact` / `standard` / `quality`). */
+  let userTierSizesMap = $state<Record<string, number>>({});
   // Three common pairs surfaced as a "what does each route to?"
   // preview matrix beneath the picker. Lets the user verify the
   // tier picks the model they expect before committing.
@@ -407,6 +419,15 @@
       userTierStatus = await getUserTier();
       await refreshRoutingPreviews(userTierStatus?.current ?? 'standard');
       routedModels = await routedModelStatus();
+      // Pull live per-tier total sizes so the dropdown reflects
+      // real model_registry numbers instead of stale hardcoded
+      // labels. Map by user_tier id for O(1) lookup at render.
+      const sizes = await userTierSizes();
+      const next: Record<string, number> = {};
+      for (const row of sizes) {
+        next[row.user_tier] = row.total_size_mb;
+      }
+      userTierSizesMap = next;
     } catch (e) {
       console.warn('user tier status load failed:', e);
     }
@@ -711,7 +732,14 @@
     'embedded.llm': {
       kind: 'local',
       label: '組み込みローカル LLM',
-      description: 'MoonLens に同梱されるローカル LLM (Qwen 2.5, Apache 2.0)。初回起動時にモデルを自動ダウンロード。'
+      // The model family ships from `model_registry::TIERS` and
+      // can be llm-jp / Qwen 3 / Qwen 3.5 / Gemma 4 depending on
+      // the chosen user_tier — pinning the description to one
+      // family ("Qwen 2.5") would lie the moment the user
+      // switches tiers. The settings UI surfaces the active tier
+      // separately via `userTierStatus` + `routedModels`.
+      description:
+        'MoonLens に同梱されるローカル LLM。選択したティアに応じて適切なモデルを自動選択。初回起動時にダウンロードされます。'
     },
     // External servers (require user-managed daemon)
     'ollama.gemma4': {
@@ -1476,6 +1504,72 @@
             </div>
           {/each}
         </div>
+      {:else if section === 'translation'}
+        <header class="section-head">
+          <h2>翻訳</h2>
+          <p class="lead">
+            Lensウィンドウ、ミニランチャー、画像キャプチャの「再翻訳」など、字幕以外の全翻訳機能で使用される既定の言語ペアです。
+          </p>
+        </header>
+
+        <div class="card setting-card">
+          <div class="kicker-row">既定の言語ペア</div>
+          <div class="row">
+            <div class="row-text">
+              <div class="row-label">原文の言語</div>
+              <div class="row-desc">
+                auto で OCR / 入力テキストから自動検出
+              </div>
+            </div>
+            <select
+              class="input narrow"
+              value={read('translation.default_source_language', 'auto')}
+              onchange={(e) =>
+                update(
+                  'translation.default_source_language',
+                  (e.target as HTMLSelectElement).value
+                )}
+            >
+              <option value="auto">自動検出</option>
+              <option value="en">英語</option>
+              <option value="ja">日本語</option>
+              <option value="zh">中国語</option>
+              <option value="ko">韓国語</option>
+              <option value="fr">フランス語</option>
+              <option value="de">ドイツ語</option>
+              <option value="es">スペイン語</option>
+            </select>
+          </div>
+          <div class="row last">
+            <div class="row-text">
+              <div class="row-label">翻訳先</div>
+              <div class="row-desc">
+                Lensカード・ランチャー・オーバーレイの表示言語
+              </div>
+            </div>
+            <select
+              class="input narrow"
+              value={read('translation.default_target_language', 'ja')}
+              onchange={(e) =>
+                update(
+                  'translation.default_target_language',
+                  (e.target as HTMLSelectElement).value
+                )}
+            >
+              <option value="ja">日本語</option>
+              <option value="en">英語</option>
+              <option value="zh">中国語</option>
+              <option value="ko">韓国語</option>
+              <option value="fr">フランス語</option>
+              <option value="de">ドイツ語</option>
+              <option value="es">スペイン語</option>
+            </select>
+          </div>
+        </div>
+
+        <p class="lead">
+          音声字幕の言語は独立した設定です — 同時に「画面は英→日、音声は中→英」のような構成にできます。
+        </p>
       {:else if section === 'subtitle'}
         <header class="section-head">
           <h2>音声字幕</h2>
@@ -1886,7 +1980,14 @@
                             <div class="muted small">モデル: {embeddedStatus.model_id}</div>
                           {/if}
                         {:else}
-                          約 1GB の GGUF を
+                          {@const currentMb =
+                            userTierSizesMap[userTierStatus?.current ?? 'standard']}
+                          {#if currentMb}
+                            <span class="mono">{formatModelSize(currentMb)}</span>
+                            の GGUF を
+                          {:else}
+                            GGUF モデルを
+                          {/if}
                           <strong>ダウンロード</strong>
                           するか、社内ファイルサーバ等から
                           <strong>パッケージファイル (.moonlens-model)</strong>
@@ -1907,11 +2008,14 @@
                             handleUserTierChange(
                               (e.target as HTMLSelectElement).value as UserTier,
                             )}
-                          style="min-width: 16rem;"
+                          style="min-width: min(16rem, 100%); max-width: 100%;"
                         >
-                          <option value="compact">Compact — 0.6 GB / EN↔JA 専用</option>
-                          <option value="standard">Standard — 4.2 GB / 多言語対応</option>
-                          <option value="quality">Quality — 6.1 GB / 最高品質</option>
+                          {#each [{ id: 'compact', label: 'Compact', desc: 'EN↔JA 専用' }, { id: 'standard', label: 'Standard', desc: '多言語対応' }, { id: 'quality', label: 'Quality', desc: '最高品質' }] as t (t.id)}
+                            {@const mb = userTierSizesMap[t.id]}
+                            <option value={t.id}>
+                              {t.label}{mb ? ` — ${formatModelSize(mb)}` : ''} / {t.desc}
+                            </option>
+                          {/each}
                         </select>
                       </div>
                       <div class="muted small">
@@ -2223,13 +2327,22 @@
                     </div>
                   {:else if engine.id === 'ollama.gemma4'}
                     <!-- Ollama detail: endpoint + model + reminder
-                         that the daemon must be running separately. -->
+                         that the daemon must be running separately.
+                         The pull command echoes the user's saved
+                         model string so they can paste exactly what
+                         matches their settings — no more stale
+                         `gemma4:e2b` instruction when they've
+                         remapped to llama / qwen. -->
+                    {@const ollamaModel = read<string>(
+                      'providers.configs."ollama.gemma4".model',
+                      'gemma4:e2b',
+                    )}
                     <div class="detail-grid">
                       <div class="detail-status">
                         外部 Ollama サーバを翻訳に使います。Ollama を別途
                         インストールして
                         <code class="muted">ollama serve</code> で起動した上で、
-                        <code class="muted">ollama pull gemma4:e2b</code>
+                        <code class="muted">ollama pull {ollamaModel}</code>
                         を済ませておく必要があります。
                       </div>
                       <div class="detail-row">
@@ -2474,7 +2587,12 @@
                             (PaddleOCR PP-OCRv5 mobile, ONNX 変換版)
                           </div>
                         {:else}
-                          約 34 MB の ONNX モデルを
+                          {#if paddleStatus.expected_multi_bytes > 0}
+                            約 <span class="mono">{formatBytes(paddleStatus.expected_multi_bytes)}</span>
+                          {:else}
+                            ONNX
+                          {/if}
+                          のモデルを
                           <strong>ダウンロード</strong>
                           すると、英語・日本語・中国語・フランス語・ドイツ語
                           (韓国語サポート有効時はさらに韓国語) を
@@ -2495,7 +2613,10 @@
                             onchange={(e) =>
                               (paddleInstallKorean = (e.target as HTMLInputElement).checked)}
                           />
-                          韓国語サポートを同時にダウンロード (+13 MB)
+                          韓国語サポートを同時にダウンロード
+                          {#if paddleStatus.expected_korean_bytes > 0}
+                            (+<span class="mono">{formatBytes(paddleStatus.expected_korean_bytes)}</span>)
+                          {/if}
                         </label>
                       </div>
 
@@ -3132,30 +3253,38 @@
     display: flex;
     gap: 0.5rem;
     align-items: center;
+    flex-wrap: wrap;
     font-size: 0.8125rem;
     line-height: 1.5;
   }
   .routed-models-icon {
     width: 1.25rem;
     text-align: center;
+    flex: 0 0 auto;
   }
   .routed-models-name {
-    flex: 1;
+    flex: 1 1 8rem;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
     color: color-mix(in srgb, var(--ink) 90%, transparent);
   }
   .routed-models-size {
-    min-width: 4rem;
+    min-width: 3rem;
     text-align: right;
     color: color-mix(in srgb, var(--ink) 65%, transparent);
     font-variant-numeric: tabular-nums;
+    flex: 0 0 auto;
   }
   .routed-models-status {
-    min-width: 5.5rem;
+    min-width: 4rem;
     text-align: right;
     color: color-mix(in srgb, var(--ink) 70%, transparent);
+    flex: 0 0 auto;
   }
   .routed-models-action {
-    min-width: 5.5rem;
+    min-width: 4.5rem;
+    flex: 0 0 auto;
     padding: 0.25rem 0.625rem;
     border-radius: 6px;
     border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
@@ -3333,6 +3462,37 @@
     height: 100%;
     min-height: 0;
   }
+  @media (max-width: 920px) {
+    .settings-grid {
+      grid-template-columns: 1fr;
+      grid-template-rows: auto minmax(0, 1fr);
+      gap: 12px;
+    }
+    .sub-nav {
+      flex-direction: row;
+      overflow-x: auto;
+      overflow-y: hidden;
+      padding-right: 0;
+      padding-bottom: 4px;
+      gap: 4px;
+    }
+    .sub-nav :global(.nav-group) {
+      flex-direction: row;
+      flex: 0 0 auto;
+    }
+    .sub-nav :global(.nav-group + .nav-group) {
+      margin-top: 0;
+      margin-left: 6px;
+      padding-left: 6px;
+      border-left: 1px solid var(--line);
+    }
+    .sub-nav :global(.nav-group-label) {
+      display: none;
+    }
+    .sub-nav :global(.nav-label) {
+      white-space: nowrap;
+    }
+  }
   .sub-nav {
     display: flex;
     flex-direction: column;
@@ -3388,6 +3548,9 @@
   .search-wrap {
     position: relative;
     width: 200px;
+    max-width: 100%;
+    flex: 0 1 200px;
+    min-width: 0;
   }
   :global(.search-ico) {
     position: absolute;
@@ -3397,6 +3560,8 @@
     color: var(--ink-3);
   }
   .search-input {
+    width: 100%;
+    min-width: 0;
     padding-left: 30px;
   }
 
@@ -3607,7 +3772,7 @@
   .preset-grid {
     padding: 12px 14px;
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(min(180px, 100%), 1fr));
     gap: 8px;
   }
   .preset-btn {

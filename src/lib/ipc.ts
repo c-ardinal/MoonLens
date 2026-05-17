@@ -112,6 +112,13 @@ export interface PaddleOcrModelStatus {
   multi_present: boolean;
   korean_present: boolean;
   total_bytes: number;
+  /** Multi-language bundle size — real bytes when installed, the
+   *  upstream-pinned estimate when not. Used to render
+   *  "ダウンロード — 34 MB" without hardcoding the literal in
+   *  the Svelte template. */
+  expected_multi_bytes: number;
+  /** Korean recogniser bundle size, same semantics. */
+  expected_korean_bytes: number;
 }
 
 export const paddleOcrModelsStatus = () =>
@@ -120,6 +127,8 @@ export const paddleOcrModelsStatus = () =>
     multi_present: false,
     korean_present: false,
     total_bytes: 0,
+    expected_multi_bytes: 0,
+    expected_korean_bytes: 0,
   });
 
 /** Trigger the model download for the new Phase 28 PP-OCRv5 primary
@@ -268,6 +277,21 @@ export const listModelTiers = () =>
 
 export const modelTierStatus = () =>
   safeInvoke<ModelTierStatus | null>('model_tier_status', undefined, null);
+
+/** Per-user-tier total download size + the underlying display names.
+ *  Used by Settings to populate the User-Tier dropdown with REAL
+ *  sizes instead of stale hardcoded `"0.6 GB"` / `"4.2 GB"` strings.
+ *  The router computes which model tiers map to each user tier on
+ *  the Rust side; the result here is just (id, MB sum, list of
+ *  contributing display names). */
+export interface UserTierSize {
+  user_tier: 'compact' | 'standard' | 'quality';
+  total_size_mb: number;
+  display_names: string[];
+}
+
+export const userTierSizes = () =>
+  safeInvoke<UserTierSize[]>('user_tier_sizes', undefined, []);
 
 /** Switch the embedded provider to a different tier. Saves the
  * `repo`/`filename_remote` overrides into user.toml and rebuilds
@@ -504,6 +528,75 @@ export const runTranslate = (args: {
   source_language: string;
   target_language: string;
 }) => safeInvoke<TaskResult>('run_translate', { args });
+
+/**
+ * Resolve the user's default language pair from settings. The
+ * source/target are stored under `translation.default_source_language`
+ * and `translation.default_target_language` (TranslationSettings in
+ * the Rust schema). Falls back to `auto`/`ja` when settings haven't
+ * been loaded yet (first paint, cold IPC failure) so no caller ever
+ * has to handle null.
+ *
+ * Use this from ANY translate entry point that doesn't have a more
+ * specific pair in scope (e.g., subtitle has its own subtitle.* pair
+ * that overrides this default). Hardcoding `'ja'` anywhere in the UI
+ * silently breaks bilingual users; route through this helper instead.
+ */
+export async function getDefaultLanguagePair(): Promise<{
+  source: string;
+  target: string;
+}> {
+  try {
+    const s = (await getSettings()) as
+      | { translation?: { default_source_language?: string; default_target_language?: string } }
+      | null;
+    return {
+      source: s?.translation?.default_source_language?.trim() || 'auto',
+      target: s?.translation?.default_target_language?.trim() || 'ja',
+    };
+  } catch {
+    return { source: 'auto', target: 'ja' };
+  }
+}
+
+/**
+ * Format a language pair as a user-facing string (`auto → JA`,
+ * `EN → JA`, etc.). ISO codes are upper-cased; `auto` keeps its
+ * literal spelling since it's a mode label, not a script code.
+ */
+export function formatLanguagePair(source: string, target: string): string {
+  const fmt = (code: string): string => {
+    const c = code.trim();
+    if (!c) return 'auto';
+    if (c.toLowerCase() === 'auto') return 'auto';
+    return c.toUpperCase();
+  };
+  return `${fmt(source)} → ${fmt(target)}`;
+}
+
+/**
+ * Navigate the main window to a specific in-app route from a
+ * floating window. Used by the lens-frame Settings cog and the mini
+ * launcher's "履歴に保存" button to hand off to the right page.
+ */
+export const showMainRoute = (path: string) =>
+  safeInvoke<void>('show_main_route', { path });
+
+/** Hide the floating launcher window (Esc / Enter / blur). */
+export const hideLauncher = () => safeInvoke<void>('hide_launcher');
+
+/**
+ * Append a translation entry to the persistent history store. Used
+ * by the mini launcher's ⌘S action so quick translations are
+ * preserved alongside the lens / capture flow entries.
+ */
+export const addHistoryEntry = (args: {
+  kind: string;
+  source_text: string | null;
+  result_text: string | null;
+  provider: string | null;
+  via_cloud: boolean;
+}) => safeInvoke<number>('add_history_entry', args);
 
 export const runIntent = (imagePng: Uint8Array) =>
   safeInvoke<string>('run_intent', { imagePng: Array.from(imagePng) });

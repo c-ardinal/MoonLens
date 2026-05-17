@@ -254,12 +254,106 @@ pub fn register_all(
         }
     }
 
-    // All other hotkeys just surface an intent; the frontend routes them.
+    // Command palette / mini launcher: open the floating launcher
+    // window. The launcher is a separate Tauri window so it survives
+    // when the main app is hidden — pressing Cmd+K from anywhere
+    // pops it up over whatever the user is doing.
+    let app_launcher = app.clone();
+    let launcher_accel = s.hotkeys.open_command_palette.clone();
+    if is_bindable(&launcher_accel) {
+        if let Err(e) = shortcut_mgr.on_shortcut(launcher_accel.as_str(), move |_a, _s, e| {
+            if !matches!(e.state(), ShortcutState::Pressed) {
+                return;
+            }
+            if let Err(err) = crate::launcher::show(&app_launcher) {
+                tracing::warn!("launcher show failed from hotkey: {err:?}");
+            }
+        }) {
+            tracing::warn!(
+                "hotkey 'open_command_palette' registration failed: accel='{launcher_accel}' error={e:?}"
+            );
+            report.push("open_command_palette", launcher_accel, e.to_string());
+        }
+    }
+
+    // New Lens window: opens a fresh translucent Lens overlay.
+    // Optional — empty default; only registered when the user
+    // opts in via Settings.
+    let app_nl = app.clone();
+    let new_lens_accel = s.hotkeys.new_lens.clone();
+    if is_bindable(&new_lens_accel) {
+        if let Err(e) = shortcut_mgr.on_shortcut(new_lens_accel.as_str(), move |_a, _s, e| {
+            if !matches!(e.state(), ShortcutState::Pressed) {
+                return;
+            }
+            let app = app_nl.clone();
+            let state = app.state::<AppState>();
+            match crate::lens::create(&app, &state.lenses) {
+                Ok(id) => {
+                    state.lens_watchers.start(
+                        id.clone(),
+                        app.clone(),
+                        state.pipeline.clone(),
+                        state.lenses.clone(),
+                        state.settings.clone(),
+                    );
+                    if let Some(win) = app.get_webview_window(&id) {
+                        let id_for_events = id.clone();
+                        let watchers = state.lens_watchers.clone();
+                        win.on_window_event(move |event| {
+                            if matches!(
+                                event,
+                                tauri::WindowEvent::Moved(_) | tauri::WindowEvent::Resized(_)
+                            ) {
+                                watchers.trigger(&id_for_events);
+                            }
+                        });
+                    }
+                }
+                Err(err) => tracing::warn!("new_lens hotkey: lens create failed: {err:?}"),
+            }
+        }) {
+            tracing::warn!(
+                "hotkey 'new_lens' registration failed: accel='{new_lens_accel}' error={e:?}"
+            );
+            report.push("new_lens", new_lens_accel, e.to_string());
+        }
+    }
+
+    // Open Settings: routes the main window to the settings page.
+    let app_os = app.clone();
+    let open_settings_accel = s.hotkeys.open_settings.clone();
+    if is_bindable(&open_settings_accel) {
+        if let Err(e) = shortcut_mgr.on_shortcut(open_settings_accel.as_str(), move |_a, _s, e| {
+            if matches!(e.state(), ShortcutState::Pressed) {
+                let _ = app_os.emit("moonlens://hotkey", "open_settings");
+            }
+        }) {
+            tracing::warn!(
+                "hotkey 'open_settings' registration failed: accel='{open_settings_accel}' error={e:?}"
+            );
+            report.push("open_settings", open_settings_accel, e.to_string());
+        }
+    }
+
+    // Open Home: routes the main window to the home tab.
+    let app_oh = app.clone();
+    let open_home_accel = s.hotkeys.open_home.clone();
+    if is_bindable(&open_home_accel) {
+        if let Err(e) = shortcut_mgr.on_shortcut(open_home_accel.as_str(), move |_a, _s, e| {
+            if matches!(e.state(), ShortcutState::Pressed) {
+                let _ = app_oh.emit("moonlens://hotkey", "open_home");
+            }
+        }) {
+            tracing::warn!(
+                "hotkey 'open_home' registration failed: accel='{open_home_accel}' error={e:?}"
+            );
+            report.push("open_home", open_home_accel, e.to_string());
+        }
+    }
+
+    // Remaining hotkeys just surface an intent; the frontend routes them.
     let remaining: Vec<(&str, String)> = vec![
-        (
-            "open_command_palette",
-            s.hotkeys.open_command_palette.clone(),
-        ),
         ("open_history", s.hotkeys.open_history.clone()),
         (
             "reverse_image_search",

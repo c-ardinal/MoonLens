@@ -11,6 +11,7 @@
     AudioWaveform
   } from 'lucide-svelte';
   import {
+    formatLanguagePair,
     getSettings,
     onSubtitle,
     startSubtitle,
@@ -80,6 +81,37 @@
   let settings = $state<Settings | null>(null);
   let asrReport = $state<AsrEndpointReport | null>(null);
   let testing = $state(false);
+
+  /** Subtitle workflow's language pair (read from
+   *  `subtitle.source_language` / `subtitle.target_language`). NOT
+   *  the `translation.default_*` pair that Lens/launcher use —
+   *  subtitle settings are intentionally independent so a user can
+   *  run "screen EN→JA + audio ZH→EN" side-by-side. Falls back to
+   *  `auto → JA` when settings haven't loaded yet. */
+  const subtitlePair = $derived.by(() => {
+    const sub = (settings as Record<string, unknown> | null)?.subtitle as
+      | { source_language?: string; target_language?: string }
+      | undefined;
+    return formatLanguagePair(
+      sub?.source_language?.trim() || 'auto',
+      sub?.target_language?.trim() || 'ja',
+    );
+  });
+
+  /** ASR endpoint URL surfaced by the error banner. Pulled from
+   *  the live settings tree so a user who has remapped their
+   *  whisper.cpp endpoint sees their own URL in the troubleshoot
+   *  hint — not a stale `127.0.0.1:9002` that would mislead them
+   *  to the wrong port. */
+  const asrEndpoint = $derived.by(() => {
+    const cfg = (settings as Record<string, unknown> | null)?.providers as
+      | { configs?: Record<string, { endpoint?: string }> }
+      | undefined;
+    return (
+      cfg?.configs?.['whisper_cpp.large_v3_turbo']?.endpoint?.trim() ||
+      'http://127.0.0.1:9002'
+    );
+  });
 
   async function runAsrTest() {
     if (testing) return;
@@ -263,7 +295,7 @@
       <span>{lastError}</span>
       <p class="banner-hint">
         音声字幕は ASR プロバイダ ({asrModel}) を必要とします。設定 → プロバイダ → asr で
-        構成と接続先を確認してください (既定では <code class="mono">whisper_cpp.large_v3_turbo</code> が <code class="mono">http://127.0.0.1:9002</code> を参照します)。
+        構成と接続先を確認してください (現在の設定: <code class="mono">whisper_cpp.large_v3_turbo</code> → <code class="mono">{asrEndpoint}</code>)。
       </p>
     </div>
   {/if}
@@ -325,7 +357,7 @@
         <div class="stream-head">
           <Languages class="h-3.5 w-3.5" aria-hidden="true" />
           <span>ライブ字幕</span>
-          <Pill>EN → JA</Pill>
+          <Pill>{subtitlePair}</Pill>
           <Pill accent dot>{recording ? 'live' : 'paused'}</Pill>
         </div>
         <div class="scroll stream-scroll" bind:this={listEl}>

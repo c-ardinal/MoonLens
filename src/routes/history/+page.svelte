@@ -20,6 +20,10 @@
     type HistoryEntry
   } from '$lib/ipc';
   import PageHeader from '$lib/components/PageHeader.svelte';
+  import { currentSettings } from '$lib/stores/settingsStore';
+  import { hotkeyFor } from '$lib/hotkey';
+
+  const captureHint = $derived(hotkeyFor('capture_region', $currentSettings));
   import Pill from '$lib/components/Pill.svelte';
   import Segmented from '$lib/components/Segmented.svelte';
 
@@ -240,7 +244,10 @@
             placeholder="履歴を検索…"
             oninput={(e) => onQueryInput((e.target as HTMLInputElement).value)}
           />
-          <span class="search-kbd mono">⌘F</span>
+          <!-- The ⌘F chip used to live here but it never bound to
+               an actual shortcut. Removed rather than misrepresent
+               capability; if we add an in-app focus shortcut later
+               we can put it back keyed to the actual binding. -->
         </div>
         <button class="btn icon" type="button" title="フィルタ" aria-label="フィルタ">
           <ListIcon class="h-3.5 w-3.5" aria-hidden="true" />
@@ -265,7 +272,8 @@
             {#if q.trim().length > 0}
               「{q}」に一致する履歴はありません。
             {:else}
-              まだ履歴がありません。⌘⇧S でキャプチャすると追加されます。
+              まだ履歴がありません。{#if captureHint}{captureHint}{:else}キャプチャ翻訳{/if}
+              でキャプチャすると追加されます。
             {/if}
           </div>
         {:else}
