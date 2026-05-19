@@ -30,7 +30,7 @@
 use async_trait::async_trait;
 use std::sync::Arc;
 
-use super::translate_embedded_llm::check_and_strip_stop_suffix;
+use super::translate_embedded_llm::{check_and_strip_stop_suffix, language_name};
 use super::{
     Capability, Provider, ProviderError, ProviderHandle, StreamingChunkSink, TaskInput, TaskOutput,
 };
@@ -58,6 +58,35 @@ impl PivotTranslator {
             stage2,
         }
     }
+}
+
+/// Wrap the Stage-1 English intermediate with an explicit Stage-2
+/// target-language reminder before handing it off.
+///
+/// Why: the 2026-05-18 routed eval surfaced that gemma-4-e2b/e4b
+/// echoes English back when asked to translate technical English
+/// intermediates into French / German / Korean. The same model
+/// happily translates everyday English to those targets, so the
+/// problem is target-language LOCKING under technical inputs, not
+/// raw translation capability. Prepending one short directive sentence
+/// (in addition to the system prompt and few-shot examples) anchors
+/// the model on the destination language without altering the
+/// translation header that `build_user_prompt` already produces.
+///
+/// Stage 1 is unaffected — its target is always English and the
+/// directive would be a tautology. The wrapper only fires when the
+/// final user-facing target is non-English; for `en` targets the
+/// returned text is the cleaned intermediate unchanged.
+pub fn wrap_stage2_with_target_hint(intermediate: &str, target_language: &str) -> String {
+    let tgt_name = language_name(target_language);
+    if tgt_name.eq_ignore_ascii_case("English") {
+        return intermediate.to_string();
+    }
+    format!(
+        "(The following English text MUST be rendered in {tgt}. Output {tgt} only — never echo English back.)\n\n{src}",
+        tgt = tgt_name,
+        src = intermediate,
+    )
 }
 
 /// Strip Stage-1 artifacts before handing the intermediate
@@ -151,10 +180,15 @@ impl Provider for PivotTranslator {
             return Err(ProviderError::LowConfidence);
         }
 
-        // Stage 2: English → target.
+        // Stage 2: English → target. The intermediate is wrapped
+        // with a one-line target-language reminder (see
+        // `wrap_stage2_with_target_hint`) to keep small multilingual
+        // models like gemma-4-e2b/e4b from echoing English back on
+        // technical inputs.
+        let stage2_text = wrap_stage2_with_target_hint(&cleaned, &target_language);
         self.stage2
             .run(TaskInput::Translate {
-                text: cleaned,
+                text: stage2_text,
                 source_language: "en".to_string(),
                 target_language,
                 glossary: Vec::new(),
@@ -209,10 +243,11 @@ impl Provider for PivotTranslator {
             return Err(ProviderError::LowConfidence);
         }
 
+        let stage2_text = wrap_stage2_with_target_hint(&cleaned, &target_language);
         self.stage2
             .run_streaming(
                 TaskInput::Translate {
-                    text: cleaned,
+                    text: stage2_text,
                     source_language: "en".to_string(),
                     target_language,
                     glossary: Vec::new(),
@@ -328,7 +363,10 @@ mod tests {
         }
 
         // Stage 2 should have seen en→zh-CN with the cleaned
-        // intermediate as input.
+        // intermediate as input. The wrapper now prepends a one-
+        // line target-language reminder to keep small multilingual
+        // models from echoing English back — check both the
+        // directive and the cleaned source are present.
         let s2_calls = stage2.calls.lock().unwrap();
         assert_eq!(s2_calls.len(), 1);
         match &s2_calls[0] {
@@ -338,7 +376,14 @@ mod tests {
                 target_language,
                 ..
             } => {
-                assert_eq!(text, "Hello, world.");
+                assert!(
+                    text.contains("rendered in Chinese"),
+                    "Stage 2 input missing target-language reminder: {text}"
+                );
+                assert!(
+                    text.ends_with("Hello, world."),
+                    "Stage 2 input does not end with intermediate text: {text}"
+                );
                 assert_eq!(source_language, "en");
                 assert_eq!(target_language, "zh-CN");
             }
@@ -372,9 +417,9 @@ mod tests {
             assert_eq!(s2_calls.len(), 1);
             match &s2_calls[0] {
                 TaskInput::Translate { text, .. } => {
-                    assert_eq!(
-                        text, expected_clean,
-                        "Stage 2 received uncleaned intermediate"
+                    assert!(
+                        text.ends_with(expected_clean),
+                        "Stage 2 received uncleaned intermediate; got {text}, expected suffix {expected_clean}",
                     );
                 }
                 other => panic!("unexpected stage2 input: {other:?}"),
@@ -421,6 +466,51 @@ mod tests {
         assert!(matches!(err, ProviderError::LowConfidence));
         // Stage 2 must not be called when Stage 1 fails.
         assert_eq!(stage2.run_count.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn wrap_stage2_with_target_hint_prepends_language_reminder() {
+        let wrapped = wrap_stage2_with_target_hint("Hello, world.", "fr");
+        assert!(
+            wrapped.contains("MUST be rendered in French"),
+            "missing target-language reminder: {wrapped}",
+        );
+        assert!(
+            wrapped.ends_with("Hello, world."),
+            "intermediate must remain at the end: {wrapped}",
+        );
+    }
+
+    #[test]
+    fn wrap_stage2_with_target_hint_skips_english_target() {
+        // Stage 2 with target=English is a no-op direction (the
+        // intermediate IS English). The directive would either
+        // confuse the model or trigger a redundant pass — leave
+        // the text alone.
+        let wrapped = wrap_stage2_with_target_hint("Hello, world.", "en");
+        assert_eq!(wrapped, "Hello, world.");
+        let wrapped_full = wrap_stage2_with_target_hint("Hello, world.", "English");
+        assert_eq!(wrapped_full, "Hello, world.");
+    }
+
+    #[test]
+    fn wrap_stage2_with_target_hint_resolves_iso_codes_to_full_names() {
+        // Models like gemma-4-e2b reliably respect `Korean` /
+        // `German` / `Chinese` directives but not bare `ko` / `de` /
+        // `zh`. The wrapper relies on `language_name` for the
+        // expansion — sanity-check the wiring.
+        for (code, name) in [
+            ("ko", "Korean"),
+            ("de", "German"),
+            ("zh", "Chinese"),
+            ("ja", "Japanese"),
+        ] {
+            let wrapped = wrap_stage2_with_target_hint("x", code);
+            assert!(
+                wrapped.contains(name),
+                "code {code} should resolve to {name}: {wrapped}"
+            );
+        }
     }
 
     #[tokio::test]

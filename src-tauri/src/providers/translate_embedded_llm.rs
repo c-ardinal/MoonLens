@@ -281,10 +281,39 @@ impl EmbeddedLlmTranslator {
                 // few-shots (see `build_translation_few_shots`)
                 // and the runtime stop-suffix scrubbing rather
                 // than by a paranoid system message.
+                // 2026-05-18: Added explicit whitespace + identifier
+                // preservation directives after a user report where
+                // Qwen 2.5 1.5B translating a Rust tracing log produced
+                // (a) all inline whitespace collapsed (`embedded LLM
+                // warmup: 38 ms` → `ンコーーの初期化:38ミリ秒`) and
+                // (b) module identifiers transliterated to katakana
+                // (`embedded_llm_perf` → `ンコーー`). Small models
+                // default to "natural prose" mode and aggressively
+                // re-flow technical text; the new clauses ground the
+                // model to treat code-like tokens as opaque. The
+                // explicit example list (`n_threads`, `INFO`, ISO
+                // timestamps, hex/numeric literals) helps the model
+                // generalise to similar shapes via in-context pattern
+                // matching — it can't follow an abstract rule, but it
+                // can mirror a concrete enumeration.
                 "You are a professional translator. Render the user's text \
                  naturally and idiomatically in the target language — match \
                  the meaning, tone, and register a native reader would expect, \
-                 not the word order of the source. Preserve newlines exactly. \
+                 not the word order of the source. \
+                 \
+                 Preserve ALL whitespace exactly: newlines, leading indentation, \
+                 and every run of spaces between tokens. Never collapse, insert, \
+                 or remove whitespace. \
+                 \
+                 Keep the following tokens unchanged — never translated, never \
+                 transliterated, never re-cased: code identifiers and module \
+                 paths (e.g. `n_threads`, `embedded_llm_perf`, \
+                 `moonlens_lib::pipeline`), file paths, URLs, ISO timestamps \
+                 (e.g. `2026-05-18T00:51:11.674022Z`), log levels (INFO, WARN, \
+                 ERROR, DEBUG, TRACE), CLI flags, numeric literals, version \
+                 strings, hex digits, and any token containing `_`, `::`, `/`, \
+                 `.`, `=`, or backticks. When in doubt, leave the token as-is. \
+                 \
                  Output ONLY the translated text. Never include commentary, \
                  explanations, romanizations, alternative translations, notes \
                  in parentheses, surrounding quotes, or bracketed markers like \
@@ -1853,6 +1882,70 @@ fn log_spec_perf(
     );
 }
 
+/// Map an ISO 639-1 (or common ISO 639-3 / BCP-47 prefix) code to
+/// the English language name we splice into the user prompt. Small
+/// models like gemma-4-e2b/e4b don't reliably recognise bare ISO
+/// codes as target-language hints — the 2026-05-18 routed eval
+/// confirmed Direct en→fr echoed English on technical inputs when
+/// the prompt said `"into fr:"`, while `"into French:"` consistently
+/// produced French output. Unknown codes fall through verbatim so a
+/// brand-new language code still passes through the prompt.
+///
+/// Made `pub` so the pivot wrapper (`translate_pivot.rs`) can
+/// reuse the same mapping when it injects its Stage-2 target-
+/// language reminder.
+pub fn language_name(code: &str) -> String {
+    // Strip BCP-47 region suffix (`fr-FR`, `zh-CN`, `zh-Hant`) and
+    // lower-case so `Fr`, `fr-FR`, `fra` all collapse to the same
+    // bucket. The router does similar normalisation for its
+    // LangBucket; this helper deliberately mirrors it.
+    let head = code
+        .split(|c: char| c == '-' || c == '_')
+        .next()
+        .unwrap_or(code)
+        .trim()
+        .to_lowercase();
+    match head.as_str() {
+        "ja" | "jp" | "jpn" | "japanese" => "Japanese".into(),
+        "en" | "eng" | "english" => "English".into(),
+        "fr" | "fra" | "fre" | "french" => "French".into(),
+        "de" | "deu" | "ger" | "german" => "German".into(),
+        "es" | "spa" | "spanish" => "Spanish".into(),
+        "it" | "ita" | "italian" => "Italian".into(),
+        "pt" | "por" | "portuguese" => "Portuguese".into(),
+        "ru" | "rus" | "russian" => "Russian".into(),
+        "ko" | "kor" | "korean" => "Korean".into(),
+        "zh" | "zho" | "chi" | "chinese" => "Chinese".into(),
+        "ar" | "ara" | "arabic" => "Arabic".into(),
+        "nl" | "nld" | "dutch" => "Dutch".into(),
+        "pl" | "pol" | "polish" => "Polish".into(),
+        "tr" | "tur" | "turkish" => "Turkish".into(),
+        "vi" | "vie" | "vietnamese" => "Vietnamese".into(),
+        "th" | "tha" | "thai" => "Thai".into(),
+        // `auto` is a UI mode label, not a real language. Leave it
+        // alone so a downstream `Translate into auto:` prompt is
+        // visibly broken in eval logs rather than silently
+        // mis-detected as "Autonomous" or similar.
+        "auto" => "auto".into(),
+        // Unknown — pass through verbatim so future codes work
+        // without a code change. Capitalise to keep the prompt
+        // tonally consistent.
+        other => {
+            let mut s = String::with_capacity(other.len());
+            let mut first = true;
+            for c in other.chars() {
+                if first {
+                    s.extend(c.to_uppercase());
+                    first = false;
+                } else {
+                    s.push(c);
+                }
+            }
+            s
+        }
+    }
+}
+
 /// User-prompt builder shared by the single-shot and streaming
 /// paths. Keeps the prompt format in one place so the two inference
 /// flavours never drift.
@@ -1882,10 +1975,17 @@ fn build_user_prompt(input: &TaskInput) -> Result<String, ProviderError> {
             // honoured when provided but elided in the prompt for
             // `auto` because spelling it out as
             // "from auto" reads like garbage to the model.
+            //
+            // 2026-05-18: ISO `fr` / `de` / `ko` codes expanded to
+            // `French` / `German` / `Korean` via `language_name`.
+            // Eval confirmed gemma-4-e2b/e4b echoes English on
+            // technical en→fr prompts when the target reads as
+            // `fr`, but reliably switches to French when the
+            // target reads as `French`.
             let _ = source_language; // see comment above — kept on the signature for upstream callers
             Ok(format!(
                 "Translate the following text into {tgt}:\n\n{src}",
-                tgt = target_language,
+                tgt = language_name(target_language),
                 src = text,
             ))
         }
@@ -1969,6 +2069,72 @@ fn build_translation_few_shots(target_language: &str) -> Vec<(String, String)> {
                 "彼女はこれらを赤い袋3つに詰めてくれるでしょう。水曜日に駅で待ち合わせましょう。",
                 "She can scoop these things into three red bags, and we will go meet her \
                  Wednesday at the train station.",
+            ),
+        ],
+        // 2026-05-18 additions: fr / de / ko / zh examples sourced
+        // from the same English anchors the ja set uses, but
+        // mirrored into each target so the model sees concrete
+        // English→target pairs. The routed eval surfaced that
+        // gemma-4-e2b/e4b echoes English on technical en→fr/de/ko
+        // inputs without a target-language demonstration. These
+        // anchor the model on the desired output language; the
+        // technical-anchor (`Performance varies...`) is the
+        // critical one because Pivot Stage 2 routinely receives
+        // exactly that kind of intermediate English.
+        "fr" | "fra" | "fre" | "french" => &[
+            (
+                "Hello, world.",
+                "Bonjour, le monde.",
+            ),
+            (
+                "The quick brown fox jumps over the lazy dog.",
+                "Le renard brun rapide saute par-dessus le chien paresseux.",
+            ),
+            (
+                "Performance varies across hardware and runtime configurations.",
+                "Les performances varient selon le matériel et la configuration d'exécution.",
+            ),
+        ],
+        "de" | "deu" | "ger" | "german" => &[
+            (
+                "Hello, world.",
+                "Hallo, Welt.",
+            ),
+            (
+                "The quick brown fox jumps over the lazy dog.",
+                "Der schnelle braune Fuchs springt über den faulen Hund.",
+            ),
+            (
+                "Performance varies across hardware and runtime configurations.",
+                "Die Leistung variiert je nach Hardware und Laufzeitkonfiguration.",
+            ),
+        ],
+        "ko" | "kor" | "korean" => &[
+            (
+                "Hello, world.",
+                "안녕, 세상.",
+            ),
+            (
+                "The quick brown fox jumps over the lazy dog.",
+                "빠른 갈색 여우가 게으른 개를 뛰어넘는다.",
+            ),
+            (
+                "Performance varies across hardware and runtime configurations.",
+                "성능은 하드웨어와 런타임 구성에 따라 달라진다.",
+            ),
+        ],
+        "zh" | "zho" | "chi" | "chinese" => &[
+            (
+                "Hello, world.",
+                "你好，世界。",
+            ),
+            (
+                "The quick brown fox jumps over the lazy dog.",
+                "敏捷的棕色狐狸跳过懒狗。",
+            ),
+            (
+                "Performance varies across hardware and runtime configurations.",
+                "性能因硬件和运行时配置而异。",
             ),
         ],
         _ => &[],
@@ -2390,10 +2556,30 @@ mod tests {
         })
         .unwrap();
         assert!(
-            prompt.starts_with("Translate the following text into ja:"),
+            prompt.starts_with("Translate the following text into Japanese:"),
             "got: {prompt}"
         );
         assert!(prompt.ends_with("Hello"), "got: {prompt}");
+    }
+
+    #[test]
+    fn language_name_expands_iso_codes_to_full_names() {
+        assert_eq!(language_name("ja"), "Japanese");
+        assert_eq!(language_name("en"), "English");
+        assert_eq!(language_name("fr"), "French");
+        assert_eq!(language_name("de"), "German");
+        assert_eq!(language_name("ko"), "Korean");
+        assert_eq!(language_name("zh"), "Chinese");
+        // BCP-47 region suffix stripped before lookup.
+        assert_eq!(language_name("fr-FR"), "French");
+        assert_eq!(language_name("zh-Hant"), "Chinese");
+        // Case-insensitive.
+        assert_eq!(language_name("FR"), "French");
+        // `auto` is a UI mode, not a real language — kept verbatim.
+        assert_eq!(language_name("auto"), "auto");
+        // Unknown codes pass through capitalised so the prompt
+        // remains visually consistent.
+        assert_eq!(language_name("xx"), "Xx");
     }
 
     #[cfg(feature = "embedded-llm")]
@@ -2708,10 +2894,33 @@ mod tests {
     fn build_translation_few_shots_is_empty_for_unknown_target() {
         // Targets we have no demos for must return empty so the
         // render path falls back to system-prompt-only behaviour.
-        for target in ["zh", "ko", "es", "klingon"] {
+        // 2026-05-18: fr / de / ko / zh dropped from this list when
+        // we added few-shot anchors to mitigate gemma-4-e2b/e4b
+        // English-echo on technical en→non-ja inputs. `es` (and
+        // other un-anchored languages) still fall through to the
+        // empty branch.
+        for target in ["es", "it", "pt", "ru", "klingon"] {
             assert!(
                 build_translation_few_shots(target).is_empty(),
                 "expected empty few-shots for target {target}"
+            );
+        }
+    }
+
+    #[cfg(feature = "embedded-llm")]
+    #[test]
+    fn build_translation_few_shots_has_anchors_for_added_targets() {
+        // Counterpart to the empty-target test above: every
+        // language with hand-authored examples MUST surface at
+        // least one (source, target) pair. Regression guard against
+        // a future cleanup deleting the wrong branch.
+        for target in [
+            "ja", "en", "fr", "de", "ko", "zh", "French", "GERMAN", "Ja",
+        ] {
+            let shots = build_translation_few_shots(target);
+            assert!(
+                !shots.is_empty(),
+                "expected non-empty few-shots for target {target}"
             );
         }
     }

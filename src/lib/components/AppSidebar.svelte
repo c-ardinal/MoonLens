@@ -18,7 +18,8 @@
     PanelLeft,
     PanelLeftClose,
     OctagonX,
-    Cpu
+    Cpu,
+    Languages
   } from 'lucide-svelte';
   import {
     listLensWindows,
@@ -58,6 +59,7 @@
       icon: Camera,
       hotkey: 'capture_region',
     },
+    { kind: 'item', href: '/translate/', label: 'テキスト翻訳', icon: Languages },
     { kind: 'item', href: '/lens/', label: 'Lensウィンドウ', icon: Focus, hotkey: 'new_lens' },
     {
       kind: 'item',
