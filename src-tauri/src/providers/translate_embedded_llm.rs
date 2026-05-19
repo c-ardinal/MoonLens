@@ -287,15 +287,18 @@ impl EmbeddedLlmTranslator {
                 // (a) all inline whitespace collapsed (`embedded LLM
                 // warmup: 38 ms` → `ンコーーの初期化:38ミリ秒`) and
                 // (b) module identifiers transliterated to katakana
-                // (`embedded_llm_perf` → `ンコーー`). Small models
-                // default to "natural prose" mode and aggressively
-                // re-flow technical text; the new clauses ground the
-                // model to treat code-like tokens as opaque. The
-                // explicit example list (`n_threads`, `INFO`, ISO
-                // timestamps, hex/numeric literals) helps the model
-                // generalise to similar shapes via in-context pattern
-                // matching — it can't follow an abstract rule, but it
-                // can mirror a concrete enumeration.
+                // (`embedded_llm_perf` → `ンコーー`).
+                //
+                // 2026-05-19: Strengthened whitespace clause with a
+                // concrete before/after example, and added a script-
+                // consistency clause to keep Korean / Japanese / etc.
+                // outputs in their native script (gemma-4-e2b/e4b
+                // routinely mixed Hangul with Hanja / Katakana /
+                // English fragments on multilingual targets — eval
+                // captured `달성은개인隐私을priority로` style mixing).
+                // Concrete example tokens help the model generalise
+                // via in-context pattern matching where abstract
+                // rules alone get ignored.
                 "You are a professional translator. Render the user's text \
                  naturally and idiomatically in the target language — match \
                  the meaning, tone, and register a native reader would expect, \
@@ -303,7 +306,15 @@ impl EmbeddedLlmTranslator {
                  \
                  Preserve ALL whitespace exactly: newlines, leading indentation, \
                  and every run of spaces between tokens. Never collapse, insert, \
-                 or remove whitespace. \
+                 or remove whitespace. Example: `Z  INFO  embedded_llm_perf` \
+                 MUST stay `Z  INFO  embedded_llm_perf`, NEVER \
+                 `ZINFOembedded_llm_perf`. Column alignment matters. \
+                 \
+                 Output ONLY in the target language's native script. Never mix \
+                 scripts (do NOT emit Latin words, Han characters, or Katakana \
+                 inside a Hangul / Hiragana / Cyrillic output) unless the \
+                 source itself contained that token verbatim — proper nouns \
+                 and trademarks may keep their original form. \
                  \
                  Keep the following tokens unchanged — never translated, never \
                  transliterated, never re-cased: code identifiers and module \
@@ -2121,6 +2132,25 @@ fn build_translation_few_shots(target_language: &str) -> Vec<(String, String)> {
             (
                 "Performance varies across hardware and runtime configurations.",
                 "성능은 하드웨어와 런타임 구성에 따라 달라진다.",
+            ),
+            // 2026-05-19: Mixed-script anchor — demonstrate that
+            // Latin words inside an English source should resolve
+            // to Hangul, NOT stay Latin or transliterate to
+            // Katakana / Hanja. Eval captured gemma-4-e4b emitting
+            // `달성은개인隐私을priority로하는스クリーン...` (Hangul
+            // + Hanja + Katakana + English) on a similar prompt;
+            // showing one example of "clean Hangul output despite
+            // Latin source tokens" should anchor the model on the
+            // target script. Proper nouns ("MoonLens" / "Click")
+            // intentionally translated to their Hangul renderings
+            // here to bias toward "translate, do NOT preserve raw
+            // Latin"; the system prompt's "proper nouns may stay
+            // verbatim" clause leaves room for the model to pick
+            // either, but this anchor pushes the bias toward the
+            // pure-Hangul end for general nouns.
+            (
+                "Click the START button to begin the privacy-first translation.",
+                "프라이버시 우선 번역을 시작하려면 시작 버튼을 클릭하세요.",
             ),
         ],
         "zh" | "zho" | "chi" | "chinese" => &[

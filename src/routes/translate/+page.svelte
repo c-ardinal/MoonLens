@@ -58,7 +58,21 @@
   const MAX_CHARS = 5000;
   const STORAGE_KEY = 'moonlens.translate.langpair';
   const AUTO_STORAGE_KEY = 'moonlens.translate.autoTranslate';
+  const LINE_MODE_STORAGE_KEY = 'moonlens.translate.lineByLine';
   const DEBOUNCE_MS = 600;
+
+  /** Lines matching these patterns are passed through verbatim in
+   *  line-by-line mode. They are essentially never translatable
+   *  prose; sending them to the LLM either returns the line
+   *  unchanged (best case) or hallucinates a translation of a
+   *  timestamp / log level (worst case). Conservative on purpose —
+   *  a false-positive (skipping a translatable line) is more
+   *  annoying than a false-negative (translating a code line). */
+  const LOG_LINE_RE =
+    /^\s*\d{4}-\d{2}-\d{2}T\S+\s+(INFO|WARN|ERROR|DEBUG|TRACE)\b/;
+  /** A line composed almost entirely of code punctuation
+   *  (`}`, `)`, `};`, etc.). Translation never helps. */
+  const PUNCT_ONLY_RE = /^[\s\}\)\]\(\[\{;,.]*$/;
 
   let sourceLang = $state('auto');
   let targetLang = $state('ja');
@@ -70,6 +84,19 @@
   let lastViaCloud = $state(false);
   let lastLatencyMs = $state<number | null>(null);
   let autoTranslate = $state(false);
+  /** "Line-by-line, preserve structure" mode. When enabled the
+   *  Translate page splits the input by `\n`, translates each line
+   *  independently, and rejoins with `\n`. Lines matching
+   *  `LOG_LINE_RE` / `PUNCT_ONLY_RE` / blank lines are passed
+   *  through verbatim. Trades latency (1 IPC call per non-bypassed
+   *  line instead of 1 for the whole text) for structural
+   *  fidelity. The opt-in is opaque to the average user; the
+   *  toggle defaults off so the existing whole-text path stays
+   *  the cheap default. */
+  let lineByLineMode = $state(false);
+  /** Progress text rendered while line-by-line mode is processing.
+   *  `null` outside the per-line loop. */
+  let lineProgress = $state<string | null>(null);
   let copyHint = $state(false);
   let copyErrorHint = $state<string | null>(null);
   let copyHintTimer: ReturnType<typeof setTimeout> | undefined;
@@ -98,6 +125,8 @@
         if (typeof parsed.target === 'string') targetLang = parsed.target;
       }
       autoTranslate = window.localStorage.getItem(AUTO_STORAGE_KEY) === '1';
+      lineByLineMode =
+        window.localStorage.getItem(LINE_MODE_STORAGE_KEY) === '1';
     } catch {
       // localStorage may be unavailable in restricted contexts — fall
       // back to settings defaults silently.
@@ -112,6 +141,10 @@
         JSON.stringify({ source: sourceLang, target: targetLang }),
       );
       window.localStorage.setItem(AUTO_STORAGE_KEY, autoTranslate ? '1' : '0');
+      window.localStorage.setItem(
+        LINE_MODE_STORAGE_KEY,
+        lineByLineMode ? '1' : '0',
+      );
     } catch {
       // ignore
     }
@@ -144,6 +177,101 @@
     }, DEBOUNCE_MS);
   }
 
+  /** Heuristic: should this single line bypass translation? `\n`
+   *  preservation is guaranteed by the line-by-line wrapper; this
+   *  predicate decides whether to also skip the IPC call entirely
+   *  for lines that are essentially non-translatable. */
+  function shouldBypassLine(line: string): boolean {
+    if (!line.trim()) return true;
+    if (LOG_LINE_RE.test(line)) return true;
+    if (PUNCT_ONLY_RE.test(line)) return true;
+    return false;
+  }
+
+  /** Split a line into `(leadingWs, content)` so we can preserve
+   *  per-line indentation when calling the LLM with only the
+   *  translatable portion. */
+  function splitLeadingWs(line: string): { leading: string; content: string } {
+    const m = line.match(/^(\s*)([\s\S]*)$/);
+    return {
+      leading: m ? m[1] : '',
+      content: m ? m[2] : line,
+    };
+  }
+
+  async function translateWholeText(text: string, started: number): Promise<void> {
+    const res = await runTranslate({
+      text,
+      source_language: sourceLang,
+      target_language: targetLang,
+    });
+    // TaskOutput is a serde-tagged enum: a `Translate` task always
+    // produces `{ Text: "<translated>" }` (note: capitalised key —
+    // serde's default for unit-style variants). Tolerate the
+    // streaming variant too so a future Translate-as-stream path
+    // wouldn't silently break this page.
+    resultText = extractText(res);
+    lastProvider = res?.used_provider ?? null;
+    lastViaCloud = Boolean(res?.via_cloud);
+    lastLatencyMs =
+      typeof res?.latency_ms === 'number'
+        ? Math.round(res.latency_ms)
+        : Math.round(performance.now() - started);
+  }
+
+  async function translateLineByLine(text: string, started: number): Promise<void> {
+    // Split on the literal `\n` (NOT `splitlines`-style) so the
+    // join below faithfully reproduces the original separator
+    // count — including a possible trailing empty entry from a
+    // final newline.
+    const lines = text.split('\n');
+    const translated: string[] = new Array(lines.length);
+    const total = lines.filter((l) => !shouldBypassLine(l)).length;
+    let done = 0;
+    let firstProvider: string | null = null;
+    let firstViaCloud = false;
+
+    for (let i = 0; i < lines.length; i += 1) {
+      const line = lines[i];
+      if (shouldBypassLine(line)) {
+        translated[i] = line;
+        continue;
+      }
+      const { leading, content } = splitLeadingWs(line);
+      try {
+        const res = await runTranslate({
+          text: content,
+          source_language: sourceLang,
+          target_language: targetLang,
+        });
+        const out = extractText(res).replace(/\n+/g, ' ').trim();
+        // Re-prepend the original leading whitespace so per-line
+        // indent survives the round trip. The LLM's own leading
+        // whitespace (rare) is squashed by `.trim()` above so the
+        // final line never grows two indents.
+        translated[i] = `${leading}${out}`;
+        if (firstProvider === null) {
+          firstProvider = res?.used_provider ?? null;
+          firstViaCloud = Boolean(res?.via_cloud);
+        }
+      } catch (e) {
+        // Per-line failure: fall back to the original line and keep
+        // going. Surfacing the error mid-stream would lose all the
+        // already-translated lines, which is worse UX than a few
+        // untranslated ones the user can spot and retry.
+        translated[i] = line;
+        console.warn(`line ${i} translate failed`, e);
+      }
+      done += 1;
+      lineProgress = `${done} / ${total} 行を翻訳中…`;
+    }
+
+    resultText = translated.join('\n');
+    lastProvider = firstProvider;
+    lastViaCloud = firstViaCloud;
+    lastLatencyMs = Math.round(performance.now() - started);
+  }
+
   async function translate(): Promise<void> {
     if (translating) return;
     const text = inputText.trim();
@@ -160,26 +288,20 @@
       return;
     }
     translating = true;
+    lineProgress = null;
     error = null;
     const started = performance.now();
     try {
-      const res = await runTranslate({
-        text,
-        source_language: sourceLang,
-        target_language: targetLang,
-      });
-      // TaskOutput is a serde-tagged enum: a `Translate` task always
-      // produces `{ Text: "<translated>" }` (note: capitalised key —
-      // serde's default for unit-style variants). Tolerate the
-      // streaming variant too so a future Translate-as-stream path
-      // wouldn't silently break this page.
-      resultText = extractText(res);
-      lastProvider = res?.used_provider ?? null;
-      lastViaCloud = Boolean(res?.via_cloud);
-      lastLatencyMs =
-        typeof res?.latency_ms === 'number'
-          ? Math.round(res.latency_ms)
-          : Math.round(performance.now() - started);
+      if (lineByLineMode && inputText.includes('\n')) {
+        // Use the raw `inputText` (not the trimmed `text`) so a
+        // leading/trailing blank line that the user pasted on
+        // purpose survives. Whole-text mode trims because the LLM
+        // tends to translate framing whitespace into commentary;
+        // line mode preserves it deliberately.
+        await translateLineByLine(inputText, started);
+      } else {
+        await translateWholeText(text, started);
+      }
       // Auto-persist every successful translation. Earlier UX had an
       // explicit "save" button next to the copy icon which users
       // mis-clicked (the two icons sit side-by-side). Auto-save
@@ -196,6 +318,7 @@
       lastLatencyMs = null;
     } finally {
       translating = false;
+      lineProgress = null;
     }
   }
 
@@ -295,10 +418,27 @@
     savePreferences();
     if (v && inputText.trim()) scheduleAutoTranslate();
   }
+
+  function onLineModeToggle(v: boolean): void {
+    lineByLineMode = v;
+    savePreferences();
+    if (autoTranslate && inputText.trim()) scheduleAutoTranslate();
+  }
 </script>
 
 <PageHeader title="テキスト翻訳" subtitle="貼り付けたテキストをそのまま翻訳">
   {#snippet actions()}
+    <label
+      class="auto-toggle"
+      title={'改行ごとに分割して 1 行ずつ翻訳。\nタイムスタンプ・ログ・記号のみの行は翻訳せず原文を保持。\nログやコード混じりの貼り付けで改行・インデントが崩れにくい。'}
+    >
+      <span class="auto-toggle-label">行ごと翻訳</span>
+      <Toggle
+        checked={lineByLineMode}
+        onChange={onLineModeToggle}
+        aria-label="行ごと翻訳"
+      />
+    </label>
     <label class="auto-toggle" title="入力停止 0.6 秒後に自動で翻訳">
       <span class="auto-toggle-label">自動翻訳</span>
       <Toggle
@@ -386,13 +526,18 @@
       <header class="pane-head">
         <Languages class="h-3.5 w-3.5" aria-hidden="true" />
         <span class="pane-head-title">翻訳</span>
-        {#if lastProvider}
+        {#if lineProgress}
+          <span class="line-progress mono small" aria-live="polite">
+            <Loader2 class="h-3 w-3 spin" aria-hidden="true" />
+            {lineProgress}
+          </span>
+        {:else if lastProvider}
           <Pill>
             {lastProvider}
             {#if lastViaCloud}<span class="cloud-flag">cloud</span>{/if}
           </Pill>
         {/if}
-        {#if lastLatencyMs !== null}
+        {#if !lineProgress && lastLatencyMs !== null}
           <span class="latency mono small muted">{lastLatencyMs} ms</span>
         {/if}
         <div style="flex: 1"></div>
@@ -415,7 +560,7 @@
         {#if translating && !resultText}
           <div class="result-loading">
             <Loader2 class="h-4 w-4 spin" aria-hidden="true" />
-            <span class="muted">翻訳中…</span>
+            <span class="muted">{lineProgress ?? '翻訳中…'}</span>
           </div>
         {:else if error}
           <div class="result-error">
@@ -605,6 +750,13 @@
   }
   .latency {
     font-size: 10.5px;
+  }
+  .line-progress {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    color: var(--accent-strong, var(--ink-1));
   }
   .cloud-flag {
     margin-left: 4px;
