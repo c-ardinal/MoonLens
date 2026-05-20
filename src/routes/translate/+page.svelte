@@ -58,7 +58,6 @@
   const MAX_CHARS = 5000;
   const STORAGE_KEY = 'moonlens.translate.langpair';
   const AUTO_STORAGE_KEY = 'moonlens.translate.autoTranslate';
-  const LINE_MODE_STORAGE_KEY = 'moonlens.translate.lineByLine';
   const DEBOUNCE_MS = 600;
 
   /** Lines matching these patterns are passed through verbatim in
@@ -84,19 +83,14 @@
   let lastViaCloud = $state(false);
   let lastLatencyMs = $state<number | null>(null);
   let autoTranslate = $state(false);
-  /** "Line-by-line, preserve structure" mode. When enabled the
-   *  Translate page splits the input by `\n`, translates each line
-   *  independently, and rejoins with `\n`. Lines matching
-   *  `LOG_LINE_RE` / `PUNCT_ONLY_RE` / blank lines are passed
-   *  through verbatim. Trades latency (1 IPC call per non-bypassed
-   *  line instead of 1 for the whole text) for structural
-   *  fidelity. The opt-in is opaque to the average user; the
-   *  toggle defaults off so the existing whole-text path stays
-   *  the cheap default. */
-  let lineByLineMode = $state(false);
   /** Progress text rendered while line-by-line mode is processing.
    *  `null` outside the per-line loop. */
   let lineProgress = $state<string | null>(null);
+  /** True when the last translation went through the per-line path.
+   *  Surfaced in the action-bar footer so the user can verify the
+   *  auto-detection matched their intent — useful for debugging the
+   *  heuristic without exposing a toggle. */
+  let usedLineMode = $state(false);
   let copyHint = $state(false);
   let copyErrorHint = $state<string | null>(null);
   let copyHintTimer: ReturnType<typeof setTimeout> | undefined;
@@ -125,8 +119,6 @@
         if (typeof parsed.target === 'string') targetLang = parsed.target;
       }
       autoTranslate = window.localStorage.getItem(AUTO_STORAGE_KEY) === '1';
-      lineByLineMode =
-        window.localStorage.getItem(LINE_MODE_STORAGE_KEY) === '1';
     } catch {
       // localStorage may be unavailable in restricted contexts — fall
       // back to settings defaults silently.
@@ -141,10 +133,6 @@
         JSON.stringify({ source: sourceLang, target: targetLang }),
       );
       window.localStorage.setItem(AUTO_STORAGE_KEY, autoTranslate ? '1' : '0');
-      window.localStorage.setItem(
-        LINE_MODE_STORAGE_KEY,
-        lineByLineMode ? '1' : '0',
-      );
     } catch {
       // ignore
     }
@@ -186,6 +174,35 @@
     if (LOG_LINE_RE.test(line)) return true;
     if (PUNCT_ONLY_RE.test(line)) return true;
     return false;
+  }
+
+  /** Decide whether the input deserves line-by-line treatment.
+   *  Mirrors what DeepL / Google Translate do implicitly — log
+   *  pastes get structure preserved, paragraph prose goes through
+   *  the cheaper whole-text path so the model retains paragraph
+   *  context for word choice.
+   *
+   *  Trigger conditions (any of these on a NON-blank line):
+   *  - Matches `LOG_LINE_RE` (ISO timestamp + log level)
+   *  - Matches `PUNCT_ONLY_RE` (closing braces, separators)
+   *  - Starts with a CLI flag (`--foo`)
+   *  - Starts with a shell prompt (`$ `, `> `)
+   *
+   *  Blank lines are NOT a structural signal — multi-paragraph
+   *  prose ships with them and should not get the per-line
+   *  treatment. Single-line input always uses whole-text. */
+  function hasStructuralLines(text: string): boolean {
+    const lines = text.split('\n');
+    if (lines.length < 2) return false;
+    return lines.some((line) => {
+      const trimmed = line.trim();
+      if (!trimmed) return false;
+      if (LOG_LINE_RE.test(line)) return true;
+      if (PUNCT_ONLY_RE.test(line)) return true;
+      if (/^\s*-{1,2}[a-zA-Z]/.test(line)) return true; // CLI flag
+      if (/^\s*[$>]\s/.test(line)) return true; // shell prompt
+      return false;
+    });
   }
 
   /** Split a line into `(leadingWs, content)` so we can preserve
@@ -289,10 +306,18 @@
     }
     translating = true;
     lineProgress = null;
+    usedLineMode = false;
     error = null;
     const started = performance.now();
     try {
-      if (lineByLineMode && inputText.includes('\n')) {
+      // Auto-pick the per-line path when the input has structural
+      // lines (logs, code, CLI usage). Plain prose — even multi-
+      // paragraph — stays on whole-text so the LLM keeps full
+      // context for natural translation. Mirrors how DeepL /
+      // Google Translate appear to handle it: no user toggle,
+      // structure preserved when it matters.
+      if (hasStructuralLines(inputText)) {
+        usedLineMode = true;
         // Use the raw `inputText` (not the trimmed `text`) so a
         // leading/trailing blank line that the user pasted on
         // purpose survives. Whole-text mode trims because the LLM
@@ -418,27 +443,10 @@
     savePreferences();
     if (v && inputText.trim()) scheduleAutoTranslate();
   }
-
-  function onLineModeToggle(v: boolean): void {
-    lineByLineMode = v;
-    savePreferences();
-    if (autoTranslate && inputText.trim()) scheduleAutoTranslate();
-  }
 </script>
 
 <PageHeader title="テキスト翻訳" subtitle="貼り付けたテキストをそのまま翻訳">
   {#snippet actions()}
-    <label
-      class="auto-toggle"
-      title={'改行ごとに分割して 1 行ずつ翻訳。\nタイムスタンプ・ログ・記号のみの行は翻訳せず原文を保持。\nログやコード混じりの貼り付けで改行・インデントが崩れにくい。'}
-    >
-      <span class="auto-toggle-label">行ごと翻訳</span>
-      <Toggle
-        checked={lineByLineMode}
-        onChange={onLineModeToggle}
-        aria-label="行ごと翻訳"
-      />
-    </label>
     <label class="auto-toggle" title="入力停止 0.6 秒後に自動で翻訳">
       <span class="auto-toggle-label">自動翻訳</span>
       <Toggle
@@ -582,6 +590,10 @@
     <div class="action-left">
       {#if copyErrorHint}
         <span class="action-msg error" aria-live="polite">{copyErrorHint}</span>
+      {:else if resultText && usedLineMode}
+        <span class="action-msg muted-msg" aria-live="polite">
+          構造を検知して 1 行ずつ翻訳しました · 履歴に自動保存
+        </span>
       {:else if resultText}
         <span class="action-msg muted-msg" aria-live="polite">
           履歴に自動保存されます
