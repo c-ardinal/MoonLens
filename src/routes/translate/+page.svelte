@@ -31,6 +31,7 @@
     runTranslate,
   } from '$lib/ipc';
   import { extractText } from '$lib/result';
+  import { translateLines } from '$lib/translate-line';
 
   /** Language pickers — kept short so the dropdown stays glanceable.
    *  Source allows `auto` (script detector on the backend decides per
@@ -60,18 +61,6 @@
   const AUTO_STORAGE_KEY = 'moonlens.translate.autoTranslate';
   const DEBOUNCE_MS = 600;
 
-  /** Lines matching these patterns are passed through verbatim in
-   *  line-by-line mode. They are essentially never translatable
-   *  prose; sending them to the LLM either returns the line
-   *  unchanged (best case) or hallucinates a translation of a
-   *  timestamp / log level (worst case). Conservative on purpose —
-   *  a false-positive (skipping a translatable line) is more
-   *  annoying than a false-negative (translating a code line). */
-  const LOG_LINE_RE =
-    /^\s*\d{4}-\d{2}-\d{2}T\S+\s+(INFO|WARN|ERROR|DEBUG|TRACE)\b/;
-  /** A line composed almost entirely of code punctuation
-   *  (`}`, `)`, `};`, etc.). Translation never helps. */
-  const PUNCT_ONLY_RE = /^[\s\}\)\]\(\[\{;,.]*$/;
 
   let sourceLang = $state('auto');
   let targetLang = $state('ja');
@@ -160,28 +149,6 @@
     }, DEBOUNCE_MS);
   }
 
-  /** Heuristic: should this single line bypass translation? `\n`
-   *  preservation is guaranteed by the line-by-line wrapper; this
-   *  predicate decides whether to also skip the IPC call entirely
-   *  for lines that are essentially non-translatable. */
-  function shouldBypassLine(line: string): boolean {
-    if (!line.trim()) return true;
-    if (LOG_LINE_RE.test(line)) return true;
-    if (PUNCT_ONLY_RE.test(line)) return true;
-    return false;
-  }
-
-  /** Split a line into `(leadingWs, content)` so we can preserve
-   *  per-line indentation when calling the LLM with only the
-   *  translatable portion. */
-  function splitLeadingWs(line: string): { leading: string; content: string } {
-    const m = line.match(/^(\s*)([\s\S]*)$/);
-    return {
-      leading: m ? m[1] : '',
-      content: m ? m[2] : line,
-    };
-  }
-
   async function translateWholeText(text: string, started: number): Promise<void> {
     const res = await runTranslate({
       text,
@@ -203,55 +170,33 @@
   }
 
   async function translateLineByLine(text: string, started: number): Promise<void> {
-    // Split on the literal `\n` (NOT `splitlines`-style) so the
-    // join below faithfully reproduces the original separator
-    // count — including a possible trailing empty entry from a
-    // final newline.
-    const lines = text.split('\n');
-    const translated: string[] = new Array(lines.length);
-    const total = lines.filter((l) => !shouldBypassLine(l)).length;
-    let done = 0;
-    let firstProvider: string | null = null;
-    let firstViaCloud = false;
-
-    for (let i = 0; i < lines.length; i += 1) {
-      const line = lines[i];
-      if (shouldBypassLine(line)) {
-        translated[i] = line;
-        continue;
-      }
-      const { leading, content } = splitLeadingWs(line);
-      try {
-        const res = await runTranslate({
-          text: content,
+    // Per-line translation logic lives in `$lib/translate-line`
+    // so the regex + bypass + indent-restoration behaviour can be
+    // unit-tested independently of Svelte + Tauri. The route
+    // layer's job is to wire that helper to the IPC + language
+    // pair state, and to surface progress through the local
+    // `lineProgress` reactive store.
+    const res = await translateLines(
+      text,
+      async (line) => {
+        const taskResult = await runTranslate({
+          text: line,
           source_language: sourceLang,
           target_language: targetLang,
         });
-        const out = extractText(res).replace(/\n+/g, ' ').trim();
-        // Re-prepend the original leading whitespace so per-line
-        // indent survives the round trip. The LLM's own leading
-        // whitespace (rare) is squashed by `.trim()` above so the
-        // final line never grows two indents.
-        translated[i] = `${leading}${out}`;
-        if (firstProvider === null) {
-          firstProvider = res?.used_provider ?? null;
-          firstViaCloud = Boolean(res?.via_cloud);
-        }
-      } catch (e) {
-        // Per-line failure: fall back to the original line and keep
-        // going. Surfacing the error mid-stream would lose all the
-        // already-translated lines, which is worse UX than a few
-        // untranslated ones the user can spot and retry.
-        translated[i] = line;
-        console.warn(`line ${i} translate failed`, e);
-      }
-      done += 1;
-      lineProgress = `${done} / ${total} 行を翻訳中…`;
-    }
-
-    resultText = translated.join('\n');
-    lastProvider = firstProvider;
-    lastViaCloud = firstViaCloud;
+        return {
+          text: extractText(taskResult).replace(/\n+/g, ' ').trim(),
+          provider: taskResult?.used_provider ?? null,
+          viaCloud: Boolean(taskResult?.via_cloud),
+        };
+      },
+      (done, total) => {
+        lineProgress = `${done} / ${total} 行を翻訳中…`;
+      },
+    );
+    resultText = res.output;
+    lastProvider = res.firstProvider;
+    lastViaCloud = res.firstViaCloud;
     lastLatencyMs = Math.round(performance.now() - started);
   }
 
