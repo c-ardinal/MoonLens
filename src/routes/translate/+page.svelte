@@ -86,11 +86,6 @@
   /** Progress text rendered while line-by-line mode is processing.
    *  `null` outside the per-line loop. */
   let lineProgress = $state<string | null>(null);
-  /** True when the last translation went through the per-line path.
-   *  Surfaced in the action-bar footer so the user can verify the
-   *  auto-detection matched their intent — useful for debugging the
-   *  heuristic without exposing a toggle. */
-  let usedLineMode = $state(false);
   let copyHint = $state(false);
   let copyErrorHint = $state<string | null>(null);
   let copyHintTimer: ReturnType<typeof setTimeout> | undefined;
@@ -174,35 +169,6 @@
     if (LOG_LINE_RE.test(line)) return true;
     if (PUNCT_ONLY_RE.test(line)) return true;
     return false;
-  }
-
-  /** Decide whether the input deserves line-by-line treatment.
-   *  Mirrors what DeepL / Google Translate do implicitly — log
-   *  pastes get structure preserved, paragraph prose goes through
-   *  the cheaper whole-text path so the model retains paragraph
-   *  context for word choice.
-   *
-   *  Trigger conditions (any of these on a NON-blank line):
-   *  - Matches `LOG_LINE_RE` (ISO timestamp + log level)
-   *  - Matches `PUNCT_ONLY_RE` (closing braces, separators)
-   *  - Starts with a CLI flag (`--foo`)
-   *  - Starts with a shell prompt (`$ `, `> `)
-   *
-   *  Blank lines are NOT a structural signal — multi-paragraph
-   *  prose ships with them and should not get the per-line
-   *  treatment. Single-line input always uses whole-text. */
-  function hasStructuralLines(text: string): boolean {
-    const lines = text.split('\n');
-    if (lines.length < 2) return false;
-    return lines.some((line) => {
-      const trimmed = line.trim();
-      if (!trimmed) return false;
-      if (LOG_LINE_RE.test(line)) return true;
-      if (PUNCT_ONLY_RE.test(line)) return true;
-      if (/^\s*-{1,2}[a-zA-Z]/.test(line)) return true; // CLI flag
-      if (/^\s*[$>]\s/.test(line)) return true; // shell prompt
-      return false;
-    });
   }
 
   /** Split a line into `(leadingWs, content)` so we can preserve
@@ -306,18 +272,16 @@
     }
     translating = true;
     lineProgress = null;
-    usedLineMode = false;
     error = null;
     const started = performance.now();
     try {
-      // Auto-pick the per-line path when the input has structural
-      // lines (logs, code, CLI usage). Plain prose — even multi-
-      // paragraph — stays on whole-text so the LLM keeps full
-      // context for natural translation. Mirrors how DeepL /
-      // Google Translate appear to handle it: no user toggle,
-      // structure preserved when it matters.
-      if (hasStructuralLines(inputText)) {
-        usedLineMode = true;
+      // If the input has newlines, translate each line independently
+      // and rejoin with `\n`. Modern prose is rarely hard-wrapped
+      // mid-sentence, so paragraph-per-line input keeps full LLM
+      // context per call while logs / code automatically come out
+      // with structure intact. Single-line input takes the whole-
+      // text path because the line split would be a no-op anyway.
+      if (inputText.includes('\n')) {
         // Use the raw `inputText` (not the trimmed `text`) so a
         // leading/trailing blank line that the user pasted on
         // purpose survives. Whole-text mode trims because the LLM
@@ -590,10 +554,6 @@
     <div class="action-left">
       {#if copyErrorHint}
         <span class="action-msg error" aria-live="polite">{copyErrorHint}</span>
-      {:else if resultText && usedLineMode}
-        <span class="action-msg muted-msg" aria-live="polite">
-          構造を検知して 1 行ずつ翻訳しました · 履歴に自動保存
-        </span>
       {:else if resultText}
         <span class="action-msg muted-msg" aria-live="polite">
           履歴に自動保存されます
