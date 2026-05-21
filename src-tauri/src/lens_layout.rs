@@ -99,7 +99,7 @@ impl LayoutConfig {
     /// glyph widths so words in a line connect but adjacent columns
     /// stay apart (Cv > Ch is the rule of thumb in modern revivals
     /// of RLSA).
-    pub fn from_line_height(w: u32, h: u32, median_line_height_px: f32) -> Self {
+    pub fn from_line_height(w: u32, _h: u32, median_line_height_px: f32) -> Self {
         let lh = median_line_height_px.max(4.0);
         let vertical = (lh * 1.5).round().clamp(8.0, 60.0) as u32;
         let horizontal = ((w as f32 * 0.02).round() as u32).clamp(8, 40);
@@ -533,6 +533,11 @@ mod tests {
         mask[2] = 1;
         mask[6] = 1;
         let out = dilate_horizontal(&mask, 10, 1, 5);
+        // `i` is used to address the absolute pixel position in the
+        // assert message ("pixel 4 should be bridged") so the index
+        // form stays — converting to an iterator would lose the
+        // human-readable failure message.
+        #[allow(clippy::needless_range_loop)]
         for i in 2..=6 {
             assert_eq!(out[i], 1, "pixel {i} should be bridged");
         }
@@ -545,6 +550,7 @@ mod tests {
         mask[2] = 1;
         mask[6] = 1;
         let out = dilate_vertical(&mask, 1, 10, 5);
+        #[allow(clippy::needless_range_loop)]
         for i in 2..=6 {
             assert_eq!(out[i], 1, "row {i} should be bridged");
         }

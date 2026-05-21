@@ -449,7 +449,13 @@ struct SampleResult {
     /// case the fixture is recorded with empty scores and skipped
     /// quality-wise. Caller renders it as "—" in the table.
     unsupported: bool,
+    // Raw measurements captured but not currently surfaced in the
+    // markdown report. Retained because future analysis passes
+    // (token-vs-latency correlation, total wall time aggregation)
+    // can read the fields without re-running the eval.
+    #[allow(dead_code)]
     output_tokens: u32,
+    #[allow(dead_code)]
     total_ms: u64,
     decode_tps: f64,
     output_text: String,
@@ -762,7 +768,7 @@ fn format_routing(d: &RoutingDecision) -> String {
     }
 }
 
-fn mean<'a, I, T>(iter: I) -> f64
+fn mean<I, T>(iter: I) -> f64
 where
     I: Iterator<Item = T>,
     T: AsF64,

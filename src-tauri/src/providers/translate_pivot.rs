@@ -28,7 +28,6 @@
 //! `translate_embedded_llm.rs` keeping the intermediate clean.
 
 use async_trait::async_trait;
-use std::sync::Arc;
 
 use super::translate_embedded_llm::{check_and_strip_stop_suffix, language_name};
 use super::{
@@ -274,7 +273,7 @@ impl Provider for PivotTranslator {
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::sync::Mutex;
+    use std::sync::{Arc, Mutex};
 
     /// Mock provider that records every input it was called with
     /// and replies with a canned `TaskOutput`. Used in pivot

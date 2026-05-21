@@ -18,6 +18,11 @@
 //!
 //! --pairs accepts a comma-separated subset; default is all 28.
 
+// See sibling `bench_all_tiers.rs` for the dead_code rationale —
+// bench data structures capture every metric for future analysis
+// even when the current report renders a subset.
+#![allow(dead_code)]
+
 use std::{collections::HashMap, fs, path::PathBuf, sync::Arc, time::Instant};
 
 use anyhow::{anyhow, Context, Result};
@@ -394,7 +399,7 @@ async fn main() -> Result<()> {
             .iter()
             .map(|(s, t)| (s.as_str(), t.as_str()))
             .collect(),
-        None => PAIRS.iter().copied().collect(),
+        None => PAIRS.to_vec(),
     };
     // Validate that every (src, tgt) has a known source fixture.
     for (s, _t) in &pairs {
@@ -527,6 +532,7 @@ async fn bench_one_pair(
                     text: text.clone(),
                     source_language: fixture.code.into(),
                     target_language: target_lang.into(),
+                    glossary: Vec::new(),
                 },
                 sink,
             )

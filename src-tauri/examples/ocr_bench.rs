@@ -313,7 +313,7 @@ impl MangaOcrRecognizer {
                 break;
             }
             tokens.push(best_id);
-            if tokens.len() >= REPEAT_CAP + 1 {
+            if tokens.len() > REPEAT_CAP {
                 let tail = &tokens[tokens.len() - REPEAT_CAP..];
                 if tail.iter().all(|t| *t == tail[0]) {
                     // Drop the offending repeated tail so it does not

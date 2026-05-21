@@ -3176,9 +3176,6 @@
     align-items: center;
     gap: 0.5rem;
   }
-  .hw-warning strong {
-    color: color-mix(in srgb, #ef4444 100%, var(--ink));
-  }
   .hw-warning-action {
     margin-left: auto;
     padding: 0.25rem 0.625rem;

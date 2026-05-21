@@ -148,6 +148,7 @@ async fn first_provider_succeeds_and_second_is_not_called() {
                 text: "x".into(),
                 source_language: "en".into(),
                 target_language: "ja".into(),
+                glossary: Vec::new(),
             },
         )
         .await
@@ -193,6 +194,7 @@ async fn timeout_falls_through_to_next_provider() {
                 text: "x".into(),
                 source_language: "en".into(),
                 target_language: "ja".into(),
+                glossary: Vec::new(),
             },
         )
         .await
@@ -241,6 +243,7 @@ async fn cloud_provider_is_skipped_when_allow_cloud_is_false() {
                 text: "x".into(),
                 source_language: "en".into(),
                 target_language: "ja".into(),
+                glossary: Vec::new(),
             },
         )
         .await
@@ -281,6 +284,7 @@ async fn provider_missing_from_map_is_skipped_with_a_reason() {
                 text: "x".into(),
                 source_language: "en".into(),
                 target_language: "ja".into(),
+                glossary: Vec::new(),
             },
         )
         .await

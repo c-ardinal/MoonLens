@@ -100,6 +100,7 @@ async fn lens_pipeline_on_english_fixture() {
                 text: line.text.clone(),
                 source_language: "auto".into(),
                 target_language: "ja".into(),
+                glossary: Vec::new(),
             })
             .await
             .unwrap_or_else(|e| panic!("translate line {i} failed: {e}"));

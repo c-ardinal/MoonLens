@@ -7,7 +7,7 @@
 //! hardware is injected, which lets the entire surface be tested
 //! against fakes.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use thiserror::Error;
@@ -410,7 +410,6 @@ where
             let part_progress: Option<ProgressCallback> = on_progress.clone().map(|cb| {
                 let cb = cb.clone();
                 let part_idx = idx;
-                let total_parts = total_parts;
                 std::sync::Arc::new(move |p: DownloadProgress| {
                     cb(DownloadProgress {
                         downloaded: prev_bytes + p.downloaded,
@@ -549,7 +548,6 @@ where
             let part_progress: Option<ProgressCallback> = on_progress.clone().map(|cb| {
                 let cb = cb.clone();
                 let part_idx = idx;
-                let total_parts = total_parts;
                 std::sync::Arc::new(move |p: DownloadProgress| {
                     cb(DownloadProgress {
                         downloaded: prev_bytes + p.downloaded,
@@ -1181,7 +1179,6 @@ mod tests {
     use crate::services::model_downloader::{scripted::ScriptedResponse, ScriptedDownloader};
     use crate::services::model_storage::InMemoryStorage;
     use crate::settings::SettingsStore;
-    use crate::storage::Storage;
 
     fn build_service(
         ram_gb: f64,
@@ -1517,7 +1514,7 @@ mod tests {
         assert_eq!(tier.recommended.id, "qwen3-0.6b-q4_k_m");
 
         // 3. User accepts the recommendation.
-        svc.set_tier(&tier.recommended.id).await.unwrap();
+        svc.set_tier(tier.recommended.id).await.unwrap();
 
         // 4. Download.
         let outcome = svc.download_current(false, None).await.unwrap();

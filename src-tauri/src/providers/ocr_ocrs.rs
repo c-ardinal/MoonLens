@@ -197,7 +197,7 @@ impl Provider for OcrsProvider {
                 let _ = infer_start;
                 Ok(line_texts
                     .into_iter()
-                    .zip(line_rects.into_iter())
+                    .zip(line_rects)
                     .filter_map(|(line_opt, word_rects)| {
                         let line = line_opt?;
                         let text = line.to_string();

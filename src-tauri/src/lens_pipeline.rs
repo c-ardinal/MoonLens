@@ -466,175 +466,6 @@ impl LensSink for RecordingSink {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::providers::OcrLine;
-
-    fn white_png(w: u32, h: u32) -> Vec<u8> {
-        let img = image::RgbImage::from_pixel(w, h, image::Rgb([255, 255, 255]));
-        let mut out = Vec::new();
-        image::DynamicImage::ImageRgb8(img)
-            .write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png)
-            .unwrap();
-        out
-    }
-
-    /// The structural invariant the whole refactor enforces: given
-    /// the same input + OCR + translator, the pipeline fires
-    /// exactly one `on_flow_start`, one `on_cards_ready`, one
-    /// translation event per card, and one `on_flow_done` — in
-    /// that order. Any future refactor that moves logic back into
-    /// a caller (and so changes what the sink observes) breaks
-    /// this test. That is the point: divergence becomes a failing
-    /// unit test, not a silent behaviour drift.
-    #[tokio::test]
-    async fn pipeline_fires_sink_callbacks_in_fixed_order() {
-        let png = white_png(200, 60);
-        let mut input = PreCapturedInput::new(CapturedFrame {
-            png,
-            width: 200,
-            height: 60,
-        });
-        let sink = RecordingSink::new();
-        let ocr = Arc::new(MockLensOcr {
-            lines: vec![OcrLine {
-                text: "Hello world".into(),
-                bbox: [20.0, 20.0, 140.0, 20.0],
-                confidence: 1.0,
-            }],
-        }) as Arc<dyn LensOcr>;
-        let translator = Arc::new(EchoLensTranslator) as Arc<dyn LensTranslator>;
-        let config = PipelineConfig::default();
-
-        run_lens_pipeline(
-            &mut input,
-            sink.clone() as Arc<dyn LensSink>,
-            ocr,
-            translator,
-            &config,
-            7,
-        )
-        .await
-        .expect("pipeline run succeeds");
-
-        let recorded = sink.snapshot();
-        assert!(recorded.flow_start_fired, "on_flow_start must fire");
-        assert_eq!(recorded.image_w, 200);
-        assert_eq!(recorded.image_h, 60);
-        assert_eq!(recorded.cards.len(), 1, "one OCR line → one card");
-        assert_eq!(recorded.flow_done_line_count, Some(1));
-        // Echo translator forwards input → input becomes the translation.
-        let pairs = sink.cards_with_translations();
-        assert_eq!(pairs.len(), 1);
-        assert_eq!(pairs[0].1, "Hello world");
-    }
-
-    /// Regression: an empty OCR result must still close the flow
-    /// (otherwise the UI hangs on its streaming placeholder).
-    #[tokio::test]
-    async fn pipeline_closes_flow_even_when_ocr_returns_nothing() {
-        let png = white_png(80, 40);
-        let mut input = PreCapturedInput::new(CapturedFrame {
-            png,
-            width: 80,
-            height: 40,
-        });
-        let sink = RecordingSink::new();
-        let ocr = Arc::new(MockLensOcr { lines: Vec::new() }) as Arc<dyn LensOcr>;
-        let translator = Arc::new(EchoLensTranslator) as Arc<dyn LensTranslator>;
-        let config = PipelineConfig::default();
-
-        run_lens_pipeline(
-            &mut input,
-            sink.clone() as Arc<dyn LensSink>,
-            ocr,
-            translator,
-            &config,
-            0,
-        )
-        .await
-        .unwrap();
-
-        let recorded = sink.snapshot();
-        assert!(recorded.flow_start_fired);
-        assert_eq!(recorded.cards.len(), 0);
-        assert_eq!(recorded.flow_done_line_count, Some(0));
-    }
-
-    /// Regression: the pipeline MUST call `on_cards_ready` BEFORE
-    /// emitting any `on_line_chunk`. The frontend depends on this
-    /// order to allocate card slots before chunk routing begins —
-    /// a divergence here would silently drop the first streaming
-    /// tokens of every translation.
-    #[tokio::test]
-    async fn pipeline_emits_cards_before_chunks() {
-        #[derive(Default)]
-        struct OrderingSink {
-            events: std::sync::Mutex<Vec<&'static str>>,
-        }
-        impl LensSink for OrderingSink {
-            fn on_flow_start(&self, _f: u64) {
-                self.events.lock().unwrap().push("flow_start");
-            }
-            fn on_cards_ready(&self, _f: u64, _w: u32, _h: u32, _cards: &[LensOcrLine]) {
-                self.events.lock().unwrap().push("cards_ready");
-            }
-            fn on_line_chunk(&self, _f: u64, _i: usize, _d: String, _done: bool) {
-                self.events.lock().unwrap().push("line_chunk");
-            }
-            fn on_flow_done(&self, _f: u64, _n: usize) {
-                self.events.lock().unwrap().push("flow_done");
-            }
-        }
-
-        let png = white_png(200, 60);
-        let mut input = PreCapturedInput::new(CapturedFrame {
-            png,
-            width: 200,
-            height: 60,
-        });
-        let sink: Arc<OrderingSink> = Arc::new(OrderingSink::default());
-        // Use bbox at 2× coordinate space because pipeline applies
-        // inv_scale=0.5 after the upscale preprocess — post-scale
-        // the bbox becomes (10..60)×(10..20), plenty of room for a
-        // card.
-        let ocr = Arc::new(MockLensOcr {
-            lines: vec![OcrLine {
-                text: "Hello world".into(),
-                bbox: [20.0, 20.0, 120.0, 40.0],
-                confidence: 1.0,
-            }],
-        }) as Arc<dyn LensOcr>;
-        let translator = Arc::new(EchoLensTranslator) as Arc<dyn LensTranslator>;
-        let config = PipelineConfig::default();
-
-        run_lens_pipeline(
-            &mut input,
-            sink.clone() as Arc<dyn LensSink>,
-            ocr,
-            translator,
-            &config,
-            1,
-        )
-        .await
-        .unwrap();
-
-        let events = sink.events.lock().unwrap().clone();
-        let cards_idx = events.iter().position(|e| *e == "cards_ready");
-        let first_chunk_idx = events.iter().position(|e| *e == "line_chunk");
-        assert!(cards_idx.is_some(), "cards_ready must fire, got {events:?}");
-        assert!(
-            first_chunk_idx.is_some(),
-            "line_chunk must fire, got {events:?}"
-        );
-        assert!(
-            cards_idx.unwrap() < first_chunk_idx.unwrap(),
-            "cards_ready must fire BEFORE line_chunk — got {events:?}"
-        );
-    }
-}
-
 /// Bridge any [`Provider`](crate::providers::Provider) with
 /// `Capability::Ocr` into a [`LensOcr`]. Useful when a single
 /// provider is the only OCR option and chain fall-through is not
@@ -806,5 +637,174 @@ impl LensTranslator for ChainBackedLensTranslator {
         self.pipeline
             .extract_glossary(lines, source_language, target_language)
             .await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::providers::OcrLine;
+
+    fn white_png(w: u32, h: u32) -> Vec<u8> {
+        let img = image::RgbImage::from_pixel(w, h, image::Rgb([255, 255, 255]));
+        let mut out = Vec::new();
+        image::DynamicImage::ImageRgb8(img)
+            .write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png)
+            .unwrap();
+        out
+    }
+
+    /// The structural invariant the whole refactor enforces: given
+    /// the same input + OCR + translator, the pipeline fires
+    /// exactly one `on_flow_start`, one `on_cards_ready`, one
+    /// translation event per card, and one `on_flow_done` — in
+    /// that order. Any future refactor that moves logic back into
+    /// a caller (and so changes what the sink observes) breaks
+    /// this test. That is the point: divergence becomes a failing
+    /// unit test, not a silent behaviour drift.
+    #[tokio::test]
+    async fn pipeline_fires_sink_callbacks_in_fixed_order() {
+        let png = white_png(200, 60);
+        let mut input = PreCapturedInput::new(CapturedFrame {
+            png,
+            width: 200,
+            height: 60,
+        });
+        let sink = RecordingSink::new();
+        let ocr = Arc::new(MockLensOcr {
+            lines: vec![OcrLine {
+                text: "Hello world".into(),
+                bbox: [20.0, 20.0, 140.0, 20.0],
+                confidence: 1.0,
+            }],
+        }) as Arc<dyn LensOcr>;
+        let translator = Arc::new(EchoLensTranslator) as Arc<dyn LensTranslator>;
+        let config = PipelineConfig::default();
+
+        run_lens_pipeline(
+            &mut input,
+            sink.clone() as Arc<dyn LensSink>,
+            ocr,
+            translator,
+            &config,
+            7,
+        )
+        .await
+        .expect("pipeline run succeeds");
+
+        let recorded = sink.snapshot();
+        assert!(recorded.flow_start_fired, "on_flow_start must fire");
+        assert_eq!(recorded.image_w, 200);
+        assert_eq!(recorded.image_h, 60);
+        assert_eq!(recorded.cards.len(), 1, "one OCR line → one card");
+        assert_eq!(recorded.flow_done_line_count, Some(1));
+        // Echo translator forwards input → input becomes the translation.
+        let pairs = sink.cards_with_translations();
+        assert_eq!(pairs.len(), 1);
+        assert_eq!(pairs[0].1, "Hello world");
+    }
+
+    /// Regression: an empty OCR result must still close the flow
+    /// (otherwise the UI hangs on its streaming placeholder).
+    #[tokio::test]
+    async fn pipeline_closes_flow_even_when_ocr_returns_nothing() {
+        let png = white_png(80, 40);
+        let mut input = PreCapturedInput::new(CapturedFrame {
+            png,
+            width: 80,
+            height: 40,
+        });
+        let sink = RecordingSink::new();
+        let ocr = Arc::new(MockLensOcr { lines: Vec::new() }) as Arc<dyn LensOcr>;
+        let translator = Arc::new(EchoLensTranslator) as Arc<dyn LensTranslator>;
+        let config = PipelineConfig::default();
+
+        run_lens_pipeline(
+            &mut input,
+            sink.clone() as Arc<dyn LensSink>,
+            ocr,
+            translator,
+            &config,
+            0,
+        )
+        .await
+        .unwrap();
+
+        let recorded = sink.snapshot();
+        assert!(recorded.flow_start_fired);
+        assert_eq!(recorded.cards.len(), 0);
+        assert_eq!(recorded.flow_done_line_count, Some(0));
+    }
+
+    /// Regression: the pipeline MUST call `on_cards_ready` BEFORE
+    /// emitting any `on_line_chunk`. The frontend depends on this
+    /// order to allocate card slots before chunk routing begins —
+    /// a divergence here would silently drop the first streaming
+    /// tokens of every translation.
+    #[tokio::test]
+    async fn pipeline_emits_cards_before_chunks() {
+        #[derive(Default)]
+        struct OrderingSink {
+            events: std::sync::Mutex<Vec<&'static str>>,
+        }
+        impl LensSink for OrderingSink {
+            fn on_flow_start(&self, _f: u64) {
+                self.events.lock().unwrap().push("flow_start");
+            }
+            fn on_cards_ready(&self, _f: u64, _w: u32, _h: u32, _cards: &[LensOcrLine]) {
+                self.events.lock().unwrap().push("cards_ready");
+            }
+            fn on_line_chunk(&self, _f: u64, _i: usize, _d: String, _done: bool) {
+                self.events.lock().unwrap().push("line_chunk");
+            }
+            fn on_flow_done(&self, _f: u64, _n: usize) {
+                self.events.lock().unwrap().push("flow_done");
+            }
+        }
+
+        let png = white_png(200, 60);
+        let mut input = PreCapturedInput::new(CapturedFrame {
+            png,
+            width: 200,
+            height: 60,
+        });
+        let sink: Arc<OrderingSink> = Arc::new(OrderingSink::default());
+        // Use bbox at 2× coordinate space because pipeline applies
+        // inv_scale=0.5 after the upscale preprocess — post-scale
+        // the bbox becomes (10..60)×(10..20), plenty of room for a
+        // card.
+        let ocr = Arc::new(MockLensOcr {
+            lines: vec![OcrLine {
+                text: "Hello world".into(),
+                bbox: [20.0, 20.0, 120.0, 40.0],
+                confidence: 1.0,
+            }],
+        }) as Arc<dyn LensOcr>;
+        let translator = Arc::new(EchoLensTranslator) as Arc<dyn LensTranslator>;
+        let config = PipelineConfig::default();
+
+        run_lens_pipeline(
+            &mut input,
+            sink.clone() as Arc<dyn LensSink>,
+            ocr,
+            translator,
+            &config,
+            1,
+        )
+        .await
+        .unwrap();
+
+        let events = sink.events.lock().unwrap().clone();
+        let cards_idx = events.iter().position(|e| *e == "cards_ready");
+        let first_chunk_idx = events.iter().position(|e| *e == "line_chunk");
+        assert!(cards_idx.is_some(), "cards_ready must fire, got {events:?}");
+        assert!(
+            first_chunk_idx.is_some(),
+            "line_chunk must fire, got {events:?}"
+        );
+        assert!(
+            cards_idx.unwrap() < first_chunk_idx.unwrap(),
+            "cards_ready must fire BEFORE line_chunk — got {events:?}"
+        );
     }
 }

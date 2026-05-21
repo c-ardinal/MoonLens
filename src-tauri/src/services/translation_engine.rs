@@ -17,7 +17,6 @@
 //!   exercised exactly the way Lens calls it.
 
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 
 use async_trait::async_trait;
 use thiserror::Error;
@@ -503,6 +502,7 @@ mod scripted {
 mod tests {
     use super::*;
     use crate::services::translation_engine::scripted::ScriptedReply;
+    use std::sync::Arc;
 
     #[tokio::test]
     async fn scripted_engine_returns_canned_reply() {
@@ -542,7 +542,7 @@ mod tests {
         assert_eq!(out, "abcdef");
         let log = chunks.lock().clone();
         assert_eq!(log.len(), 3);
-        assert_eq!(log.last().unwrap().1, true, "final chunk must mark done");
+        assert!(log.last().unwrap().1, "final chunk must mark done");
         let combined: String = log.iter().map(|(s, _)| s.as_str()).collect();
         assert_eq!(combined, "abcdef");
     }

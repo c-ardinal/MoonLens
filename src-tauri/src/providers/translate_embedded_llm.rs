@@ -881,7 +881,12 @@ fn build_sampler(temperature: f32, top_p: f32) -> llama_cpp_2::sampling::LlamaSa
 /// Worker thread main. Owns the model + context for the lifetime of
 /// the channel; exits cleanly when the request channel is closed
 /// (i.e. the last `EngineWorkerHandle` is dropped).
+//
+// 8 arguments cover the worker's bootstrap state (paths, samplers,
+// notifier, channels). Bundling them into a struct just moves the
+// noise to the call site since the worker is spawned exactly once.
 #[cfg(feature = "embedded-llm")]
+#[allow(clippy::too_many_arguments)]
 fn worker_main(
     provider_id: String,
     model_path: PathBuf,
@@ -895,7 +900,6 @@ fn worker_main(
     use llama_cpp_2::context::params::LlamaContextParams;
     use llama_cpp_2::model::params::LlamaModelParams;
     use llama_cpp_2::model::LlamaModel;
-    use llama_cpp_2::sampling::LlamaSampler;
     use std::num::NonZeroU32;
 
     if let Some(n) = load_notifier.as_ref() {
@@ -1322,7 +1326,7 @@ fn flush_streaming_final(
             if cand >= emit_cursor
                 && aggregated.is_char_boundary(cand)
                 && stop.is_char_boundary(take)
-                && &aggregated.as_bytes()[cand..] == &stop.as_bytes()[..take]
+                && aggregated.as_bytes()[cand..] == stop.as_bytes()[..take]
             {
                 if cand < safe_end {
                     safe_end = cand;
@@ -1476,7 +1480,23 @@ fn run_inference_in_context(
 ///      e. If all N accepted: emit one "free" bonus token from
 ///         target's last logits (it has been computed during the
 ///         verify batch and costs nothing extra).
+//
+// `unused_assignments` is allow-listed because the spec-decode
+// state machine reassigns `n_target_pos`, `n_drafter_pos`,
+// `mismatch_at` and `correction` at the end of each round to keep
+// them ready for the NEXT iteration — the final iteration leaves
+// the trailing write unread by definition (loop exits before the
+// next read). Rewriting to drop the trailing write would muddle
+// the invariant that "these vars track positions for the upcoming
+// round"; keeping them is correct, just looks dead to the linter.
 #[cfg(feature = "embedded-llm")]
+#[allow(unused_assignments)]
+// 9 arguments thread the target/drafter pair of (model, ctx,
+// sampler) plus the shared aggregation state. Refactoring into a
+// SpecState struct is plausible but would split the borrow scope
+// across many `&mut state.X` accesses; the current flat signature
+// keeps the borrow checker happy with one mutable slot per arg.
+#[allow(clippy::too_many_arguments)]
 fn run_inference_in_context_spec(
     model: &llama_cpp_2::model::LlamaModel,
     ctx: &mut llama_cpp_2::context::LlamaContext<'_>,
@@ -1554,7 +1574,7 @@ fn run_inference_in_context_spec(
     // `suffix_hit` outer flag is set when the cause is a stop
     // suffix — callers MUST NOT do a final flush in that case
     // because the held-back tail IS (or led up to) the suffix.
-    let mut emit = |aggregated: &mut String,
+    let emit = |aggregated: &mut String,
                     emit_cursor: &mut usize,
                     suffix_hit: &mut bool,
                     produced: &mut usize,
@@ -1679,6 +1699,14 @@ fn run_inference_in_context_spec(
         let mut n_accepted_this_round = 0usize;
         let mut mismatch_at: Option<usize> = None;
         let mut correction: Option<LlamaToken> = None;
+        // `i` is used as a position marker (e.g. `i == 0` branch,
+        // `mismatch_at = Some(i)`, KV rollback math `n_target_pos +
+        // k as i32`) AND for indexed reads against multiple parallel
+        // arrays. Converting to `enumerate()` would replace one
+        // `drafts[i]` access with `draft` but leave the index-driven
+        // bookkeeping untouched — the warning isn't actually telling
+        // us anything actionable for this shape.
+        #[allow(clippy::needless_range_loop)]
         for i in 0..drafts.len() {
             // To verify drafts[i], we need target's prediction at
             // the position BEFORE consuming drafts[i]:
@@ -1911,7 +1939,7 @@ pub fn language_name(code: &str) -> String {
     // bucket. The router does similar normalisation for its
     // LangBucket; this helper deliberately mirrors it.
     let head = code
-        .split(|c: char| c == '-' || c == '_')
+        .split(['-', '_'])
         .next()
         .unwrap_or(code)
         .trim()
@@ -2364,7 +2392,7 @@ fn recommended_threads() -> i32 {
     let n = std::thread::available_parallelism()
         .map(|n| n.get())
         .unwrap_or(4);
-    let capped = n.min(8).max(1);
+    let capped = n.clamp(1, 8);
     i32::try_from(capped).unwrap_or(4)
 }
 

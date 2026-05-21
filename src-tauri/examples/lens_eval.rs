@@ -22,6 +22,14 @@
 //! size / weight metrics remain meaningful regardless; the rendered
 //! text is purely a visual aid for Latin sources.
 
+// This example carries helper functions (`run_paddle_detection`,
+// `run_ocrs_detection`, `bbox_iou_over_area`, `translate_single`) and
+// `source_text` capture fields that flip between active / inactive
+// across iterations of the pipeline experiment. Suppressing
+// `dead_code` keeps the helpers reachable without churning the file
+// each time the comparison axis changes.
+#![allow(dead_code)]
+
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -96,6 +104,7 @@ impl LensTranslator for ProviderLensAdapter {
                         source_language
                     },
                     target_language,
+                    glossary: Vec::new(),
                 },
                 chunk_sink,
             )
@@ -663,6 +672,7 @@ fn evaluate_one(
         target_language: TARGET_LANGUAGE.to_string(),
         max_concurrent_translate: 2,
         ocr_scale: 3,
+        glossary_min_lines: 5,
     };
     let mut pipeline_input = PreCapturedInput::new(CapturedFrame {
         png: bytes.clone(),
@@ -1183,6 +1193,7 @@ fn probe_translator(rt: &tokio::runtime::Runtime, t: &OllamaTranslator) -> bool 
                 text: "ok".into(),
                 source_language: "en".into(),
                 target_language: "ja".into(),
+                glossary: Vec::new(),
             }),
         )
         .await
@@ -1207,6 +1218,7 @@ fn translate_single(
         text: text.to_string(),
         source_language: String::new(),
         target_language: TARGET_LANGUAGE.to_string(),
+        glossary: Vec::new(),
     }));
     match out {
         Ok(TaskOutput::Text(s)) => Ok(s.trim().to_string()),

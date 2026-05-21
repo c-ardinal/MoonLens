@@ -247,17 +247,14 @@ pub struct LensFlowStart {
 /// the frontend can use the value directly for `text-align`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
+#[derive(Default)]
 pub enum TextAlign {
+    #[default]
     Left,
     Center,
     Right,
 }
 
-impl Default for TextAlign {
-    fn default() -> Self {
-        TextAlign::Left
-    }
-}
 
 /// Emitted once per flow, immediately after OCR completes. Gives the
 /// UI enough to draw placeholder cards at bbox positions before any
@@ -441,6 +438,11 @@ fn average_rgb(a: [u8; 3], b: [u8; 3]) -> [u8; 3] {
 /// we previously missed: diagonal window-chrome gradients and any
 /// oblique background where the edge-mean approach chose the wrong
 /// axis.
+// 8 colour-sample arguments span the rim. Folding them into a
+// struct would lose the per-argument doc strings the call sites
+// rely on; keeping the flat signature is the path of least
+// surprise for callers and tests.
+#[allow(clippy::too_many_arguments)]
 pub fn detect_rim_gradient(
     top: [u8; 3],
     bottom: [u8; 3],
@@ -1496,6 +1498,12 @@ pub fn compute_lens_cards(
 /// can stand in for the sub-group's source rect — if target-
 /// language text sits inside the block (same row, adjacent column),
 /// using the block rect would cause the card's inpaint to erase it.
+// Currently only exercised by the regression tests below; kept
+// `pub(crate)` so a future caller in the overlay / lens flow can
+// adopt it without re-deriving the same JA-row overlap logic. The
+// `#[cfg(test)]` gate keeps non-test builds clean of the unused-fn
+// warning until that adoption happens.
+#[cfg(test)]
 pub(crate) fn block_overlaps_skipped(
     block: [f32; 4],
     ocr_lines: &[OcrLine],
@@ -2063,7 +2071,7 @@ fn english_digram_density(text: &str) -> f32 {
         if win[0].is_ascii_alphabetic() && win[1].is_ascii_alphabetic() {
             total += 1;
             let pair = [win[0].to_ascii_lowercase(), win[1].to_ascii_lowercase()];
-            if COMMON_ENGLISH_DIGRAMS.iter().any(|p| *p == pair) {
+            if COMMON_ENGLISH_DIGRAMS.contains(&pair) {
                 matches += 1;
             }
         }
@@ -2083,7 +2091,7 @@ fn has_common_english_word(text: &str) -> bool {
             continue;
         }
         let lower = raw.to_ascii_lowercase();
-        if COMMON_ENGLISH_WORDS.iter().any(|w| *w == lower.as_str()) {
+        if COMMON_ENGLISH_WORDS.contains(&lower.as_str()) {
             return true;
         }
     }
@@ -2145,7 +2153,7 @@ pub fn looks_like_ocr_noise(text: &str) -> bool {
             .filter(|c| matches!(c.to_ascii_lowercase(), 'a' | 'e' | 'i' | 'o' | 'u' | 'y'))
             .count();
         let vowel_ratio = vowels as f32 / latin_letters.len() as f32;
-        let vowels_off = vowel_ratio < 0.20 || vowel_ratio > 0.70;
+        let vowels_off = !(0.20..=0.70).contains(&vowel_ratio);
         // Signal 2: English digram density is below the gibberish
         // threshold. Natural prose scores > 0.20; Japanese-source
         // gibberish regularly scores under 0.10.
@@ -3312,6 +3320,12 @@ async fn translate_paragraph_streaming(
 /// loop once per card; concurrency is bounded by the pool semaphore
 /// in the caller so the runtime never exceeds the configured
 /// parallel-translation budget.
+// Streaming-translate state needs all 8 inputs to wire the
+// per-line UI updates back through the right channels; folding
+// them into a `TranslateCtx` struct would help readability but
+// requires the caller to assemble the struct ahead of every call
+// — net-neutral for the only call site we have today.
+#[allow(clippy::too_many_arguments)]
 async fn translate_line_streaming(
     app: AppHandle,
     lens_id: String,
@@ -3548,7 +3562,7 @@ mod tests {
             let t = y as f32 / (h as f32 - 1.0);
             let v = (40.0 + t * 200.0) as u8;
             for x in 0..w {
-                if y >= 35 && y < 45 {
+                if (35..45).contains(&y) {
                     // "glyph" — far from gradient bg, should be
                     // filtered out by the text threshold.
                     img.put_pixel(x, y, Rgb([20, 20, 20]));
@@ -3886,7 +3900,6 @@ mod tests {
 
     #[test]
     fn detect_text_align_uses_block_for_single_line_card() {
-        use crate::lens_layout::{LayoutBlock, Polarity};
         // Single-line text near the right edge of a wider layout
         // block — the multi-line variance check has nothing to
         // work with, so detection falls back on the block bbox
@@ -4564,7 +4577,7 @@ mod tests {
         let mut img = RgbImage::new(20, 20);
         for y in 0..20 {
             for x in 0..20 {
-                let colour = if x >= 8 && x <= 12 {
+                let colour = if (8..=12).contains(&x) {
                     Rgb([230, 40, 40]) // red glyph
                 } else {
                     Rgb([250, 250, 250]) // white bg
@@ -4700,7 +4713,7 @@ mod tests {
         let inpaint_right = inpaint[0] + inpaint[2]; // 650
         let slack = card_right - inpaint_right;
         assert!(
-            slack >= 0.0 && slack <= 600.0 * 0.25 + 0.5,
+            (0.0..=600.0 * 0.25 + 0.5).contains(&slack),
             "left-aligned card slack {slack} exceeded 25% cap (source width 600px)"
         );
         // Left edge stays anchored at the source's left.

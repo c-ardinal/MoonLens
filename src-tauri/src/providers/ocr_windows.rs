@@ -128,7 +128,7 @@ pub fn run_ocr(image_png: &[u8], preferred: Option<&str>) -> Result<Vec<OcrLine>
         .map_err(|e| ProviderError::Other(format!("Lines: {e}")))?;
     let line_count = lines
         .Size()
-        .map_err(|e| ProviderError::Other(format!("Size: {e}")))? as u32;
+        .map_err(|e| ProviderError::Other(format!("Size: {e}")))?;
     for i in 0..line_count {
         let line = match lines.GetAt(i) {
             Ok(l) => l,
@@ -142,7 +142,7 @@ pub fn run_ocr(image_png: &[u8], preferred: Option<&str>) -> Result<Vec<OcrLine>
             Ok(w) => w,
             Err(_) => continue,
         };
-        let word_count = words.Size().unwrap_or(0) as u32;
+        let word_count = words.Size().unwrap_or(0);
         if word_count == 0 {
             continue;
         }
@@ -277,9 +277,9 @@ fn resolve_symbol_classes(words: &mut [(String, windows::Foundation::Rect, WordC
             }
         }
         if resolved.is_none() {
-            for j in (i + 1)..n {
-                if words[j].2 != WordClass::Symbol {
-                    resolved = Some(words[j].2);
+            for word in &words[(i + 1)..n] {
+                if word.2 != WordClass::Symbol {
+                    resolved = Some(word.2);
                     break;
                 }
             }

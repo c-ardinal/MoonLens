@@ -157,6 +157,13 @@ pub struct DrafterSpec {
     pub n_draft: u32,
 }
 
+// Referenced by `#[serde(default = "default_chat_template")]` on
+// `ModelTier::chat_template` via a string lookup, which the
+// compiler's dead-code analyser cannot see. The `#[allow]` opts out
+// of the resulting false positive; removing this function silently
+// breaks deserialisation of partial tier records (older snapshots
+// or user-edited TOMLs that omit `chat_template`).
+#[allow(dead_code)]
 fn default_chat_template() -> ChatTemplate {
     ChatTemplate::ChatMl
 }
@@ -548,7 +555,7 @@ pub fn tier_by_id(id: &str) -> Option<&'static ModelTier> {
 pub fn tier_by_coord(repo: &str, filename: &str) -> Option<&'static ModelTier> {
     TIERS
         .iter()
-        .find(|t| t.repo == repo && t.filenames.iter().any(|f| *f == filename))
+        .find(|t| t.repo == repo && t.filenames.contains(&filename))
 }
 
 /// Resolve the tier matching `repo` only — used by the legacy-config
@@ -1086,11 +1093,11 @@ mod tests {
             "explain chain must also be migrated"
         );
         assert!(
-            s.providers.configs.get("embedded.gemma").is_none(),
+            !s.providers.configs.contains_key("embedded.gemma"),
             "legacy configs entry must be removed"
         );
         assert!(
-            s.providers.configs.get("embedded.llm").is_some(),
+            s.providers.configs.contains_key("embedded.llm"),
             "new configs entry must exist after migration"
         );
     }

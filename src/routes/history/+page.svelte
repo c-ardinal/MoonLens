@@ -438,15 +438,6 @@
     padding-left: 30px;
     padding-right: 36px;
   }
-  .search-kbd {
-    position: absolute;
-    right: 10px;
-    top: 50%;
-    transform: translateY(-50%);
-    font-size: 10.5px;
-    color: var(--ink-3);
-  }
-
   .list-scroll {
     flex: 1;
     overflow: auto;

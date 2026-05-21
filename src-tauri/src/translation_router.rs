@@ -44,6 +44,7 @@ use crate::model_registry::{
 /// single dropdown in the settings UI.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum UserTier {
     /// Smallest footprint (0.6 GB RAM). EN↔JA only; multilingual
     /// translations degrade silently to the same JA-Compact model
@@ -51,6 +52,7 @@ pub enum UserTier {
     Compact,
     /// Default (4.2 GB RAM). JA bridge + Edge E2B. Recommended
     /// for typical office laptops.
+    #[default]
     Standard,
     /// Maximum quality (6.1 GB RAM). JA bridge + Edge+ E4B.
     /// Recommended for workstations with a dGPU.
@@ -80,15 +82,6 @@ impl UserTier {
     }
 }
 
-impl Default for UserTier {
-    fn default() -> Self {
-        // Standard matches `model_registry::DEFAULT_TIER_ID`'s
-        // class — keep both defaults aligned so a fresh install
-        // does not see the router and the legacy single-model
-        // surface disagree about "what is the default tier".
-        UserTier::Standard
-    }
-}
 
 /// Host hardware bucket the inference runtime will run on. Picked
 /// from `services::hardware_probe::HostCapabilities::hw_kind` at
@@ -152,7 +145,7 @@ fn classify(lang: &str) -> LangBucket {
     // existing `translate_embedded_llm` already normalises that,
     // and we mirror its acceptance set here.
     let head = lang
-        .split(|c: char| c == '-' || c == '_')
+        .split(['-', '_'])
         .next()
         .unwrap_or("")
         .trim()

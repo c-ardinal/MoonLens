@@ -3,6 +3,19 @@
 //! The binary crate delegates to `run()`; keeping the top-level logic in a
 //! library makes it easier to embed in tests or alternate frontends.
 
+// clippy 1.95+ flags any prose paragraph that contains `+ word` or `- word`
+// patterns as "doc list item without indentation" — but most of our doc
+// comments use `+` / `-` as plain punctuation inside parenthetical asides
+// (e.g. "(Svelte + Rust)", "n_threads + draft buffer"). Rewriting 30+
+// comments to avoid the linter's overeager pattern match adds no
+// information for a reader; suppressing the lint keeps the prose readable.
+#![allow(clippy::doc_lazy_continuation)]
+// Same family: clippy flags continuation lines that are indented to align
+// visually with the list item's content rather than to the strict markdown
+// 2-space continuation rule. The visual alignment is more readable in
+// source; rustdoc renders both shapes correctly.
+#![allow(clippy::doc_overindented_list_items)]
+
 pub mod app;
 pub mod audio;
 pub mod capture;

@@ -499,8 +499,11 @@ pub fn notify_failures(app: &AppHandle, report: &HotkeyRegistrationReport) {
 
 /// Test-only reset for the dedup cache. Kept private to the crate so
 /// integration tests can clear state between runs without exposing the
-/// mutex itself.
+/// mutex itself. Currently no test calls it; `#[allow(dead_code)]`
+/// keeps it available for future integration tests that need to
+/// reset state between runs without paying the warn-on-build cost.
 #[cfg(test)]
+#[allow(dead_code)]
 pub(crate) fn reset_failure_cache_for_test() {
     *LAST_FAILURE_REPORT.lock() = None;
 }

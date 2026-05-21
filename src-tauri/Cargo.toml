@@ -11,6 +11,28 @@ rust-version = "1.80"
 name = "moonlens_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+# Project-wide clippy posture. Applies to the lib + every example +
+# every integration test in this crate (the equivalent `#![allow]` in
+# `lib.rs` would NOT propagate to examples / tests, which compile as
+# separate crates that share this manifest).
+#
+# - `doc_lazy_continuation` and `doc_overindented_list_items` fire on
+#   plain prose paragraphs that incidentally contain `+ word` / `- word`
+#   shapes (the linter mistakes them for unindented list items). The
+#   doc comments render correctly in rustdoc; the warnings are noise.
+# - `too_many_arguments` triggers on a handful of legitimately complex
+#   functions (spec-decode bootstrap, lens streaming pipeline) where
+#   the per-argument doc comments would be lost in a struct refactor;
+#   silencing project-wide avoids 10 individual `#[allow]` attrs.
+# - `needless_range_loop` fires when an index variable IS used in the
+#   loop body (typically for `assert_eq!` failure messages or
+#   parallel-array indexing). The lint can't tell the difference.
+[lints.clippy]
+doc_lazy_continuation = "allow"
+doc_overindented_list_items = "allow"
+too_many_arguments = "allow"
+needless_range_loop = "allow"
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
@@ -205,6 +227,12 @@ embedded-llm = ["dep:llama-cpp-2"]
 # NVIDIA-only and needs the CUDA Toolkit installed at build time.
 embedded-llm-vulkan = ["embedded-llm", "llama-cpp-2/vulkan"]
 embedded-llm-cuda = ["embedded-llm", "llama-cpp-2/cuda"]
+# Metal backend is macOS-only and currently a placeholder so the
+# `cfg!(feature = "embedded-llm-metal")` checks in `hardware_probe.rs`
+# (and the user-facing docs in `pipeline.rs`) compile cleanly without
+# raising `unexpected_cfgs`. Wire to `llama-cpp-2/metal` once a Mac
+# build target lands.
+embedded-llm-metal = ["embedded-llm"]
 embedded-llm-mistralrs = ["dep:mistralrs"]
 
 [dev-dependencies]
