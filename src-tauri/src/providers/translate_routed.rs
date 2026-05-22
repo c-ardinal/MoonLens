@@ -108,7 +108,7 @@ impl RoutedTranslator {
                 tracing::error!("RoutedTranslator: tier `{tier_id}` not in registry, skipping",);
                 continue;
             };
-            let cfg = config_for_tier(tier);
+            let cfg = config_for_tier(tier, user_tier);
             let inner_id = format!("embedded.llm.routed:{tier_id}");
             let mut translator = EmbeddedLlmTranslator::new(&inner_id, &cfg);
             if let Some(dir) = app_data {
@@ -232,7 +232,25 @@ impl RoutedTranslator {
 /// for tier `tier`. Mirrors the shape `default.toml` produces for
 /// `[providers.configs."embedded.llm"]` minus the user-specific
 /// overrides — those don't apply to routing-managed models.
-fn config_for_tier(tier: &ModelTier) -> serde_json::Value {
+/// Build the JSON config block an `EmbeddedLlmTranslator` reads for
+/// `tier`. The `user_tier` argument picks per-tier sampling defaults
+/// — upper tiers run with lower temperature so the strict ordering
+/// invariant (Quality ≥ Standard ≥ Compact, eval-enforced) survives
+/// the per-sample variance that 0.4 / 0.95 sampling exhibits.
+///
+/// Rationale for the curve: the user-visible eval ran into cases
+/// where Quality scored worse than Standard on a specific fixture
+/// purely because temperature=0.4 produced one bad sample. Dropping
+/// the temperature for upper tiers tightens the distribution toward
+/// the model's mode — faithfulness over creativity — which is the
+/// right tradeoff when "upper tier MUST NOT lose to lower tier" is
+/// a hard contract.
+///
+/// Compact stays at 0.4 because llm-jp 980M needs the exploratory
+/// slack to find idiomatic phrasing; greedy sampling on the smallest
+/// tier produces wooden output the Phase 27 Lens eval already
+/// captured.
+fn config_for_tier(tier: &ModelTier, user_tier: UserTier) -> serde_json::Value {
     let mut obj = serde_json::Map::new();
     obj.insert("repo".into(), serde_json::Value::String(tier.repo.into()));
     obj.insert(
@@ -255,6 +273,33 @@ fn config_for_tier(tier: &ModelTier) -> serde_json::Value {
         "license".into(),
         serde_json::Value::String(tier.license.into()),
     );
+
+    // Per-UserTier sampling. Upper tiers tighten toward the model's
+    // mode for strict-ordering safety; lower tiers keep enough
+    // entropy to find idiomatic phrasings the model's mode wouldn't
+    // surface. The 0.95 top_p stays constant — clipping the nucleus
+    // is orthogonal to temperature and the existing baseline already
+    // works there.
+    // 2026-05-22: tightened further after a --samples 3 eval surfaced
+    // four persistent violations driven by llm-jp 3.1 1.8B's
+    // creativity on technical content (log timestamps, TOML keys,
+    // markdown code blocks). Compact uses llm-jp 3 980M which has
+    // less "translation-y" behaviour and faithfully echoes
+    // identifiers; Standard/Quality both go through the bigger 1.8B
+    // bridge and inherit its tendency to paraphrase. Dropping their
+    // temperature pulls the output back toward the model's mode,
+    // which on llm-jp 1.8B is closer to verbatim preservation.
+    let temperature = match user_tier {
+        UserTier::Compact => 0.4,
+        UserTier::Standard => 0.2,
+        UserTier::Quality => 0.1,
+    };
+    obj.insert(
+        "temperature".into(),
+        serde_json::Value::from(temperature as f64),
+    );
+    obj.insert("top_p".into(), serde_json::Value::from(0.95));
+
     serde_json::Value::Object(obj)
 }
 
@@ -365,7 +410,7 @@ mod tests {
     fn config_for_tier_picks_first_filename_as_primary() {
         // Single-part tier: no `filenames_remote_extra`.
         let tier = tier_by_id(STANDARD_JA_BRIDGE_TIER_ID).unwrap();
-        let cfg = config_for_tier(tier);
+        let cfg = config_for_tier(tier, UserTier::Standard);
         assert_eq!(cfg.get("repo").and_then(|v| v.as_str()), Some(tier.repo));
         assert_eq!(
             cfg.get("filename_remote").and_then(|v| v.as_str()),
@@ -384,12 +429,40 @@ mod tests {
         if split.filenames.len() < 2 {
             return;
         }
-        let cfg = config_for_tier(split);
+        let cfg = config_for_tier(split, UserTier::Quality);
         let extras = cfg
             .get("filenames_remote_extra")
             .and_then(|v| v.as_array())
             .expect("extras present for multi-part");
         assert_eq!(extras.len(), split.filenames.len() - 1);
+    }
+
+    #[test]
+    fn config_for_tier_uses_lower_temperature_for_upper_tiers() {
+        // Strict-ordering safety net: lower temperature → tighter
+        // distribution → less per-sample variance → less chance of
+        // Quality randomly losing to Standard on a given fixture.
+        let tier = tier_by_id(STANDARD_JA_BRIDGE_TIER_ID).unwrap();
+        let compact_temp = config_for_tier(tier, UserTier::Compact)
+            .get("temperature")
+            .and_then(|v| v.as_f64())
+            .unwrap();
+        let standard_temp = config_for_tier(tier, UserTier::Standard)
+            .get("temperature")
+            .and_then(|v| v.as_f64())
+            .unwrap();
+        let quality_temp = config_for_tier(tier, UserTier::Quality)
+            .get("temperature")
+            .and_then(|v| v.as_f64())
+            .unwrap();
+        assert!(
+            quality_temp < standard_temp,
+            "Quality temp {quality_temp} should be < Standard {standard_temp}"
+        );
+        assert!(
+            standard_temp < compact_temp,
+            "Standard temp {standard_temp} should be < Compact {compact_temp}"
+        );
     }
 
     #[test]

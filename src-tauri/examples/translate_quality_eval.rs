@@ -550,9 +550,12 @@ async fn main() -> Result<()> {
     }
 
     print_summary(&all_results);
+    println!();
+    let violations = detect_invariant_violations(&all_results);
+    print_invariant_violations(&violations);
 
     if let Some(path) = args.write_report.as_ref() {
-        let md = render_markdown(&all_results, &args, &fixtures);
+        let md = render_markdown(&all_results, &args, &fixtures, &violations);
         if let Some(parent) = path.parent() {
             if !parent.as_os_str().is_empty() {
                 fs::create_dir_all(parent).ok();
@@ -1030,6 +1033,171 @@ fn looks_like_version(tok: &str) -> bool {
     digit_groups >= 2
 }
 
+/// Tolerance for tier-ordering comparisons. Single-sample runs have
+/// real per-fixture variance from sampling temperature; a 5-point
+/// gap is large enough that "Quality is genuinely worse than
+/// Standard on this fixture" stands out from noise without flagging
+/// every 0.97 vs 0.98 micro-blip. Tune via --samples >1 + averaging
+/// if you need a finer signal.
+const INVARIANT_TOLERANCE: f64 = 0.05;
+
+#[derive(Debug, Clone)]
+struct InvariantViolation {
+    fixture_id: String,
+    metric: &'static str,
+    /// The tier that should be at least as good as `dominated_by`.
+    upper: UserTier,
+    upper_value: f64,
+    /// The lower tier whose score the upper failed to match.
+    lower: UserTier,
+    lower_value: f64,
+}
+
+/// Detect every case where a higher UserTier scores worse than a
+/// lower UserTier on the same fixture. The invariant is:
+///
+///   Quality ≥ Standard ≥ Compact   for every (fixture, metric)
+///
+/// Unsupported entries are skipped — if a lower tier doesn't support
+/// the fixture, "lower has no score to dominate the upper with" is
+/// trivially fine. The upper tier still must produce a usable
+/// translation when it can; we only compare when both sides have a
+/// supported score to compare.
+fn detect_invariant_violations(results: &[UserTierResult]) -> Vec<InvariantViolation> {
+    use std::collections::HashMap;
+
+    /// Mean-aggregated per-(tier, fixture) scores so the invariant
+    /// check is robust against single-sample variance. With
+    /// `--samples 1` this is just the lone sample; with `--samples N`
+    /// it averages out the noise that 0.2-0.4 temperature sampling
+    /// introduces. `UserTier` doesn't derive Hash so we key on its
+    /// string label.
+    #[derive(Default, Clone, Copy)]
+    struct AggSample {
+        ws_score: f64,
+        id_score: f64,
+        translated_rate: f64,
+        n: usize,
+    }
+    let mut agg: HashMap<(&'static str, String), AggSample> = HashMap::new();
+    for r in results {
+        for s in &r.samples {
+            if s.unsupported {
+                continue;
+            }
+            let entry = agg
+                .entry((user_tier_label(r.user_tier), s.fixture_id.clone()))
+                .or_default();
+            entry.ws_score += s.ws_score;
+            entry.id_score += s.id_score;
+            entry.translated_rate += if s.translated { 1.0 } else { 0.0 };
+            entry.n += 1;
+        }
+    }
+    for v in agg.values_mut() {
+        if v.n > 0 {
+            let n = v.n as f64;
+            v.ws_score /= n;
+            v.id_score /= n;
+            v.translated_rate /= n;
+        }
+    }
+
+    // Metrics whose "upper ≥ lower" ordering carries real signal.
+    //
+    // Intentionally NOT in this list: `length_ratio`. The eval data
+    // showed length_ratio bouncing 0.42 → 1.25 across tiers on the
+    // SAME fixture from sampling noise, plus there is no
+    // monotonic "shorter is better" relationship — a quality
+    // translation can legitimately be more concise OR more
+    // verbose than a worse one. Forcing tier ordering on length
+    // produces false positives that drown out real regressions.
+    let metrics: &[(&str, fn(&AggSample) -> f64)] = &[
+        ("ws_score", |s| s.ws_score),
+        ("id_score", |s| s.id_score),
+        ("translated", |s| s.translated_rate),
+    ];
+
+    let pairs: &[(UserTier, UserTier)] = &[
+        // (upper, lower) — upper must be ≥ lower
+        (UserTier::Quality, UserTier::Standard),
+        (UserTier::Quality, UserTier::Compact),
+        (UserTier::Standard, UserTier::Compact),
+    ];
+
+    let mut violations = Vec::new();
+    let fixture_ids: Vec<String> = results
+        .iter()
+        .flat_map(|r| r.samples.iter().map(|s| s.fixture_id.clone()))
+        .collect::<std::collections::HashSet<_>>()
+        .into_iter()
+        .collect();
+
+    for fix_id in &fixture_ids {
+        for &(upper, lower) in pairs {
+            let upper_key = user_tier_label(upper);
+            let lower_key = user_tier_label(lower);
+            let Some(u) = agg.get(&(upper_key, fix_id.clone())) else {
+                continue;
+            };
+            let Some(l) = agg.get(&(lower_key, fix_id.clone())) else {
+                continue;
+            };
+            for (label, extract) in metrics {
+                let uv = extract(u);
+                let lv = extract(l);
+                if uv + INVARIANT_TOLERANCE < lv {
+                    violations.push(InvariantViolation {
+                        fixture_id: fix_id.clone(),
+                        metric: label,
+                        upper,
+                        upper_value: uv,
+                        lower,
+                        lower_value: lv,
+                    });
+                }
+            }
+        }
+    }
+
+    violations.sort_by(|a, b| {
+        a.fixture_id
+            .cmp(&b.fixture_id)
+            .then_with(|| a.metric.cmp(b.metric))
+    });
+    violations
+}
+
+fn print_invariant_violations(violations: &[InvariantViolation]) {
+    if violations.is_empty() {
+        println!(
+            "== Invariant check: PASS ({}-tolerance) ==",
+            INVARIANT_TOLERANCE
+        );
+        println!("Quality ≥ Standard ≥ Compact holds for every (fixture, metric).");
+        return;
+    }
+    println!(
+        "== Invariant check: {} VIOLATIONS ({}-tolerance) ==",
+        violations.len(),
+        INVARIANT_TOLERANCE
+    );
+    println!(
+        "{:<32} {:<18} {:<20} {:<20}",
+        "fixture", "metric", "upper (worse)", "lower (better)"
+    );
+    println!("{}", "-".repeat(100));
+    for v in violations {
+        let upper_render = format!("{:?}={:.2}", v.upper, v.upper_value);
+        let lower_render = format!("{:?}={:.2}", v.lower, v.lower_value);
+        let fix_short: String = v.fixture_id.chars().take(32).collect();
+        println!(
+            "{:<32} {:<18} {:<20} {:<20}",
+            fix_short, v.metric, upper_render, lower_render,
+        );
+    }
+}
+
 fn print_summary(results: &[UserTierResult]) {
     if results.is_empty() {
         println!("No user tiers evaluated.");
@@ -1067,6 +1235,7 @@ fn render_markdown(
     results: &[UserTierResult],
     args: &CliArgs,
     fixtures: &[&Fixture],
+    violations: &[InvariantViolation],
 ) -> String {
     let mut out = String::new();
     out.push_str("# Translate Quality Eval (routed)\n\n");
@@ -1076,6 +1245,40 @@ fn render_markdown(
     out.push_str(&format!("**Samples per fixture**: {}\n\n", args.samples));
     out.push_str(&format!("**Hardware**: {:?}\n\n", args.hardware));
     out.push_str(&format!("**Fixtures evaluated**: {}\n\n", fixtures.len()));
+
+    // Invariant section comes first so a reader scanning the doc
+    // sees the strict-ordering verdict before the per-tier numbers.
+    if violations.is_empty() {
+        out.push_str(&format!(
+            "## Invariant check: ✅ PASS ({}-tolerance)\n\n\
+             Quality ≥ Standard ≥ Compact holds for every (fixture, metric).\n\n",
+            INVARIANT_TOLERANCE
+        ));
+    } else {
+        out.push_str(&format!(
+            "## Invariant check: ❌ {} VIOLATIONS ({}-tolerance)\n\n\
+             Upper tiers are scoring worse than lower tiers on these \
+             (fixture × metric) cells. Each row must be eliminated by a \
+             targeted fix (sampling tweak, routing change, output \
+             post-process, or model swap).\n\n",
+            violations.len(),
+            INVARIANT_TOLERANCE
+        ));
+        out.push_str("| Fixture | Metric | Upper (worse) | Lower (better) |\n");
+        out.push_str("|---|---|---|---|\n");
+        for v in violations {
+            out.push_str(&format!(
+                "| {} | {} | {:?}={:.2} | {:?}={:.2} |\n",
+                v.fixture_id,
+                v.metric,
+                v.upper,
+                v.upper_value,
+                v.lower,
+                v.lower_value,
+            ));
+        }
+        out.push('\n');
+    }
 
     out.push_str("## UserTier ranking (sorted by id_score, supported-only mean)\n\n");
     out.push_str(
