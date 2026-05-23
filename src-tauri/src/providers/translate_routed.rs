@@ -40,6 +40,8 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use super::placeholder::{mask, unmask, PlaceholderMap, StreamUnmask};
+use parking_lot::Mutex;
 use super::translate_embedded_llm::{EmbeddedLlmTranslator, EmbeddedLoadNotifier};
 use super::translate_pivot::PivotTranslator;
 use super::{
@@ -303,6 +305,52 @@ fn config_for_tier(tier: &ModelTier, user_tier: UserTier) -> serde_json::Value {
     serde_json::Value::Object(obj)
 }
 
+/// If `input` is a `Translate` task whose source text contains any
+/// protected tokens, return a rewritten copy with placeholders
+/// substituted in alongside the [`PlaceholderMap`] that records
+/// the originals. Otherwise returns `(None, empty map)` so the
+/// caller can skip the mask/unmask roundtrip on the fast path.
+fn maybe_mask_translate(
+    input: &TaskInput,
+) -> (Option<TaskInput>, PlaceholderMap) {
+    if let TaskInput::Translate {
+        text,
+        source_language,
+        target_language,
+        glossary,
+    } = input
+    {
+        let (rewritten, map) = mask(text);
+        if map.is_empty() {
+            return (None, map);
+        }
+        let new_input = TaskInput::Translate {
+            text: rewritten,
+            source_language: source_language.clone(),
+            target_language: target_language.clone(),
+            glossary: glossary.clone(),
+        };
+        return (Some(new_input), map);
+    }
+    (None, PlaceholderMap::default())
+}
+
+/// Restore placeholders inside a `TaskOutput`. Idempotent when the
+/// map is empty so callers can call unconditionally.
+fn unmask_output(out: TaskOutput, map: &PlaceholderMap) -> TaskOutput {
+    if map.is_empty() {
+        return out;
+    }
+    match out {
+        TaskOutput::Text(t) => TaskOutput::Text(unmask(&t, map)),
+        TaskOutput::TextChunk { delta, done } => TaskOutput::TextChunk {
+            delta: unmask(&delta, map),
+            done,
+        },
+        other => other,
+    }
+}
+
 #[async_trait]
 impl Provider for RoutedTranslator {
     fn id(&self) -> &str {
@@ -333,8 +381,23 @@ impl Provider for RoutedTranslator {
     }
 
     async fn run(&self, input: TaskInput) -> Result<TaskOutput, ProviderError> {
-        let handle = self.dispatch_handle(&input)?;
-        handle.run(input).await
+        // Placeholder pass: protect "must not be translated" tokens
+        // (timestamps, identifiers, module paths, URLs, ...) by
+        // replacing them with opaque sentinels BEFORE the model
+        // sees them, then substituting the originals back from our
+        // own map AFTER. The model literally cannot fail to
+        // preserve a token it never saw. See `providers::placeholder`
+        // for the regex catalogue and round-trip tests.
+        //
+        // Non-Translate inputs pass through unchanged — Explain /
+        // Summarize don't have the same identifier-preservation
+        // contract and would lose useful prompt context if we
+        // pre-rewrote them.
+        let (rewired, map) = maybe_mask_translate(&input);
+        let dispatched_input = rewired.unwrap_or(input);
+        let handle = self.dispatch_handle(&dispatched_input)?;
+        let out = handle.run(dispatched_input).await?;
+        Ok(unmask_output(out, &map))
     }
 
     async fn run_streaming(
@@ -342,8 +405,30 @@ impl Provider for RoutedTranslator {
         input: TaskInput,
         sink: StreamingChunkSink,
     ) -> Result<TaskOutput, ProviderError> {
-        let handle = self.dispatch_handle(&input)?;
-        handle.run_streaming(input, sink).await
+        let (rewired, map) = maybe_mask_translate(&input);
+        let dispatched_input = rewired.unwrap_or(input);
+        // Streaming sink: wrap the caller's sink with a stateful
+        // placeholder restorer. A placeholder like `__MLENS_T_3__`
+        // can split across token boundaries, so we hold back the
+        // trailing bytes of the buffer until either (a) the next
+        // chunk completes a placeholder match or (b) the inner
+        // provider signals `done=true`. See
+        // `placeholder::StreamUnmask`.
+        let wrapped_sink: StreamingChunkSink = if map.is_empty() {
+            sink
+        } else {
+            let inner = sink.clone();
+            let state = Arc::new(Mutex::new(StreamUnmask::new(map.clone())));
+            Arc::new(move |delta: String, done: bool| {
+                let restored = state.lock().process(&delta, done);
+                if !restored.is_empty() || done {
+                    inner(restored, done);
+                }
+            })
+        };
+        let handle = self.dispatch_handle(&dispatched_input)?;
+        let out = handle.run_streaming(dispatched_input, wrapped_sink).await?;
+        Ok(unmask_output(out, &map))
     }
 
     async fn preload(&self) -> Result<(), ProviderError> {

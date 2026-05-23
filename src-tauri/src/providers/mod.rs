@@ -7,6 +7,7 @@
 
 pub mod asr_whisper;
 pub mod glossary;
+pub mod placeholder;
 pub mod ocr_ocrs;
 #[cfg(feature = "paddleocr-engine")]
 pub mod ocr_paddle;

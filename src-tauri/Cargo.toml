@@ -66,6 +66,11 @@ async-trait = "0.1"
 anyhow = "1"
 thiserror = "1"
 parking_lot = "0.12"
+# Used by `providers::placeholder` for the protected-token regex
+# pattern (timestamps, snake_case, module paths, ...). Already a
+# transitive dependency (via tracing-subscriber + others) so this
+# direct entry doesn't add to the compile cost.
+regex = "1"
 
 # serde / schema / config
 serde = { version = "1", features = ["derive"] }
