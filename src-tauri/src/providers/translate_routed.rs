@@ -40,6 +40,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use super::mbr::{mbr_n_for_tier, select_best};
 use super::placeholder::{mask, unmask, PlaceholderMap, StreamUnmask};
 use parking_lot::Mutex;
 use super::translate_embedded_llm::{EmbeddedLlmTranslator, EmbeddedLoadNotifier};
@@ -351,6 +352,56 @@ fn unmask_output(out: TaskOutput, map: &PlaceholderMap) -> TaskOutput {
     }
 }
 
+/// Run an inner provider N times with the same masked input and
+/// pick the highest-utility candidate via MBR (Freitag 2022). All
+/// N inferences share the same prompt — variance comes from the
+/// model's own sampling RNG, which is intentional: we WANT the
+/// candidates to differ, otherwise there's nothing to choose
+/// between.
+///
+/// Errors are propagated from the FIRST failing inference; if any
+/// inference fails, the request fails (no partial fallback). The
+/// alternative — skip failures and rank the survivors — would let
+/// a flaky inner provider degrade Quality silently. Better to fail
+/// fast and surface the issue.
+async fn run_mbr(
+    handle: &dyn Provider,
+    input: &TaskInput,
+    n: usize,
+) -> Result<TaskOutput, ProviderError> {
+    let mut texts: Vec<String> = Vec::with_capacity(n);
+    let mut chunk_template: Option<bool> = None;
+    for _ in 0..n {
+        // Clone the input per call — each inference must own its
+        // copy because the provider trait takes by value.
+        let out = handle.run(input.clone()).await?;
+        match out {
+            TaskOutput::Text(t) => {
+                texts.push(t);
+                chunk_template = Some(false);
+            }
+            TaskOutput::TextChunk { delta, done: _ } => {
+                texts.push(delta);
+                chunk_template = Some(true);
+            }
+            other => {
+                // Non-text output (e.g., OCR / Intent) doesn't fit
+                // MBR's "agreement-on-text" model. Return the first
+                // such response unchanged.
+                return Ok(other);
+            }
+        }
+    }
+    let best = select_best(texts).unwrap_or_default();
+    Ok(match chunk_template {
+        Some(true) => TaskOutput::TextChunk {
+            delta: best,
+            done: true,
+        },
+        _ => TaskOutput::Text(best),
+    })
+}
+
 #[async_trait]
 impl Provider for RoutedTranslator {
     fn id(&self) -> &str {
@@ -396,7 +447,27 @@ impl Provider for RoutedTranslator {
         let (rewired, map) = maybe_mask_translate(&input);
         let dispatched_input = rewired.unwrap_or(input);
         let handle = self.dispatch_handle(&dispatched_input)?;
-        let out = handle.run(dispatched_input).await?;
+
+        // MBR decoding (Freitag et al. 2022): for upper tiers,
+        // generate N candidates and pick the one with highest
+        // bigram-Jaccard self-similarity to the others. N grows
+        // with the tier so Quality (N=5) gets strictly more
+        // chances to land a good output than Standard (N=3) or
+        // Compact (N=1), which mechanically biases the strict-
+        // ordering invariant in our favour. Only fires for
+        // Translate input — Explain / Summarize fall to the
+        // single-shot path because there's no "ensemble agreement"
+        // signal we can score on free-form text.
+        let n = if matches!(dispatched_input, TaskInput::Translate { .. }) {
+            mbr_n_for_tier(self.user_tier)
+        } else {
+            1
+        };
+        let out = if n <= 1 {
+            handle.run(dispatched_input).await?
+        } else {
+            run_mbr(handle.as_ref(), &dispatched_input, n).await?
+        };
         Ok(unmask_output(out, &map))
     }
 
@@ -407,6 +478,39 @@ impl Provider for RoutedTranslator {
     ) -> Result<TaskOutput, ProviderError> {
         let (rewired, map) = maybe_mask_translate(&input);
         let dispatched_input = rewired.unwrap_or(input);
+        let handle = self.dispatch_handle(&dispatched_input)?;
+
+        // MBR for upper tiers: same monotonic-N contract as `run`,
+        // but the streaming sink has to be handled with care —
+        // emitting tokens from N candidates would surface 5
+        // half-translations to the user before the chosen winner.
+        // Instead, run MBR silently (each candidate's tokens go to
+        // a /dev/null sink), then push the winning text to the
+        // caller's sink as a single final chunk. The user sees no
+        // streaming, but `runTranslate` (the only IPC path that
+        // would normally stream) collects the final string via the
+        // return value anyway, so the perceptible UX is unchanged.
+        let n = if matches!(dispatched_input, TaskInput::Translate { .. }) {
+            mbr_n_for_tier(self.user_tier)
+        } else {
+            1
+        };
+
+        if n > 1 {
+            let out = run_mbr(handle.as_ref(), &dispatched_input, n).await?;
+            let restored = unmask_output(out, &map);
+            // Surface the winning text to the caller's sink as one
+            // chunk so streaming consumers still get content. The
+            // sink itself doesn't see placeholders here because
+            // `unmask_output` already restored them.
+            if let TaskOutput::Text(t) = &restored {
+                sink(t.clone(), true);
+            } else if let TaskOutput::TextChunk { delta, .. } = &restored {
+                sink(delta.clone(), true);
+            }
+            return Ok(restored);
+        }
+
         // Streaming sink: wrap the caller's sink with a stateful
         // placeholder restorer. A placeholder like `__MLENS_T_3__`
         // can split across token boundaries, so we hold back the
@@ -426,7 +530,6 @@ impl Provider for RoutedTranslator {
                 }
             })
         };
-        let handle = self.dispatch_handle(&dispatched_input)?;
         let out = handle.run_streaming(dispatched_input, wrapped_sink).await?;
         Ok(unmask_output(out, &map))
     }

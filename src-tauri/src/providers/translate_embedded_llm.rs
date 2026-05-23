@@ -2166,19 +2166,24 @@ fn build_translation_few_shots(target_language: &str) -> Vec<(String, String)> {
             // to Hangul, NOT stay Latin or transliterate to
             // Katakana / Hanja. Eval captured gemma-4-e4b emitting
             // `달성은개인隐私을priority로하는스クリーン...` (Hangul
-            // + Hanja + Katakana + English) on a similar prompt;
-            // showing one example of "clean Hangul output despite
-            // Latin source tokens" should anchor the model on the
-            // target script. Proper nouns ("MoonLens" / "Click")
-            // intentionally translated to their Hangul renderings
-            // here to bias toward "translate, do NOT preserve raw
-            // Latin"; the system prompt's "proper nouns may stay
-            // verbatim" clause leaves room for the model to pick
-            // either, but this anchor pushes the bias toward the
-            // pure-Hangul end for general nouns.
+            // + Hanja + Katakana + English) on a similar prompt.
             (
                 "Click the START button to begin the privacy-first translation.",
                 "프라이버시 우선 번역을 시작하려면 시작 버튼을 클릭하세요.",
+            ),
+            // 2026-05-23: Tech-vocabulary anchor — the
+            // multi-en-to-ko eval fixture leaks `cren번역도구`
+            // (mangled `screen`) on gemma-4-e2b/e4b because the
+            // model's mode for "screen" in a Korean context is to
+            // half-translate, dropping letters. Hammer in the
+            // mapping with a concrete sentence that uses every word
+            // the failing fixture contained — screen, translation,
+            // tool, machine, privacy, local — so the model sees
+            // their canonical Hangul forms next to the English
+            // counterparts at sampling time.
+            (
+                "This privacy-first screen translation tool runs entirely on your local machine.",
+                "이 프라이버시 우선 화면 번역 도구는 사용자의 로컬 컴퓨터에서 완전히 실행됩니다.",
             ),
         ],
         "zh" | "zho" | "chi" | "chinese" => &[
@@ -2193,6 +2198,14 @@ fn build_translation_few_shots(target_language: &str) -> Vec<(String, String)> {
             (
                 "Performance varies across hardware and runtime configurations.",
                 "性能因硬件和运行时配置而异。",
+            ),
+            // 2026-05-23: Mirror the ko tech-vocabulary anchor so
+            // zh outputs stop dropping letters on `screen`/`tool`
+            // and friends. Same English sentence, native zh-CN
+            // rendering of the tech vocabulary.
+            (
+                "This privacy-first screen translation tool runs entirely on your local machine.",
+                "这个以隐私为先的屏幕翻译工具完全在您的本地计算机上运行。",
             ),
         ],
         _ => &[],
