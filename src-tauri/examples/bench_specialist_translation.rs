@@ -54,9 +54,19 @@ struct Candidate {
 }
 
 const MODELS: &[Candidate] = &[
-    // Baseline — current Standard / Quality JA-bridge.
+    // Compact-tier baseline. The 980M JA-Compact is the smallest
+    // bridge we ship and the reference Hy-MT2 1.8B has to beat (on
+    // both speed AND quality) before we'd consider promoting it
+    // into Compact too.
     Candidate {
-        label: "llm-jp-3.1 1.8B (baseline)",
+        label: "llm-jp-3 980M (Compact baseline)",
+        gguf: "llm-jp-3-980m-instruct3-Q4_K_M.gguf",
+        temperature: 0.2,
+        top_p: 0.95,
+    },
+    // Standard-tier baseline (pre-2026-05-26 JA-bridge).
+    Candidate {
+        label: "llm-jp-3.1 1.8B (Standard baseline)",
         gguf: "llm-jp-3.1-1.8b-instruct4-Q4_K_M.gguf",
         temperature: 0.2,
         top_p: 0.95,
@@ -86,6 +96,17 @@ const MODELS: &[Candidate] = &[
         temperature: 0.7,
         top_p: 1.0,
     },
+    // 2026-05-26 investigation outcome: Tencent also ships
+    // `Hy-MT2-1.8B-2Bit.gguf` (601 MB) and `Hy-MT2-1.8B-1.25Bit.gguf`
+    // (462 MB) that would have matched the Compact bridge's
+    // disk footprint, but both use AngelSlim's custom GGML
+    // type 42 which is OUT OF RANGE in upstream llama.cpp
+    // (`GGML_TYPE_COUNT = 42`, valid range `[0, 42)`). Even
+    // llama-cpp-2 0.1.147 master fails to load them with
+    // `invalid ggml type 42`. Supporting them would require
+    // forking llama.cpp and porting AngelSlim's kernels — out
+    // of scope. Recorded here so future runs don't re-explore
+    // a dead end.
 ];
 
 /// Identical fixture set to `translate_quality_eval` so the
