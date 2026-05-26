@@ -83,6 +83,9 @@ impl PlaceholderMap {
 /// - ISO 8601 datetime (`2026-05-18T00:51:11.674022Z`)
 /// - ISO date alone (`2026-05-18`)
 /// - URL (`https://example.com/...`)
+/// - HTML tag (`<p class="intro">`, `</strong>`, `<br/>`)
+/// - JSON / TOML string literal (`"task"`, `"embedded.llm"`,
+///   `"こんにちは、世界。"`) — see rationale below
 /// - Module path with `::` (`moonlens_lib::pipeline`)
 /// - Hex literal (`0xDEADBEEF`)
 /// - Version string (`1.2.3`, `2.4.1-rc.1`)
@@ -90,6 +93,30 @@ impl PlaceholderMap {
 /// - Key=value (`n_threads=6`)
 /// - Snake_case identifier (`embedded_llm_perf`)
 /// - Log level (uppercase only: `INFO` / `WARN` / `ERROR` / `DEBUG` / `TRACE`)
+///
+/// HTML rationale (2026-05-26 routed eval): standard/quality JA
+/// bridge drops `<strong>` / `<p class="intro">` while translating
+/// the surrounding prose, producing `<p>MoonLens, a translation
+/// tool that respects formatting.</p>`. Masking the tags lifts them
+/// out of the model's translatable surface entirely. The pattern
+/// matches open / close / self-closing forms with attributes; it
+/// deliberately rejects malformed `<` followed by a space (so
+/// inequalities like `if x < 5` stay untouched).
+///
+/// JSON rationale (2026-05-26 routed eval, Hy-MT2 adoption):
+/// Hy-MT2 on the structured-json fixture occasionally outputs ONLY
+/// the Japanese value already embedded inside the source JSON
+/// (`{"output": {"Text": "こんにちは、世界。"}, ...}` → just
+/// `こんにちは、世界。`). The model treats the embedded JA literal
+/// as "the translation" and drops the surrounding structure.
+/// Masking every double-quoted string lifts them all out of the
+/// translatable surface — the model sees `{__MLENS_T_3__:
+/// __MLENS_T_4__, ...}` and has no JA content to latch onto.
+/// Trade-off: prose translations that legitimately contain
+/// `"quoted phrases"` get their quoted portions preserved
+/// verbatim instead of translated. Acceptable for a developer-
+/// tool target audience where code/config/log content dominates
+/// over English fiction with dialogue quotes.
 fn protected_token_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| {
@@ -98,10 +125,12 @@ fn protected_token_re() -> &'static Regex {
         // tokens. Numeric prefixes use `(?:^|[^\w])` look-behind via
         // word-boundary because `regex` doesn't support
         // variable-width lookbehinds.
-        let pattern = r"(?x)
+        let pattern = r#"(?x)
             \b\d{4}-\d{2}-\d{2}T[\d:.]+(?:Z|[+-]\d{2}:?\d{2})?\b      # ISO datetime
             | \b\d{4}-\d{2}-\d{2}\b                                    # ISO date
             | https?://[^\s]+                                          # URL
+            | </?[A-Za-z][A-Za-z0-9]*(?:\s+[A-Za-z_:][A-Za-z0-9_:.\-]*(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+))?)*\s*/?>  # HTML tag
+            | "[^"\n]*"                                                # JSON/TOML/code double-quoted string literal
             | \b[A-Za-z_][A-Za-z0-9_]*(?:::[A-Za-z_][A-Za-z0-9_]*)+\b  # module path
             | \b0x[0-9a-fA-F]+\b                                       # hex literal
             | \b\d+\.\d+(?:\.\d+)?(?:-[A-Za-z0-9]+(?:\.[A-Za-z0-9]+)*)?\b # version
@@ -109,7 +138,7 @@ fn protected_token_re() -> &'static Regex {
             | \b[a-z_][a-z0-9_]*=[^\s\)\]\},]+                         # key=value
             | \b[a-z]+_[a-z][a-z0-9_]*\b                               # snake_case (lowercase only)
             | \b(?:INFO|WARN|ERROR|DEBUG|TRACE)\b                      # log level
-        ";
+        "#;
         Regex::new(pattern).expect("placeholder regex is well-formed")
     })
 }
@@ -448,6 +477,68 @@ mod tests {
         let (masked, map) = mask("Hello, world.");
         assert_eq!(masked, "Hello, world.");
         assert!(map.is_empty());
+    }
+
+    #[test]
+    fn mask_html_tags() {
+        // Open tag with attribute, close tag, plain prose between.
+        let (masked, map) = mask(
+            r#"<p class="intro">Welcome to <strong>MoonLens</strong>, the tool.</p>"#,
+        );
+        // Three tags: <p class="intro">, <strong>, </strong>, </p> = 4 total.
+        assert_eq!(map.len(), 4, "expected 4 HTML tags, got {}: {masked}", map.len());
+        // Prose text must remain visible to the model.
+        assert!(masked.contains("Welcome to"), "prose stripped: {masked}");
+        assert!(masked.contains("MoonLens"), "MoonLens stripped: {masked}");
+        // Restoring the placeholders gives back the original.
+        let restored = unmask(&masked, &map);
+        assert_eq!(
+            restored,
+            r#"<p class="intro">Welcome to <strong>MoonLens</strong>, the tool.</p>"#,
+        );
+    }
+
+    #[test]
+    fn mask_html_does_not_grab_inequality() {
+        // `x < 5` must NOT match the HTML regex (the `<` is followed
+        // by whitespace, not a tag name). Confirms the tag-name
+        // anchor in the pattern.
+        let (masked, map) = mask("if x < 5 && y > 3");
+        assert!(map.is_empty(), "false-positive HTML match: {masked}");
+        assert_eq!(masked, "if x < 5 && y > 3");
+    }
+
+    #[test]
+    fn mask_json_string_literals() {
+        // The 2026-05-26 routed eval surfaced Hy-MT2 outputting
+        // ONLY `こんにちは、世界。` (the embedded JA value) when
+        // asked to translate the structured-json fixture. Masking
+        // every double-quoted string takes the JA content out of
+        // the model's surface entirely.
+        let (masked, map) = mask(
+            r#"{"task": "Translate", "output": {"Text": "こんにちは、世界。"}, "n": 1760}"#,
+        );
+        // Six quoted strings: "task", "Translate", "output", "Text", "こんにちは、世界。", "n"
+        assert_eq!(map.len(), 6, "expected 6 string literals, got {}: {masked}", map.len());
+        // The JA content must be inside the map, not in the masked text.
+        assert!(
+            !masked.contains("こんにちは"),
+            "JA content leaked into masked text: {masked}"
+        );
+        // Round-trip preserves the original.
+        let restored = unmask(&masked, &map);
+        assert_eq!(
+            restored,
+            r#"{"task": "Translate", "output": {"Text": "こんにちは、世界。"}, "n": 1760}"#,
+        );
+    }
+
+    #[test]
+    fn mask_html_self_closing_and_void_tags() {
+        let (masked, map) = mask(r#"line 1<br/>line 2<hr />line 3<img src="x.png">"#);
+        assert_eq!(map.len(), 3, "expected 3 tags, got {}: {masked}", map.len());
+        let restored = unmask(&masked, &map);
+        assert_eq!(restored, r#"line 1<br/>line 2<hr />line 3<img src="x.png">"#);
     }
 
     #[test]
