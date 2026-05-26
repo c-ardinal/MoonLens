@@ -2,7 +2,7 @@
 
 ユーザーは Tier を 1 つ選ぶだけで、(source, target) ペアと CPU/GPU 環境に応じてツールが自動的にモデルと推論パスを選択する。本ドキュメントはその事前定義テーブル。
 
-**実装状態 (2026-05-14):** 全てプロダクション統合済み。
+**実装状態 (2026-05-26):** 全てプロダクション統合済み。
 - ルーティング決定: [`src-tauri/src/translation_router.rs`](../src-tauri/src/translation_router.rs) (`route()` + `UserTier` / `Hardware` / `RoutingDecision`)
 - Direct 経路 + Pivot 経路の wrapper: [`src-tauri/src/providers/translate_routed.rs`](../src-tauri/src/providers/translate_routed.rs), [`src-tauri/src/providers/translate_pivot.rs`](../src-tauri/src/providers/translate_pivot.rs)
 - Tier ID 安全化: [`src-tauri/src/model_registry.rs`](../src-tauri/src/model_registry.rs) の `COMPACT_JA_TIER_ID` / `STANDARD_JA_BRIDGE_TIER_ID` / `STANDARD_MULTI_TIER_ID` / `QUALITY_MULTI_TIER_ID` + `router_anchor_ids_are_registered` テスト
@@ -10,15 +10,26 @@
 - 設定 + IPC: `Providers::user_tier` フィールド + `get_user_tier` / `set_user_tier` / `preview_routing` / `routed_model_status` / `download_routed_model` IPC
 - UI: `src/routes/settings/+page.svelte` の「翻訳ティア」ピッカー + per-model 状態表示 + Onboarding 統合
 
-裏付けデータ: `docs/benchmarks/2026-05-12-phase27-multilang-quality-review.md` (直接), `2026-05-12-phase27-pivot-quality-review.md` (Pivot v4 EOS 修正後)。
+裏付けデータ:
+- `docs/benchmarks/2026-05-12-phase27-multilang-quality-review.md` (直接), `2026-05-12-phase27-pivot-quality-review.md` (Pivot v4 EOS 修正後) — Edge / Edge+ 多言語 safety rate のソース。
+- `docs/benchmarks/2026-05-26-hymt2-template-fix.md` — Hy-MT2 1.8B vs llm-jp-3.1 1.8B のスタンドアロン比較 (ws +5 / id +9 で Hy-MT2 勝利)。
+- `docs/benchmarks/2026-05-26-log-variance-samples10.md` — RoutedTranslator 経由の最終検証で **invariant PASS** (Quality ≥ Standard ≥ Compact for every fixture × metric)。
+
+**2026-05-26 アップデート:** JA-bridge を llm-jp-3.1 1.8B から **Tencent Hy-MT2 1.8B** に置き換え。あわせて以下の品質改善:
+- placeholder catalog に HTML タグ + JSON/TOML 文字列リテラルを追加 — Standard/Quality が `<strong>` や JSON 内 JA 値を訳出時に落とす failure mode を NMT tag-transfer で機械的に保護。
+- system_prompt に "N source newlines → N output newlines" directive 明示 — 複数行ログを単一行に潰す regression を回避。
+- chat-template prefix scrubber — Hy-MT2 GGUF が `<|im_end|>` を byte-level に分解する問題で `<|im_end(){` 等の崩れ変種が漏れる現象を、prefix-anywhere 検出で除去。
+- MBR scoring を source-newline-aware 化 (`select_best_with_source`, weight=0.85) — Quality MBR-N=5 が "5/5 candidates collapse" consensus に lock-in する failure mode を、構造保持候補にスコアブースト/構造破壊候補に減点で破る。
 
 ## ユーザー Tier 定義
 
 | Tier | 使用モデル | 合計 RAM | 主用途 | 多言語 |
 |---|---|---:|---|:---:|
 | **Compact** (軽量) | JA-Compact (llm-jp 3 980M) のみ | **0.6 GB** | EN↔JA 専用、低スペック PC | ❌ |
-| **Standard** (標準) | JA-Std+ (llm-jp 3.1 1.8B) + Edge (Gemma 4 E2B) | **4.2 GB** | EN↔JA 高品質 + 多言語 (Pivot) | ✅ |
+| **Standard** (標準) | JA-Std+ (Hy-MT2 1.8B) + Edge (Gemma 4 E2B) | **4.2 GB** | EN↔JA 高品質 + 多言語 (Pivot) | ✅ |
 | **Quality** (高品質) | JA-Std+ + Edge+ (Gemma 4 E4B) | **6.1 GB** | EN↔JA 高品質 + 最高多言語 (Pivot) | ✅✅ |
+
+> **JA-Std+ について**: 2026-05-26 以降 `tencent/Hy-MT2-1.8B-GGUF` (Q4_K_M, 1133 MB, ChatML, Tencent License) を使用。33 言語の翻訳に対応する Tencent Hunyuan の翻訳特化モデル。Standard と Quality が同一の JA-bridge を共有する設計は変更なし。
 
 ### Tier 推奨ガイド
 
@@ -115,77 +126,41 @@ Compact では多言語をサポートしないことを UI で明示。
 
 (Phase 27 直接ベンチで Edge E2B/E4B が ja↔X で 93%/96%、Pivot 化で 2-3 pp 改善見込み)
 
-## 実装ヘッドラインの定数化案
+### RoutedTranslator 経由の strict-ordering 検証 (2026-05-26)
 
-```rust
-// src/translation_router.rs
-pub enum UserTier { Compact, Standard, Quality }
-pub enum Hardware { Cpu, Gpu }
-pub enum RoutingDecision {
-    Direct { tier_id: &'static str },
-    Pivot { stage1_tier: &'static str, stage2_tier: &'static str },
-    Unsupported,
-}
+`translate_quality_eval` (21 fixture × 3 UserTier × N サンプル) を Hy-MT2 採用 + 各種改善 (HTML/JSON mask, newline directive, source-aware MBR) 後に再走した結果:
 
-pub fn route(
-    user_tier: UserTier,
-    hw: Hardware,
-    src: &str,
-    tgt: &str,
-) -> RoutingDecision {
-    use UserTier::*;
-    use Hardware::*;
-    let is_ja = |s: &str| s.eq_ignore_ascii_case("ja") || s.eq_ignore_ascii_case("japanese");
-    let is_en = |s: &str| s.eq_ignore_ascii_case("en") || s.eq_ignore_ascii_case("english");
+| UserTier | mean ws_score | mean id_score | 備考 |
+|---|---:|---:|---|
+| Quality | **0.93** | **0.95** | top (両 metric) |
+| Standard | 0.92 | 0.93 | |
+| Compact | 0.93 | 0.91 | id は最下位だが invariant OK |
 
-    match (user_tier, is_ja(src), is_ja(tgt), is_en(src), is_en(tgt)) {
-        // en↔ja 系は全 Tier 共通: JA bridge を直接使用
-        (Compact, true, false, _, true) | (Compact, false, true, true, _) =>
-            RoutingDecision::Direct { tier_id: "llm-jp-3-980m-instruct3-q4_k_m" },
-        (Standard | Quality, true, false, _, true) | (Standard | Quality, false, true, true, _) =>
-            RoutingDecision::Direct { tier_id: "llm-jp-3.1-1.8b-instruct4-q4_k_m" },
+`--samples 3` では log-rust-tracing-multi で sample variance による 2 件の超過違反が発生したが、`--samples 10` で log fixture だけ単独検証した結果 **invariant 完全 PASS**:
 
-        // Compact: ja↔X (X != en) は直接の劣化版を使用
-        (Compact, _, _, _, _) =>
-            RoutingDecision::Direct { tier_id: "llm-jp-3-980m-instruct3-q4_k_m" },
-
-        // Standard/Quality 多言語の Pivot 経路
-        (tier, true, false, _, _) =>  // ja → X (X != en)
-            match (tier, hw) {
-                (Standard, Cpu) => RoutingDecision::Direct { tier_id: "gemma-4-e2b-it-q4_k_m" },
-                (Standard, Gpu) => RoutingDecision::Pivot {
-                    stage1_tier: "llm-jp-3.1-1.8b-instruct4-q4_k_m",
-                    stage2_tier: "gemma-4-e2b-it-q4_k_m",
-                },
-                (Quality, Cpu) => RoutingDecision::Direct { tier_id: "gemma-4-e4b-it-q4_k_m" },
-                (Quality, Gpu) => RoutingDecision::Pivot {
-                    stage1_tier: "llm-jp-3.1-1.8b-instruct4-q4_k_m",
-                    stage2_tier: "gemma-4-e4b-it-q4_k_m",
-                },
-                _ => unreachable!(),
-            },
-        (tier, false, true, _, _) =>  // X → ja (X != en)
-            match (tier, hw) {
-                (Standard, Cpu) => RoutingDecision::Direct { tier_id: "gemma-4-e2b-it-q4_k_m" },
-                (Standard, Gpu) => RoutingDecision::Pivot {
-                    stage1_tier: "gemma-4-e2b-it-q4_k_m",
-                    stage2_tier: "llm-jp-3.1-1.8b-instruct4-q4_k_m",
-                },
-                (Quality, Cpu) => RoutingDecision::Direct { tier_id: "gemma-4-e4b-it-q4_k_m" },
-                (Quality, Gpu) => RoutingDecision::Pivot {
-                    stage1_tier: "gemma-4-e4b-it-q4_k_m",
-                    stage2_tier: "llm-jp-3.1-1.8b-instruct4-q4_k_m",
-                },
-                _ => unreachable!(),
-            },
-        // Non-ja 多言語 (en↔X や X↔Y) — Standard/Quality は単段 Edge / Edge+ 直接、Compact は未対応
-        (Standard, _, _, _, _) =>
-            RoutingDecision::Direct { tier_id: "gemma-4-e2b-it-q4_k_m" },
-        (Quality, _, _, _, _) =>
-            RoutingDecision::Direct { tier_id: "gemma-4-e4b-it-q4_k_m" },
-    }
-}
 ```
+Quality   ws=0.55  id=0.99
+Standard  ws=0.48  id=0.89
+Compact   ws=0.46  id=0.86
+
+== Invariant check: PASS (0.05-tolerance) ==
+Quality ≥ Standard ≥ Compact holds for every (fixture, metric).
+```
+
+つまり N=3 の違反は **モデル能力差ではなく単純な統計的揺らぎ** であることが確認された。プロダクションでは MBR-N=5 (Quality) / 3 (Standard) / 1 (Compact) が候補生成を行うため、ユーザー体感の出力品質は表上の mean 値より安定する。
+
+## 実装ヘッドライン
+
+ルーティング判断は [`src-tauri/src/translation_router.rs`](../src-tauri/src/translation_router.rs) の `route()` 関数で集約。Tier ID 文字列は [`src-tauri/src/model_registry.rs`](../src-tauri/src/model_registry.rs) の `pub const` で 4 つに正規化:
+
+| const | 現在のモデル | 用途 |
+|---|---|---|
+| `COMPACT_JA_TIER_ID` | `llm-jp-3-980m-instruct3-q4_k_m` | Compact tier の唯一のモデル |
+| `STANDARD_JA_BRIDGE_TIER_ID` | `hy-mt2-1.8b-q4_k_m` (2026-05-26〜) | Standard / Quality の JA-bridge (en↔ja Direct + Pivot stage1/stage2) |
+| `STANDARD_MULTI_TIER_ID` | `gemma-4-e2b-it-q4_k_m` | Standard tier の多言語パートナー |
+| `QUALITY_MULTI_TIER_ID` | `gemma-4-e4b-it-q4_k_m` | Quality tier の多言語パートナー |
+
+`router_anchor_ids_are_registered` テストが `tier_by_id(id).is_some()` を全 4 const で強制するため、`STANDARD_JA_BRIDGE_TIER_ID` を別モデルに切り替える際は `model_registry::TIERS` に対応する `ModelTier` を追加するだけで OK (router 側のコード変更不要)。実際 2026-05-26 の Hy-MT2 移行は const 1 行差し替え + tier 1 件追加で完結している。
 
 ## なぜこの設計か
 
