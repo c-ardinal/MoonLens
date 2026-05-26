@@ -29,7 +29,9 @@
 
 use async_trait::async_trait;
 
-use super::translate_embedded_llm::{check_and_strip_stop_suffix, language_name};
+use super::translate_embedded_llm::{
+    check_and_strip_stop_suffix, language_name, strip_chat_template_garbage,
+};
 use super::{
     Capability, Provider, ProviderError, ProviderHandle, StreamingChunkSink, TaskInput, TaskOutput,
 };
@@ -114,6 +116,13 @@ pub fn clean_pivot_intermediate(text: &str) -> String {
     while check_and_strip_stop_suffix(&mut s) {
         // Trim again — the suffix may have been preceded by
         // whitespace that becomes the new trailing run.
+        s = s.trim().to_string();
+    }
+    // Also catch malformed chat-template variants (Hy-MT2-style
+    // byte-level leaks like `<|im_end(){`). The suffix matcher
+    // above only catches well-formed terminators; the
+    // prefix-anywhere scrubber catches the rest.
+    if strip_chat_template_garbage(&mut s, 0) {
         s = s.trim().to_string();
     }
     s
@@ -557,11 +566,18 @@ mod tests {
         assert_eq!(clean_pivot_intermediate("text<end_of_turn>"), "text");
         assert_eq!(clean_pivot_intermediate("  text  "), "text");
         assert_eq!(clean_pivot_intermediate(""), "");
-        // Suffix in the middle is NOT stripped — only at the
-        // tail. Cleanup is intentionally conservative.
+        // Mid-string chat-template prefix is also stripped (along
+        // with anything after it). The 2026-05-26 evidence: when
+        // the marker leaks mid-stream from Hy-MT2-style byte-level
+        // tokenisation, what follows is reliably garbage (the
+        // model has fallen out of distribution); preserving it
+        // would re-introduce the very bug we are trying to fix.
+        // The trade-off is acceptable for natural-language
+        // translation, where literal `<|im_end|>` as content is
+        // vanishingly rare.
         assert_eq!(
             clean_pivot_intermediate("text<|im_end|>more"),
-            "text<|im_end|>more"
+            "text"
         );
     }
 }

@@ -304,6 +304,14 @@ impl EmbeddedLlmTranslator {
                  the meaning, tone, and register a native reader would expect, \
                  not the word order of the source. \
                  \
+                 Preserve the line structure exactly: if the source has N \
+                 newlines, the output MUST also have N newlines. Translate \
+                 each line independently — one source line maps to exactly \
+                 one output line, in the same order, with the same blank \
+                 lines between them. Never merge two source lines into one \
+                 output line, and never split one source line into two output \
+                 lines. \
+                 \
                  Preserve ALL whitespace exactly: newlines, leading indentation, \
                  and every run of spaces between tokens. Never collapse, insert, \
                  or remove whitespace. Example: `Z  INFO  embedded_llm_perf` \
@@ -1221,6 +1229,28 @@ pub const STOP_SUFFIXES: &[&str] = &[
     "<end_of_turn",
 ];
 
+/// Chat-template prefix markers — any substring starting with one
+/// of these is treated as a chat-end leak regardless of what
+/// follows. Use for the prefix-anywhere scrubber below.
+///
+/// Why prefix-only matching (Hy-MT2 1.8B evidence, 2026-05-26 bench):
+/// Tencent's Hy-MT2 registers `<|im_end|>` as a single special
+/// token in the upstream `tokenizer.json`, but the GGUF conversion
+/// drops the special-token flag so llama.cpp emits the marker as
+/// a sequence of plain UTF-8 tokens. The first few tokens reliably
+/// produce `<|im_end`, but the trailing `|>` is often corrupted to
+/// `(){`, `>>`, or other garbage because the model is in an
+/// out-of-distribution state after the prefix (it has learned the
+/// marker as a single token, not a five-token sequence). Matching
+/// by prefix catches all observed variants (`<|im_end|>`,
+/// `<|im_end(){`, `<|im_end>>`, ...).
+const STOP_PREFIXES: &[&str] = &[
+    "<|im_end",
+    "|im_end>",
+    "<end_of_turn",
+    "end_of_turn",
+];
+
 /// If `aggregated` ends with any [`STOP_SUFFIXES`] entry, strip it
 /// in place and return `true`. Caller breaks the generation loop.
 ///
@@ -1235,6 +1265,65 @@ pub fn check_and_strip_stop_suffix(aggregated: &mut String) -> bool {
         }
     }
     false
+}
+
+/// Find the leftmost occurrence of any chat-template prefix in
+/// `aggregated[start..]` and, if found, truncate `aggregated`
+/// from that point. Also trims trailing whitespace before the cut
+/// so stray newlines/spaces emitted by the model just before the
+/// chat marker do not survive in the output.
+///
+/// Returns `true` when a marker was found and `aggregated` was
+/// modified. Caller should break the generation loop on `true`.
+///
+/// `start` constrains the search window: callers pass the current
+/// streaming emit-cursor so the function never truncates content
+/// that was already flushed to the chunk sink. The chat marker
+/// always appears at the end of generation (the model produces it
+/// as its terminator), so the unflushed tail is the only place we
+/// expect to find it. Searching from `start` also prevents
+/// false-positive truncation when a translation legitimately
+/// contains the prefix string as content (vanishingly rare but
+/// possible for technical documentation).
+pub fn strip_chat_template_garbage(aggregated: &mut String, start: usize) -> bool {
+    let len = aggregated.len();
+    if start >= len {
+        return false;
+    }
+    // Guard against `start` landing inside a UTF-8 codepoint.
+    // Callers compute it from valid byte boundaries, but make this
+    // robust for misuse.
+    let safe_start = if aggregated.is_char_boundary(start) {
+        start
+    } else {
+        // Walk forward to the next char boundary; if none found,
+        // bail without modification.
+        let mut i = start;
+        while i < len && !aggregated.is_char_boundary(i) {
+            i += 1;
+        }
+        if i == len {
+            return false;
+        }
+        i
+    };
+    let haystack = &aggregated[safe_start..];
+    let mut earliest: Option<usize> = None;
+    for prefix in STOP_PREFIXES {
+        if let Some(pos) = haystack.find(prefix) {
+            earliest = Some(earliest.map_or(pos, |e| e.min(pos)));
+        }
+    }
+    let Some(rel) = earliest else {
+        return false;
+    };
+    let abs = safe_start + rel;
+    aggregated.truncate(abs);
+    // Strip trailing whitespace the model emitted as a separator
+    // just before the chat marker (commonly a stray newline).
+    let trimmed_end = aggregated.trim_end_matches(char::is_whitespace).len();
+    aggregated.truncate(trimmed_end);
+    true
 }
 
 /// Lookahead size for the streaming-emit deferral below. Must be
@@ -1412,7 +1501,15 @@ fn run_inference_in_context(
         // for `<|im_end|>` — see STOP_SUFFIXES comment). MUST run
         // before flushing the streaming sink so any bytes belonging
         // to the matched suffix never reach the consumer.
-        if check_and_strip_stop_suffix(&mut aggregated) {
+        //
+        // Two-step scrub: first the exact-suffix matcher (cheap,
+        // catches well-formed terminators in one shot), then the
+        // prefix-anywhere scrubber (catches Hy-MT2-style malformed
+        // variants where `<|im_end|>` is byte-level-tokenised into
+        // garbage tails like `<|im_end(){` or `<|im_end>>`).
+        if check_and_strip_stop_suffix(&mut aggregated)
+            || strip_chat_template_garbage(&mut aggregated, emit_cursor)
+        {
             stop_hit = true;
             break;
         }
@@ -1595,10 +1692,14 @@ fn run_inference_in_context_spec(
             aggregated.push_str(&piece);
         }
         // Soft stop: see autoregressive path for rationale
-        // (mmnga llm-jp 3.1 mirror omits `<|im_end|>` EOG tag).
-        // Run BEFORE the streaming flush so suffix bytes never
-        // reach the sink.
-        if check_and_strip_stop_suffix(aggregated) {
+        // (mmnga llm-jp 3.1 mirror omits `<|im_end|>` EOG tag,
+        // Hy-MT2 emits malformed `<|im_end(){`-style variants).
+        // Run BOTH the exact-suffix and prefix-anywhere matchers
+        // BEFORE the streaming flush so suffix bytes never reach
+        // the sink.
+        if check_and_strip_stop_suffix(aggregated)
+            || strip_chat_template_garbage(aggregated, *emit_cursor)
+        {
             *suffix_hit = true;
             return Ok(true);
         }
@@ -2819,6 +2920,63 @@ mod tests {
         let mut e = String::from("Hello, world名無し|im_end|>");
         assert!(check_and_strip_stop_suffix(&mut e));
         assert_eq!(e, "Hello, world名無し");
+    }
+
+    #[cfg(feature = "embedded-llm")]
+    #[test]
+    fn strip_chat_template_garbage_catches_hymt2_variants() {
+        // Hy-MT2 1.8B (Tencent, 2026-05-21) emits ChatML's
+        // `<|im_end|>` byte-level — the GGUF conversion drops the
+        // special-token flag — so the marker arrives as a sequence
+        // of plain tokens. The trailing `|>` is often corrupted to
+        // `(){`, `>>`, or other garbage because the model is in an
+        // out-of-distribution state after the `<|im_end` prefix.
+        // These variants are all observed in the 2026-05-26 bench.
+        let cases = &[
+            ("こんにちは。<|im_end|>", "こんにちは。"),
+            ("こんにちは。<|im_end(){", "こんにちは。"),
+            ("こんにちは。<|im_end>>", "こんにちは。"),
+            // Trailing newline before the marker — the model often
+            // emits a separator. Must be trimmed along with the
+            // marker so downstream ws_score doesn't see a phantom
+            // newline that the source didn't have.
+            ("こんにちは。\n<|im_end|>", "こんにちは。"),
+            ("こんにちは。  <|im_end(){", "こんにちは。"),
+        ];
+        for (input, expected) in cases {
+            let mut s = String::from(*input);
+            assert!(
+                strip_chat_template_garbage(&mut s, 0),
+                "expected scrub for {input}"
+            );
+            assert_eq!(s, *expected, "case: {input}");
+        }
+    }
+
+    #[cfg(feature = "embedded-llm")]
+    #[test]
+    fn strip_chat_template_garbage_respects_start_cursor() {
+        // The `start` argument simulates the streaming emit cursor:
+        // the function MUST NOT truncate content before `start`
+        // (already flushed to the sink and unreachable).
+        let mut s = String::from("flushed prefix <|im_end keeps garbage");
+        // start AFTER the marker → no scrub.
+        let after = s.find("keeps").unwrap();
+        assert!(!strip_chat_template_garbage(&mut s, after));
+        assert_eq!(s, "flushed prefix <|im_end keeps garbage");
+
+        // start at 0 → scrubs from `<|im_end`.
+        let mut s = String::from("kept text <|im_end gibberish");
+        assert!(strip_chat_template_garbage(&mut s, 0));
+        assert_eq!(s, "kept text");
+    }
+
+    #[cfg(feature = "embedded-llm")]
+    #[test]
+    fn strip_chat_template_garbage_noop_on_clean_output() {
+        let mut s = String::from("perfectly clean translation.");
+        assert!(!strip_chat_template_garbage(&mut s, 0));
+        assert_eq!(s, "perfectly clean translation.");
     }
 
     #[test]
