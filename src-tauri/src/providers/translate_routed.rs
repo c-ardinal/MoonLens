@@ -40,7 +40,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use super::mbr::{mbr_n_for_tier, select_best};
+use super::mbr::{mbr_n_for_tier, select_best_with_source};
 use super::placeholder::{mask, unmask, PlaceholderMap, StreamUnmask};
 use parking_lot::Mutex;
 use super::translate_embedded_llm::{EmbeddedLlmTranslator, EmbeddedLoadNotifier};
@@ -392,7 +392,18 @@ async fn run_mbr(
             }
         }
     }
-    let best = select_best(texts).unwrap_or_default();
+    // Extract the source text for newline-aware MBR scoring. Without
+    // the source, MBR's bigram-Jaccard utility can lock onto a
+    // consensus "all candidates collapse multi-line input" failure
+    // mode — Quality tier's MBR-N=5 made this acute on the
+    // log-rust-tracing-multi fixture (2026-05-26 routed eval).
+    // Passing the source lets MBR demote candidates whose newline
+    // count diverges from the source's.
+    let source_text = match input {
+        TaskInput::Translate { text, .. } => text.as_str(),
+        _ => "",
+    };
+    let best = select_best_with_source(texts, source_text).unwrap_or_default();
     Ok(match chunk_template {
         Some(true) => TaskOutput::TextChunk {
             delta: best,
@@ -679,7 +690,7 @@ mod tests {
         // bridge.
         assert_eq!(
             h.id(),
-            "embedded.llm.routed:llm-jp-3.1-1.8b-instruct4-q4_k_m"
+            "embedded.llm.routed:hy-mt2-1.8b-q4_k_m"
         );
     }
 

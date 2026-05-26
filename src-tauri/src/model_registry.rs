@@ -360,6 +360,38 @@ pub const TIERS: &[ModelTier] = &[
         chat_template: ChatTemplate::ChatMl,
         drafter: None,
     },
+    // Tencent Hunyuan Hy-MT2 1.8B — a translation-specialist model
+    // released 2026-05-21. The 2026-05-26 standalone bench
+    // (`bench_specialist_translation`) measured ws=0.93 / id=0.98
+    // against llm-jp-3.1 1.8B's ws=0.88 / id=0.89 across 12
+    // translation fixtures, a +5 / +9 win on both metrics. The
+    // routed eval (`translate_quality_eval`) confirmed Standard
+    // tier's residual `log-rust-tracing-multi` ws violation
+    // (Standard 0.31 < Compact 0.49) is specifically caused by
+    // llm-jp-3.1's tendency to collapse multi-line log input into
+    // a single output line — a regression Hy-MT2 does not share.
+    //
+    // Chat template: ChatML. The GGUF emits `<|im_end|>` byte-
+    // level (special-token flag dropped at conversion); the
+    // runtime's `strip_chat_template_garbage` catches the
+    // resulting malformed variants (`<|im_end(){`, `<|im_end>>`).
+    ModelTier {
+        id: "hy-mt2-1.8b-q4_k_m",
+        display_name: "JA-Standard+ (Hy-MT2 1.8B)",
+        description:
+            "Tencent Hy-MT2 1.8B 翻訳特化モデル (2026-05-21)。33 言語の翻訳に対応。Standard / Quality JA-bridge として llm-jp-3.1 を置き換え (Tencent License)。",
+        repo: "tencent/Hy-MT2-1.8B-GGUF",
+        filenames: &["Hy-MT2-1.8B-Q4_K_M.gguf"],
+        // Actual on-disk size: 1133 MB (1133080448 bytes ÷ 1024²).
+        size_mb: 1133,
+        min_ram_gb: 8,
+        license: "Tencent License",
+        license_url:
+            "https://huggingface.co/tencent/Hy-MT2-1.8B-GGUF/blob/main/LICENSE.txt",
+        class: ModelTierClass::Standard,
+        chat_template: ChatTemplate::ChatMl,
+        drafter: None,
+    },
     // Qwen 3.5 2B was rejected in Phase 23 v23c (semantic breaks:
     // "急げんこつなうとんぼが lazy なぬまを越す"). Re-added in
     // Phase 25 on the same basis as the 0.8B re-introduction —
@@ -526,9 +558,13 @@ pub const DEFAULT_TIER_ID: &str = "qwen2.5-1.5b-instruct-q4_k_m";
 pub const COMPACT_JA_TIER_ID: &str = "llm-jp-3-980m-instruct3-q4_k_m";
 
 /// Standard / Quality tiers' Japanese bridge. JA-Standard+
-/// (llm-jp 3.1 1.8B Instruct4). Phase 27 measured 100% safety on
-/// en↔ja direct and serves as Stage 1 / Stage 2 in pivot routes.
-pub const STANDARD_JA_BRIDGE_TIER_ID: &str = "llm-jp-3.1-1.8b-instruct4-q4_k_m";
+/// (Hy-MT2 1.8B, Tencent 2026-05-21). 2026-05-26 bench: ws=0.93,
+/// id=0.98 across 12 fixtures — +5 / +9 over the previous bridge
+/// (llm-jp 3.1 1.8B, ws=0.88 id=0.89). Replaces llm-jp-3.1 to
+/// resolve the residual `log-rust-tracing-multi` strict-ordering
+/// violation that llm-jp's tendency to collapse multi-line input
+/// caused under Standard tier.
+pub const STANDARD_JA_BRIDGE_TIER_ID: &str = "hy-mt2-1.8b-q4_k_m";
 
 /// Standard tier's multilingual model. Edge (Gemma 4 E2B).
 /// Direct single-step on CPU (2 GB-class effective) and pivot

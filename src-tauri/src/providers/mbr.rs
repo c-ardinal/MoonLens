@@ -109,6 +109,71 @@ pub fn score_candidates(candidates: &[String]) -> Vec<f64> {
     scores
 }
 
+/// Per-candidate newline-structure penalty against `source`.
+/// Returns a value in `[0, 1]` — 1 when the candidate's newline
+/// count exactly matches the source's, decaying linearly with
+/// absolute difference. Empty source short-circuits to 1.0.
+///
+/// Background (2026-05-26 routed eval, log-rust-tracing-multi
+/// fixture): with MBR-N=5, Quality tier's plain bigram-Jaccard
+/// consensus locks onto the model's MOST COMMON failure mode —
+/// collapsing a 4-line source into a 1-line output. All five
+/// candidates "agree" they collapsed it, so they score each
+/// other high under bigram Jaccard. The newline penalty breaks
+/// this tie by demoting the entire collapse class regardless of
+/// internal agreement, surfacing the rare structurally-correct
+/// candidate instead.
+fn newline_match_score(candidate: &str, source_newlines: usize) -> f64 {
+    let cand_newlines = candidate.matches('\n').count();
+    if source_newlines == 0 && cand_newlines == 0 {
+        return 1.0;
+    }
+    if source_newlines == 0 {
+        // Source has no newlines but candidate added some — small
+        // penalty, since extra newlines are usually whitespace
+        // noise rather than a structural error.
+        return (1.0 - (cand_newlines as f64) * 0.1).max(0.0);
+    }
+    let diff = cand_newlines.abs_diff(source_newlines) as f64;
+    let denom = (source_newlines as f64) + 1.0;
+    ((denom - diff) / denom).max(0.0)
+}
+
+/// Score every candidate by mean bigram-Jaccard utility against
+/// the other candidates, multiplied by a newline-structure match
+/// score against `source`.
+///
+/// Weight tuning (2026-05-26): set to 0.85 — chosen so the
+/// newline-wrong penalty (multiplier 0.15 at nl=0) overpowers
+/// the worst-case bigram lock-in seen in the Quality-tier
+/// routed eval, where 5 of 5 collapsed candidates agreed with
+/// each other at bigram_jaccard ≈ 1.0 while the rare survivor
+/// scored ≈ 0.4. With weight=0.85 the survivor's penalty-free
+/// score (0.4 * 1.0 = 0.40) beats the collapsed consensus
+/// (1.0 * 0.15 = 0.15), letting MBR surface the structurally-
+/// correct output. Lower weights (0.5–0.7) preserved the lock-in.
+pub fn score_candidates_with_source(candidates: &[String], source: &str) -> Vec<f64> {
+    let bigram_scores = score_candidates(candidates);
+    if candidates.len() <= 1 {
+        return bigram_scores;
+    }
+    let source_newlines = source.matches('\n').count();
+    let weight = 0.85;
+    bigram_scores
+        .into_iter()
+        .zip(candidates.iter())
+        .map(|(s, c)| {
+            let nl = newline_match_score(c, source_newlines);
+            // Multiplicative combination: candidate that fully
+            // disagrees on newlines (nl=0) gets `1 - weight`
+            // (= 0.15) of its bigram score; a fully-matching
+            // candidate gets the full bigram score. Output range
+            // is roughly `[0.15s, 1.0s]`.
+            s * (1.0 - weight + weight * nl)
+        })
+        .collect()
+}
+
 /// Pick the candidate with the highest MBR score. Falls back to
 /// the first candidate when the list is non-empty but all scores
 /// tie; returns `None` for an empty list.
@@ -117,6 +182,22 @@ pub fn select_best(candidates: Vec<String>) -> Option<String> {
         return None;
     }
     let scores = score_candidates(&candidates);
+    let best_idx = scores
+        .iter()
+        .enumerate()
+        .max_by(|a, b| a.1.partial_cmp(b.1).unwrap_or(std::cmp::Ordering::Equal))
+        .map(|(i, _)| i)
+        .unwrap_or(0);
+    candidates.into_iter().nth(best_idx)
+}
+
+/// Pick the best candidate using source-aware scoring. See
+/// [`score_candidates_with_source`] for the scoring rationale.
+pub fn select_best_with_source(candidates: Vec<String>, source: &str) -> Option<String> {
+    if candidates.is_empty() {
+        return None;
+    }
+    let scores = score_candidates_with_source(&candidates, source);
     let best_idx = scores
         .iter()
         .enumerate()
@@ -212,5 +293,71 @@ mod tests {
     fn select_best_handles_singleton() {
         let best = select_best(vec!["only one".to_string()]).unwrap();
         assert_eq!(best, "only one");
+    }
+
+    #[test]
+    fn newline_match_score_matches_source_exactly() {
+        // Source with 3 newlines (= 4 lines). Candidate with the
+        // same count scores 1.0 (perfect structure match).
+        let cand_match = "a\nb\nc\nd";
+        let cand_collapse = "abcd";
+        let s = "x\ny\nz\nw";
+        let source_nl = s.matches('\n').count();
+        assert!((newline_match_score(cand_match, source_nl) - 1.0).abs() < 1e-9);
+        // The collapsed candidate (0 newlines vs source's 3) scores
+        // roughly `(4 - 3) / 4 = 0.25`.
+        let collapsed = newline_match_score(cand_collapse, source_nl);
+        assert!(
+            collapsed < 0.3,
+            "expected collapsed candidate to score < 0.3, got {collapsed}"
+        );
+    }
+
+    #[test]
+    fn newline_match_score_handles_zero_source_newlines() {
+        // Source has no newlines (single line). Single-line
+        // candidate matches perfectly.
+        let s = "single line input";
+        let source_nl = s.matches('\n').count();
+        assert!((newline_match_score("single line out", source_nl) - 1.0).abs() < 1e-9);
+        // Extra newlines added by candidate: small penalty.
+        let with_extra = newline_match_score("line one\nline two", source_nl);
+        assert!(
+            with_extra < 1.0 && with_extra > 0.7,
+            "extra newlines on single-line source should be lightly penalised, got {with_extra}"
+        );
+    }
+
+    #[test]
+    fn select_best_with_source_prefers_structure_preserving_candidate() {
+        // Three candidates, all bigram-similar but with different
+        // newline counts. The one matching the source's 3 newlines
+        // should win even though the other two agree with each
+        // other on bigrams more strongly.
+        let source = "line 1\nline 2\nline 3\nline 4"; // 3 newlines
+        let candidates = vec![
+            // The structurally-correct candidate. Has 3 newlines.
+            "翻訳 1\n翻訳 2\n翻訳 3\n翻訳 4".to_string(),
+            // Two collapsed candidates that agree with each other.
+            "翻訳 1 翻訳 2 翻訳 3 翻訳 4".to_string(),
+            "翻訳 1 翻訳 2 翻訳 3 翻訳 4".to_string(),
+        ];
+        let best = select_best_with_source(candidates, source).unwrap();
+        assert!(
+            best.matches('\n').count() == 3,
+            "expected structure-preserving candidate, got: {best}"
+        );
+    }
+
+    #[test]
+    fn select_best_with_source_singleton_passes_through() {
+        let best =
+            select_best_with_source(vec!["only".to_string()], "source").unwrap();
+        assert_eq!(best, "only");
+    }
+
+    #[test]
+    fn select_best_with_source_handles_empty_list() {
+        assert_eq!(select_best_with_source(Vec::new(), "source"), None);
     }
 }
