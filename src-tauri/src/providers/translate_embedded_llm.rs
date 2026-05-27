@@ -249,10 +249,30 @@ pub struct EmbeddedLlmTranslator {
 
 impl EmbeddedLlmTranslator {
     pub fn new(id: impl Into<String>, config: &serde_json::Value) -> Self {
+        // Resolution order for the GGUF path:
+        //   1. Explicit `model_path` — absolute path, used by tests
+        //      and power-user overrides.
+        //   2. `filename_remote` (tier-based config from RoutedTranslator
+        //      via `config_for_tier`) — a relative `models/<filename>`
+        //      is built here and then upgraded to an absolute
+        //      `<app-data>/models/<filename>` by `with_app_data_dir`.
+        //      WITHOUT this branch the routing layer's per-tier
+        //      filename is silently ignored: every routed inner
+        //      translator falls through to `DEFAULT_MODEL_FILE`
+        //      (qwen2.5-1.5b), defeating the whole routing matrix
+        //      (every tier loads the SAME GGUF in parallel — observed
+        //      in the 2026-05-27 Lens log as 4× simultaneous
+        //      qwen2.5-1.5b loads even though Compact / Standard /
+        //      Quality each had distinct tier ids registered).
+        //   3. `DEFAULT_MODEL_FILE` — legacy single-tier fallback.
         let model_path = config
             .get("model_path")
             .and_then(|v| v.as_str())
             .map(PathBuf::from)
+            .or_else(|| {
+                let filename = config.get("filename_remote").and_then(|v| v.as_str())?;
+                Some(PathBuf::from("models").join(filename))
+            })
             .unwrap_or_else(|| {
                 // Best-effort: fall back to a cwd-relative path so the
                 // type can be constructed even without an AppHandle
@@ -468,7 +488,21 @@ impl EmbeddedLlmTranslator {
     /// `<app-data>/moonlens/models/<file>.gguf`.
     pub fn with_app_data_dir(mut self, app_data: &Path) -> Self {
         if !self.model_path.is_absolute() {
-            self.model_path = default_model_path(app_data);
+            // Preserve the filename the constructor stashed (from
+            // `filename_remote` for routed inner translators, or
+            // `DEFAULT_MODEL_FILE` for legacy single-tier callers).
+            // Pre-2026-05-27 bug: this unconditionally rewrote to
+            // `<app-data>/models/<DEFAULT_MODEL_FILE>`, silently
+            // discarding the routing layer's per-tier filename.
+            let file = self
+                .model_path
+                .file_name()
+                .map(|f| f.to_os_string())
+                .filter(|f| !f.is_empty());
+            self.model_path = match file {
+                Some(name) => default_model_dir(app_data).join(name),
+                None => default_model_path(app_data),
+            };
         }
         self
     }
