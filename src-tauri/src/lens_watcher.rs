@@ -1713,21 +1713,28 @@ pub(crate) fn paragraph_cap_height_ratio(
     members: &[usize],
     rendered: &[OcrLine],
 ) -> f32 {
-    let mut cjk = 0u32;
-    let mut latin = 0u32;
+    // Weight CJK characters at 2x because they occupy roughly
+    // twice the horizontal cell width of a Latin glyph. A
+    // paragraph like `翻訳ツール「Open Source」` has 7 CJK chars +
+    // 10 Latin chars by raw count, but visually the CJK takes
+    // ~14 cells vs ~10 cells for Latin — CJK still dominates the
+    // line. Weighting by visual cell mirrors what the renderer
+    // actually sees when picking a font for the card.
+    let mut cjk_weight = 0u32;
+    let mut latin_weight = 0u32;
     for &i in members {
         if i >= rendered.len() {
             continue;
         }
         for ch in rendered[i].text.chars() {
             if is_cjk_character(ch) {
-                cjk += 1;
+                cjk_weight += 2;
             } else if ch.is_alphabetic() {
-                latin += 1;
+                latin_weight += 1;
             }
         }
     }
-    if cjk >= latin {
+    if cjk_weight >= latin_weight {
         0.88
     } else {
         0.72
@@ -3109,6 +3116,111 @@ impl LensSink for TauriLensSink {
     }
 }
 
+/// Outcome of one observation tick on the
+/// [`WindowStabilityGate`].  Used by the capture loop to decide
+/// whether to keep polling, fire a capture, or bail out.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum GateOutcome {
+    /// Window still moving (or this is the first observation, or
+    /// the platform returned a transient query failure). Keep
+    /// sleeping `poll_ms` and observing.
+    KeepWaiting,
+    /// The same window outer-rect has been observed
+    /// `stable_budget_ms / poll_ms` ticks in a row → user has let
+    /// go, fire the capture.
+    Stable,
+    /// `max_wait_ms` elapsed without the position settling. Fire
+    /// anyway so the user is not starved (an actually-stuck drag
+    /// would keep queuing fresh triggers from the auto-poll task).
+    Timeout,
+}
+
+/// Pure state machine for the capture-loop's drag-stability gate
+/// (Bug 3 fix from the 2026-05-27 Lens UX batch). Pre-fix the
+/// gate was a fixed `sleep(180ms)` and any concurrent position
+/// poll mid-drag fired a capture against the move-in-progress
+/// position. This struct replaces that with an "observe until
+/// the same value has been seen for `stable_budget_ms`" wait,
+/// extracted from the async loop so the state transitions are
+/// directly unit-testable without `tokio` involvement.
+///
+/// Three knobs:
+///   - `poll_ms` — sampling interval the caller must honour
+///     between `observe()` calls. Returned by [`Self::poll_ms`].
+///   - `stable_budget_ms` — how long the same value must persist
+///     to count as "settled" (≥ 300 ms in production; the value
+///     must be at least `poll_ms` or the gate degenerates to
+///     "any non-None observation is stable").
+///   - `max_wait_ms` — hard ceiling on the whole wait so a
+///     pathological "user dragging forever" still fires.
+///
+/// Observation semantics:
+///   - `Some(rect)` matching the previous `last_seen` increments
+///     the stable counter; when it reaches the required ticks the
+///     gate reports `Stable`.
+///   - `Some(rect)` differing from `last_seen` resets the counter
+///     and updates `last_seen` (drag still in progress).
+///   - `None` keeps `last_seen` unchanged but resets the counter
+///     (transient platform query failure: treat as "still moving").
+pub(crate) struct WindowStabilityGate {
+    poll_ms: u64,
+    stable_required_ticks: u64,
+    max_wait_ticks: u64,
+    last_seen: Option<(i32, i32, u32, u32)>,
+    stable_ticks: u64,
+    ticks_elapsed: u64,
+}
+
+impl WindowStabilityGate {
+    pub(crate) fn new(poll_ms: u64, stable_budget_ms: u64, max_wait_ms: u64) -> Self {
+        let poll_ms = poll_ms.max(1);
+        let stable_required_ticks = (stable_budget_ms / poll_ms).max(1);
+        let max_wait_ticks = (max_wait_ms / poll_ms).max(stable_required_ticks);
+        Self {
+            poll_ms,
+            stable_required_ticks,
+            max_wait_ticks,
+            last_seen: None,
+            stable_ticks: 0,
+            ticks_elapsed: 0,
+        }
+    }
+
+    pub(crate) fn poll_ms(&self) -> u64 {
+        self.poll_ms
+    }
+
+    pub(crate) fn observe(
+        &mut self,
+        cur: Option<(i32, i32, u32, u32)>,
+    ) -> GateOutcome {
+        self.ticks_elapsed = self.ticks_elapsed.saturating_add(1);
+        match (cur, self.last_seen) {
+            (Some(c), Some(prev)) if c == prev => {
+                self.stable_ticks = self.stable_ticks.saturating_add(1);
+                if self.stable_ticks >= self.stable_required_ticks {
+                    return GateOutcome::Stable;
+                }
+            }
+            (Some(c), _) => {
+                self.last_seen = Some(c);
+                self.stable_ticks = 0;
+            }
+            (None, _) => {
+                // Transient query failure — treat as "still moving"
+                // (don't reset last_seen so the next successful read
+                // can still match).
+                self.stable_ticks = 0;
+            }
+        }
+        if self.ticks_elapsed >= self.max_wait_ticks {
+            GateOutcome::Timeout
+        } else {
+            GateOutcome::KeepWaiting
+        }
+    }
+}
+
 async fn run_capture_loop(
     lens_id: String,
     app: AppHandle,
@@ -3147,19 +3259,12 @@ async fn run_capture_loop(
         // (otherwise the auto-poll's next tick would queue another
         // trigger and we'd be permanently starved).
         {
-            const POLL_MS: u64 = 50;
-            const STABLE_BUDGET_MS: u64 = 300;
-            const MAX_WAIT_MS: u64 = 2_000;
-            let stable_required = STABLE_BUDGET_MS / POLL_MS;
-            let mut last_seen: Option<(i32, i32, u32, u32)> = None;
-            let mut stable_ticks: u64 = 0;
-            let mut elapsed: u64 = 0;
-            while elapsed < MAX_WAIT_MS {
+            let mut gate = WindowStabilityGate::new(50, 300, 2_000);
+            loop {
                 tokio::select! {
                     _ = stop.notified() => return,
-                    _ = tokio::time::sleep(Duration::from_millis(POLL_MS)) => {}
+                    _ = tokio::time::sleep(Duration::from_millis(gate.poll_ms())) => {}
                 }
-                elapsed = elapsed.saturating_add(POLL_MS);
                 let Some(win) = app.get_webview_window(&lens_id) else {
                     return;
                 };
@@ -3167,22 +3272,9 @@ async fn run_capture_loop(
                     (Some(p), Some(s)) => Some((p.x, p.y, s.width, s.height)),
                     _ => None,
                 };
-                match (cur, last_seen) {
-                    (Some(c), Some(prev)) if c == prev => {
-                        stable_ticks = stable_ticks.saturating_add(1);
-                        if stable_ticks >= stable_required {
-                            break;
-                        }
-                    }
-                    (Some(c), _) => {
-                        last_seen = Some(c);
-                        stable_ticks = 0;
-                    }
-                    (None, _) => {
-                        // Transient query failure: treat as
-                        // "still moving" and keep polling.
-                        stable_ticks = 0;
-                    }
+                match gate.observe(cur) {
+                    GateOutcome::KeepWaiting => continue,
+                    GateOutcome::Stable | GateOutcome::Timeout => break,
                 }
             }
         }
@@ -4085,6 +4177,241 @@ mod tests {
         let block = [0.0, 5.0, 250.0, 26.0]; // right edge 250 → small gap
         let align = detect_text_align(&[0], &rendered, Some(block));
         assert_eq!(align, TextAlign::Right);
+    }
+
+    // ---------------------------------------------------------------
+    // Lens UX regression guards (2026-05-27 batch). Each test below
+    // pins a SPECIFIC behaviour change the user reported on
+    // 2026-05-27 — drag-mid-flight capture, font-size overshoot,
+    // single-line text-align fallback. If any of them flips back,
+    // the existing visual regression returns on real Lens content.
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn paragraph_cap_height_ratio_uses_cjk_constant_for_japanese() {
+        // Bug 5a guard: Japanese paragraphs must scale bbox height
+        // by ~0.88 (CJK glyphs fill their bbox). Pre-fix the raw
+        // bbox was used verbatim and translation rendered 15-25%
+        // larger than the source.
+        let rendered = vec![
+            OcrLine {
+                text: "こんにちは世界".into(),
+                bbox: [0.0, 0.0, 100.0, 20.0],
+                confidence: 1.0,
+            },
+            OcrLine {
+                text: "翻訳テスト".into(),
+                bbox: [0.0, 20.0, 100.0, 20.0],
+                confidence: 1.0,
+            },
+        ];
+        let ratio = paragraph_cap_height_ratio(&[0, 1], &rendered);
+        assert!(
+            (ratio - 0.88).abs() < 1e-6,
+            "Japanese paragraphs should pick the 0.88 ratio, got {ratio}"
+        );
+    }
+
+    #[test]
+    fn paragraph_cap_height_ratio_uses_latin_constant_for_english() {
+        // Bug 5a guard: Latin paragraphs need the smaller ~0.72
+        // ratio because descenders / ascenders make the bbox 25-30%
+        // taller than the cap height.
+        let rendered = vec![
+            OcrLine {
+                text: "Hello, world.".into(),
+                bbox: [0.0, 0.0, 120.0, 20.0],
+                confidence: 1.0,
+            },
+        ];
+        let ratio = paragraph_cap_height_ratio(&[0], &rendered);
+        assert!(
+            (ratio - 0.72).abs() < 1e-6,
+            "Latin paragraphs should pick the 0.72 ratio, got {ratio}"
+        );
+    }
+
+    #[test]
+    fn paragraph_cap_height_ratio_votes_dominant_script_in_mixed_text() {
+        // Bug 5a guard: a single trailing English word in an
+        // otherwise-Japanese paragraph should still pick the CJK
+        // ratio because Japanese glyph cells dominate the line.
+        let rendered = vec![
+            OcrLine {
+                text: "翻訳ツール「Open Source」".into(),
+                bbox: [0.0, 0.0, 200.0, 20.0],
+                confidence: 1.0,
+            },
+        ];
+        let ratio = paragraph_cap_height_ratio(&[0], &rendered);
+        assert!(
+            (ratio - 0.88).abs() < 1e-6,
+            "Mixed-script paragraph with CJK dominance should pick 0.88, got {ratio}"
+        );
+    }
+
+    #[test]
+    fn detect_text_align_uses_frame_fallback_for_centred_single_line_card() {
+        // Bug 5c guard: a single-line heading that sits well off
+        // the left edge of the frame must be detected as `Center`,
+        // NOT default to `Left` because `block_bbox` is None. The
+        // fix passes `Some([0, 0, image_w, image_h])` from the
+        // caller; this test exercises the same path directly.
+        let rendered = vec![OcrLine {
+            text: "Title".into(),
+            // 50-px wide text starting at x=475 in a 1024-px frame:
+            // left gap 475, right gap 1024 - 525 = 499. Roughly
+            // equal → Center.
+            bbox: [475.0, 10.0, 50.0, 16.0],
+            confidence: 1.0,
+        }];
+        let virtual_block = Some([0.0, 0.0, 1024.0, 768.0]);
+        let align = detect_text_align(&[0], &rendered, virtual_block);
+        assert_eq!(
+            align,
+            TextAlign::Center,
+            "single-line centred text should detect Center under the frame-fallback path"
+        );
+    }
+
+    // ---------------------------------------------------------------
+    // WindowStabilityGate — pure state-machine tests for the drag-
+    // stability gate (Bug 3). Pre-fix this logic was inline async
+    // code in `run_capture_loop` and impossible to unit-test
+    // without spinning up tokio + a Tauri webview; the extraction
+    // into a struct is the asset-ization the 2026-05-27 review
+    // explicitly called for.
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn stability_gate_keeps_waiting_until_position_settles() {
+        // 50 ms poll, 300 ms stable budget → need 6 consecutive
+        // MATCHES against `last_seen` (the first observation of
+        // a new value sets last_seen and counts as 0 matches).
+        // Simulate a slow drag where the position changes for 4
+        // ticks, then settles at (104, 100, 800, 600).
+        let mut g = WindowStabilityGate::new(50, 300, 2_000);
+        // Drag in progress — position changes every tick, no
+        // stable streak ever starts.
+        for i in 0..4 {
+            let r = g.observe(Some((100 + i, 100, 800, 600)));
+            assert_eq!(r, GateOutcome::KeepWaiting, "tick {i} during drag");
+        }
+        // User let go at rect=(104,100,800,600). This is the FIRST
+        // observation of the new value (last_seen was (103,…) from
+        // the previous drag tick), so it counts as 0 matches —
+        // last_seen advances, stable_ticks stays at 0.
+        let r = g.observe(Some((104, 100, 800, 600)));
+        assert_eq!(r, GateOutcome::KeepWaiting, "first observation of release pos");
+        // Now we need 6 ticks where `cur == last_seen` to reach
+        // stable_required_ticks (300 / 50 = 6).
+        for i in 0..5 {
+            let r = g.observe(Some((104, 100, 800, 600)));
+            assert_eq!(r, GateOutcome::KeepWaiting, "match #{} after release", i + 1);
+        }
+        let r = g.observe(Some((104, 100, 800, 600)));
+        assert_eq!(r, GateOutcome::Stable, "6th consecutive match should fire Stable");
+    }
+
+    #[test]
+    fn stability_gate_resets_on_position_change() {
+        // After the user nearly settles (5 matches) but then drags
+        // again, the stable counter must restart from zero.
+        let mut g = WindowStabilityGate::new(50, 300, 2_000);
+        // First observation establishes last_seen.
+        g.observe(Some((10, 10, 800, 600)));
+        // 4 matches — almost there.
+        for _ in 0..4 {
+            g.observe(Some((10, 10, 800, 600)));
+        }
+        // Drag resumes.
+        let r = g.observe(Some((11, 10, 800, 600)));
+        assert_eq!(r, GateOutcome::KeepWaiting);
+        // Need a fresh 6-match streak now.
+        for _ in 0..5 {
+            assert_eq!(
+                g.observe(Some((11, 10, 800, 600))),
+                GateOutcome::KeepWaiting,
+                "reset streak must run a full 6 ticks"
+            );
+        }
+        assert_eq!(
+            g.observe(Some((11, 10, 800, 600))),
+            GateOutcome::Stable,
+            "fresh 6-match streak should fire Stable"
+        );
+    }
+
+    #[test]
+    fn stability_gate_treats_query_failure_as_still_moving() {
+        // Windows can transiently return None for outer_position
+        // during a resize grip release. The gate must NOT count
+        // None as a stable observation.
+        let mut g = WindowStabilityGate::new(50, 300, 2_000);
+        // Establish last_seen, build a partial stable streak.
+        g.observe(Some((10, 10, 800, 600)));
+        g.observe(Some((10, 10, 800, 600)));
+        // Transient failure resets the streak.
+        let r = g.observe(None);
+        assert_eq!(r, GateOutcome::KeepWaiting);
+        // Subsequent successful reads must rebuild from zero.
+        for _ in 0..5 {
+            g.observe(Some((10, 10, 800, 600)));
+        }
+        assert_eq!(
+            g.observe(Some((10, 10, 800, 600))),
+            GateOutcome::Stable,
+        );
+    }
+
+    #[test]
+    fn stability_gate_eventually_times_out() {
+        // 50 ms poll, max 200 ms wait → 4 ticks ceiling. A user
+        // dragging forever (different value every tick) must
+        // surface Timeout at tick 4 so the capture loop can still
+        // fire instead of being starved indefinitely.
+        let mut g = WindowStabilityGate::new(50, 100, 200);
+        // 3 KeepWaiting then Timeout on the 4th tick.
+        for i in 0..3 {
+            let r = g.observe(Some((i as i32, 0, 800, 600)));
+            assert_eq!(r, GateOutcome::KeepWaiting, "tick {i}");
+        }
+        let r = g.observe(Some((10, 0, 800, 600)));
+        assert_eq!(r, GateOutcome::Timeout);
+    }
+
+    #[test]
+    fn stability_gate_normalises_zero_poll_to_one() {
+        // poll_ms=0 is a programmer mistake; gate should not divide
+        // by zero. Normalising to 1 ms means the stable budget
+        // requires `budget_ms` ticks (probably a lot) — slow but
+        // safe.
+        let mut g = WindowStabilityGate::new(0, 50, 1_000);
+        assert_eq!(g.poll_ms(), 1);
+        // Just confirm it runs without panic.
+        for _ in 0..50 {
+            g.observe(Some((0, 0, 100, 100)));
+        }
+    }
+
+    #[test]
+    fn detect_text_align_uses_frame_fallback_for_right_flush_single_line_card() {
+        // Bug 5c guard: a single-line UI label flush to the right
+        // edge of the frame must come back as `Right`.
+        let rendered = vec![OcrLine {
+            text: "Settings".into(),
+            // Text ends at x=1020 in a 1024-px frame → right gap 4
+            // (within edge_tol). Left gap 940 → clearly not Left.
+            bbox: [940.0, 10.0, 80.0, 16.0],
+            confidence: 1.0,
+        }];
+        let virtual_block = Some([0.0, 0.0, 1024.0, 768.0]);
+        let align = detect_text_align(&[0], &rendered, virtual_block);
+        assert_eq!(
+            align,
+            TextAlign::Right,
+            "right-flush single-line text should detect Right under the frame-fallback path"
+        );
     }
 
     #[test]
