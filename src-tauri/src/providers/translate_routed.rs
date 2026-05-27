@@ -253,6 +253,19 @@ impl RoutedTranslator {
 /// slack to find idiomatic phrasing; greedy sampling on the smallest
 /// tier produces wooden output the Phase 27 Lens eval already
 /// captured.
+/// Test-only re-export of [`config_for_tier`] for the
+/// `routed_inner_translators_load_their_tier_specific_gguf` seam
+/// test in `translate_embedded_llm`. Keeps the production
+/// `config_for_tier` private (its callers stay in this module)
+/// without forcing the test to duplicate the JSON shape.
+#[cfg(test)]
+pub(crate) fn test_only_config_for_tier(
+    tier: &ModelTier,
+    user_tier: UserTier,
+) -> serde_json::Value {
+    config_for_tier(tier, user_tier)
+}
+
 fn config_for_tier(tier: &ModelTier, user_tier: UserTier) -> serde_json::Value {
     let mut obj = serde_json::Map::new();
     obj.insert("repo".into(), serde_json::Value::String(tier.repo.into()));

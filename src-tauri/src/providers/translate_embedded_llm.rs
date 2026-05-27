@@ -2677,6 +2677,81 @@ mod tests {
         assert_eq!(p.model_path().to_str(), Some("C:\\override\\file.gguf"));
     }
 
+    #[test]
+    fn filename_remote_resolves_to_app_data_models_dir() {
+        // Regression guard for the 2026-05-27 routing-bug-confirmed-
+        // by-Lens-log fix. `RoutedTranslator::config_for_tier` emits
+        // a config with `filename_remote = "<tier-specific>.gguf"`
+        // and NO `model_path`. Pre-fix, `EmbeddedLlmTranslator::new`
+        // ignored `filename_remote` for the path and silently fell
+        // through to `DEFAULT_MODEL_FILE`, so every routed inner
+        // translator loaded `qwen2.5-1.5b-instruct-q4_k_m.gguf`
+        // regardless of the tier id. This test pins the contract
+        // that `filename_remote` flows through to `model_path`.
+        let cfg = serde_json::json!({
+            "repo": "tencent/Hy-MT2-1.8B-GGUF",
+            "filename_remote": "Hy-MT2-1.8B-Q4_K_M.gguf",
+        });
+        let p = EmbeddedLlmTranslator::new("embedded.llm.routed:hy-mt2-1.8b-q4_k_m", &cfg)
+            .with_app_data_dir(Path::new("C:\\Users\\test\\AppData\\Roaming\\moonlens"));
+        assert_eq!(
+            p.model_path(),
+            Path::new("C:\\Users\\test\\AppData\\Roaming\\moonlens\\models\\Hy-MT2-1.8B-Q4_K_M.gguf"),
+            "filename_remote must resolve to <app-data>/models/<filename>, not DEFAULT_MODEL_FILE"
+        );
+    }
+
+    #[cfg(feature = "embedded-llm")]
+    #[test]
+    fn routed_inner_translators_load_their_tier_specific_gguf() {
+        // End-to-end seam test for the routing matrix. Pre-2026-05-27
+        // every tier's inner `EmbeddedLlmTranslator` resolved to the
+        // same `DEFAULT_MODEL_FILE` (qwen2.5-1.5b) because
+        // `config_for_tier` emitted `filename_remote` but the
+        // constructor ignored it. The bug was invisible to the
+        // existing config-shape and dispatch-handle unit tests
+        // because they never crossed the seam between `config_for_tier`
+        // and `EmbeddedLlmTranslator::new`.
+        //
+        // This test simulates the routed pipeline: for each
+        // registered router-anchor tier, build the per-tier config
+        // the routing layer would emit, materialise an
+        // `EmbeddedLlmTranslator` from it, attach the production
+        // app-data dir, and verify `model_path()` ends with the
+        // tier's primary filename. A single mismatch surfaces the
+        // routing regression.
+        use crate::model_registry::{
+            tier_by_id, COMPACT_JA_TIER_ID, QUALITY_MULTI_TIER_ID, STANDARD_JA_BRIDGE_TIER_ID,
+            STANDARD_MULTI_TIER_ID,
+        };
+        use crate::providers::translate_routed::test_only_config_for_tier;
+        use crate::translation_router::UserTier;
+
+        let app_data = Path::new("C:\\Users\\test\\AppData\\Roaming\\moonlens");
+        let cases: &[(&str, UserTier)] = &[
+            (COMPACT_JA_TIER_ID, UserTier::Compact),
+            (STANDARD_JA_BRIDGE_TIER_ID, UserTier::Standard),
+            (STANDARD_MULTI_TIER_ID, UserTier::Standard),
+            (STANDARD_JA_BRIDGE_TIER_ID, UserTier::Quality),
+            (QUALITY_MULTI_TIER_ID, UserTier::Quality),
+        ];
+        for (tier_id, user_tier) in cases {
+            let tier = tier_by_id(tier_id)
+                .unwrap_or_else(|| panic!("tier `{tier_id}` not in registry"));
+            let cfg = test_only_config_for_tier(tier, *user_tier);
+            let translator =
+                EmbeddedLlmTranslator::new(format!("embedded.llm.routed:{tier_id}"), &cfg)
+                    .with_app_data_dir(app_data);
+            let expected =
+                app_data.join("models").join(tier.primary_filename());
+            assert_eq!(
+                translator.model_path(),
+                expected.as_path(),
+                "routed tier `{tier_id}` (user_tier={user_tier:?}) resolves to wrong path"
+            );
+        }
+    }
+
     #[tokio::test]
     async fn run_without_model_reports_missing_state() {
         let p = EmbeddedLlmTranslator::new("embedded.llm", &serde_json::Value::Null);
