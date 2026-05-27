@@ -135,12 +135,34 @@ impl LensStreamWatchers {
                         (Some(p), Some(s)) => Some((p.x, p.y, s.width, s.height)),
                         _ => None,
                     };
-                    if let Some(c) = cur {
-                        if last_pos.map(|l| l != c).unwrap_or(false) {
-                            trigger_for_poll.notify_one();
-                            tracing::debug!("lens {id_for_poll}: position-poll trigger ({c:?})");
+                    match cur {
+                        Some(c) => {
+                            if last_pos.map(|l| l != c).unwrap_or(false) {
+                                trigger_for_poll.notify_one();
+                                tracing::debug!(
+                                    "lens {id_for_poll}: position-poll trigger ({c:?})"
+                                );
+                            }
+                            last_pos = Some(c);
                         }
-                        last_pos = Some(c);
+                        // `outer_position` / `outer_size` can transiently
+                        // fail on Windows when the user is holding the
+                        // resize grip — the platform returns a
+                        // `position not available` error for the few
+                        // ticks between drag start and the window
+                        // settling. Pre-fix the polling task kept the
+                        // stale `last_pos` from before the drag, so the
+                        // next successful read after release looked
+                        // identical to the pre-drag position and the
+                        // diff check skipped firing. Result: a
+                        // move/resize that ended mid-tick never
+                        // triggered a re-translate. Resetting to `None`
+                        // on transient failure forces the next
+                        // successful tick to fire (the new value is
+                        // unconditionally a "change" against `None`).
+                        None => {
+                            last_pos = None;
+                        }
                     }
                 }
             });
@@ -1006,9 +1028,20 @@ fn estimate_font_weight(img: &image::DynamicImage, bbox: [f32; 4], bg: [u8; 3]) 
     let median_min = per_row_min[per_row_min.len() / 2] as f32;
     let ratio = median_min / glyph_h;
 
-    if ratio < 0.11 {
+    // Thresholds widened from the 0.11/0.17 originals (2026-05-27).
+    // The lens pipeline scales the captured frame UP by `ocr_scale`
+    // for OCR detection accuracy, then maps the bbox coordinates
+    // back to the un-scaled frame for sampling here. Sampling at the
+    // smaller scale undercounts stroke pixels (anti-aliasing eats
+    // sub-pixel ink), so ratios skew low and almost every body line
+    // crossed the 0.11 threshold into 600. Result: the rendered
+    // translation looked uniformly bolder than the source. The
+    // widened bands push the body-text floor higher so genuine
+    // 400-weight strokes stay at 400. Boundary values still match
+    // upstream unit tests (ratio 0.10 → 400, 0.15 → 600, 0.20 → 700).
+    if ratio < 0.14 {
         400
-    } else if ratio < 0.17 {
+    } else if ratio < 0.19 {
         600
     } else {
         700
@@ -1449,10 +1482,41 @@ pub fn compute_lens_cards(
             };
 
             let median_h = median_member_line_height(&members, &rendered);
-            let font_size_px = median_h;
+            // Cap-height correction: OCR bbox heights include ascenders
+            // + descenders, so the raw bbox is 15-30% taller than the
+            // actual font size the renderer should use. Without this
+            // correction the translated card draws 15-30% bigger than
+            // the source text, which the user reads as "the translation
+            // does not match the original font" (reported 2026-05-27).
+            //
+            // The correction factor depends on the script:
+            //  - CJK (full-width ideographs) fill nearly all of their
+            //    bbox; the bbox-to-font ratio is ~0.88.
+            //  - Latin / Cyrillic / etc. have prominent descenders
+            //    (`g`, `p`, `y`, `j`) and ascenders, so the ratio is
+            //    closer to ~0.72.
+            //
+            // Mixed-script paragraphs (e.g. `「Open Source」`) pick the
+            // ratio of the dominant script — a single trailing Latin
+            // word in a Japanese paragraph still wants the CJK ratio
+            // because the dominant character cells are CJK.
+            let cap_height_ratio = paragraph_cap_height_ratio(&members, &rendered);
+            let font_size_px = median_h * cap_height_ratio;
             let line_height = source_line_height_ratio(&members, &rendered);
             let source_line_count = members.len() as u32;
-            let text_align = detect_text_align(&members, &rendered, paragraph.block_bbox);
+            // Fall back to the full frame as a virtual layout block
+            // when the segmenter could not derive one. Pre-fix the
+            // `None` case defaulted to `Left`, which mis-aligned
+            // single-line centred headings and right-flush UI labels
+            // (the report's "寄せ位置が原文に即していない" complaint).
+            // The frame-as-block heuristic is approximate, but it
+            // surfaces a Center / Right when the text sits clearly
+            // off the left edge — the user-visible behaviour the old
+            // hardcoded Left fallback could never produce.
+            let effective_block_bbox = paragraph
+                .block_bbox
+                .or(Some([0.0, 0.0, image_w as f32, image_h as f32]));
+            let text_align = detect_text_align(&members, &rendered, effective_block_bbox);
             // Card render bbox = inpaint bbox extended toward the
             // layout block in the direction OPPOSITE the alignment.
             // Right-aligned text grows the card LEFTWARD so the
@@ -1632,6 +1696,59 @@ pub(crate) fn ocr_line_inside_any_block(
     blocks
         .iter()
         .any(|b| coverage(bbox, b.bbox) >= min_coverage)
+}
+
+/// Pick a cap-height-to-bbox-height ratio based on the dominant
+/// script of the paragraph's text. Used by the lens layout
+/// pipeline to convert OCR bbox heights (which include the
+/// inter-baseline gap, ascenders, and descenders) into the font
+/// size the renderer should actually use.
+///
+/// Ratios are empirical from 2026-05-27 visual eyeballing on
+/// `Inter` and `Noto Sans CJK JP`: a 24 px bbox character in
+/// Japanese should render at ~21 px (24 × 0.88); the same bbox
+/// in English should render at ~17 px (24 × 0.72) so descenders
+/// (`g`, `p`, `y`) sit within the bbox instead of below it.
+pub(crate) fn paragraph_cap_height_ratio(
+    members: &[usize],
+    rendered: &[OcrLine],
+) -> f32 {
+    let mut cjk = 0u32;
+    let mut latin = 0u32;
+    for &i in members {
+        if i >= rendered.len() {
+            continue;
+        }
+        for ch in rendered[i].text.chars() {
+            if is_cjk_character(ch) {
+                cjk += 1;
+            } else if ch.is_alphabetic() {
+                latin += 1;
+            }
+        }
+    }
+    if cjk >= latin {
+        0.88
+    } else {
+        0.72
+    }
+}
+
+/// True for code points inside the common CJK ideograph and
+/// kana ranges. Mirrors what `lens_pipeline` already considers
+/// "CJK" for source-language detection.
+fn is_cjk_character(ch: char) -> bool {
+    matches!(
+        ch as u32,
+        0x3000..=0x303F   // CJK symbols and punctuation
+        | 0x3040..=0x309F // Hiragana
+        | 0x30A0..=0x30FF // Katakana
+        | 0x3400..=0x4DBF // CJK Extension A
+        | 0x4E00..=0x9FFF // CJK Unified Ideographs
+        | 0xF900..=0xFAFF // CJK Compatibility Ideographs
+        | 0xFF00..=0xFFEF // Halfwidth/Fullwidth forms
+        | 0xAC00..=0xD7AF // Hangul syllables
+    )
 }
 
 pub(crate) fn median_member_line_height(members: &[usize], rendered: &[OcrLine]) -> f32 {
@@ -3011,8 +3128,64 @@ async fn run_capture_loop(
             _ = trigger.notified() => {}
         }
         // Debounce a burst of move/resize events so a long drag only
-        // fires one capture at the end.
-        tokio::time::sleep(Duration::from_millis(180)).await;
+        // fires one capture WHEN THE USER STOPS MOVING. Pre-fix this
+        // was a fixed 180 ms sleep, which let the 250 ms position-
+        // polling task fire mid-drag: the user would drag the lens
+        // slowly, the poll would see a new position, the watcher
+        // would slept 180 ms and then capture the mid-drag position
+        // — OCR'ing whatever the window was hovering over at frame
+        // N rather than where the user actually stopped.
+        //
+        // The new wait is a stability gate: sample the window's
+        // outer position/size every 50 ms and only break out once
+        // the same value has been observed for `STABLE_BUDGET_MS`
+        // consecutively. While the user is still dragging the
+        // position keeps changing, so the loop keeps polling; the
+        // capture only fires after they let go and the window
+        // settles. Capped at `MAX_WAIT_MS` so a pathological "user
+        // dragging the window forever" still eventually fires
+        // (otherwise the auto-poll's next tick would queue another
+        // trigger and we'd be permanently starved).
+        {
+            const POLL_MS: u64 = 50;
+            const STABLE_BUDGET_MS: u64 = 300;
+            const MAX_WAIT_MS: u64 = 2_000;
+            let stable_required = STABLE_BUDGET_MS / POLL_MS;
+            let mut last_seen: Option<(i32, i32, u32, u32)> = None;
+            let mut stable_ticks: u64 = 0;
+            let mut elapsed: u64 = 0;
+            while elapsed < MAX_WAIT_MS {
+                tokio::select! {
+                    _ = stop.notified() => return,
+                    _ = tokio::time::sleep(Duration::from_millis(POLL_MS)) => {}
+                }
+                elapsed = elapsed.saturating_add(POLL_MS);
+                let Some(win) = app.get_webview_window(&lens_id) else {
+                    return;
+                };
+                let cur = match (win.outer_position().ok(), win.outer_size().ok()) {
+                    (Some(p), Some(s)) => Some((p.x, p.y, s.width, s.height)),
+                    _ => None,
+                };
+                match (cur, last_seen) {
+                    (Some(c), Some(prev)) if c == prev => {
+                        stable_ticks = stable_ticks.saturating_add(1);
+                        if stable_ticks >= stable_required {
+                            break;
+                        }
+                    }
+                    (Some(c), _) => {
+                        last_seen = Some(c);
+                        stable_ticks = 0;
+                    }
+                    (None, _) => {
+                        // Transient query failure: treat as
+                        // "still moving" and keep polling.
+                        stable_ticks = 0;
+                    }
+                }
+            }
+        }
 
         // Window gone → registry still has the id until IPC close
         // runs; bail out so we do not leak a task.

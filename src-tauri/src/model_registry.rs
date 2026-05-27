@@ -862,9 +862,12 @@ mod tests {
         // distribution. Apache-2.0 is the preferred default; Gemma
         // TOS is permitted under the documented redistribution
         // workflow (license + Prohibited Use Policy bundled in the
-        // package). New entries with other licenses would silently
-        // re-introduce the contamination this allow-list prevents.
-        const ALLOWED: &[&str] = &["Apache-2.0", "Gemma-Terms-of-Use"];
+        // package). Tencent License is permitted for the Hy-MT2
+        // translation specialist (2026-05-26 adoption); the license
+        // file ships alongside the GGUF in the model directory.
+        // New entries with other licenses would silently re-introduce
+        // the contamination this allow-list prevents.
+        const ALLOWED: &[&str] = &["Apache-2.0", "Gemma-Terms-of-Use", "Tencent License"];
         for t in TIERS {
             assert!(
                 ALLOWED.contains(&t.license),
