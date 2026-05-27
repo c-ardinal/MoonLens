@@ -1046,10 +1046,22 @@ fn worker_main(
 
     // Optional speculative-decoding drafter. Loaded once at worker
     // startup; spec_decode_inference uses (model, ctx) as the
-    // target/verifier and (drafter_model, drafter_ctx) to predict
+    // target/verifier and (drafter_ctx, drafter_model) to predict
     // candidate tokens N at a time. If load fails we degrade to
     // pure autoregressive — spec decode is opt-in, not required.
-    let mut drafter_pair: Option<(LlamaModel, llama_cpp_2::context::LlamaContext<'_>)> =
+    //
+    // Tuple order matters here: the `LlamaContext` carries a
+    // `'static`-transmuted borrow of the `LlamaModel`, and Rust
+    // drops tuple fields in declaration order (front to back).
+    // Putting the context FIRST ensures `llama_free_context` runs
+    // BEFORE the model is freed — the inverse order (which earlier
+    // commits used) caused a Windows STATUS_ACCESS_VIOLATION
+    // (0xC0000005) under the Gemma E2B tier in `lens_eval`'s
+    // 3-way sweep on 2026-05-27, because Vulkan cleanup inside
+    // `llama_free_context` was dereferencing the already-freed
+    // model handle. The fix landed in the commit that introduces
+    // this comment.
+    let mut drafter_pair: Option<(llama_cpp_2::context::LlamaContext<'_>, LlamaModel)> =
         drafter_path.as_ref().and_then(|p| {
             tracing::info!(
                 target: "embedded_llm_perf",
@@ -1103,7 +1115,9 @@ fn worker_main(
                 target: "embedded_llm_perf",
                 "embedded LLM: drafter ready (model + ctx loaded)"
             );
-            Some((drafter_model, drafter_ctx))
+            // Stored ctx FIRST so it drops FIRST — see tuple-order
+            // comment above.
+            Some((drafter_ctx, drafter_model))
         });
     let has_drafter = drafter_pair.is_some();
 
@@ -1134,7 +1148,7 @@ fn worker_main(
         ctx.clear_kv_cache();
         sampler.reset();
         // Same warmup for the drafter, when present.
-        if let Some((dm, dctx)) = drafter_pair.as_mut() {
+        if let Some((dctx, dm)) = drafter_pair.as_mut() {
             let dbos = dm.token_bos();
             let mut dwarm = LlamaBatch::new(1, 1);
             if dwarm.add(dbos, 0, &[0], true).is_ok() && dctx.decode(&mut dwarm).is_ok() {
@@ -1178,7 +1192,7 @@ fn worker_main(
         // documented way to swap sampling strategies.
         ctx.clear_kv_cache();
         sampler = build_sampler(req.temperature, req.top_p);
-        let result = if let Some((drafter_model, drafter_ctx)) = drafter_pair.as_mut() {
+        let result = if let Some((drafter_ctx, drafter_model)) = drafter_pair.as_mut() {
             drafter_ctx.clear_kv_cache();
             run_inference_in_context_spec(
                 &model,
@@ -1283,6 +1297,19 @@ const STOP_PREFIXES: &[&str] = &[
     "|im_end>",
     "<end_of_turn",
     "end_of_turn",
+    // 2026-05-27 lens_eval evidence: Hy-MT2 occasionally emits a
+    // role-start marker (`<|im_start|>assistant`, `<|im_start|>user`)
+    // mid-output, especially on the synth_small_body fixture where
+    // 17 chars of residual text were observed AFTER inpaint. The
+    // marker is the model picking up the next turn's start tokens
+    // instead of stopping cleanly — same root cause as the
+    // `<|im_end` byte-level leak (special-token flag stripped at
+    // GGUF conversion), just on the opening marker. The `<start_of_turn`
+    // entry covers the Gemma equivalent for symmetry.
+    "<|im_start",
+    "|im_start>",
+    "<start_of_turn",
+    "start_of_turn",
 ];
 
 /// If `aggregated` ends with any [`STOP_SUFFIXES`] entry, strip it
@@ -3078,6 +3105,33 @@ mod tests {
         let mut s = String::from("kept text <|im_end gibberish");
         assert!(strip_chat_template_garbage(&mut s, 0));
         assert_eq!(s, "kept text");
+    }
+
+    #[cfg(feature = "embedded-llm")]
+    #[test]
+    fn strip_chat_template_garbage_catches_role_start_markers() {
+        // 2026-05-27 lens_eval evidence: Hy-MT2 was emitting a
+        // partial `<|im_start|>assistant` mid-output after the
+        // GGUF conversion stripped the special-token flag from
+        // the role-start marker. This test pins the contract that
+        // the prefix scrubber catches `<|im_start`, `|im_start>`,
+        // and the Gemma equivalents in the same way it catches
+        // the closing markers.
+        let cases = &[
+            ("Hello.<|im_start|>assistant\nignored", "Hello."),
+            ("こんにちは。<|im_start(){", "こんにちは。"),
+            ("出力。|im_start>foo", "出力。"),
+            ("Greetings.<start_of_turn>user\nblah", "Greetings."),
+            ("Done. start_of_turn user", "Done."),
+        ];
+        for (input, expected) in cases {
+            let mut s = String::from(*input);
+            assert!(
+                strip_chat_template_garbage(&mut s, 0),
+                "expected scrub for {input}"
+            );
+            assert_eq!(s, *expected, "case: {input}");
+        }
     }
 
     #[cfg(feature = "embedded-llm")]
