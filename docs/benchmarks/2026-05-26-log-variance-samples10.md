@@ -1,3 +1,10 @@
+> ⚠️ **2026-05-27 INVALID DATA WARNING** — Same caveat as the
+> 2026-05-26-routed-* reports. The N=10 invariant PASS claim here
+> used qwen2.5-1.5b for every tier due to the routing bug; the
+> per-tier ordering reflects only per-tier sampling differences on
+> a single model, not the routing matrix. See
+> `docs/benchmarks/2026-05-27-routed-after-filename-fix.md`.
+
 # Translate Quality Eval (routed)
 
 **Samples per fixture**: 10

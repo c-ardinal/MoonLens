@@ -1,3 +1,17 @@
+> ⚠️ **2026-05-27 INVALID DATA WARNING** — This report was generated
+> BEFORE the routing bug fix (commit `5da7316`,
+> `fix(translate): route per-tier filename_remote through to model_path`).
+> At the time, `RoutedTranslator` config emitted `filename_remote`
+> for each tier but `EmbeddedLlmTranslator::new` ignored it and fell
+> back to `DEFAULT_MODEL_FILE = "qwen2.5-1.5b-instruct-q4_k_m.gguf"`,
+> so **every tier in this measurement actually ran qwen2.5-1.5b**,
+> not the registered tier model (Hy-MT2 / llm-jp / Gemma). The
+> per-tier score differences captured here reflect only per-tier
+> sampling/MBR-N changes on top of qwen2.5-1.5b — NOT the routing
+> matrix's intended model selection. See
+> `docs/benchmarks/2026-05-27-routed-after-filename-fix.md` for the
+> post-fix numbers that actually exercise the routed models.
+
 # Translate Quality Eval (routed)
 
 **Samples per fixture**: 3
