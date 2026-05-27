@@ -1,0 +1,11 @@
+{
+  "engine": "manga-hybrid",
+  "image": "synth/synth_short_lines.png",
+  "lang": "en",
+  "expected_chars": 112,
+  "detected_lines": 6,
+  "detected_text": "Saveyourwork. Cpenanewfle. Closealltabs. Sarrohttpedocument Showsettingepane: Quittheapplicafion.",
+  "cer": 0.1276595744680851,
+  "wer": 1.0,
+  "latency_ms": 1683.8089
+}

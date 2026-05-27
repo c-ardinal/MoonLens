@@ -1,0 +1,11 @@
+{
+  "engine": "manga-hybrid",
+  "image": "synth/synth_ui_buttons.png",
+  "lang": "en",
+  "expected_chars": 57,
+  "detected_lines": 1,
+  "detected_text": "「うん。それじゃない。んの",
+  "cer": 1.0,
+  "wer": 1.0,
+  "latency_ms": 319.82349999999997
+}

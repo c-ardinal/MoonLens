@@ -155,20 +155,20 @@ git add tests/snapshots/ocr_bench
 
 ## Ground truth coverage
 
-`tests/ocr_gt/` carries one JSON per input image. As of the
-2026-05-27 audit, the following input images do **not** yet have
-ground truth and the OCR bench will silently skip them:
+`tests/ocr_gt/` carries one JSON per input image. All 14 synthetic
+fixtures and 6 real screenshots in `tests/input/` have matching
+ground truth as of 2026-05-27, including the 6 layout-pattern
+panels (`synth_long_paragraph`, `synth_short_lines`,
+`synth_small_body`, `synth_title_body`, `synth_two_columns`,
+`synth_ui_buttons`) added at the end of that audit. These are
+useful for catching regressions in card sizing, text alignment,
+and column detection because the source text is generator-emitted
+so the GT is exact rather than human-transcribed.
 
-- `synth_long_paragraph.png`
-- `synth_short_lines.png`
-- `synth_small_body.png`
-- `synth_title_body.png`
-- `synth_two_columns.png`
-- `synth_ui_buttons.png`
-
-Adding GT for these is task #182 — they are layout-pattern fixtures
-useful for catching regressions in card sizing, text alignment, and
-column detection.
+When adding a new input image, also add the matching
+`tests/ocr_gt/<stem>.json` in the same commit — `ocr_bench`
+silently skips images whose GT is missing, which masks coverage
+gaps in CI.
 
 ## Historical context
 

@@ -1,0 +1,11 @@
+{
+  "engine": "ppocrv5-oar-ko",
+  "image": "synth/synth_short_lines.png",
+  "lang": "en",
+  "expected_chars": 112,
+  "detected_lines": 6,
+  "detected_text": "Save your work. Open a new file. Close all tabs. Search the document. Show settings panel. Quit the application.",
+  "cer": 0.0,
+  "wer": 0.0,
+  "latency_ms": 196.0954
+}

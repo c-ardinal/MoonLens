@@ -1,0 +1,11 @@
+{
+  "engine": "ppocrv5-mobile",
+  "image": "synth/synth_small_body.png",
+  "lang": "en",
+  "expected_chars": 613,
+  "detected_lines": 1,
+  "detected_text": "cYammarnsnen el",
+  "cer": 0.9736842105263158,
+  "wer": 1.0,
+  "latency_ms": 1510.1415
+}

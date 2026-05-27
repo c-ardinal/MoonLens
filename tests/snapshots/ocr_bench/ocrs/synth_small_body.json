@@ -1,0 +1,11 @@
+{
+  "engine": "ocrs",
+  "image": "synth/synth_small_body.png",
+  "lang": "en",
+  "expected_chars": 613,
+  "detected_lines": 11,
+  "detected_text": "It was the best of times, it was the worst of times,it was the age of wisdom. it was the age of foolishness,it was the epoch of beliel,it was the epoch of incredulity, it was the season of Light, it was the iit was the spring of hope, it was the winter of despair. we had everything before us, we had nothing before us, we were all going direct to Heaven, e were all going direct the other wayin short, the period was sol like the present period, that some of its noisiest authorities insisted its beine received, for good or for evil, in the superlative degree of fison only. eampar season of Darkness,",
+  "cer": 0.10323886639676114,
+  "wer": 0.20833333333333334,
+  "latency_ms": 534.9475
+}

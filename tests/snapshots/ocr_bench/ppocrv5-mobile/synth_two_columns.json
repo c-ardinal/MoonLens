@@ -1,0 +1,11 @@
+{
+  "engine": "ppocrv5-mobile",
+  "image": "synth/synth_two_columns.png",
+  "lang": "en",
+  "expected_chars": 490,
+  "detected_lines": 16,
+  "detected_text": "The North Windand the Sun were Then theNorthWindblewaar disputigcst ashecoulu theoe themorecloselydd thetravele atravelercamealngrppdin awam aTygd a folhisclu ne h fig last theNorth Wind gaveup the thetravelertakehis cloak of attept.henhnsh shuldesietn warmly,andthetravelertoof cYmtnanete cYhis cleak",
+  "cer": 0.635678391959799,
+  "wer": 0.9032258064516129,
+  "latency_ms": 2312.0637
+}

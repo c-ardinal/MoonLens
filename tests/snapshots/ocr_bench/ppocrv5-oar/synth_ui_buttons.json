@@ -1,0 +1,11 @@
+{
+  "engine": "ppocrv5-oar",
+  "image": "synth/synth_ui_buttons.png",
+  "lang": "en",
+  "expected_chars": 57,
+  "detected_lines": 1,
+  "detected_text": "File Edit View Insert Format Tools Help",
+  "cer": 0.0,
+  "wer": 0.0,
+  "latency_ms": 54.0833
+}

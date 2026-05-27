@@ -1,0 +1,11 @@
+{
+  "engine": "manga-hybrid",
+  "image": "synth/synth_small_body.png",
+  "lang": "en",
+  "expected_chars": 613,
+  "detected_lines": 5,
+  "detected_text": "ああ、あの時はあったからからはまだまだまだまだまだまだまだまだから いやいや、やっぱりいいのかわからないのですが、 ああ もちろん、これはまたはいいのですが、またはいませんでしたが、 comparighandy.",
+  "cer": 0.9736842105263158,
+  "wer": 1.0,
+  "latency_ms": 3062.3529
+}

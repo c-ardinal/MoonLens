@@ -1,0 +1,11 @@
+{
+  "engine": "ppocrv5-oar-ko",
+  "image": "synth/synth_two_columns.png",
+  "lang": "en",
+  "expected_chars": 490,
+  "detected_lines": 16,
+  "detected_text": "The North Wind and the Sun were Then the North Wind blew as hard disputing which was stronger when as he could, but the more he blew a traveler came along wrapped in the more closely did the traveler a warm cloak. They agreed that the fold his cloak around him; and at one who first succeeded in making last the North Wind gave up the the traveler take his cloak off attempt. Then the Sun shined out should be considered stronger than warmly, and the traveler took off the other. his cloak.",
+  "cer": 0.6482412060301508,
+  "wer": 0.7741935483870968,
+  "latency_ms": 718.0105
+}

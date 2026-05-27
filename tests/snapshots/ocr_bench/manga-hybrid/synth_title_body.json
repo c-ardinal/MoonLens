@@ -1,0 +1,11 @@
+{
+  "engine": "manga-hybrid",
+  "image": "synth/synth_title_body.png",
+  "lang": "en",
+  "expected_chars": 181,
+  "detected_lines": 2,
+  "detected_text": "TheQuickBrownFox mendakion(shonerook)は、",
+  "cer": 0.8040540540540541,
+  "wer": 1.0,
+  "latency_ms": 1190.4048
+}

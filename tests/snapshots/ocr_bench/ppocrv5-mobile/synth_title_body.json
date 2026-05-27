@@ -1,0 +1,11 @@
+{
+  "engine": "ppocrv5-mobile",
+  "image": "synth/synth_title_body.png",
+  "lang": "en",
+  "expected_chars": 181,
+  "detected_lines": 1,
+  "detected_text": "The Quick Brown Fox",
+  "cer": 0.8918918918918919,
+  "wer": 0.8823529411764706,
+  "latency_ms": 733.2402
+}

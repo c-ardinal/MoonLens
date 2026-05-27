@@ -7,5 +7,5 @@
   "detected_text": "Entee C",
   "cer": 0.9661016949152542,
   "wer": 1.0,
-  "latency_ms": 803.7238
+  "latency_ms": 724.4811
 }

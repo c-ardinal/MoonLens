@@ -1,0 +1,11 @@
+{
+  "engine": "ocrs",
+  "image": "synth/synth_long_paragraph.png",
+  "lang": "en",
+  "expected_chars": 367,
+  "detected_lines": 9,
+  "detected_text": "Of all the senses, sight must be the most delightful. Few things give us greater pleasure than to be able to see again after we have been prevented from doing so for Yet though sight is so precious people make full use animals and clouds, but they almost never observe them, length of time. possession, comparatively few of it They may indeed glance at trees and",
+  "cer": 0.41333333333333333,
+  "wer": 0.47058823529411764,
+  "latency_ms": 390.1826
+}

@@ -1,0 +1,11 @@
+{
+  "engine": "ocrs",
+  "image": "synth/synth_title_body.png",
+  "lang": "en",
+  "expected_chars": 181,
+  "detected_lines": 5,
+  "detected_text": "Brown Fox The Quick The quick brown fox jumps over the lazy dog. The five boxing wizards jump quickly. Pack my box with five dozen liquor jugs. Sphinx of black quartz, judge my vow.",
+  "cer": 0.10810810810810811,
+  "wer": 0.11764705882352941,
+  "latency_ms": 359.2808
+}

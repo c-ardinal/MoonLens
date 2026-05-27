@@ -1,0 +1,11 @@
+{
+  "engine": "manga-hybrid",
+  "image": "synth/synth_long_paragraph.png",
+  "lang": "en",
+  "expected_chars": 367,
+  "detected_lines": 5,
+  "detected_text": "それは今年はこの時は、はいはいはいかがでしたが、 あとはいえ、今回の中ではないのですが、 それは、本当にいるのではないのですが、このようなものではないのですが、 ちょっとしたら、あなたはずはずだったのはなにもなにですが、 おかげさまではないのは、はいはいはずですが、",
+  "cer": 1.0,
+  "wer": 1.0,
+  "latency_ms": 2403.3273
+}

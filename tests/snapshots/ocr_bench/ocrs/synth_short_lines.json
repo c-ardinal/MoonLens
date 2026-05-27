@@ -1,0 +1,11 @@
+{
+  "engine": "ocrs",
+  "image": "synth/synth_short_lines.png",
+  "lang": "en",
+  "expected_chars": 112,
+  "detected_lines": 7,
+  "detected_text": "Save your work. new file. Close all tabs. Search the document. Show settings panel. Ouit the application. Open",
+  "cer": 0.10638297872340426,
+  "wer": 0.21052631578947367,
+  "latency_ms": 310.32349999999997
+}
