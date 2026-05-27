@@ -12,11 +12,13 @@
     showMainRoute,
   } from '$lib/ipc';
   import {
+    onEmbeddedModelLoading,
     onLensFlowDone,
     onLensFlowStart,
     onLensLineChunk,
     onLensMask,
     onLensOcrLines,
+    type EmbeddedModelLoadingEvent,
     type LensFlowDone,
     type LensFlowStart,
     type LensLineChunk,
@@ -112,6 +114,22 @@
   // from screen capture, so the opacity-0 dance is skipped and the
   // cards stay fully visible through every poll.
   let masked = $state(false);
+
+  // Embedded LLM load state, surfaced ON THE LENS window itself so
+  // the user sees concrete progress during the multi-second
+  // GGUF cold-start. Pre-fix the only signal was the
+  // `EmbeddedModelLoadingBadge` in `/+layout.svelte` — which the
+  // Lens frame DOES inherit, but the badge is `pointer-events: none`
+  // + fixed top-right + the Lens chrome bars stay opacity:0 until
+  // hovered, so the user effectively saw "frozen Lens that does not
+  // respond to drag or hover" with no explanation. Surfacing the
+  // state via a dedicated overlay (and forcing the chrome bars
+  // visible while loading) is what closes the
+  // "機能が消えた" perception gap reported on 2026-05-27.
+  let modelLoading = $state(false);
+  let modelLoadError = $state<string | null>(null);
+  let modelLoadProvider = $state<string>('');
+  let modelLoadDismissTimer: ReturnType<typeof setTimeout> | null = null;
 
   const unlisteners: UnlistenFn[] = [];
   const win = getCurrentWebviewWindow();
@@ -534,6 +552,19 @@
         }));
         if (pendingLines.length === 0) {
           visibleLines = [];
+        } else {
+          // Prune stale lines from the previous flow whose
+          // `line_index` is not present in the new OCR layout. Without
+          // this, when flow B has fewer lines than flow A (or the
+          // line indices shift because the Lens moved to a different
+          // region), the extra flow-A cards stay visible on top of
+          // the new background until `LensFlowDone` runs the
+          // forceCommitRemaining sweep — and if `LensFlowDone` is
+          // delayed or lost, they linger forever. Pruning at OCR-
+          // commit time guarantees the visible set never contains
+          // a `line_index` the current flow does not own.
+          const validIndices = new Set(pendingLines.map((l) => l.line_index));
+          visibleLines = visibleLines.filter((l) => validIndices.has(l.line_index));
         }
       })
     );
@@ -575,6 +606,43 @@
       })
     );
 
+    // Embedded LLM load lifecycle. `started` surfaces a centred
+    // overlay + freezes the chrome bars visible so the user can
+    // see "loading" instead of "frozen". `finished` clears it
+    // (success briefly flashes "準備完了", error sticks longer
+    // so the user can read the message).
+    unlisteners.push(
+      await onEmbeddedModelLoading((e: EmbeddedModelLoadingEvent) => {
+        if (modelLoadDismissTimer) {
+          clearTimeout(modelLoadDismissTimer);
+          modelLoadDismissTimer = null;
+        }
+        if (e.phase === 'started') {
+          modelLoading = true;
+          modelLoadError = null;
+          modelLoadProvider = e.provider_id;
+          return;
+        }
+        modelLoadProvider = e.provider_id;
+        if (e.success) {
+          modelLoadError = null;
+          // Hold the badge briefly so the user can see "準備完了"
+          // before it vanishes — masking the moment the load
+          // finishes feels jarring after several seconds of
+          // visible progress.
+          modelLoadDismissTimer = setTimeout(() => {
+            modelLoading = false;
+          }, 800);
+        } else {
+          modelLoadError = e.error;
+          modelLoadDismissTimer = setTimeout(() => {
+            modelLoading = false;
+            modelLoadError = null;
+          }, 5000);
+        }
+      })
+    );
+
     window.addEventListener('keydown', handleKey);
   });
 
@@ -582,6 +650,10 @@
     for (const u of unlisteners) u();
     if (typeof window !== 'undefined') {
       window.removeEventListener('keydown', handleKey);
+    }
+    if (modelLoadDismissTimer) {
+      clearTimeout(modelLoadDismissTimer);
+      modelLoadDismissTimer = null;
     }
   });
 </script>
@@ -599,7 +671,8 @@
 <main
   class="lens-shell"
   class:opacity-0={masked}
-  class:lens-hovered={hovered}
+  class:lens-hovered={hovered || modelLoading}
+  class:lens-loading={modelLoading}
   onmouseenter={() => (hovered = true)}
   onmouseleave={() => (hovered = false)}
   onmousedown={beginDrag}
@@ -755,6 +828,42 @@
 
   {#if lastError}
     <p class="lens-error" role="alert">{lastError}</p>
+  {/if}
+
+  {#if modelLoading}
+    <!--
+      Centred loading curtain shown while the embedded LLM is
+      reading its GGUF off disk + warming up the llama.cpp
+      context (several seconds on cold start). The curtain
+      covers the whole shell so the user understands that the
+      Lens is intentionally non-interactive right now, instead
+      of treating the missing drag / hover response as a crash.
+      Auto-dismisses on the `finished` lifecycle event.
+    -->
+    <div
+      class="lens-loading-curtain"
+      role="status"
+      aria-live="polite"
+      aria-busy={!modelLoadError}
+    >
+      <div class="lens-loading-card">
+        {#if modelLoadError}
+          <span class="lens-loading-icon-error" aria-hidden="true">!</span>
+          <div class="lens-loading-text">
+            <strong>ローカル LLM の読み込みに失敗</strong>
+            <span class="lens-loading-subtle">{modelLoadError}</span>
+          </div>
+        {:else}
+          <span class="lens-loading-spinner" aria-hidden="true"></span>
+          <div class="lens-loading-text">
+            <strong>ローカル LLM をロード中…</strong>
+            {#if modelLoadProvider}
+              <span class="lens-loading-subtle">{modelLoadProvider}</span>
+            {/if}
+          </div>
+        {/if}
+      </div>
+    </div>
   {/if}
 </main>
 
@@ -1172,5 +1281,87 @@
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     text-rendering: geometricPrecision;
+  }
+
+  /* ============================================================
+     Embedded LLM loading curtain
+     ============================================================ */
+  .lens-loading-curtain {
+    position: absolute;
+    inset: 0;
+    z-index: 40;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(13, 14, 16, 0.55);
+    backdrop-filter: blur(20px) saturate(140%);
+    -webkit-backdrop-filter: blur(20px) saturate(140%);
+    border-radius: 12px;
+    pointer-events: none;
+    animation: lens-loading-fade-in 160ms ease;
+  }
+  .lens-loading-card {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 14px 18px;
+    border-radius: 12px;
+    background: rgba(20, 22, 26, 0.92);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    color: #e8eaee;
+    font-size: 12.5px;
+    max-width: 80%;
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
+  }
+  .lens-loading-text {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+  }
+  .lens-loading-text strong {
+    font-weight: 600;
+  }
+  .lens-loading-subtle {
+    font-size: 10.5px;
+    color: rgba(232, 234, 238, 0.6);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .lens-loading-spinner {
+    width: 16px;
+    height: 16px;
+    border: 2px solid rgba(168, 197, 218, 0.22);
+    border-top-color: var(--accent, #a8c5da);
+    border-radius: 50%;
+    animation: lens-loading-spin 0.8s linear infinite;
+    flex-shrink: 0;
+  }
+  .lens-loading-icon-error {
+    width: 18px;
+    height: 18px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    background: rgba(220, 70, 70, 0.25);
+    color: #ff8080;
+    font-weight: 700;
+    font-size: 12px;
+    flex-shrink: 0;
+  }
+  @keyframes lens-loading-spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+  @keyframes lens-loading-fade-in {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
   }
 </style>
