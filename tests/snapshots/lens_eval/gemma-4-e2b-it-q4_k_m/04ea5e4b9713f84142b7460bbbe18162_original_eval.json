@@ -3,231 +3,33 @@
   "image_w": 680,
   "image_h": 1146,
   "line_count": 28,
-  "avg_font_size": 20.04762,
+  "avg_font_size": 14.434283,
   "avg_color_delta": 325.62555,
   "weight_counts": [
-    4,
-    8,
-    16
+    6,
+    9,
+    13
   ],
-  "residual_char_count": 0,
-  "residual_texts": [],
+  "residual_char_count": 15,
+  "residual_texts": [
+    "UNW21N16SMVIODL"
+  ],
   "overflows": [
     {
-      "line_index": 0,
-      "source_text": "UltraNixie",
-      "translation": "UltraNixie",
-      "rendered_width_px": 20.0,
-      "card_inner_width_px": 16.0,
-      "overflow_ratio": 1.25
-    },
-    {
-      "line_index": 1,
-      "source_text": "Brand",
-      "translation": "ブランド",
-      "rendered_width_px": 19.583334,
-      "card_inner_width_px": 15.6666565,
-      "overflow_ratio": 1.2500008
-    },
-    {
-      "line_index": 2,
-      "source_text": "ModeI :",
-      "translation": "モデル：",
-      "rendered_width_px": 20.0,
-      "card_inner_width_px": 16.0,
-      "overflow_ratio": 1.25
-    },
-    {
-      "line_index": 3,
-      "source_text": "Case MateriaI:",
-      "translation": "MateriaIのケース:",
-      "rendered_width_px": 21.25,
-      "card_inner_width_px": 17.0,
-      "overflow_ratio": 1.25
-    },
-    {
-      "line_index": 4,
-      "source_text": "Zinc—AIuminum AIIOY",
-      "translation": "Zinc—AIuminumAIIOY",
-      "rendered_width_px": 27.083336,
-      "card_inner_width_px": 21.666656,
-      "overflow_ratio": 1.2500007
-    },
-    {
-      "line_index": 5,
-      "source_text": "Manufacturing Process .",
-      "translation": "製造プロセス",
-      "rendered_width_px": 27.916668,
-      "card_inner_width_px": 22.333313,
-      "overflow_ratio": 1.2500012
-    },
-    {
-      "line_index": 6,
-      "source_text": "Precision Die Casting &",
-      "translation": "精密なダイキャストと",
-      "rendered_width_px": 27.083336,
-      "card_inner_width_px": 21.666687,
-      "overflow_ratio": 1.2499989
-    },
-    {
-      "line_index": 7,
-      "source_text": "CNC Machining",
-      "translation": "CNC加工",
-      "rendered_width_px": 27.083336,
-      "card_inner_width_px": 21.666687,
-      "overflow_ratio": 1.2499989
-    },
-    {
-      "line_index": 8,
-      "source_text": "Tempered Protective GIass",
-      "translation": "強化された保護用ガー",
-      "rendered_width_px": 26.666668,
-      "card_inner_width_px": 21.333313,
-      "overflow_ratio": 1.2500013
-    },
-    {
-      "line_index": 9,
-      "source_text": "GIass .",
-      "translation": "こんにちは。",
-      "rendered_width_px": 19.583334,
-      "card_inner_width_px": 15.666687,
-      "overflow_ratio": 1.2499985
-    },
-    {
-      "line_index": 11,
-      "source_text": "Case DimenSIons .",
-      "translation": "サイズ情報。",
-      "rendered_width_px": 21.666668,
-      "card_inner_width_px": 17.333313,
-      "overflow_ratio": 1.2500015
-    },
-    {
-      "line_index": 12,
-      "source_text": "Weight .",
-      "translation": "体重です。",
-      "rendered_width_px": 27.916668,
-      "card_inner_width_px": 22.333313,
-      "overflow_ratio": 1.2500012
-    },
-    {
-      "line_index": 13,
-      "source_text": "85g",
-      "translation": "85グラムです。",
-      "rendered_width_px": 105.0,
-      "card_inner_width_px": 21.0,
-      "overflow_ratio": 5.0
-    },
-    {
-      "line_index": 14,
-      "source_text": "DispIay",
-      "translation": "表示",
-      "rendered_width_px": 27.916668,
-      "card_inner_width_px": 22.333313,
-      "overflow_ratio": 1.2500012
-    },
-    {
-      "line_index": 15,
-      "source_text": "Authentic Soviet-era",
-      "translation": "ソビエト時代の真っ最中",
-      "rendered_width_px": 20.416668,
-      "card_inner_width_px": 16.333313,
-      "overflow_ratio": 1.2500017
-    },
-    {
-      "line_index": 16,
-      "source_text": "16 Nixie Tube",
-      "translation": "16キスチュー",
-      "rendered_width_px": 20.416668,
-      "card_inner_width_px": 16.333313,
-      "overflow_ratio": 1.2500017
-    },
-    {
-      "line_index": 17,
-      "source_text": "Battery Capacity.",
-      "translation": "バッテリースティション",
-      "rendered_width_px": 27.916668,
-      "card_inner_width_px": 22.333313,
-      "overflow_ratio": 1.2500012
-    },
-    {
-      "line_index": 18,
-      "source_text": "90 mAh",
-      "translation": "90mAhのバッテリーです。",
-      "rendered_width_px": 39.166668,
-      "card_inner_width_px": 15.666687,
-      "overflow_ratio": 2.499997
-    },
-    {
-      "line_index": 19,
-      "source_text": "Charging Method :",
-      "translation": "電源供給方法：",
-      "rendered_width_px": 27.916668,
-      "card_inner_width_px": 22.333313,
-      "overflow_ratio": 1.2500012
-    },
-    {
-      "line_index": 20,
-      "source_text": "Qi WireIess Charging",
-      "translation": "Qichargeless",
-      "rendered_width_px": 27.083336,
-      "card_inner_width_px": 21.666687,
-      "overflow_ratio": 1.2499989
-    },
-    {
-      "line_index": 21,
-      "source_text": "Battery Life .",
-      "translation": "バッテリー寿命",
-      "rendered_width_px": 27.916668,
-      "card_inner_width_px": 22.333313,
-      "overflow_ratio": 1.2500012
-    },
-    {
-      "line_index": 22,
-      "source_text": "Up tO 5 days with regular",
-      "translation": "5日間の定期的な",
-      "rendered_width_px": 26.666668,
-      "card_inner_width_px": 21.333313,
-      "overflow_ratio": 1.2500013
-    },
-    {
-      "line_index": 23,
-      "source_text": "use (Approx. 100 activations per day)",
-      "translation": "1日に100回の使用を約する場合、",
-      "rendered_width_px": 31.666668,
-      "card_inner_width_px": 25.333313,
-      "overflow_ratio": 1.2500011
-    },
-    {
-      "line_index": 24,
-      "source_text": "StandbyTime .",
-      "translation": "待機時間",
-      "rendered_width_px": 27.5,
-      "card_inner_width_px": 22.0,
-      "overflow_ratio": 1.25
+      "line_index": 10,
+      "source_text": "55.3 x 40 x 15.3 mm (\n0.2 mm)",
+      "translation": "55.3x40x15.3mm(\n0.2mm)",
+      "rendered_width_px": 34.08,
+      "card_inner_width_px": 23.666687,
+      "overflow_ratio": 1.4399989
     },
     {
       "line_index": 25,
       "source_text": "Up tO 60 days",
-      "translation": "60日以内にまで届くと。",
-      "rendered_width_px": 52.5,
+      "translation": "60日後まで<end_of_of_turn>",
+      "rendered_width_px": 37.800003,
       "card_inner_width_px": 21.0,
-      "overflow_ratio": 2.5
-    },
-    {
-      "line_index": 26,
-      "source_text": "lnteraction .",
-      "translation": "相互作用です。",
-      "rendered_width_px": 21.666668,
-      "card_inner_width_px": 17.333374,
-      "overflow_ratio": 1.2499971
-    },
-    {
-      "line_index": 27,
-      "source_text": "PhysicaI Buttons",
-      "translation": "物理的ボタン",
-      "rendered_width_px": 27.083336,
-      "card_inner_width_px": 21.666626,
-      "overflow_ratio": 1.2500025
+      "overflow_ratio": 1.8000002
     }
   ],
   "timings_ms": {
@@ -235,10 +37,10 @@
     "winrt_ocr": 0.0,
     "ocrs_detect": 0.0,
     "compute_cards": 0.0,
-    "translate": 23794.15,
-    "inpaint": 13.750099,
-    "post_ocr_residual": 39.1502,
-    "total": 23891.398
+    "translate": 57976.617,
+    "inpaint": 8.7903,
+    "post_ocr_residual": 63.8459,
+    "total": 58096.004
   },
   "cards": [
     {
@@ -252,9 +54,9 @@
         16.0
       ],
       "tiled_bbox": [
-        3.0,
+        539.5834,
         381.6667,
-        672.0,
+        135.41663,
         24.0
       ],
       "bg_color": [
@@ -267,8 +69,8 @@
         77,
         77
       ],
-      "font_weight": 700,
-      "font_size_px": 16.0,
+      "font_weight": 600,
+      "font_size_px": 11.52,
       "text_align": "right",
       "fg_bg_delta": 297.91275
     },
@@ -285,7 +87,7 @@
       "tiled_bbox": [
         4.666667,
         382.0,
-        672.3333,
+        93.75,
         23.666656
       ],
       "bg_color": [
@@ -299,14 +101,14 @@
         42
       ],
       "font_weight": 700,
-      "font_size_px": 15.666667,
+      "font_size_px": 11.280001,
       "text_align": "left",
       "fg_bg_delta": 351.60632
     },
     {
       "line_index": 2,
       "text": "ModeI :",
-      "translation": "モデル：",
+      "translation": "ModeI:",
       "source_bbox": [
         10.666667,
         434.0,
@@ -316,7 +118,7 @@
       "tiled_bbox": [
         4.666667,
         430.0,
-        672.3333,
+        108.75,
         24.0
       ],
       "bg_color": [
@@ -330,14 +132,14 @@
         49
       ],
       "font_weight": 700,
-      "font_size_px": 16.0,
+      "font_size_px": 11.52,
       "text_align": "left",
       "fg_bg_delta": 355.0704
     },
     {
       "line_index": 3,
       "text": "Case MateriaI:",
-      "translation": "MateriaIのケース:",
+      "translation": "ケースマテリアル：",
       "source_bbox": [
         10.333334,
         480.6667,
@@ -347,7 +149,7 @@
       "tiled_bbox": [
         4.333334,
         476.6667,
-        672.6667,
+        214.58334,
         25.0
       ],
       "bg_color": [
@@ -361,14 +163,14 @@
         52
       ],
       "font_weight": 700,
-      "font_size_px": 17.0,
+      "font_size_px": 12.240001,
       "text_align": "left",
       "fg_bg_delta": 339.48196
     },
     {
       "line_index": 4,
       "text": "Zinc—AIuminum AIIOY",
-      "translation": "Zinc—AIuminumAIIOY",
+      "translation": "亜鉛—AIuminumAIIOY",
       "source_bbox": [
         450.0,
         481.33334,
@@ -376,9 +178,9 @@
         21.666656
       ],
       "tiled_bbox": [
-        3.0,
+        386.0833,
         477.33334,
-        672.6667,
+        289.58337,
         29.666656
       ],
       "bg_color": [
@@ -392,14 +194,14 @@
         76
       ],
       "font_weight": 600,
-      "font_size_px": 21.666668,
+      "font_size_px": 15.600001,
       "text_align": "right",
       "fg_bg_delta": 308.30505
     },
     {
       "line_index": 5,
       "text": "Manufacturing Process .",
-      "translation": "製造プロセス",
+      "translation": "製造工程。",
       "source_bbox": [
         10.666667,
         528.6667,
@@ -409,7 +211,7 @@
       "tiled_bbox": [
         4.666667,
         524.6667,
-        672.3333,
+        340.4167,
         30.333313
       ],
       "bg_color": [
@@ -423,14 +225,14 @@
         56
       ],
       "font_weight": 700,
-      "font_size_px": 22.333334,
+      "font_size_px": 16.080002,
       "text_align": "left",
       "fg_bg_delta": 341.21402
     },
     {
       "line_index": 6,
       "text": "Precision Die Casting &",
-      "translation": "精密なダイキャストと",
+      "translation": "精密鋳造と",
       "source_bbox": [
         429.0,
         529.3334,
@@ -438,9 +240,9 @@
         21.666687
       ],
       "tiled_bbox": [
-        3.0,
+        359.91666,
         525.3334,
-        672.3334,
+        315.41672,
         29.666687
       ],
       "bg_color": [
@@ -454,7 +256,7 @@
         78
       ],
       "font_weight": 400,
-      "font_size_px": 21.666668,
+      "font_size_px": 15.600001,
       "text_align": "right",
       "fg_bg_delta": 304.84094
     },
@@ -469,9 +271,9 @@
         21.666687
       ],
       "tiled_bbox": [
-        3.0,
+        459.25,
         573.3334,
-        671.6667,
+        215.41669,
         29.666687
       ],
       "bg_color": [
@@ -485,14 +287,14 @@
         75
       ],
       "font_weight": 600,
-      "font_size_px": 21.666668,
+      "font_size_px": 15.600001,
       "text_align": "right",
       "fg_bg_delta": 308.30505
     },
     {
       "line_index": 8,
       "text": "Tempered Protective GIass",
-      "translation": "強化された保護用ガー",
+      "translation": "熱処理保護ガラス<end_of_of_turn>",
       "source_bbox": [
         388.33334,
         625.6667,
@@ -500,9 +302,9 @@
         21.333313
       ],
       "tiled_bbox": [
-        3.0,
+        309.1667,
         621.6667,
-        672.0,
+        365.8333,
         29.333313
       ],
       "bg_color": [
@@ -516,14 +318,14 @@
         77
       ],
       "font_weight": 400,
-      "font_size_px": 21.333334,
+      "font_size_px": 15.360001,
       "text_align": "right",
       "fg_bg_delta": 306.573
     },
     {
       "line_index": 9,
       "text": "GIass .",
-      "translation": "こんにちは。",
+      "translation": "GIass。",
       "source_bbox": [
         10.333334,
         626.0,
@@ -533,7 +335,7 @@
       "tiled_bbox": [
         4.333334,
         622.0,
-        672.6667,
+        101.66667,
         23.666687
       ],
       "bg_color": [
@@ -547,14 +349,14 @@
         52
       ],
       "font_weight": 700,
-      "font_size_px": 15.666667,
+      "font_size_px": 11.280001,
       "text_align": "left",
       "fg_bg_delta": 341.21402
     },
     {
       "line_index": 10,
       "text": "55.3 x 40 x 15.3 mm (\n0.2 mm)",
-      "translation": "55.3x40x15.3mm(0.2mm)",
+      "translation": "55.3x40x15.3mm(\n0.2mm)",
       "source_bbox": [
         348.6667,
         669.6667,
@@ -562,9 +364,9 @@
         23.666687
       ],
       "tiled_bbox": [
-        3.0,
+        301.2917,
         665.6667,
-        674.0,
+        375.7083,
         31.666687
       ],
       "bg_color": [
@@ -577,15 +379,15 @@
         77,
         77
       ],
-      "font_weight": 600,
-      "font_size_px": 23.666668,
+      "font_weight": 400,
+      "font_size_px": 17.04,
       "text_align": "center",
       "fg_bg_delta": 306.573
     },
     {
       "line_index": 11,
       "text": "Case DimenSIons .",
-      "translation": "サイズ情報。",
+      "translation": "ケースの寸法。",
       "source_bbox": [
         10.333334,
         672.6667,
@@ -595,7 +397,7 @@
       "tiled_bbox": [
         4.333334,
         668.6667,
-        672.6667,
+        260.41666,
         25.333313
       ],
       "bg_color": [
@@ -609,14 +411,14 @@
         50
       ],
       "font_weight": 700,
-      "font_size_px": 17.333334,
+      "font_size_px": 12.4800005,
       "text_align": "left",
       "fg_bg_delta": 344.6781
     },
     {
       "line_index": 12,
       "text": "Weight .",
-      "translation": "体重です。",
+      "translation": "重さ。",
       "source_bbox": [
         10.0,
         720.6667,
@@ -626,7 +428,7 @@
       "tiled_bbox": [
         4.0,
         716.6667,
-        673.0,
+        125.0,
         30.333313
       ],
       "bg_color": [
@@ -640,14 +442,14 @@
         52
       ],
       "font_weight": 700,
-      "font_size_px": 22.333334,
+      "font_size_px": 16.080002,
       "text_align": "left",
       "fg_bg_delta": 348.1422
     },
     {
       "line_index": 13,
       "text": "85g",
-      "translation": "85グラムです。",
+      "translation": "85g",
       "source_bbox": [
         630.6667,
         722.0,
@@ -655,9 +457,9 @@
         21.0
       ],
       "tiled_bbox": [
-        3.0,
+        612.1667,
         718.0,
-        671.6667,
+        62.5,
         29.0
       ],
       "bg_color": [
@@ -671,14 +473,14 @@
         76
       ],
       "font_weight": 600,
-      "font_size_px": 21.0,
+      "font_size_px": 15.120001,
       "text_align": "right",
       "fg_bg_delta": 304.84094
     },
     {
       "line_index": 14,
       "text": "DispIay",
-      "translation": "表示",
+      "translation": "DispIay",
       "source_bbox": [
         10.666667,
         768.6667,
@@ -688,7 +490,7 @@
       "tiled_bbox": [
         4.666667,
         764.6667,
-        672.3333,
+        115.41667,
         30.333313
       ],
       "bg_color": [
@@ -702,14 +504,14 @@
         50
       ],
       "font_weight": 700,
-      "font_size_px": 22.333334,
+      "font_size_px": 16.080002,
       "text_align": "left",
       "fg_bg_delta": 349.87427
     },
     {
       "line_index": 15,
       "text": "Authentic Soviet-era",
-      "translation": "ソビエト時代の真っ最中",
+      "translation": "本物のソ連時代の<end_of_of_turn>",
       "source_bbox": [
         453.6667,
         769.3334,
@@ -717,9 +519,9 @@
         16.333313
       ],
       "tiled_bbox": [
-        3.0,
+        390.9167,
         765.3334,
-        671.6667,
+        283.75,
         24.333313
       ],
       "bg_color": [
@@ -732,15 +534,15 @@
         74,
         74
       ],
-      "font_weight": 700,
-      "font_size_px": 16.333334,
+      "font_weight": 600,
+      "font_size_px": 11.760001,
       "text_align": "right",
       "fg_bg_delta": 304.84094
     },
     {
       "line_index": 16,
       "text": "16 Nixie Tube",
-      "translation": "16キスチュー",
+      "translation": "16NixieTube",
       "source_bbox": [
         538.0,
         817.3334,
@@ -748,9 +550,9 @@
         16.333313
       ],
       "tiled_bbox": [
-        3.0,
+        496.25,
         813.3334,
-        672.0,
+        178.75,
         24.333313
       ],
       "bg_color": [
@@ -763,15 +565,15 @@
         78,
         78
       ],
-      "font_weight": 700,
-      "font_size_px": 16.333334,
+      "font_weight": 600,
+      "font_size_px": 11.760001,
       "text_align": "right",
       "fg_bg_delta": 299.64478
     },
     {
       "line_index": 17,
       "text": "Battery Capacity.",
-      "translation": "バッテリースティション",
+      "translation": "バッテリー容量。<end_of_of_turn>",
       "source_bbox": [
         10.666667,
         864.6667,
@@ -781,7 +583,7 @@
       "tiled_bbox": [
         4.666667,
         860.6667,
-        672.3333,
+        257.08334,
         30.333313
       ],
       "bg_color": [
@@ -795,14 +597,14 @@
         50
       ],
       "font_weight": 700,
-      "font_size_px": 22.333334,
+      "font_size_px": 16.080002,
       "text_align": "left",
       "fg_bg_delta": 349.87427
     },
     {
       "line_index": 18,
       "text": "90 mAh",
-      "translation": "90mAhのバッテリーです。",
+      "translation": "90mAh",
       "source_bbox": [
         590.3334,
         866.0,
@@ -810,9 +612,9 @@
         15.666687
       ],
       "tiled_bbox": [
-        3.0,
+        561.75006,
         862.0,
-        671.6667,
+        112.916626,
         23.666687
       ],
       "bg_color": [
@@ -825,15 +627,15 @@
         66,
         66
       ],
-      "font_weight": 600,
-      "font_size_px": 15.666667,
+      "font_weight": 400,
+      "font_size_px": 11.280001,
       "text_align": "right",
       "fg_bg_delta": 320.4294
     },
     {
       "line_index": 19,
       "text": "Charging Method :",
-      "translation": "電源供給方法：",
+      "translation": "充電方法：",
       "source_bbox": [
         10.333334,
         912.6667,
@@ -843,7 +645,7 @@
       "tiled_bbox": [
         4.333334,
         908.6667,
-        672.6667,
+        262.49997,
         30.333313
       ],
       "bg_color": [
@@ -857,14 +659,14 @@
         50
       ],
       "font_weight": 700,
-      "font_size_px": 22.333334,
+      "font_size_px": 16.080002,
       "text_align": "left",
       "fg_bg_delta": 351.60632
     },
     {
       "line_index": 20,
       "text": "Qi WireIess Charging",
-      "translation": "Qichargeless",
+      "translation": "QiWireIessCharging",
       "source_bbox": [
         451.6667,
         913.3334,
@@ -872,9 +674,9 @@
         21.666687
       ],
       "tiled_bbox": [
-        3.0,
+        388.4167,
         909.3334,
-        671.6667,
+        286.25,
         29.666687
       ],
       "bg_color": [
@@ -888,14 +690,14 @@
         75
       ],
       "font_weight": 400,
-      "font_size_px": 21.666668,
+      "font_size_px": 15.600001,
       "text_align": "right",
       "fg_bg_delta": 308.30505
     },
     {
       "line_index": 21,
       "text": "Battery Life .",
-      "translation": "バッテリー寿命",
+      "translation": "バッテリー寿命。",
       "source_bbox": [
         10.666667,
         960.6667,
@@ -905,7 +707,7 @@
       "tiled_bbox": [
         4.666667,
         956.6667,
-        672.3333,
+        179.58334,
         30.333313
       ],
       "bg_color": [
@@ -919,14 +721,14 @@
         51
       ],
       "font_weight": 700,
-      "font_size_px": 22.333334,
+      "font_size_px": 16.080002,
       "text_align": "left",
       "fg_bg_delta": 348.1422
     },
     {
       "line_index": 22,
       "text": "Up tO 5 days with regular",
-      "translation": "5日間の定期的な",
+      "translation": "通常5日間まで",
       "source_bbox": [
         408.6667,
         961.6667,
@@ -934,9 +736,9 @@
         21.333313
       ],
       "tiled_bbox": [
-        3.0,
+        334.4167,
         957.6667,
-        672.6667,
+        341.25,
         29.333313
       ],
       "bg_color": [
@@ -950,14 +752,14 @@
         77
       ],
       "font_weight": 600,
-      "font_size_px": 21.333334,
+      "font_size_px": 15.360001,
       "text_align": "right",
       "fg_bg_delta": 306.573
     },
     {
       "line_index": 23,
       "text": "use (Approx. 100 activations per day)",
-      "translation": "1日に100回の使用を約する場合、",
+      "translation": "use(1日あたり約100回の活性化)",
       "source_bbox": [
         281.6667,
         1005.6667,
@@ -965,9 +767,9 @@
         25.333313
       ],
       "tiled_bbox": [
-        3.0,
+        176.16669,
         1001.6667,
-        670.6667,
+        497.5,
         33.333313
       ],
       "bg_color": [
@@ -981,14 +783,14 @@
         74
       ],
       "font_weight": 400,
-      "font_size_px": 25.333334,
+      "font_size_px": 18.240002,
       "text_align": "right",
       "fg_bg_delta": 311.76913
     },
     {
       "line_index": 24,
       "text": "StandbyTime .",
-      "translation": "待機時間",
+      "translation": "待機中Time。",
       "source_bbox": [
         10.666667,
         1056.6667,
@@ -998,7 +800,7 @@
       "tiled_bbox": [
         4.666667,
         1052.6667,
-        672.3333,
+        213.33334,
         30.0
       ],
       "bg_color": [
@@ -1012,14 +814,14 @@
         52
       ],
       "font_weight": 700,
-      "font_size_px": 22.0,
+      "font_size_px": 15.84,
       "text_align": "left",
       "fg_bg_delta": 346.41016
     },
     {
       "line_index": 25,
       "text": "Up tO 60 days",
-      "translation": "60日以内にまで届くと。",
+      "translation": "60日後まで<end_of_of_turn>",
       "source_bbox": [
         526.6667,
         1058.0,
@@ -1027,9 +829,9 @@
         21.0
       ],
       "tiled_bbox": [
-        3.0,
+        482.08337,
         1054.0,
-        672.0,
+        192.91663,
         29.0
       ],
       "bg_color": [
@@ -1043,14 +845,14 @@
         75
       ],
       "font_weight": 600,
-      "font_size_px": 21.0,
+      "font_size_px": 15.120001,
       "text_align": "right",
       "fg_bg_delta": 310.0371
     },
     {
       "line_index": 26,
       "text": "lnteraction .",
-      "translation": "相互作用です。",
+      "translation": "lnteraction.",
       "source_bbox": [
         10.666667,
         1104.6667,
@@ -1060,7 +862,7 @@
       "tiled_bbox": [
         4.666667,
         1100.6667,
-        672.3333,
+        177.08334,
         25.333374
       ],
       "bg_color": [
@@ -1074,14 +876,14 @@
         46
       ],
       "font_weight": 700,
-      "font_size_px": 17.333334,
+      "font_size_px": 12.4800005,
       "text_align": "left",
       "fg_bg_delta": 348.1422
     },
     {
       "line_index": 27,
       "text": "PhysicaI Buttons",
-      "translation": "物理的ボタン",
+      "translation": "PhysicaIButtons",
       "source_bbox": [
         499.6667,
         1105.3334,
@@ -1089,9 +891,9 @@
         21.666626
       ],
       "tiled_bbox": [
-        3.0,
+        448.33337,
         1101.3334,
-        672.0,
+        226.66663,
         29.666626
       ],
       "bg_color": [
@@ -1105,7 +907,7 @@
         79
       ],
       "font_weight": 600,
-      "font_size_px": 21.666668,
+      "font_size_px": 15.600001,
       "text_align": "right",
       "fg_bg_delta": 303.1089
     }

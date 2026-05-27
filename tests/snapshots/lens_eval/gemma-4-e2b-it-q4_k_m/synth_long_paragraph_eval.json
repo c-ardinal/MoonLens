@@ -3,7 +3,7 @@
   "image_w": 900,
   "image_h": 260,
   "line_count": 1,
-  "avg_font_size": 12.666667,
+  "avg_font_size": 9.120001,
   "avg_color_delta": 214.1985,
   "weight_counts": [
     1,
@@ -12,31 +12,22 @@
   ],
   "residual_char_count": 0,
   "residual_texts": [],
-  "overflows": [
-    {
-      "line_index": 0,
-      "source_text": "the senses, sight must be the most delightful.\nFew things give us greater pleasure than tO be able tO see again\nafterwe have been prevented from doing so f0 「 a length oftime.\nYet though sight is 50 precious a possession, comparatively few\npeople make full use 0f it. They may indeed glance at trees and\nanimals and clouds, but they\nmost never observe them.",
-      "translation": "感覚の一つ目は最も楽しいものです。\n多くのことは、視覚が再び使用できるかどうかを阻止されたときに\n私たちに与えるより大きな喜びを与えてくれます。\nしかし、視覚は50貴重な財産でありながら、比較的少ない人々が\nそれを完全に利用することはできません。彼らは確かに木々や動物や雲をglanceするかもしれませんが、それ以上に視覚を見ることはほとんどありません。",
-      "rendered_width_px": 144.0,
-      "card_inner_width_px": 132.33333,
-      "overflow_ratio": 1.0881612
-    }
-  ],
+  "overflows": [],
   "timings_ms": {
     "preprocess": 0.0,
     "winrt_ocr": 0.0,
     "ocrs_detect": 0.0,
     "compute_cards": 0.0,
-    "translate": 4672.836,
-    "inpaint": 2.4617,
-    "post_ocr_residual": 5.1228,
-    "total": 4692.54
+    "translate": 5130.586,
+    "inpaint": 2.2675,
+    "post_ocr_residual": 5.7795997,
+    "total": 5158.4985
   },
   "cards": [
     {
       "line_index": 0,
       "text": "the senses, sight must be the most delightful.\nFew things give us greater pleasure than tO be able tO see again\nafterwe have been prevented from doing so f0 「 a length oftime.\nYet though sight is 50 precious a possession, comparatively few\npeople make full use 0f it. They may indeed glance at trees and\nanimals and clouds, but they\nmost never observe them.",
-      "translation": "感覚の一つ目は最も楽しいものです。\n多くのことは、視覚が再び使用できるかどうかを阻止されたときに\n私たちに与えるより大きな喜びを与えてくれます。\nしかし、視覚は50貴重な財産でありながら、比較的少ない人々が\nそれを完全に利用することはできません。彼らは確かに木々や動物や雲をglanceするかもしれませんが、それ以上に視覚を見ることはほとんどありません。",
+      "translation": "感覚、視覚は最も喜ばしいものでなければなりません。\nしばらくの間、それらを見ることを禁じられた後で再び見ることができることよりも大きな喜びを与えるものはほとんどありません。\nしかし、視覚は貴重な所有物ですが、それを十分に活用する人はごくわずかです。彼らは木々や動物、雲に目を向けることはできても、それらを観察することはほとんどありません。",
       "source_bbox": [
         23.666668,
         27.666668,
@@ -60,7 +51,7 @@
         126
       ],
       "font_weight": 400,
-      "font_size_px": 12.666667,
+      "font_size_px": 9.120001,
       "text_align": "center",
       "fg_bg_delta": 214.1985
     }

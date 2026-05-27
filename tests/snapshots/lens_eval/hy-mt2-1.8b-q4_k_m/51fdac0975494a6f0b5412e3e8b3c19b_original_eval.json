@@ -3,72 +3,31 @@
   "image_w": 680,
   "image_h": 1547,
   "line_count": 7,
-  "avg_font_size": 32.380955,
+  "avg_font_size": 23.314285,
   "avg_color_delta": 300.33182,
   "weight_counts": [
-    0,
-    6,
+    5,
+    1,
     1
   ],
   "residual_char_count": 0,
   "residual_texts": [],
-  "overflows": [
-    {
-      "line_index": 0,
-      "source_text": "UItraNixie",
-      "translation": "イーーックス",
-      "rendered_width_px": 63.75,
-      "card_inner_width_px": 51.0,
-      "overflow_ratio": 1.25
-    },
-    {
-      "line_index": 1,
-      "source_text": "Nixie Tube Watch",
-      "translation": "ニキシー・タブーの時計",
-      "rendered_width_px": 52.5,
-      "card_inner_width_px": 42.0,
-      "overflow_ratio": 1.25
-    },
-    {
-      "line_index": 4,
-      "source_text": "stability, and battery life.",
-      "translation": "安定性とバッテリーイフ。",
-      "rendered_width_px": 33.333336,
-      "card_inner_width_px": 26.666626,
-      "overflow_ratio": 1.250002
-    },
-    {
-      "line_index": 5,
-      "source_text": "This p 「 OJect is built on the t 「 ust Of ou 「\np 「 evious supporters\nand this new",
-      "translation": "この「オージー」は、以前の支持者たちの「トライアングル」を基に作られています。",
-      "rendered_width_px": 60.000004,
-      "card_inner_width_px": 56.666626,
-      "overflow_ratio": 1.0588243
-    },
-    {
-      "line_index": 6,
-      "source_text": "ve 「 sion iS ou 「 way Of honoring it.",
-      "translation": "それは「尊敬するもの」の「道」を示しています。",
-      "rendered_width_px": 67.5,
-      "card_inner_width_px": 27.0,
-      "overflow_ratio": 2.5
-    }
-  ],
+  "overflows": [],
   "timings_ms": {
     "preprocess": 0.0,
     "winrt_ocr": 0.0,
     "ocrs_detect": 0.0,
     "compute_cards": 0.0,
-    "translate": 11050.401,
-    "inpaint": 17.5024,
-    "post_ocr_residual": 57.1108,
-    "total": 11189.149
+    "translate": 7963.388,
+    "inpaint": 31.4786,
+    "post_ocr_residual": 124.07169,
+    "total": 8231.019
   },
   "cards": [
     {
       "line_index": 0,
       "text": "UItraNixie",
-      "translation": "イーーックス",
+      "translation": "ユートラニクシー",
       "source_bbox": [
         174.0,
         764.6667,
@@ -76,9 +35,9 @@
         51.0
       ],
       "tiled_bbox": [
-        55.0,
+        124.625,
         760.6667,
-        572.0,
+        433.75,
         59.0
       ],
       "bg_color": [
@@ -92,14 +51,14 @@
         241
       ],
       "font_weight": 700,
-      "font_size_px": 51.0,
+      "font_size_px": 36.72,
       "text_align": "center",
       "fg_bg_delta": 358.53452
     },
     {
       "line_index": 1,
       "text": "Nixie Tube Watch",
-      "translation": "ニキシー・タブーの時計",
+      "translation": "ニクシー・チュー・ウッチ",
       "source_bbox": [
         106.66667,
         833.3334,
@@ -123,14 +82,14 @@
         52
       ],
       "font_weight": 600,
-      "font_size_px": 42.0,
+      "font_size_px": 30.240002,
       "text_align": "center",
       "fg_bg_delta": 224.77989
     },
     {
       "line_index": 2,
       "text": "Ou 「 p 「 evious Ni)(ie—inspi 「 ed watch\nlaunched in Janua 「 y 2025 with the support\nof 508 backers. That support allowed\nthe design tO continue evolving.",
-      "translation": "「前の」ニコラー-インスピレーションウォッチは2025年1月にリリースされ、508人を支援しました。その支援により、設計が進化することができました。",
+      "translation": "「p「eviousNi)(ie—inspi「edwatch\n2025年1月に508人の支援者からのサポートを受けて発売されました。その支援により、デザインは進化を続けることができました。",
       "source_bbox": [
         61.666668,
         906.6667,
@@ -153,15 +112,15 @@
         210,
         210
       ],
-      "font_weight": 600,
-      "font_size_px": 26.666668,
+      "font_weight": 400,
+      "font_size_px": 19.2,
       "text_align": "center",
       "fg_bg_delta": 304.84094
     },
     {
       "line_index": 3,
       "text": "Ove 「 the past year, we listened closely,\n「 efined the details,\nand focused on what t 「 uly matte 「 s\nin eve 「 yday wea 「 . FO 「 UltraNixie,\nwe 「 edesigned the internal circuitry\nand further optimized performance,\nimproving energy efficiency,",
-      "translation": "一昨年、我々は過去一年間、慎重に耳を傾け、詳細を明確にして、今日の夜に焦点を当てました。UltraNixieでは、内部回路設計を行い、性能をさらに最適化し、エネルギー率を改善しました。",
+      "translation": "オーェ「昨年、私たちは注意深く聞き、\n「細を精化し、\nそして何が「本当に重要なのかに焦点を当てた。\n今朝「私たちの日々の活動において。「FO「UltraNixie、\n私たちは内部回路を設計し、\n性能をさらに最適化し、\nエネルギー効率を向上させた。",
       "source_bbox": [
         87.0,
         1056.6667,
@@ -184,15 +143,15 @@
         209,
         209
       ],
-      "font_weight": 600,
-      "font_size_px": 26.666668,
+      "font_weight": 400,
+      "font_size_px": 19.2,
       "text_align": "center",
       "fg_bg_delta": 303.1089
     },
     {
       "line_index": 4,
       "text": "stability, and battery life.",
-      "translation": "安定性とバッテリーイフ。",
+      "translation": "安定性とバッテリー寿命です。",
       "source_bbox": [
         179.33334,
         1266.6667,
@@ -200,9 +159,9 @@
         26.666626
       ],
       "tiled_bbox": [
-        55.0,
+        131.58334,
         1265.1667,
-        572.0,
+        417.50003,
         32.166626
       ],
       "bg_color": [
@@ -215,15 +174,15 @@
         211,
         211
       ],
-      "font_weight": 600,
-      "font_size_px": 26.666668,
+      "font_weight": 400,
+      "font_size_px": 19.2,
       "text_align": "center",
       "fg_bg_delta": 306.573
     },
     {
       "line_index": 5,
       "text": "This p 「 OJect is built on the t 「 ust Of ou 「\np 「 evious supporters\nand this new",
-      "translation": "この「オージー」は、以前の支持者たちの「トライアングル」を基に作られています。",
+      "translation": "このプロジェクトは、続的な支援者たちと、この新しい...",
       "source_bbox": [
         97.0,
         1326.6667,
@@ -246,15 +205,15 @@
         208,
         208
       ],
-      "font_weight": 600,
-      "font_size_px": 26.666668,
+      "font_weight": 400,
+      "font_size_px": 19.2,
       "text_align": "center",
       "fg_bg_delta": 301.37683
     },
     {
       "line_index": 6,
       "text": "ve 「 sion iS ou 「 way Of honoring it.",
-      "translation": "それは「尊敬するもの」の「道」を示しています。",
+      "translation": "それを尊重する方法です。",
       "source_bbox": [
         133.0,
         1386.6667,
@@ -262,9 +221,9 @@
         27.0
       ],
       "tiled_bbox": [
-        55.0,
+        72.83333,
         1385.0,
-        572.0,
+        541.66675,
         32.666748
       ],
       "bg_color": [
@@ -277,8 +236,8 @@
         209,
         209
       ],
-      "font_weight": 600,
-      "font_size_px": 27.0,
+      "font_weight": 400,
+      "font_size_px": 19.44,
       "text_align": "center",
       "fg_bg_delta": 303.1089
     }

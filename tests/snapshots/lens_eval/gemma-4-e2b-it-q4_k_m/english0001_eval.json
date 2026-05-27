@@ -3,7 +3,7 @@
   "image_w": 882,
   "image_h": 189,
   "line_count": 3,
-  "avg_font_size": 16.666668,
+  "avg_font_size": 12.0,
   "avg_color_delta": 162.95824,
   "weight_counts": [
     0,
@@ -12,39 +12,22 @@
   ],
   "residual_char_count": 0,
   "residual_texts": [],
-  "overflows": [
-    {
-      "line_index": 0,
-      "source_text": "The Elicitation Paragraph (Please CaIl StelIa)",
-      "translation": "ステラに電話してください。",
-      "rendered_width_px": 23.333336,
-      "card_inner_width_px": 18.666668,
-      "overflow_ratio": 1.25
-    },
-    {
-      "line_index": 1,
-      "source_text": "The Speech Accent A 「 chive (SAA)\nSAA",
-      "translation": "「chive」は英語で「スライスしたハー」という意味です。",
-      "rendered_width_px": 58.000008,
-      "card_inner_width_px": 40.33334,
-      "overflow_ratio": 1.4380165
-    }
-  ],
+  "overflows": [],
   "timings_ms": {
     "preprocess": 0.0,
     "winrt_ocr": 0.0,
     "ocrs_detect": 0.0,
     "compute_cards": 0.0,
-    "translate": 5602.4575,
-    "inpaint": 4.2373,
-    "post_ocr_residual": 4.3064003,
-    "total": 5624.6426
+    "translate": 2950.0413,
+    "inpaint": 3.9269001,
+    "post_ocr_residual": 48.552902,
+    "total": 3017.36
   },
   "cards": [
     {
       "line_index": 0,
       "text": "The Elicitation Paragraph (Please CaIl StelIa)",
-      "translation": "ステラに電話してください。",
+      "translation": "エリケーション段落（ステラを呼んでください）",
       "source_bbox": [
         10.0,
         13.666667,
@@ -54,7 +37,7 @@
       "tiled_bbox": [
         4.0,
         9.666667,
-        876.0,
+        466.6667,
         26.666668
       ],
       "bg_color": [
@@ -67,15 +50,15 @@
         114,
         120
       ],
-      "font_weight": 700,
-      "font_size_px": 18.666668,
+      "font_weight": 600,
+      "font_size_px": 13.4400015,
       "text_align": "left",
       "fg_bg_delta": 188.40913
     },
     {
       "line_index": 1,
       "text": "The Speech Accent A 「 chive (SAA)\nSAA",
-      "translation": "「chive」は英語で「スライスしたハー」という意味です。",
+      "translation": "スピーチアクセントA「チャイブ(SAA)",
       "source_bbox": [
         10.0,
         43.666668,
@@ -85,7 +68,7 @@
       "tiled_bbox": [
         1.0,
         39.666668,
-        879.0,
+        265.125,
         48.33334
       ],
       "bg_color": [
@@ -98,15 +81,15 @@
         132,
         141
       ],
-      "font_weight": 600,
-      "font_size_px": 15.666667,
+      "font_weight": 700,
+      "font_size_px": 11.280001,
       "text_align": "center",
       "fg_bg_delta": 155.98718
     },
     {
       "line_index": 2,
       "text": "PIease call StelIa. Ask herto bring these things with her f 「 om the store: Six spoons 0f f 「 esh snow peas, five thick slabs 0f blue\ncheese, and maybe a snack f0 「 her brother B0b. We SO need a small plastic snake and a big toy frog forthe kids. She can scoop\nthese things intO three 「 ed bags, and we will go meet her Wednesday atthe train station.",
-      "translation": "PleasecallStella.Askhertobringthesethingswithherfromthestore:Sixspoonsoffreshsnowpeas,fivethickslabsofbluecheese,andmaybeasnackforherbrotherBob.Wealsoneedasmallplasticsnakeandabigtoyfrogforthekids.Shecanscoopthesethingsintothreeredbags,andwewillgomeetherWednesdayatthetrainstation.",
+      "translation": "ステラに電話してください。これらのものをお店で買ってきてもらうように頼んでください。新鮮なスナップエンドウを6さじ、厚切りのブルーチーズを5枚、それから弟のボブのおやつも。子供たちのために、小さなプラスチック製のヘビと大きなカエルのおもちゃも必要です。彼女はこれらを赤い袋3つに詰めてくれるでしょう。水曜日に駅で待ち合わせましょう。",
       "source_bbox": [
         13.666667,
         99.66667,
@@ -130,7 +113,7 @@
         135
       ],
       "font_weight": 600,
-      "font_size_px": 15.666667,
+      "font_size_px": 11.280001,
       "text_align": "left",
       "fg_bg_delta": 144.47838
     }

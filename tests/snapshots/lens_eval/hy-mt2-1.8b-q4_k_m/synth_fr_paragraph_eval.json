@@ -1,0 +1,59 @@
+{
+  "image": "synth_fr_paragraph.png",
+  "image_w": 880,
+  "image_h": 220,
+  "line_count": 1,
+  "avg_font_size": 11.280001,
+  "avg_color_delta": 238.44705,
+  "weight_counts": [
+    0,
+    1,
+    0
+  ],
+  "residual_char_count": 0,
+  "residual_texts": [],
+  "overflows": [],
+  "timings_ms": {
+    "preprocess": 0.0,
+    "winrt_ocr": 0.0,
+    "ocrs_detect": 0.0,
+    "compute_cards": 0.0,
+    "translate": 2070.5862,
+    "inpaint": 2.3876998,
+    "post_ocr_residual": 5.6019,
+    "total": 2095.187
+  },
+  "cards": [
+    {
+      "line_index": 0,
+      "text": "Aujourd'hui, maman est mo e. Ou peut-étre hier, je ne sais pas.\nJ'ai 「 equ un télégramme de l'asile : 《 Mére décédée. 》\nEnte 「 「 ement demain. Sentiments distingués.\nCela ne veut rien dire. C'était peut-étre hie 「 .",
+      "translation": "今日は母が亡くなった。昨日だったのかもしれないが、わからない。\n「施設から電報が届いた：『母が亡くなった。』\n明日には「の」になるだろう。高な気持ちだ。\n何の意味もない。おそらく昨日だったのかもしれない。「」",
+      "source_bbox": [
+        23.666668,
+        26.666668,
+        456.6667,
+        102.66667
+      ],
+      "tiled_bbox": [
+        17.666668,
+        22.666668,
+        471.33334,
+        110.66667
+      ],
+      "bg_color": [
+        247,
+        247,
+        249
+      ],
+      "fg_color": [
+        109,
+        109,
+        112
+      ],
+      "font_weight": 600,
+      "font_size_px": 11.280001,
+      "text_align": "left",
+      "fg_bg_delta": 238.44705
+    }
+  ]
+}

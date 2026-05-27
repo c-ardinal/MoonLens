@@ -3,47 +3,23 @@
   "image_w": 891,
   "image_h": 252,
   "line_count": 4,
-  "avg_font_size": 16.166668,
+  "avg_font_size": 11.639999,
   "avg_color_delta": 150.36905,
   "weight_counts": [
     1,
-    2,
-    1
+    3,
+    0
   ],
   "residual_char_count": 0,
   "residual_texts": [],
   "overflows": [
     {
-      "line_index": 0,
-      "source_text": "The North Wind and the Sun (",
-      "translation": "北風と太陽は、雪を吹き飛ばし、日光を浴びて寒さから身を守る。",
-      "rendered_width_px": 45.833336,
-      "card_inner_width_px": 18.333332,
-      "overflow_ratio": 2.5000002
-    },
-    {
       "line_index": 1,
       "source_text": "Wikipedia",
-      "translation": "Wikipediaを翻します。",
-      "rendered_width_px": 37.5,
+      "translation": "ウィキペディア<end_of_of_turn>",
+      "rendered_width_px": 27.0,
       "card_inner_width_px": 15.0,
-      "overflow_ratio": 2.5
-    },
-    {
-      "line_index": 2,
-      "source_text": "The North Wind and the Sun were disputing which was the stronger, when a t 「 aveler came along wrapped in a warm cloak. They\nagreed that the one wh0 first succeeded in making the t 「 aveler take his cloak 0ff should be conside 「 ed stronge 「 than the 0ther.\nThen the North Wind blew as hard as he could, but the more he blew the more closely did the traveler fo\nhis cloak a 「 ound him;",
-      "translation": "北風と太陽が、どちらが強ければ強いかを争っていたとき、一匹の「avelerが暖かいコートをまとい、彼らに会った。彼は「avelerがコートを取り外すことができた方から強ければ強いと信じる。\n次に北風は最大限の力で吹き、しかし、吹くほどコートが近づいてきた。",
-      "rendered_width_px": 84.0,
-      "card_inner_width_px": 71.66667,
-      "overflow_ratio": 1.1720929
-    },
-    {
-      "line_index": 3,
-      "source_text": "and at last the North Wind gave up the attempt. Then the Sun shined out warmly, and immediatelythe travelertook Off his cloak.\nAnd SO the NO 「 th Wind was obliged tO confess that the Sun was the stronger Ofthe two.",
-      "translation": "そして、最後に北風は試みを放棄しました。その代わり、太陽は暖かく輝き、旅行者はすぐに帽子を取り外しました。\nそして、北風は「二つめの太陽がどちらも強い」と認めざるを得ませんでした。",
-      "rendered_width_px": 56.0,
-      "card_inner_width_px": 43.66667,
-      "overflow_ratio": 1.2824426
+      "overflow_ratio": 1.8
     }
   ],
   "timings_ms": {
@@ -51,16 +27,16 @@
     "winrt_ocr": 0.0,
     "ocrs_detect": 0.0,
     "compute_cards": 0.0,
-    "translate": 10224.532,
-    "inpaint": 5.8809004,
-    "post_ocr_residual": 40.537,
-    "total": 10288.896
+    "translate": 13815.036,
+    "inpaint": 7.5464997,
+    "post_ocr_residual": 106.334,
+    "total": 13971.385
   },
   "cards": [
     {
       "line_index": 0,
       "text": "The North Wind and the Sun (",
-      "translation": "北風と太陽は、雪を吹き飛ばし、日光を浴びて寒さから身を守る。",
+      "translation": "北風と太陽<end_of_of_turn>",
       "source_bbox": [
         18.0,
         21.666668,
@@ -70,7 +46,7 @@
       "tiled_bbox": [
         12.0,
         17.666668,
-        872.0,
+        305.20837,
         26.333332
       ],
       "bg_color": [
@@ -83,15 +59,15 @@
         113,
         118
       ],
-      "font_weight": 700,
-      "font_size_px": 18.333334,
+      "font_weight": 600,
+      "font_size_px": 13.200001,
       "text_align": "left",
       "fg_bg_delta": 190.68823
     },
     {
       "line_index": 1,
       "text": "Wikipedia",
-      "translation": "Wikipediaを翻します。",
+      "translation": "ウィキペディア<end_of_of_turn>",
       "source_bbox": [
         63.333336,
         80.0,
@@ -101,7 +77,7 @@
       "tiled_bbox": [
         57.333336,
         76.0,
-        826.6667,
+        88.541664,
         23.0
       ],
       "bg_color": [
@@ -115,14 +91,14 @@
         196
       ],
       "font_weight": 400,
-      "font_size_px": 15.0,
+      "font_size_px": 10.8,
       "text_align": "left",
       "fg_bg_delta": 119.524055
     },
     {
       "line_index": 2,
       "text": "The North Wind and the Sun were disputing which was the stronger, when a t 「 aveler came along wrapped in a warm cloak. They\nagreed that the one wh0 first succeeded in making the t 「 aveler take his cloak 0ff should be conside 「 ed stronge 「 than the 0ther.\nThen the North Wind blew as hard as he could, but the more he blew the more closely did the traveler fo\nhis cloak a 「 ound him;",
-      "translation": "北風と太陽が、どちらが強ければ強いかを争っていたとき、一匹の「avelerが暖かいコートをまとい、彼らに会った。彼は「avelerがコートを取り外すことができた方から強ければ強いと信じる。\n次に北風は最大限の力で吹き、しかし、吹くほどコートが近づいてきた。",
+      "translation": "北風と太陽はどちらがより強いかについて争っていました。すると、暖かい外套に包まれたタベルがやって来ました。最初にタベルが外套を脱がせることに成功した方が、もう一方がより強いと見なされることに同意しました。\nそれから北風はできる限り強く吹きましたが、吹くほど旅人は外套を彼に近づけました。",
       "source_bbox": [
         22.0,
         107.66667,
@@ -146,14 +122,14 @@
         135
       ],
       "font_weight": 600,
-      "font_size_px": 15.666667,
+      "font_size_px": 11.280001,
       "text_align": "center",
       "fg_bg_delta": 144.47838
     },
     {
       "line_index": 3,
       "text": "and at last the North Wind gave up the attempt. Then the Sun shined out warmly, and immediatelythe travelertook Off his cloak.\nAnd SO the NO 「 th Wind was obliged tO confess that the Sun was the stronger Ofthe two.",
-      "translation": "そして、最後に北風は試みを放棄しました。その代わり、太陽は暖かく輝き、旅行者はすぐに帽子を取り外しました。\nそして、北風は「二つめの太陽がどちらも強い」と認めざるを得ませんでした。",
+      "translation": "そして最後に北風は試みを諦めた。それから太陽が暖かく輝き、旅人はすぐに外套を羽織って飛び立った。\nそしてそのように北風は太陽が二つの中でより強いことを告白することを余儀なくされた。",
       "source_bbox": [
         22.0,
         191.66667,
@@ -177,7 +153,7 @@
         134
       ],
       "font_weight": 600,
-      "font_size_px": 15.666667,
+      "font_size_px": 11.280001,
       "text_align": "left",
       "fg_bg_delta": 146.78555
     }

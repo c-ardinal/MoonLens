@@ -3,47 +3,23 @@
   "image_w": 900,
   "image_h": 220,
   "line_count": 5,
-  "avg_font_size": 13.4,
+  "avg_font_size": 9.648001,
   "avg_color_delta": 218.9335,
   "weight_counts": [
-    4,
-    1,
+    3,
+    2,
     0
   ],
   "residual_char_count": 0,
   "residual_texts": [],
   "overflows": [
     {
-      "line_index": 0,
-      "source_text": "The Quick Brown FOX",
-      "translation": "Thequickbrownfox",
-      "rendered_width_px": 23.75,
-      "card_inner_width_px": 19.0,
-      "overflow_ratio": 1.25
-    },
-    {
-      "line_index": 1,
-      "source_text": "The quick brown fox jumps 0V0",
-      "translation": "速いブラウンfoxが0V0で跳びます。",
-      "rendered_width_px": 15.0,
+      "line_index": 3,
+      "source_text": "boxing wizardsjump quickly. Pack my bOX with\nve dozen",
+      "translation": "ボクシングの魔法使いは素早くジャンプする。私のbOXを\n12個詰めてください",
+      "rendered_width_px": 17.28,
       "card_inner_width_px": 12.0,
-      "overflow_ratio": 1.25
-    },
-    {
-      "line_index": 2,
-      "source_text": "dog. The",
-      "translation": "犬。",
-      "rendered_width_px": 14.583334,
-      "card_inner_width_px": 11.666664,
-      "overflow_ratio": 1.2500004
-    },
-    {
-      "line_index": 4,
-      "source_text": "liquorjugs. Sphinxofblackquartz,judge myvow.",
-      "translation": "ライスジョールス。シプサウトブラッククォー、私の誓いを判断する。",
-      "rendered_width_px": 30.833336,
-      "card_inner_width_px": 12.333328,
-      "overflow_ratio": 2.5000012
+      "overflow_ratio": 1.44
     }
   ],
   "timings_ms": {
@@ -51,16 +27,16 @@
     "winrt_ocr": 0.0,
     "ocrs_detect": 0.0,
     "compute_cards": 0.0,
-    "translate": 4873.5894,
-    "inpaint": 0.9945,
-    "post_ocr_residual": 4.4896,
-    "total": 4887.8813
+    "translate": 29140.557,
+    "inpaint": 2.0899,
+    "post_ocr_residual": 17.4047,
+    "total": 29188.104
   },
   "cards": [
     {
       "line_index": 0,
       "text": "The Quick Brown FOX",
-      "translation": "Thequickbrownfox",
+      "translation": "素早い茶色のFOX",
       "source_bbox": [
         24.0,
         29.666668,
@@ -84,14 +60,14 @@
         89
       ],
       "font_weight": 600,
-      "font_size_px": 19.0,
+      "font_size_px": 13.68,
       "text_align": "left",
       "fg_bg_delta": 279.4423
     },
     {
       "line_index": 1,
       "text": "The quick brown fox jumps 0V0",
-      "translation": "速いブラウンfoxが0V0で跳びます。",
+      "translation": "すばやい茶色のキツネが0V0と跳ぶ",
       "source_bbox": [
         24.0,
         83.0,
@@ -101,7 +77,7 @@
       "tiled_bbox": [
         18.0,
         79.0,
-        293.0,
+        202.08334,
         20.0
       ],
       "bg_color": [
@@ -115,14 +91,14 @@
         130
       ],
       "font_weight": 400,
-      "font_size_px": 12.0,
+      "font_size_px": 8.64,
       "text_align": "left",
       "fg_bg_delta": 207.27036
     },
     {
       "line_index": 2,
       "text": "dog. The",
-      "translation": "犬。",
+      "translation": "犬。その",
       "source_bbox": [
         220.0,
         83.66667,
@@ -132,7 +108,7 @@
       "tiled_bbox": [
         214.0,
         79.66667,
-        97.0,
+        67.5,
         19.666664
       ],
       "bg_color": [
@@ -146,14 +122,14 @@
         134
       ],
       "font_weight": 400,
-      "font_size_px": 11.666667,
+      "font_size_px": 8.400001,
       "text_align": "left",
       "fg_bg_delta": 198.61017
     },
     {
       "line_index": 3,
       "text": "boxing wizardsjump quickly. Pack my bOX with\nve dozen",
-      "translation": "ボクシングウィザードは速く跳び、私のBOXをめるでしょう。vedozen",
+      "translation": "ボクシングの魔法使いは素早くジャンプする。私のbOXを\n12個詰めてください",
       "source_bbox": [
         24.666668,
         106.333336,
@@ -176,15 +152,15 @@
         129,
         132
       ],
-      "font_weight": 400,
-      "font_size_px": 12.0,
+      "font_weight": 600,
+      "font_size_px": 8.64,
       "text_align": "center",
       "fg_bg_delta": 202.07425
     },
     {
       "line_index": 4,
       "text": "liquorjugs. Sphinxofblackquartz,judge myvow.",
-      "translation": "ライスジョールス。シプサウトブラッククォー、私の誓いを判断する。",
+      "translation": "liquorjugs.Sphinxofblackquartz,judgemyvow.",
       "source_bbox": [
         24.666668,
         129.0,
@@ -208,7 +184,7 @@
         130
       ],
       "font_weight": 400,
-      "font_size_px": 12.333334,
+      "font_size_px": 8.880001,
       "text_align": "left",
       "fg_bg_delta": 207.27036
     }

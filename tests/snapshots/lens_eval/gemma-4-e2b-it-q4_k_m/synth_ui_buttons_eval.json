@@ -3,56 +3,31 @@
   "image_w": 900,
   "image_h": 100,
   "line_count": 3,
-  "avg_font_size": 9.222222,
+  "avg_font_size": 6.64,
   "avg_color_delta": 224.78265,
   "weight_counts": [
-    1,
     2,
+    1,
     0
   ],
   "residual_char_count": 0,
   "residual_texts": [],
-  "overflows": [
-    {
-      "line_index": 0,
-      "source_text": "File Edit View ⅲ se",
-      "translation": "FileEditViewを翻します。",
-      "rendered_width_px": 10.833334,
-      "card_inner_width_px": 8.666668,
-      "overflow_ratio": 1.2499999
-    },
-    {
-      "line_index": 1,
-      "source_text": "Tools Help",
-      "translation": "工具が役立ちます。",
-      "rendered_width_px": 27.5,
-      "card_inner_width_px": 11.0,
-      "overflow_ratio": 2.5
-    },
-    {
-      "line_index": 2,
-      "source_text": "Fo 「 m",
-      "translation": "「メモ」の文字を日本語に翻すると、「メモ」になります。",
-      "rendered_width_px": 70.0,
-      "card_inner_width_px": 8.0,
-      "overflow_ratio": 8.75
-    }
-  ],
+  "overflows": [],
   "timings_ms": {
     "preprocess": 0.0,
     "winrt_ocr": 0.0,
     "ocrs_detect": 0.0,
     "compute_cards": 0.0,
-    "translate": 2916.8574,
-    "inpaint": 0.3963,
-    "post_ocr_residual": 3.0006,
-    "total": 2925.1643
+    "translate": 3037.1511,
+    "inpaint": 0.3168,
+    "post_ocr_residual": 3.8679,
+    "total": 3054.4778
   },
   "cards": [
     {
       "line_index": 0,
       "text": "File Edit View ⅲ se",
-      "translation": "FileEditViewを翻します。",
+      "translation": "ファイル編集ビューⅲse",
       "source_bbox": [
         24.666668,
         27.0,
@@ -62,7 +37,7 @@
       "tiled_bbox": [
         18.666668,
         23.0,
-        226.33333,
+        139.16666,
         16.666668
       ],
       "bg_color": [
@@ -75,15 +50,15 @@
         124,
         127
       ],
-      "font_weight": 600,
-      "font_size_px": 8.666667,
+      "font_weight": 400,
+      "font_size_px": 6.2400002,
       "text_align": "left",
       "fg_bg_delta": 206.11404
     },
     {
       "line_index": 1,
       "text": "Tools Help",
-      "translation": "工具が役立ちます。",
+      "translation": "ツールヘルプ",
       "source_bbox": [
         181.66667,
         27.0,
@@ -91,9 +66,9 @@
         11.0
       ],
       "tiled_bbox": [
-        16.0,
+        159.0,
         23.0,
-        226.33334,
+        83.33334,
         19.0
       ],
       "bg_color": [
@@ -107,14 +82,14 @@
         124
       ],
       "font_weight": 400,
-      "font_size_px": 11.0,
+      "font_size_px": 7.92,
       "text_align": "right",
       "fg_bg_delta": 215.93054
     },
     {
       "line_index": 2,
       "text": "Fo 「 m",
-      "translation": "「メモ」の文字を日本語に翻すると、「メモ」になります。",
+      "translation": "Fo「m",
       "source_bbox": [
         140.66667,
         27.666668,
@@ -124,7 +99,7 @@
       "tiled_bbox": [
         134.66667,
         23.666668,
-        110.33333,
+        43.333344,
         16.0
       ],
       "bg_color": [
@@ -138,7 +113,7 @@
         95
       ],
       "font_weight": 600,
-      "font_size_px": 8.0,
+      "font_size_px": 5.76,
       "text_align": "left",
       "fg_bg_delta": 252.30339
     }

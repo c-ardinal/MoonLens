@@ -3,66 +3,33 @@
   "image_w": 899,
   "image_h": 559,
   "line_count": 5,
-  "avg_font_size": 14.800001,
+  "avg_font_size": 10.656001,
   "avg_color_delta": 151.57962,
   "weight_counts": [
     1,
-    2,
-    2
+    4,
+    0
   ],
-  "residual_char_count": 3,
+  "residual_char_count": 2,
   "residual_texts": [
-    "DEA"
+    "EA"
   ],
-  "overflows": [
-    {
-      "line_index": 0,
-      "source_text": "The Rainbow Passage",
-      "translation": "rainbowpassage",
-      "rendered_width_px": 23.333336,
-      "card_inner_width_px": 18.666668,
-      "overflow_ratio": 1.25
-    },
-    {
-      "line_index": 1,
-      "source_text": "lnte 「 national Dialects of English Archive (IDEA)",
-      "translation": "日本語で翻すると、以下のようになります：\n\n「国際英語方言アーイブ（IDEA）」です。",
-      "rendered_width_px": 58.75,
-      "card_inner_width_px": 15.666668,
-      "overflow_ratio": 3.7499998
-    },
-    {
-      "line_index": 2,
-      "source_text": "Comma Gets a Cure",
-      "translation": "カンマが治療法を見つけた",
-      "rendered_width_px": 14.166668,
-      "card_inner_width_px": 11.333336,
-      "overflow_ratio": 1.2499999
-    },
-    {
-      "line_index": 4,
-      "source_text": "blue.",
-      "translation": "blue. \n青いです。 \n青（あお）です。 \n青色の文字を日本語に翻します。 \n\n青（あお）です。 \n青いです。 \n青の文字を日本語に翻します。 \n青（あお）です。 \n青いです。 \n青の文字を日本語に翻します。 \n青（あお）です。 \n青いです。 \n青の文字を日本語に翻します。 \n青（あお）です。 \n青いです。 \n青の文字を日本語に翻します。 \n青（あお）です。 \n青いです。 \n青の文字を日本語に翻します。 \n青（あお）です。 \n青いです。 \n青の文字を日本語に翻します。 \n青（あお）です。 \n青いです。 \n青の文字を日本語に翻します。 \n青（あお）です。 \n青いです。 \n青の文字を日本語に翻します。 \n青（あお）です。 \n青いです。 \n青の文字を日本語に翻します。 \n青（あお）です。 \n青いです。 \n青の文字を日本語に翻します。 \n青（あお）です。 \n青いです。 \n青の文字を日本語に翻します。 \n青（あお）です。 \n青いです。 \n青の文字を日本語に翻します。 \n青（あお）です。 \n青いです。 \n青の文字を日本語に翻します。 \n青（あお）です。 \n青いです。 \n青の文字を日本語に翻します。 \n青（あお）です。 \n青いです。 \n青の文字を日本語に翻します。 \n青（あお）です。 \n青いです。 \n青の文字を日本語に翻します。 \n青（あお）です。 \n青いです。 \n青の文字を日本語に翻します。 \n青（あお）です。 \n青いです。 \n青の文字を日本語に翻します。 \n青（あお）です。 \n青いです。 \n青",
-      "rendered_width_px": 3135.0002,
-      "card_inner_width_px": 12.666687,
-      "overflow_ratio": 247.49962
-    }
-  ],
+  "overflows": [],
   "timings_ms": {
     "preprocess": 0.0,
     "winrt_ocr": 0.0,
     "ocrs_detect": 0.0,
     "compute_cards": 0.0,
-    "translate": 41936.934,
-    "inpaint": 16.7695,
-    "post_ocr_residual": 41.556297,
-    "total": 42044.566
+    "translate": 145871.9,
+    "inpaint": 51.6274,
+    "post_ocr_residual": 254.53871,
+    "total": 146363.05
   },
   "cards": [
     {
       "line_index": 0,
       "text": "The Rainbow Passage",
-      "translation": "rainbowpassage",
+      "translation": "虹の通路",
       "source_bbox": [
         20.0,
         12.666667,
@@ -72,7 +39,7 @@
       "tiled_bbox": [
         14.0,
         8.666667,
-        873.0,
+        237.91669,
         26.666668
       ],
       "bg_color": [
@@ -85,15 +52,15 @@
         113,
         118
       ],
-      "font_weight": 700,
-      "font_size_px": 18.666668,
+      "font_weight": 600,
+      "font_size_px": 13.4400015,
       "text_align": "left",
       "fg_bg_delta": 190.75114
     },
     {
       "line_index": 1,
       "text": "lnte 「 national Dialects of English Archive (IDEA)",
-      "translation": "日本語で翻すると、以下のようになります：\n\n「国際英語方言アーイブ（IDEA）」です。",
+      "translation": "lnte「nationalDialectsofEnglishArchive(IDEA)」",
       "source_bbox": [
         21.0,
         42.666668,
@@ -103,7 +70,7 @@
       "tiled_bbox": [
         15.0,
         38.666668,
-        872.0,
+        398.125,
         23.666668
       ],
       "bg_color": [
@@ -117,14 +84,14 @@
         139
       ],
       "font_weight": 600,
-      "font_size_px": 15.666667,
+      "font_size_px": 11.280001,
       "text_align": "left",
       "fg_bg_delta": 159.48041
     },
     {
       "line_index": 2,
       "text": "Comma Gets a Cure",
-      "translation": "カンマが治療法を見つけた",
+      "translation": "カンマに治療法が見つかる",
       "source_bbox": [
         114.0,
         71.66667,
@@ -134,7 +101,7 @@
       "tiled_bbox": [
         110.833336,
         67.66667,
-        776.1667,
+        173.54169,
         19.333336
       ],
       "bg_color": [
@@ -148,14 +115,14 @@
         198
       ],
       "font_weight": 400,
-      "font_size_px": 11.333334,
+      "font_size_px": 8.160001,
       "text_align": "left",
       "fg_bg_delta": 132.09088
     },
     {
       "line_index": 3,
       "text": "When the sunlight strikes raindrops in the air, they act as a p 「 ism and fO 「 m a rainbow. The rainbow is a division Of white light\nint0 many beautiful colours. These take the shape 0f a long 「 ound arch, with its path high above, and its two ends apparently\nbeyond the horizon. There is, according tolegend. a boiling pot Of go\nat one end. People IOOk. but no one ever finds it. When a\nman 100ks f0 「 something beyond his 「 each, his friends say he is looking forthe pot 0f go\nat the end ofthe 「 ainbow. Th 「 oughout\nthe centu 「 ies people have explained the rainbow in various ways. Some have accepted it as a miracle without physical\nexplanation. TO the Hebrews it was a tOken that the 「 e would be no mo 「 e universal flOOds. The Greeks used tO imagine that it was\na sign from the gods t0 foretell war 0 「 heavy rain. The NO 「 semen considered the rainbow as a bridge over which the gods passed\nf 「 om earth tO their home in the sky. Others have tried tO explain the phenomenon physically. AristotIe thought that the 「 ainbow\nwas caused by 「 eflection Ofthe sun's rays bythe 「 ain. Since then physicists have found that it is not reflection, but 「 ef 「 action by\nthe raind 「 ops which causes the 「 ainbows. Many complicated ideas about the 「 ainbow have been formed. The diffe 「 ence in the\nrainbow depends considerably upon the size Ofthe drops, and the width Ofthe coloured band increases as the size Ofthe drops\nincreases. The actualprimary rainbow observed is said t0 be the effect 0f super-imposition 0f a numbe 「 0f bows. lfthe 「 ed 0fthe\nsecond bow falls upon the green 0fthe first, the resultis t0 give a bow with an abnormally wide yellow band, since red and green\nlight when mixed fO 「 m yellow. This is a very common type Of bow, one showing mainly red and yellow, with little 0 「 no green 0 「",
-      "translation": "Whenthesunlightstrikesraindropsintheair,theyactasaprismandformarainbow.Therainbowisadivisionofwhitelightintomanybeautifulcolors.Thesetaketheshapeofalongarc,withitspathhighabove,anditstwoendsapparentlybeyondthehorizon.Accordingtolegend,thereisaboilingpotofgoldatoneend.Peoplelookforitbutnooneeverfindsit.Whensomeonegoesbeyondhisreach,hisfriendssayheislookingforthepotofgoldattheendoftherainbow.Throughouthistory,peoplehaveexplainedtherainbowinvariousways.Somehaveaccepteditasamiraclewithoutphysicalexplanation.TotheHebrews,itwasatokenthatGodwouldnotbeuniversalfloods.TheGreeksusedtoimaginethatitwasasignfromthegodstoforetellwarorheavyrain.TheRomansconsideredtherainbowasabridgeoverwhichthegodspassedf0mearthtotheirhomeinthesky.Othershavetriedtoexplainthephenomenonphysically.Aristotlethoughtthattherainbowwascausedbyreflectionofthesun'sraysbyraindrops.Sincethen,physicistshavefoundthatitisnotreflectionbutattractionbytheraindropswhichcausestherainbowbows.Manycomplicatedideasabouttherainbowhavebeenformed.Thedifferenceintherainbowdependsconsiderablyuponthesizeofthedropsandthewidthofthecoloredbandincreasesasthesizeofthedropsincreases.Theactualprimaryrainbowobservedissaidtobetheeffectofsuperimpositionofanumberofbows.Ifthesecondbowfallsuponthegreenofthefirst,theresultistogiveabowwithanabnormallywideyellowbandsinceredandgreenlightwhenmixedformyellow.Thisisaverycommontypeofbow,oneshowingmainlyredandyellow,withlittlenogreen.",
+      "translation": "太陽の光が空気中の雨粒に当たると、それはプリズムのように振る舞い、虹を形作ります。虹は白色光が多くの美しい色に分かれたものです。この虹は長い弧の形をしており、その道筋は高く空にあり、両端は地平線の向こうにあるように見えます。伝説によれば、片方の端には黄金の釜が煮えていると言われています。人々はそれを見ますが、誰もそれを見つけることはありません。一人の人間が自分の視界の外にある何かを見るとき、彼の友人たちは彼が虹の先にある黄金の釜を探しているのだと言います。何世紀にもわたって、人々は様々な方法で虹を説明してきました。中には、物理的な説明なしにそれを奇跡として受け入れた人もいます。ヘブライ人にとっては、それは大洪水が二度と起こらないというしるしでした。ギリシャ人は、それが戦争や激しい雨を予言する神々のからの印だと想像しました。ノア人は、虹を神々が地上から空の家へ通る橋として考えました。他の人々は、この現象を物理的に説明しようと試みました。アリストテレスは、虹は太陽光が雨粒によって屈折することによって引き起こされると考えました。それ以来、物理学者はそれが反射ではなく、雨粒による回折作用であり、虹を引き起こしていることを見出しました。虹について多くの複雑な考えが形成されてきました。虹の違いは、水滴のサイズに大きく依存し、色の帯の幅は水滴のサイズが増すにつれて広がります。観察される実際の主要な虹は、複数の虹の重ね合わせの効果であると言われています。2番目の虹の色が最初の緑に重なると、赤と緑の光が混ざって黄色になるため、異常に広い黄色の帯を持つ虹ができることになります。これは非常に一般的なタイプの虹で、主に赤と黄色を示し、緑はほとんどないか全くありません。",
       "source_bbox": [
         23.666668,
         126.66667,
@@ -179,14 +146,14 @@
         136
       ],
       "font_weight": 600,
-      "font_size_px": 15.666667,
+      "font_size_px": 11.280001,
       "text_align": "center",
       "fg_bg_delta": 143.87148
     },
     {
       "line_index": 4,
       "text": "blue.",
-      "translation": "blue. \n青いです。 \n青（あお）です。 \n青色の文字を日本語に翻します。 \n\n青（あお）です。 \n青いです。 \n青の文字を日本語に翻します。 \n青（あお）です。 \n青いです。 \n青の文字を日本語に翻します。 \n青（あお）です。 \n青いです。 \n青の文字を日本語に翻します。 \n青（あお）です。 \n青いです。 \n青の文字を日本語に翻します。 \n青（あお）です。 \n青いです。 \n青の文字を日本語に翻します。 \n青（あお）です。 \n青いです。 \n青の文字を日本語に翻します。 \n青（あお）です。 \n青いです。 \n青の文字を日本語に翻します。 \n青（あお）です。 \n青いです。 \n青の文字を日本語に翻します。 \n青（あお）です。 \n青いです。 \n青の文字を日本語に翻します。 \n青（あお）です。 \n青いです。 \n青の文字を日本語に翻します。 \n青（あお）です。 \n青いです。 \n青の文字を日本語に翻します。 \n青（あお）です。 \n青いです。 \n青の文字を日本語に翻します。 \n青（あお）です。 \n青いです。 \n青の文字を日本語に翻します。 \n青（あお）です。 \n青いです。 \n青の文字を日本語に翻します。 \n青（あお）です。 \n青いです。 \n青の文字を日本語に翻します。 \n青（あお）です。 \n青いです。 \n青の文字を日本語に翻します。 \n青（あお）です。 \n青いです。 \n青の文字を日本語に翻します。 \n青（あお）です。 \n青いです。 \n青の文字を日本語に翻します。 \n青（あお）です。 \n青いです。 \n青",
+      "translation": "青。",
       "source_bbox": [
         24.666668,
         518.6667,
@@ -196,7 +163,7 @@
       "tiled_bbox": [
         18.666668,
         514.6667,
-        868.3333,
+        53.333332,
         20.666687
       ],
       "bg_color": [
@@ -209,8 +176,8 @@
         121,
         135
       ],
-      "font_weight": 700,
-      "font_size_px": 12.666667,
+      "font_weight": 600,
+      "font_size_px": 9.120001,
       "text_align": "left",
       "fg_bg_delta": 131.70421
     }

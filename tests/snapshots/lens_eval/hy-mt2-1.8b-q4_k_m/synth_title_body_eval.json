@@ -3,72 +3,31 @@
   "image_w": 900,
   "image_h": 220,
   "line_count": 5,
-  "avg_font_size": 13.4,
+  "avg_font_size": 9.648001,
   "avg_color_delta": 218.9335,
   "weight_counts": [
-    4,
-    1,
+    3,
+    2,
     0
   ],
   "residual_char_count": 0,
   "residual_texts": [],
-  "overflows": [
-    {
-      "line_index": 0,
-      "source_text": "The Quick Brown FOX",
-      "translation": "Thequickbrownfox.",
-      "rendered_width_px": 23.75,
-      "card_inner_width_px": 19.0,
-      "overflow_ratio": 1.25
-    },
-    {
-      "line_index": 1,
-      "source_text": "The quick brown fox jumps 0V0",
-      "translation": "quickbrownfoxjumpsoverthelazydog",
-      "rendered_width_px": 15.0,
-      "card_inner_width_px": 12.0,
-      "overflow_ratio": 1.25
-    },
-    {
-      "line_index": 2,
-      "source_text": "dog. The",
-      "translation": "犬。",
-      "rendered_width_px": 14.583334,
-      "card_inner_width_px": 11.666664,
-      "overflow_ratio": 1.2500004
-    },
-    {
-      "line_index": 3,
-      "source_text": "boxing wizardsjump quickly. Pack my bOX with\nve dozen",
-      "translation": "ボクシングWizardsは速く跳びます。私のBOXをめましょう、12個のもの。",
-      "rendered_width_px": 24.0,
-      "card_inner_width_px": 12.0,
-      "overflow_ratio": 2.0
-    },
-    {
-      "line_index": 4,
-      "source_text": "liquorjugs. Sphinxofblackquartz,judge myvow.",
-      "translation": "酒瓶。いSphinx、私の誓いを判断します。",
-      "rendered_width_px": 15.416668,
-      "card_inner_width_px": 12.333328,
-      "overflow_ratio": 1.2500006
-    }
-  ],
+  "overflows": [],
   "timings_ms": {
     "preprocess": 0.0,
     "winrt_ocr": 0.0,
     "ocrs_detect": 0.0,
     "compute_cards": 0.0,
-    "translate": 3922.1147,
-    "inpaint": 0.9637,
-    "post_ocr_residual": 5.5010004,
-    "total": 3937.0598
+    "translate": 2597.63,
+    "inpaint": 0.9246,
+    "post_ocr_residual": 5.8554,
+    "total": 2617.7156
   },
   "cards": [
     {
       "line_index": 0,
       "text": "The Quick Brown FOX",
-      "translation": "Thequickbrownfox.",
+      "translation": "クイック・ブラウン・フォックス",
       "source_bbox": [
         24.0,
         29.666668,
@@ -92,14 +51,14 @@
         89
       ],
       "font_weight": 600,
-      "font_size_px": 19.0,
+      "font_size_px": 13.68,
       "text_align": "left",
       "fg_bg_delta": 279.4423
     },
     {
       "line_index": 1,
       "text": "The quick brown fox jumps 0V0",
-      "translation": "quickbrownfoxjumpsoverthelazydog",
+      "translation": "速い茶色のキツネが跳びます0V0",
       "source_bbox": [
         24.0,
         83.0,
@@ -109,7 +68,7 @@
       "tiled_bbox": [
         18.0,
         79.0,
-        293.0,
+        202.08334,
         20.0
       ],
       "bg_color": [
@@ -123,14 +82,14 @@
         130
       ],
       "font_weight": 400,
-      "font_size_px": 12.0,
+      "font_size_px": 8.64,
       "text_align": "left",
       "fg_bg_delta": 207.27036
     },
     {
       "line_index": 2,
       "text": "dog. The",
-      "translation": "犬。",
+      "translation": "犬。その",
       "source_bbox": [
         220.0,
         83.66667,
@@ -140,7 +99,7 @@
       "tiled_bbox": [
         214.0,
         79.66667,
-        97.0,
+        67.5,
         19.666664
       ],
       "bg_color": [
@@ -154,14 +113,14 @@
         134
       ],
       "font_weight": 400,
-      "font_size_px": 11.666667,
+      "font_size_px": 8.400001,
       "text_align": "left",
       "fg_bg_delta": 198.61017
     },
     {
       "line_index": 3,
       "text": "boxing wizardsjump quickly. Pack my bOX with\nve dozen",
-      "translation": "ボクシングWizardsは速く跳びます。私のBOXをめましょう、12個のもの。",
+      "translation": "ボクシングの魔法使いが素早く跳びます。私の箱を12ダースでたしてください。",
       "source_bbox": [
         24.666668,
         106.333336,
@@ -184,15 +143,15 @@
         129,
         132
       ],
-      "font_weight": 400,
-      "font_size_px": 12.0,
+      "font_weight": 600,
+      "font_size_px": 8.64,
       "text_align": "center",
       "fg_bg_delta": 202.07425
     },
     {
       "line_index": 4,
       "text": "liquorjugs. Sphinxofblackquartz,judge myvow.",
-      "translation": "酒瓶。いSphinx、私の誓いを判断します。",
+      "translation": "酒瓶。石英のスフィンクス、私の誓いを判断しなさい。",
       "source_bbox": [
         24.666668,
         129.0,
@@ -216,7 +175,7 @@
         130
       ],
       "font_weight": 400,
-      "font_size_px": 12.333334,
+      "font_size_px": 8.880001,
       "text_align": "left",
       "fg_bg_delta": 207.27036
     }

@@ -3,11 +3,11 @@
   "image_w": 661,
   "image_h": 288,
   "line_count": 1,
-  "avg_font_size": 16.666668,
+  "avg_font_size": 12.000001,
   "avg_color_delta": 259.8692,
   "weight_counts": [
-    0,
     1,
+    0,
     0
   ],
   "residual_char_count": 1,
@@ -20,16 +20,16 @@
     "winrt_ocr": 0.0,
     "ocrs_detect": 0.0,
     "compute_cards": 0.0,
-    "translate": 5026.367,
-    "inpaint": 3.3701,
-    "post_ocr_residual": 47.824303,
-    "total": 5090.0586
+    "translate": 28616.154,
+    "inpaint": 10.1793,
+    "post_ocr_residual": 225.2385,
+    "total": 28948.889
   },
   "cards": [
     {
       "line_index": 0,
       "text": "WhO eve 「 「 eads a newspape 「 f 「 om cove 「 tO cove 「 ? ClearIy almost nobody.\nThe 「 e isn't time in a busy day, and not all the articles a 「 e equally\ninteresting. AII 「 eade 「 s have thei 「 own pe 「 sonal tastes and purposes fO 「\n「 eading, which cause them tO tu 「 n immediately tO whicheve 「 sections\ninterest them, and tO igno 「 e the 「 est. Thus, most Of the pape 「 「 emains\nun 「 ead, yet you still have tO buy all Of it.",
-      "translation": "誰もが「eadsa新報「f「omCove「tOCove「？らかにalmostnobody.\n「eisn'ttimeinabusyday,andnotallthearticlesareequally\ninteresting.Allhavetheirownpersonaltastesandpurposesforleading,\nwhichcausethemtoquicklyturnimmediatelytowhichsectionintereststhem,andtoignoretheest.\nThus,mostofthepapersremainunread,yetyoustillhavetobuyallofit.",
+      "translation": "誰が新聞を読むのでしょうか？ほとんど誰もいません。\n忙しい日には時間がないですし、すべての記事が同じくらい面白いわけではありません。読者にはそれぞれ個人の好みや目的があり、それが彼らをすぐに興味のあるセクションに導き、他の部分を無視させるためです。したがって、新聞のほとんどは読まれずに残りますが、それでもすべてを買わなければなりません。",
       "source_bbox": [
         27.666668,
         132.66667,
@@ -52,8 +52,8 @@
         95,
         100
       ],
-      "font_weight": 600,
-      "font_size_px": 16.666668,
+      "font_weight": 400,
+      "font_size_px": 12.000001,
       "text_align": "left",
       "fg_bg_delta": 259.8692
     }

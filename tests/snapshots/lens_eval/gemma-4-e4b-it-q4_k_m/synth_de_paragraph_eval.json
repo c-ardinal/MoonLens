@@ -1,0 +1,59 @@
+{
+  "image": "synth_de_paragraph.png",
+  "image_w": 880,
+  "image_h": 220,
+  "line_count": 1,
+  "avg_font_size": 11.280001,
+  "avg_color_delta": 236.71501,
+  "weight_counts": [
+    0,
+    1,
+    0
+  ],
+  "residual_char_count": 0,
+  "residual_texts": [],
+  "overflows": [],
+  "timings_ms": {
+    "preprocess": 0.0,
+    "winrt_ocr": 0.0,
+    "ocrs_detect": 0.0,
+    "compute_cards": 0.0,
+    "translate": 28616.467,
+    "inpaint": 17.1458,
+    "post_ocr_residual": 44.0213,
+    "total": 28731.324
+  },
+  "cards": [
+    {
+      "line_index": 0,
+      "text": "AlS Gregor Samsa eines Morgens aus unruhigen Träumen erwachte,\nfand er SiCh in seinem Bett zu einem ungeheuren Ungeziefer ve 「 wandelt.\nErlag auf seinem panzerartig harten Rücken und sah,\nwenn er den Kopf ein wenig hOb, seinen gewölbten, braunen Bauch.",
+      "translation": "アルス・グレゴール・ザムザはある朝、落ち着かない夢から目覚めると、\n自分のベッドの中で恐ろしい害虫に変わっているのを見つけた。\n彼は装甲のように硬い背中に横たわり、\n頭を少し傾けると、膨らんだ茶色の腹を見た。",
+      "source_bbox": [
+        23.666668,
+        26.666668,
+        518.6667,
+        102.66667
+      ],
+      "tiled_bbox": [
+        17.666668,
+        22.666668,
+        533.3333,
+        110.66667
+      ],
+      "bg_color": [
+        246,
+        246,
+        248
+      ],
+      "fg_color": [
+        109,
+        109,
+        112
+      ],
+      "font_weight": 600,
+      "font_size_px": 11.280001,
+      "text_align": "left",
+      "fg_bg_delta": 236.71501
+    }
+  ]
+}

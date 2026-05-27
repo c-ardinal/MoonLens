@@ -1,0 +1,73 @@
+{
+  "image": "synth_ko_paragraph.png",
+  "image_w": 880,
+  "image_h": 220,
+  "line_count": 1,
+  "avg_font_size": 9.84,
+  "avg_color_delta": 185.32944,
+  "weight_counts": [
+    1,
+    0,
+    0
+  ],
+  "residual_char_count": 9,
+  "residual_texts": [
+    "OI",
+    "L",
+    "「 H",
+    "Clf"
+  ],
+  "overflows": [
+    {
+      "line_index": 0,
+      "source_text": "æ01",
+      "translation": "OK,Iwilldoit.",
+      "rendered_width_px": 24.6,
+      "card_inner_width_px": 13.666664,
+      "overflow_ratio": 1.8000003
+    }
+  ],
+  "timings_ms": {
+    "preprocess": 0.0,
+    "winrt_ocr": 0.0,
+    "ocrs_detect": 0.0,
+    "compute_cards": 0.0,
+    "translate": 624.4677,
+    "inpaint": 0.26560003,
+    "post_ocr_residual": 88.980095,
+    "total": 722.9982
+  },
+  "cards": [
+    {
+      "line_index": 0,
+      "text": "æ01",
+      "translation": "OK,Iwilldoit.",
+      "source_bbox": [
+        147.66667,
+        113.66667,
+        24.666672,
+        13.666664
+      ],
+      "tiled_bbox": [
+        141.66667,
+        109.66667,
+        45.833344,
+        21.666672
+      ],
+      "bg_color": [
+        231,
+        231,
+        234
+      ],
+      "fg_color": [
+        124,
+        124,
+        127
+      ],
+      "font_weight": 400,
+      "font_size_px": 9.84,
+      "text_align": "left",
+      "fg_bg_delta": 185.32944
+    }
+  ]
+}

@@ -3,49 +3,25 @@
   "image_w": 899,
   "image_h": 559,
   "line_count": 5,
-  "avg_font_size": 14.800001,
+  "avg_font_size": 10.656001,
   "avg_color_delta": 151.57962,
   "weight_counts": [
     1,
-    2,
-    2
+    4,
+    0
   ],
-  "residual_char_count": 3,
+  "residual_char_count": 2,
   "residual_texts": [
-    "DEA"
+    "EA"
   ],
   "overflows": [
     {
-      "line_index": 0,
-      "source_text": "The Rainbow Passage",
-      "translation": "虹の道",
-      "rendered_width_px": 23.333336,
-      "card_inner_width_px": 18.666668,
-      "overflow_ratio": 1.25
-    },
-    {
-      "line_index": 1,
-      "source_text": "lnte 「 national Dialects of English Archive (IDEA)",
-      "translation": "「国際Dialettiingleeの英語アーイブ(IDEA)」",
-      "rendered_width_px": 19.583334,
-      "card_inner_width_px": 15.666668,
-      "overflow_ratio": 1.2499999
-    },
-    {
-      "line_index": 2,
-      "source_text": "Comma Gets a Cure",
-      "translation": "カンマが治す",
-      "rendered_width_px": 14.166668,
-      "card_inner_width_px": 11.333336,
-      "overflow_ratio": 1.2499999
-    },
-    {
       "line_index": 4,
       "source_text": "blue.",
-      "translation": "青色",
-      "rendered_width_px": 15.833334,
+      "translation": "ブルーーズです。",
+      "rendered_width_px": 22.800003,
       "card_inner_width_px": 12.666687,
-      "overflow_ratio": 1.2499981
+      "overflow_ratio": 1.7999973
     }
   ],
   "timings_ms": {
@@ -53,16 +29,16 @@
     "winrt_ocr": 0.0,
     "ocrs_detect": 0.0,
     "compute_cards": 0.0,
-    "translate": 22642.732,
-    "inpaint": 16.1882,
-    "post_ocr_residual": 41.3237,
-    "total": 22741.232
+    "translate": 12417.04,
+    "inpaint": 30.6476,
+    "post_ocr_residual": 94.87671,
+    "total": 12608.797
   },
   "cards": [
     {
       "line_index": 0,
       "text": "The Rainbow Passage",
-      "translation": "虹の道",
+      "translation": "レインーッスージー",
       "source_bbox": [
         20.0,
         12.666667,
@@ -72,7 +48,7 @@
       "tiled_bbox": [
         14.0,
         8.666667,
-        873.0,
+        237.91669,
         26.666668
       ],
       "bg_color": [
@@ -85,15 +61,15 @@
         113,
         118
       ],
-      "font_weight": 700,
-      "font_size_px": 18.666668,
+      "font_weight": 600,
+      "font_size_px": 13.4400015,
       "text_align": "left",
       "fg_bg_delta": 190.75114
     },
     {
       "line_index": 1,
       "text": "lnte 「 national Dialects of English Archive (IDEA)",
-      "translation": "「国際Dialettiingleeの英語アーイブ(IDEA)」",
+      "translation": "「英語の国際方言アーカイブ」(IDEA)を意味します。",
       "source_bbox": [
         21.0,
         42.666668,
@@ -103,7 +79,7 @@
       "tiled_bbox": [
         15.0,
         38.666668,
-        872.0,
+        398.125,
         23.666668
       ],
       "bg_color": [
@@ -117,14 +93,14 @@
         139
       ],
       "font_weight": 600,
-      "font_size_px": 15.666667,
+      "font_size_px": 11.280001,
       "text_align": "left",
       "fg_bg_delta": 159.48041
     },
     {
       "line_index": 2,
       "text": "Comma Gets a Cure",
-      "translation": "カンマが治す",
+      "translation": "コンが治る",
       "source_bbox": [
         114.0,
         71.66667,
@@ -134,7 +110,7 @@
       "tiled_bbox": [
         110.833336,
         67.66667,
-        776.1667,
+        173.54169,
         19.333336
       ],
       "bg_color": [
@@ -148,14 +124,14 @@
         198
       ],
       "font_weight": 400,
-      "font_size_px": 11.333334,
+      "font_size_px": 8.160001,
       "text_align": "left",
       "fg_bg_delta": 132.09088
     },
     {
       "line_index": 3,
       "text": "When the sunlight strikes raindrops in the air, they act as a p 「 ism and fO 「 m a rainbow. The rainbow is a division Of white light\nint0 many beautiful colours. These take the shape 0f a long 「 ound arch, with its path high above, and its two ends apparently\nbeyond the horizon. There is, according tolegend. a boiling pot Of go\nat one end. People IOOk. but no one ever finds it. When a\nman 100ks f0 「 something beyond his 「 each, his friends say he is looking forthe pot 0f go\nat the end ofthe 「 ainbow. Th 「 oughout\nthe centu 「 ies people have explained the rainbow in various ways. Some have accepted it as a miracle without physical\nexplanation. TO the Hebrews it was a tOken that the 「 e would be no mo 「 e universal flOOds. The Greeks used tO imagine that it was\na sign from the gods t0 foretell war 0 「 heavy rain. The NO 「 semen considered the rainbow as a bridge over which the gods passed\nf 「 om earth tO their home in the sky. Others have tried tO explain the phenomenon physically. AristotIe thought that the 「 ainbow\nwas caused by 「 eflection Ofthe sun's rays bythe 「 ain. Since then physicists have found that it is not reflection, but 「 ef 「 action by\nthe raind 「 ops which causes the 「 ainbows. Many complicated ideas about the 「 ainbow have been formed. The diffe 「 ence in the\nrainbow depends considerably upon the size Ofthe drops, and the width Ofthe coloured band increases as the size Ofthe drops\nincreases. The actualprimary rainbow observed is said t0 be the effect 0f super-imposition 0f a numbe 「 0f bows. lfthe 「 ed 0fthe\nsecond bow falls upon the green 0fthe first, the resultis t0 give a bow with an abnormally wide yellow band, since red and green\nlight when mixed fO 「 m yellow. This is a very common type Of bow, one showing mainly red and yellow, with little 0 「 no green 0 「",
-      "translation": "日光が雨滴に当たると、それは虹の「是と「はを成し遂げます。虹は白光を多くの美しい色で分割します。これらは長く曲がった弧の形をしており、その道は高くあり、端は地平線に見えます。伝によると、虹の一端には沸騰した鍋があります。人々が見ますが、誰もそれを見しません。当たれば、人間は何かを遠くに探していると信じられますが、その鍋は虹の「が終わります。人々はさまざまな方法で虹を見つけてきました。いくつかは物理的な明なしでも信じています。ユーシア人は神々から警告を受け、洪水が起こらないことを明するための「として、ギリシャ人は争や大雨の予言を知らせることを象し、その虹は地球から天の家に渡る橋として考えました。他の人々は物理的な明で虹を見つけてきました。アリストテレスは日光のrayを雨滴に反射させると考え、その後物理学者はそれは雨dropsの「作用が虹を生み出すと見しました。様々な複な虹の理論は形成されています。虹の違いは雨滴のサイズによってかなり大きく、色の幅が大きくなるにつれて雨滴のサイズが大きくなります。察された主虹は超像を重ねて生じたとされており、この場合、二つの弓の色が赤と黄色に配置されると、結果として黄色が非常にく、赤と黄色の光を混ぜ合わせると黄色になります。これは非常に一般的なタイプの弓で、主に赤と黄色が見られる、ほとんど黄色がない場合があります。",
+      "translation": "空気中の雨粒に太陽光が当たると、それは虹のような形になります。虹は白い光を多くの美しい色に分けることです。虹は長い弧の形をしており、その道は高く、両端は地平線の向こうにあるように見えます。伝説によると、一端には「ゴー」のが沸しているそうです。人々はそれを見つけることはできません。ある男性が「ゴー」のを探していると友達が言います。何百年も人々は虹について様々な説をしてきました。物理的な説明なしに奇として受け入れる人もいます。ヘブライ人には、神々からの戦争や豪雨を予告する兆候だという考えがありました。ギリシャ人は、神々が地上から天界へのとして虹を利用すると想像しました。物理的にこの現象を説明しようとする人もいます。アリストテレスは、虹は太陽光線が雨粒によって反射されることによるものではなく、雨粒の動きによって引き起こされると考えました。それ以来、物理学者たちは虹が反射ではなく、雨粒の動きによる作用であることを発見しました。虹に関する多くの複な考えが生まれました。虹の違いは雨粒の大きさに大きく依存し、色のの幅も雨粒の大きさが増えるにつれて広がります。実際に観測される本当の主虹は、いくつかの虹が重ね合わさった結果だと言われています。第二の虹が第一の虹に当たると、赤との光が混って黄色になるため、黄色いが非常に広い虹になります。これは非常によく見られる種類の虹で、主に赤と黄が現れ、はほとんど見えません。",
       "source_bbox": [
         23.666668,
         126.66667,
@@ -179,14 +155,14 @@
         136
       ],
       "font_weight": 600,
-      "font_size_px": 15.666667,
+      "font_size_px": 11.280001,
       "text_align": "center",
       "fg_bg_delta": 143.87148
     },
     {
       "line_index": 4,
       "text": "blue.",
-      "translation": "青色",
+      "translation": "ブルーーズです。",
       "source_bbox": [
         24.666668,
         518.6667,
@@ -196,7 +172,7 @@
       "tiled_bbox": [
         18.666668,
         514.6667,
-        868.3333,
+        53.333332,
         20.666687
       ],
       "bg_color": [
@@ -209,8 +185,8 @@
         121,
         135
       ],
-      "font_weight": 700,
-      "font_size_px": 12.666667,
+      "font_weight": 600,
+      "font_size_px": 9.120001,
       "text_align": "left",
       "fg_bg_delta": 131.70421
     }

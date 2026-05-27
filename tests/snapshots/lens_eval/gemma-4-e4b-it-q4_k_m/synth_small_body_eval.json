@@ -2,171 +2,34 @@
   "image": "synth_small_body.png",
   "image_w": 900,
   "image_h": 260,
-  "line_count": 19,
-  "avg_font_size": 7.5614023,
-  "avg_color_delta": 166.12642,
+  "line_count": 20,
+  "avg_font_size": 5.3640003,
+  "avg_color_delta": 166.45157,
   "weight_counts": [
-    0,
-    15,
-    4
+    5,
+    10,
+    5
   ],
-  "residual_char_count": 2,
+  "residual_char_count": 17,
   "residual_texts": [
     "b",
-    "ⅱ"
+    "ⅱ",
+    "、 3 no",
+    "h",
+    "0",
+    "、 00",
+    "0",
+    "i",
+    "0"
   ],
   "overflows": [
     {
-      "line_index": 0,
-      "source_text": "0 im",
-      "translation": "0個のものをお願いします。",
-      "rendered_width_px": 33.333336,
-      "card_inner_width_px": 6.666668,
-      "overflow_ratio": 4.9999995
-    },
-    {
-      "line_index": 1,
-      "source_text": "03 d",
-      "translation": "03番です。",
-      "rendered_width_px": 8.333334,
-      "card_inner_width_px": 6.666668,
-      "overflow_ratio": 1.2499999
-    },
-    {
-      "line_index": 2,
-      "source_text": "hOfbe( f. W35",
-      "translation": "hOfbe(f.W35",
-      "rendered_width_px": 10.0,
-      "card_inner_width_px": 8.0,
-      "overflow_ratio": 1.25
-    },
-    {
-      "line_index": 3,
-      "source_text": "5. was",
-      "translation": "5.は",
-      "rendered_width_px": 7.5,
-      "card_inner_width_px": 6.0,
-      "overflow_ratio": 1.25
-    },
-    {
-      "line_index": 4,
-      "source_text": "0 n ( du",
-      "translation": "0つ(です)",
-      "rendered_width_px": 8.333334,
-      "card_inner_width_px": 6.666668,
-      "overflow_ratio": 1.2499999
-    },
-    {
-      "line_index": 5,
-      "source_text": "O n 5.",
-      "translation": "5個あります。",
-      "rendered_width_px": 9.166667,
-      "card_inner_width_px": 7.333332,
-      "overflow_ratio": 1.2500002
-    },
-    {
-      "line_index": 6,
-      "source_text": "W35",
-      "translation": "W35",
-      "rendered_width_px": 6.666667,
-      "card_inner_width_px": 5.333336,
-      "overflow_ratio": 1.2499995
-    },
-    {
-      "line_index": 7,
-      "source_text": "gof .",
-      "translation": "行って。",
-      "rendered_width_px": 11.25,
-      "card_inner_width_px": 9.0,
-      "overflow_ratio": 1.25
-    },
-    {
-      "line_index": 8,
-      "source_text": "erofd pair. 、 had",
-      "translation": "erofdpair。、had",
-      "rendered_width_px": 10.416668,
-      "card_inner_width_px": 8.333336,
-      "overflow_ratio": 1.2499998
-    },
-    {
-      "line_index": 9,
-      "source_text": "ing",
-      "translation": "イングです。",
-      "rendered_width_px": 65.0,
-      "card_inner_width_px": 8.666664,
-      "overflow_ratio": 7.5000024
-    },
-    {
-      "line_index": 10,
-      "source_text": "bef",
-      "translation": "前の文を日本語に翻します：\n\n彼女はこれらを赤い袋3つにめてくれるでしょう。水曜日にで待ち合わせましょう。\n\n日本語:あなたはこれらのものを3つの赤い袋に入れてください。水曜日にで待っているとしましょう。",
-      "rendered_width_px": 446.25,
-      "card_inner_width_px": 7.0,
-      "overflow_ratio": 63.75
-    },
-    {
-      "line_index": 11,
-      "source_text": "gbefO",
-      "translation": "gbefO",
-      "rendered_width_px": 11.25,
-      "card_inner_width_px": 9.0,
-      "overflow_ratio": 1.25
-    },
-    {
       "line_index": 12,
       "source_text": "had no",
-      "translation": "無かった",
-      "rendered_width_px": 8.333334,
+      "translation": "持っていなかった",
+      "rendered_width_px": 12.0,
       "card_inner_width_px": 6.666664,
-      "overflow_ratio": 1.2500006
-    },
-    {
-      "line_index": 13,
-      "source_text": "goingdi (\nw 03",
-      "translation": "行く(\nw03",
-      "rendered_width_px": 17.333334,
-      "card_inner_width_px": 8.666664,
-      "overflow_ratio": 2.0000007
-    },
-    {
-      "line_index": 14,
-      "source_text": "ⅱ t>dw 50 %",
-      "translation": "50パーント",
-      "rendered_width_px": 8.75,
-      "card_inner_width_px": 7.0,
-      "overflow_ratio": 1.25
-    },
-    {
-      "line_index": 15,
-      "source_text": "goi d ⅳ\nep p iOd. (",
-      "translation": "行きましょう。えいきょくです。(",
-      "rendered_width_px": 32.0,
-      "card_inner_width_px": 24.333328,
-      "overflow_ratio": 1.3150687
-    },
-    {
-      "line_index": 16,
-      "source_text": "i ⅲ 53 d00",
-      "translation": "53で0です。",
-      "rendered_width_px": 8.333334,
-      "card_inner_width_px": 6.6666718,
-      "overflow_ratio": 1.2499992
-    },
-    {
-      "line_index": 17,
-      "source_text": "its i 0 d. ⅸ g02",
-      "translation": "その中で、0.g02です。",
-      "rendered_width_px": 11.25,
-      "card_inner_width_px": 9.0,
-      "overflow_ratio": 1.25
-    },
-    {
-      "line_index": 18,
-      "source_text": "ompa ⅱ",
-      "translation": "オマパ",
-      "rendered_width_px": 10.416668,
-      "card_inner_width_px": 8.333328,
-      "overflow_ratio": 1.250001
+      "overflow_ratio": 1.8000007
     }
   ],
   "timings_ms": {
@@ -174,16 +37,16 @@
     "winrt_ocr": 0.0,
     "ocrs_detect": 0.0,
     "compute_cards": 0.0,
-    "translate": 15551.688,
-    "inpaint": 2.2031,
-    "post_ocr_residual": 43.280003,
-    "total": 15610.348
+    "translate": 118239.1,
+    "inpaint": 5.2444,
+    "post_ocr_residual": 196.58319,
+    "total": 118482.17
   },
   "cards": [
     {
       "line_index": 0,
       "text": "0 im",
-      "translation": "0個のものをお願いします。",
+      "translation": "0im",
       "source_bbox": [
         166.66667,
         26.666668,
@@ -193,7 +56,7 @@
       "tiled_bbox": [
         160.66667,
         22.666668,
-        136.33333,
+        40.833344,
         14.666668
       ],
       "bg_color": [
@@ -207,14 +70,14 @@
         130
       ],
       "font_weight": 600,
-      "font_size_px": 6.666667,
+      "font_size_px": 4.8,
       "text_align": "left",
       "fg_bg_delta": 181.28983
     },
     {
       "line_index": 1,
       "text": "03 d",
-      "translation": "03番です。",
+      "translation": "03d",
       "source_bbox": [
         228.66667,
         26.666668,
@@ -224,7 +87,7 @@
       "tiled_bbox": [
         222.66667,
         22.666668,
-        74.33333,
+        72.08333,
         14.666668
       ],
       "bg_color": [
@@ -238,7 +101,7 @@
         151
       ],
       "font_weight": 600,
-      "font_size_px": 6.666667,
+      "font_size_px": 4.8,
       "text_align": "left",
       "fg_bg_delta": 132.79308
     },
@@ -255,7 +118,7 @@
       "tiled_bbox": [
         173.66667,
         38.0,
-        123.33333,
+        83.125015,
         16.0
       ],
       "bg_color": [
@@ -268,15 +131,15 @@
         151,
         154
       ],
-      "font_weight": 600,
-      "font_size_px": 8.0,
+      "font_weight": 400,
+      "font_size_px": 5.76,
       "text_align": "left",
       "fg_bg_delta": 160.50545
     },
     {
       "line_index": 3,
       "text": "5. was",
-      "translation": "5.は",
+      "translation": "5.was",
       "source_bbox": [
         119.66667,
         44.0,
@@ -286,7 +149,7 @@
       "tiled_bbox": [
         119.5,
         40.0,
-        177.5,
+        42.291687,
         14.0
       ],
       "bg_color": [
@@ -300,14 +163,14 @@
         146
       ],
       "font_weight": 600,
-      "font_size_px": 6.0,
+      "font_size_px": 4.32,
       "text_align": "left",
       "fg_bg_delta": 162.81277
     },
     {
       "line_index": 4,
       "text": "0 n ( du",
-      "translation": "0つ(です)",
+      "translation": "0n(du",
       "source_bbox": [
         23.666668,
         58.666668,
@@ -317,7 +180,7 @@
       "tiled_bbox": [
         17.666668,
         54.666668,
-        279.33334,
+        59.583332,
         14.666668
       ],
       "bg_color": [
@@ -331,14 +194,14 @@
         139
       ],
       "font_weight": 600,
-      "font_size_px": 6.666667,
+      "font_size_px": 4.8,
       "text_align": "left",
       "fg_bg_delta": 162.81277
     },
     {
       "line_index": 5,
       "text": "O n 5.",
-      "translation": "5個あります。",
+      "translation": "5日目。",
       "source_bbox": [
         238.66667,
         58.666668,
@@ -348,7 +211,7 @@
       "tiled_bbox": [
         232.66667,
         54.833336,
-        64.33333,
+        58.33333,
         15.166664
       ],
       "bg_color": [
@@ -362,7 +225,7 @@
         154
       ],
       "font_weight": 600,
-      "font_size_px": 7.3333335,
+      "font_size_px": 5.28,
       "text_align": "left",
       "fg_bg_delta": 162.23749
     },
@@ -379,7 +242,7 @@
       "tiled_bbox": [
         75.66667,
         56.0,
-        221.33333,
+        32.08333,
         13.333336
       ],
       "bg_color": [
@@ -393,14 +256,14 @@
         143
       ],
       "font_weight": 700,
-      "font_size_px": 5.3333335,
+      "font_size_px": 3.8400002,
       "text_align": "left",
       "fg_bg_delta": 174.3617
     },
     {
       "line_index": 7,
       "text": "gof .",
-      "translation": "行って。",
+      "translation": "gof.",
       "source_bbox": [
         77.66667,
         74.333336,
@@ -410,7 +273,7 @@
       "tiled_bbox": [
         71.66667,
         70.333336,
-        225.33333,
+        52.29167,
         16.5
       ],
       "bg_color": [
@@ -423,15 +286,15 @@
         137,
         140
       ],
-      "font_weight": 600,
-      "font_size_px": 9.0,
+      "font_weight": 400,
+      "font_size_px": 6.4800005,
       "text_align": "left",
       "fg_bg_delta": 181.28983
     },
     {
       "line_index": 8,
       "text": "erofd pair. 、 had",
-      "translation": "erofdpair。、had",
+      "translation": "erofdpair.、had",
       "source_bbox": [
         165.66667,
         74.333336,
@@ -441,7 +304,7 @@
       "tiled_bbox": [
         159.66667,
         70.333336,
-        137.33333,
+        106.66667,
         16.333336
       ],
       "bg_color": [
@@ -454,15 +317,15 @@
         147,
         150
       ],
-      "font_weight": 600,
-      "font_size_px": 8.333334,
+      "font_weight": 400,
+      "font_size_px": 6.0000005,
       "text_align": "left",
       "fg_bg_delta": 163.96951
     },
     {
       "line_index": 9,
       "text": "ing",
-      "translation": "イングです。",
+      "translation": "ing",
       "source_bbox": [
         268.0,
         74.66667,
@@ -472,7 +335,7 @@
       "tiled_bbox": [
         262.0,
         70.66667,
-        35.0,
+        28.75,
         16.666664
       ],
       "bg_color": [
@@ -486,14 +349,14 @@
         134
       ],
       "font_weight": 600,
-      "font_size_px": 8.666667,
+      "font_size_px": 6.2400002,
       "text_align": "left",
       "fg_bg_delta": 184.75389
     },
     {
       "line_index": 10,
       "text": "bef",
-      "translation": "前の文を日本語に翻します：\n\n彼女はこれらを赤い袋3つにめてくれるでしょう。水曜日にで待ち合わせましょう。\n\n日本語:あなたはこれらのものを3つの赤い袋に入れてください。水曜日にで待っているとしましょう。",
+      "translation": "bef",
       "source_bbox": [
         24.0,
         90.333336,
@@ -503,7 +366,7 @@
       "tiled_bbox": [
         18.0,
         86.333336,
-        279.0,
+        29.166672,
         15.0
       ],
       "bg_color": [
@@ -517,7 +380,7 @@
         155
       ],
       "font_weight": 700,
-      "font_size_px": 7.0,
+      "font_size_px": 5.04,
       "text_align": "left",
       "fg_bg_delta": 150.68842
     },
@@ -534,7 +397,7 @@
       "tiled_bbox": [
         105.66667,
         86.833336,
-        191.33333,
+        41.666656,
         16.5
       ],
       "bg_color": [
@@ -547,15 +410,15 @@
         132,
         135
       ],
-      "font_weight": 600,
-      "font_size_px": 9.0,
+      "font_weight": 400,
+      "font_size_px": 6.4800005,
       "text_align": "left",
       "fg_bg_delta": 183.02185
     },
     {
       "line_index": 12,
       "text": "had no",
-      "translation": "無かった",
+      "translation": "持っていなかった",
       "source_bbox": [
         73.0,
         90.66667,
@@ -565,7 +428,7 @@
       "tiled_bbox": [
         67.0,
         87.0,
-        230.0,
+        45.0,
         14.333336
       ],
       "bg_color": [
@@ -579,24 +442,24 @@
         136
       ],
       "font_weight": 700,
-      "font_size_px": 6.666667,
+      "font_size_px": 4.8,
       "text_align": "left",
       "fg_bg_delta": 165.70154
     },
     {
       "line_index": 13,
-      "text": "goingdi (\nw 03",
-      "translation": "行く(\nw03",
+      "text": "goingdi (",
+      "translation": "goingdi",
       "source_bbox": [
-        166.33334,
+        195.66667,
         90.66667,
-        68.66666,
+        39.33333,
         8.666664
       ],
       "tiled_bbox": [
-        15.0,
+        192.5,
         86.66667,
-        282.0,
+        60.625,
         16.166656
       ],
       "bg_color": [
@@ -610,14 +473,45 @@
         147
       ],
       "font_weight": 600,
-      "font_size_px": 8.666667,
-      "text_align": "center",
+      "font_size_px": 6.2400002,
+      "text_align": "left",
       "fg_bg_delta": 167.43356
     },
     {
       "line_index": 14,
+      "text": "w 03",
+      "translation": "w03",
+      "source_bbox": [
+        166.33334,
+        92.0,
+        23.0,
+        5.333336
+      ],
+      "tiled_bbox": [
+        160.33334,
+        88.0,
+        40.208313,
+        13.333336
+      ],
+      "bg_color": [
+        241,
+        241,
+        243
+      ],
+      "fg_color": [
+        141,
+        141,
+        144
+      ],
+      "font_weight": 700,
+      "font_size_px": 3.8400002,
+      "text_align": "left",
+      "fg_bg_delta": 172.62965
+    },
+    {
+      "line_index": 15,
       "text": "ⅱ t>dw 50 %",
-      "translation": "50パーント",
+      "translation": "ⅱt>dw50%",
       "source_bbox": [
         221.66667,
         106.333336,
@@ -627,7 +521,7 @@
       "tiled_bbox": [
         221.5,
         102.833336,
-        75.5,
+        67.29169,
         14.5
       ],
       "bg_color": [
@@ -641,14 +535,14 @@
         147
       ],
       "font_weight": 600,
-      "font_size_px": 7.0,
+      "font_size_px": 5.04,
       "text_align": "left",
       "fg_bg_delta": 167.43356
     },
     {
-      "line_index": 15,
+      "line_index": 16,
       "text": "goi d ⅳ\nep p iOd. (",
-      "translation": "行きましょう。えいきょくです。(",
+      "translation": "goidⅳ\neppiOd.",
       "source_bbox": [
         45.666668,
         106.66667,
@@ -656,9 +550,9 @@
         24.333328
       ],
       "tiled_bbox": [
-        15.0,
+        30.083334,
         102.66667,
-        282.0,
+        95.83334,
         32.0
       ],
       "bg_color": [
@@ -672,14 +566,14 @@
         145
       ],
       "font_weight": 600,
-      "font_size_px": 8.666667,
+      "font_size_px": 6.2400002,
       "text_align": "center",
       "fg_bg_delta": 169.74098
     },
     {
-      "line_index": 16,
+      "line_index": 17,
       "text": "i ⅲ 53 d00",
-      "translation": "53で0です。",
+      "translation": "iⅲ53d00",
       "source_bbox": [
         222.66667,
         122.66667,
@@ -689,7 +583,7 @@
       "tiled_bbox": [
         216.66667,
         118.66667,
-        80.33333,
+        77.08333,
         14.666672
       ],
       "bg_color": [
@@ -703,14 +597,14 @@
         142
       ],
       "font_weight": 700,
-      "font_size_px": 6.666667,
+      "font_size_px": 4.8,
       "text_align": "left",
       "fg_bg_delta": 150.68842
     },
     {
-      "line_index": 17,
+      "line_index": 18,
       "text": "its i 0 d. ⅸ g02",
-      "translation": "その中で、0.g02です。",
+      "translation": "itsi0d.g02",
       "source_bbox": [
         24.0,
         138.33334,
@@ -720,7 +614,7 @@
       "tiled_bbox": [
         18.0,
         134.66667,
-        279.0,
+        133.75,
         16.333328
       ],
       "bg_color": [
@@ -733,15 +627,15 @@
         155,
         158
       ],
-      "font_weight": 600,
-      "font_size_px": 9.0,
+      "font_weight": 400,
+      "font_size_px": 6.4800005,
       "text_align": "left",
       "fg_bg_delta": 158.77342
     },
     {
-      "line_index": 18,
+      "line_index": 19,
       "text": "ompa ⅱ",
-      "translation": "オマパ",
+      "translation": "ompaⅱ",
       "source_bbox": [
         27.666668,
         154.66667,
@@ -751,7 +645,7 @@
       "tiled_bbox": [
         21.666668,
         151.0,
-        275.33334,
+        47.083332,
         16.0
       ],
       "bg_color": [
@@ -765,7 +659,7 @@
         138
       ],
       "font_weight": 600,
-      "font_size_px": 8.333334,
+      "font_size_px": 6.0000005,
       "text_align": "left",
       "fg_bg_delta": 176.09372
     }

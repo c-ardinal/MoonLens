@@ -1,0 +1,27 @@
+{
+  "image": "synth_ja_vertical.png",
+  "image_w": 196,
+  "image_h": 358,
+  "line_count": 0,
+  "avg_font_size": 0.0,
+  "avg_color_delta": 0.0,
+  "weight_counts": [
+    0,
+    0,
+    0
+  ],
+  "residual_char_count": 0,
+  "residual_texts": [],
+  "overflows": [],
+  "timings_ms": {
+    "preprocess": 0.0,
+    "winrt_ocr": 0.0,
+    "ocrs_detect": 0.0,
+    "compute_cards": 0.0,
+    "translate": 378.1651,
+    "inpaint": 7.0852,
+    "post_ocr_residual": 173.02151,
+    "total": 577.1843
+  },
+  "cards": []
+}

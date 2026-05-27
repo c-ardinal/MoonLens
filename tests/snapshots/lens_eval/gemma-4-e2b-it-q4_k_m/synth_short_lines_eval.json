@@ -3,63 +3,41 @@
   "image_w": 900,
   "image_h": 220,
   "line_count": 6,
-  "avg_font_size": 10.777779,
+  "avg_font_size": 7.7600007,
   "avg_color_delta": 212.65971,
   "weight_counts": [
-    4,
-    2,
+    5,
+    1,
     0
   ],
-  "residual_char_count": 0,
-  "residual_texts": [],
+  "residual_char_count": 1,
+  "residual_texts": [
+    "3"
+  ],
   "overflows": [
     {
       "line_index": 0,
       "source_text": "Save your WO 「 k.",
-      "translation": "あなたのWO「k.」を保存してください。",
-      "rendered_width_px": 30.833336,
+      "translation": "あなたのWOを保存してください「k.",
+      "rendered_width_px": 22.200003,
       "card_inner_width_px": 12.333332,
-      "overflow_ratio": 2.5000005
-    },
-    {
-      "line_index": 1,
-      "source_text": "Open a new",
-      "translation": "新しいを開く",
-      "rendered_width_px": 14.166668,
-      "card_inner_width_px": 11.333336,
-      "overflow_ratio": 1.2499999
-    },
-    {
-      "line_index": 2,
-      "source_text": "05e",
-      "translation": "05e",
-      "rendered_width_px": 8.75,
-      "card_inner_width_px": 7.0,
-      "overflow_ratio": 1.25
+      "overflow_ratio": 1.8000004
     },
     {
       "line_index": 3,
       "source_text": "Search the document.",
-      "translation": "テキストを索します。",
-      "rendered_width_px": 12.083334,
+      "translation": "ドキュメントを検索してください。<end_of_of_turn>",
+      "rendered_width_px": 17.400002,
       "card_inner_width_px": 9.666664,
-      "overflow_ratio": 1.2500004
-    },
-    {
-      "line_index": 4,
-      "source_text": "Show settings panel.",
-      "translation": "設定パネルを表示します。",
-      "rendered_width_px": 15.416668,
-      "card_inner_width_px": 12.333328,
-      "overflow_ratio": 1.2500006
+      "overflow_ratio": 1.8000007
     },
     {
       "line_index": 5,
       "source_text": "Quit the application.",
-      "translation": "アプリを終了してください。",
-      "rendered_width_px": 30.0,
+      "translation": "アプリケーションを終了してください。",
+      "rendered_width_px": 21.6,
       "card_inner_width_px": 12.0,
-      "overflow_ratio": 2.5
+      "overflow_ratio": 1.8000001
     }
   ],
   "timings_ms": {
@@ -67,16 +45,16 @@
     "winrt_ocr": 0.0,
     "ocrs_detect": 0.0,
     "compute_cards": 0.0,
-    "translate": 4870.3364,
-    "inpaint": 0.5941,
-    "post_ocr_residual": 4.2328,
-    "total": 4883.2544
+    "translate": 5536.4307,
+    "inpaint": 0.7594,
+    "post_ocr_residual": 74.8414,
+    "total": 5631.0435
   },
   "cards": [
     {
       "line_index": 0,
       "text": "Save your WO 「 k.",
-      "translation": "あなたのWO「k.」を保存してください。",
+      "translation": "あなたのWOを保存してください「k.",
       "source_bbox": [
         24.333334,
         27.666668,
@@ -86,7 +64,7 @@
       "tiled_bbox": [
         18.333334,
         23.666668,
-        127.666664,
+        116.666664,
         20.333332
       ],
       "bg_color": [
@@ -100,14 +78,14 @@
         126
       ],
       "font_weight": 400,
-      "font_size_px": 12.333334,
+      "font_size_px": 8.880001,
       "text_align": "left",
       "fg_bg_delta": 214.1985
     },
     {
       "line_index": 1,
       "text": "Open a new",
-      "translation": "新しいを開く",
+      "translation": "新規を開く",
       "source_bbox": [
         24.333334,
         52.333336,
@@ -117,7 +95,7 @@
       "tiled_bbox": [
         18.333334,
         48.333336,
-        127.666664,
+        90.41667,
         19.333336
       ],
       "bg_color": [
@@ -131,7 +109,7 @@
         124
       ],
       "font_weight": 400,
-      "font_size_px": 11.333334,
+      "font_size_px": 8.160001,
       "text_align": "left",
       "fg_bg_delta": 217.66258
     },
@@ -148,7 +126,7 @@
       "tiled_bbox": [
         28.666668,
         74.333336,
-        117.33333,
+        37.083332,
         15.0
       ],
       "bg_color": [
@@ -162,14 +140,14 @@
         113
       ],
       "font_weight": 600,
-      "font_size_px": 7.0,
+      "font_size_px": 5.04,
       "text_align": "left",
       "fg_bg_delta": 202.07425
     },
     {
       "line_index": 3,
       "text": "Search the document.",
-      "translation": "テキストを索します。",
+      "translation": "ドキュメントを検索してください。<end_of_of_turn>",
       "source_bbox": [
         24.333334,
         99.66667,
@@ -192,15 +170,15 @@
         111,
         115
       ],
-      "font_weight": 600,
-      "font_size_px": 9.666667,
+      "font_weight": 400,
+      "font_size_px": 6.9600005,
       "text_align": "center",
       "fg_bg_delta": 204.96585
     },
     {
       "line_index": 4,
       "text": "Show settings panel.",
-      "translation": "設定パネルを表示します。",
+      "translation": "設定パネルを表示する。",
       "source_bbox": [
         24.333334,
         123.66667,
@@ -224,14 +202,14 @@
         126
       ],
       "font_weight": 400,
-      "font_size_px": 12.333334,
+      "font_size_px": 8.880001,
       "text_align": "center",
       "fg_bg_delta": 214.1985
     },
     {
       "line_index": 5,
       "text": "Quit the application.",
-      "translation": "アプリを終了してください。",
+      "translation": "アプリケーションを終了してください。",
       "source_bbox": [
         24.333334,
         147.66667,
@@ -255,7 +233,7 @@
         121
       ],
       "font_weight": 400,
-      "font_size_px": 12.0,
+      "font_size_px": 8.64,
       "text_align": "left",
       "fg_bg_delta": 222.8587
     }
