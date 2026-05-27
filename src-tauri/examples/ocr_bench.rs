@@ -7,9 +7,12 @@
 //! provider away from `ocrs`.
 //!
 //! Run: `cargo run --release --example ocr_bench`
-//! Outputs: `tests/output_ocr_bench/<engine>/<image>.json`
-//!          `tests/output_ocr_bench/summary.json`
-//!          `tests/output_ocr_bench/summary.md`
+//! Default output: `tests/runs/ocr_bench/<engine>/<image>.json`,
+//!                 `tests/runs/ocr_bench/summary.json`,
+//!                 `tests/runs/ocr_bench/summary.md`.
+//! Override with `MOONLENS_OCR_BENCH_OUTPUT_DIR=<path>` (e.g. point
+//! it at `tests/snapshots/ocr_bench/` to refresh the committed
+//! baseline once the diff has been reviewed).
 //!
 //! Iteration 2 (deferred): add a manga-ocr ONNX path via `ort` for a
 //! Japanese-specialist comparison once iteration-1 results land.
@@ -810,8 +813,16 @@ fn main() -> Result<()> {
         .to_path_buf();
     let input_dir = project_root.join("tests").join("input");
     let gt_dir = project_root.join("tests").join("ocr_gt");
-    let out_dir = project_root.join("tests").join("output_ocr_bench");
-    fs::create_dir_all(&out_dir)?;
+    // Per-run scratch dir under `tests/runs/ocr_bench/`. The
+    // committed baseline lives at `tests/snapshots/ocr_bench/` and
+    // is updated by copying this dir over after a baseline-bless
+    // workflow (see `tests/README.md`).
+    let out_dir = match std::env::var("MOONLENS_OCR_BENCH_OUTPUT_DIR") {
+        Ok(p) if !p.is_empty() => std::path::PathBuf::from(p),
+        _ => project_root.join("tests").join("runs").join("ocr_bench"),
+    };
+    fs::create_dir_all(&out_dir)
+        .with_context(|| format!("create {}", out_dir.display()))?;
 
     let gts = load_ground_truth(&gt_dir)?;
     if gts.is_empty() {

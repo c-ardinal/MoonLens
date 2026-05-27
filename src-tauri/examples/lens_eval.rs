@@ -11,10 +11,19 @@
 //! Usage:
 //!   cargo run --example lens_eval --release
 //!
-//! Outputs (all under `tests/output/`):
-//!   - `<stem>_eval.png`  side-by-side comparison
-//!   - `<stem>_eval.json` per-card metric dump
-//!   - `_summary.md`      one-line-per-input roll-up
+//! Default output: `tests/runs/lens_eval/` (gitignored scratch dir).
+//! Override with `MOONLENS_LENS_EVAL_OUTPUT_DIR=<path>` — used by
+//! `scripts/run-lens-eval-3way.ps1` to materialise per-tier
+//! directories, and by snapshot-bless flows that point straight at
+//! `tests/snapshots/lens_eval/` to refresh the committed baseline.
+//!
+//! Per-input artefacts in the output dir:
+//!   - `<stem>_eval.png`  side-by-side comparison (NOT in git —
+//!                        too large to bloat history)
+//!   - `<stem>_eval.json` per-card metric dump (diffable, committed
+//!                        when copied into snapshots/)
+//!   - `_summary.md`      one-line-per-input roll-up (committed
+//!                        when copied into snapshots/)
 //!
 //! Font loading uses Windows system fonts (Arial for Latin, Arial
 //! Bold for weight ≥ 600). CJK glyphs fall back to `.notdef` —
@@ -181,8 +190,22 @@ fn main() -> Result<()> {
         .parent()
         .context("project root (parent of src-tauri)")?;
     let input_dir = project_root.join("tests").join("input");
-    let output_dir = project_root.join("tests").join("output");
-    fs::create_dir_all(&output_dir).context("create tests/output")?;
+    // Output destination: defaults to the gitignored scratch dir
+    // `tests/runs/lens_eval/` so consecutive runs do not stomp the
+    // committed baseline in `tests/snapshots/lens_eval/`. Override
+    // with `MOONLENS_LENS_EVAL_OUTPUT_DIR=<path>` — used by the
+    // 3-way harness to materialise per-tier directories side-by-
+    // side, and by snapshot-update flows that point straight at
+    // `tests/snapshots/lens_eval/` to refresh the baseline.
+    let output_dir = match std::env::var("MOONLENS_LENS_EVAL_OUTPUT_DIR") {
+        Ok(p) if !p.is_empty() => PathBuf::from(p),
+        _ => project_root
+            .join("tests")
+            .join("runs")
+            .join("lens_eval"),
+    };
+    fs::create_dir_all(&output_dir)
+        .with_context(|| format!("create {}", output_dir.display()))?;
 
     let fonts = Fonts::load().context("load system fonts")?;
     let detector_choice = SecondaryDetector::from_env();

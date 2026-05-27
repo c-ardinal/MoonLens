@@ -1,0 +1,11 @@
+{
+  "engine": "ppocrv5-mobile",
+  "image": "english0003.png",
+  "lang": "en-ja",
+  "expected_chars": 1936,
+  "detected_lines": 4,
+  "detected_text": "The Rainbow Passage 同組によいる 出典：IDEA 本文ページ cYbaue.",
+  "cer": 0.9735849056603774,
+  "wer": 0.9855907780979827,
+  "latency_ms": 3634.9821
+}

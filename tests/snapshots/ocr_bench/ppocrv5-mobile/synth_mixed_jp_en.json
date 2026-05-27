@@ -1,0 +1,11 @@
+{
+  "engine": "ppocrv5-mobile",
+  "image": "synth/synth_mixed_jp_en.png",
+  "lang": "en-ja",
+  "expected_chars": 217,
+  "detected_lines": 2,
+  "detected_text": "The Rainbow Passage (虹の章) 音ン。",
+  "cer": 0.8641304347826086,
+  "wer": 0.9117647058823529,
+  "latency_ms": 1333.0503
+}

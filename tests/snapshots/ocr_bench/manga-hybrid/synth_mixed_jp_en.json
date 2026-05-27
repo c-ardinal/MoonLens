@@ -1,0 +1,11 @@
+{
+  "engine": "manga-hybrid",
+  "image": "synth/synth_mixed_jp_en.png",
+  "lang": "en-ja",
+  "expected_chars": 217,
+  "detected_lines": 5,
+  "detected_text": "TheRaindowPasseer他の文章に 吉野学のサンプルとしては、僕のスペスペースは、 Webサイトの中では、WindowsのTordinterでは、 あの時の時間は何でもないのか、あの人ではなかったのですが、 ofontiontioncmopiontamitioneの",
+  "cer": 0.7336956521739131,
+  "wer": 1.0,
+  "latency_ms": 3948.5815
+}

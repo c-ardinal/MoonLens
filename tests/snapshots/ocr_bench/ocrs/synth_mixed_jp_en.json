@@ -1,0 +1,11 @@
+{
+  "engine": "ocrs",
+  "image": "synth/synth_mixed_jp_en.png",
+  "lang": "en-ja",
+  "expected_chars": 217,
+  "detected_lines": 8,
+  "detected_text": "The Rainbow Passage (IOXW) HE the air they act prism and form a rainbow. The rainbow is a division of white light into many beautiful colours. ASOHTILELTI<IEOn3xH When.the sunlight strikes raindrops Wikipedia",
+  "cer": 0.7065217391304348,
+  "wer": 0.5,
+  "latency_ms": 627.9863
+}

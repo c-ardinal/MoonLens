@@ -1,0 +1,11 @@
+{
+  "engine": "ppocrv5-oar",
+  "image": "english0004.png",
+  "lang": "en-ja",
+  "expected_chars": 475,
+  "detected_lines": 10,
+  "detected_text": "O英文原稿サンプル 以下は、大学の入試問題から抜粋した英文原稿になります。ぜひ一度ご自身でも翻訳にチ ヤレンジしてみてください。 Who ever reads a newspaper from cover to cover? Clearly almost nobody. There isn't time in a busy day, and not all the articles are equally interesting. All readers have their own personal tastes and purposes for reading, which cause them to turn immediately to whichever sections interest them, and to ignore the rest. Thus, most of the paper remains unread, yet you still have to buy all of it. (某大学入試過去問題から抜粋)",
+  "cer": 0.009925558312655087,
+  "wer": 0.0547945205479452,
+  "latency_ms": 291.2389
+}

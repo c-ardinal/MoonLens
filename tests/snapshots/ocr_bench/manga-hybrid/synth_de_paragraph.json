@@ -1,0 +1,11 @@
+{
+  "engine": "manga-hybrid",
+  "image": "synth/synth_de_paragraph.png",
+  "lang": "de",
+  "expected_chars": 251,
+  "detected_lines": 4,
+  "detected_text": "あの時は、あの時は、あの時のことは、 ありがとうございます。おまえの時の時はまだまだまだまだまだまだまだまだまだまだまだまだまだまだまだまだまだまだまだまだまだまだまだまだ そういうのはいいのですが、このままではないのですが、 Webサイトの中には、Amazonの設定については、",
+  "cer": 0.9716981132075472,
+  "wer": 1.0,
+  "latency_ms": 3966.9153
+}

@@ -1,0 +1,11 @@
+{
+  "engine": "ppocrv5-oar-ko",
+  "image": "synth/synth_zh_paragraph.png",
+  "lang": "zh",
+  "expected_chars": 51,
+  "detected_lines": 0,
+  "detected_text": "",
+  "cer": 1.0,
+  "wer": 1.0,
+  "latency_ms": 130.6212
+}

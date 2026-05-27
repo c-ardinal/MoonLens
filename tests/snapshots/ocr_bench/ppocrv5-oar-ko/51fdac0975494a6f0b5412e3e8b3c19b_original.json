@@ -1,0 +1,11 @@
+{
+  "engine": "ppocrv5-oar-ko",
+  "image": "51fdac0975494a6f0b5412e3e8b3c19b_original.png",
+  "lang": "en",
+  "expected_chars": 551,
+  "detected_lines": 18,
+  "detected_text": "UltraNixie Nixie Tube Watch Our previous Nixie-inspired watch launched in January 2025 with the support of 508 backers.That support allowed the design to continue evolving. Over the past year, we listened closely, refined the details, and focused on what truly matters in everyday wear.For UltraNixie, we redesigned the internal circuitry and further optimized performance, improving energy efficiency, stability, and battery life. This project is built on the trust of our previous supporters — and this new version is our way of honoring it. AIXE",
+  "cer": 0.004291845493562232,
+  "wer": 0.05813953488372093,
+  "latency_ms": 336.0126
+}

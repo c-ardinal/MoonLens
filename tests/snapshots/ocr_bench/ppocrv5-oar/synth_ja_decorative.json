@@ -1,0 +1,11 @@
+{
+  "engine": "ppocrv5-oar",
+  "image": "synth/synth_ja_decorative.png",
+  "lang": "ja-decorative",
+  "expected_chars": 45,
+  "detected_lines": 4,
+  "detected_text": "新章「月光」開幕！ 主人公が立ち上がり、 世界は再び動き始める。 今こそ、運命を選び取れ。",
+  "cer": 0.0,
+  "wer": 0.0,
+  "latency_ms": 240.55689999999998
+}

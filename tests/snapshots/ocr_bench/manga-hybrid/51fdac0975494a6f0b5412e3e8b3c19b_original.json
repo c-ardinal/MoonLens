@@ -1,0 +1,11 @@
+{
+  "engine": "manga-hybrid",
+  "image": "51fdac0975494a6f0b5412e3e8b3c19b_original.png",
+  "lang": "en",
+  "expected_chars": 551,
+  "detected_lines": 12,
+  "detected_text": "UltraNixie MiceTubeMotol OurapernesNinernstordervich なのですね。ホームページの2012年には、たっぷりの Ovarternstorerightterdostastastastastastasty 「 antion werでは6000mgitioningramandonenter antidinteropiningttpstornerss. Thissonetはお店のiPherdedですが、 vestonsouneryordionernert NDKE",
+  "cer": 0.7253218884120172,
+  "wer": 0.9883720930232558,
+  "latency_ms": 8817.6744
+}

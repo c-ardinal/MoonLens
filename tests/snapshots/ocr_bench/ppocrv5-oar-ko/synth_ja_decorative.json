@@ -1,0 +1,11 @@
+{
+  "engine": "ppocrv5-oar-ko",
+  "image": "synth/synth_ja_decorative.png",
+  "lang": "ja-decorative",
+  "expected_chars": 45,
+  "detected_lines": 1,
+  "detected_text": "!",
+  "cer": 1.0,
+  "wer": 1.0,
+  "latency_ms": 142.8161
+}

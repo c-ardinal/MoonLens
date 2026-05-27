@@ -1,0 +1,11 @@
+{
+  "engine": "ocrs",
+  "image": "synth/synth_zh_paragraph.png",
+  "lang": "zh",
+  "expected_chars": 51,
+  "detected_lines": 4,
+  "detected_text": "TTET, AIIUOSSS. TZ*KKXWFEE, T6ISD. #SAA LS EKAUBAAY ?Sth FFS.",
+  "cer": 1.1041666666666667,
+  "wer": 2.25,
+  "latency_ms": 374.6763
+}

@@ -1,0 +1,61 @@
+{
+  "image": "english0004.png",
+  "image_w": 661,
+  "image_h": 288,
+  "line_count": 1,
+  "avg_font_size": 16.666668,
+  "avg_color_delta": 259.8692,
+  "weight_counts": [
+    0,
+    1,
+    0
+  ],
+  "residual_char_count": 1,
+  "residual_texts": [
+    "0"
+  ],
+  "overflows": [],
+  "timings_ms": {
+    "preprocess": 0.0,
+    "winrt_ocr": 0.0,
+    "ocrs_detect": 0.0,
+    "compute_cards": 0.0,
+    "translate": 15459.179,
+    "inpaint": 3.4429998,
+    "post_ocr_residual": 49.9182,
+    "total": 15525.791
+  },
+  "cards": [
+    {
+      "line_index": 0,
+      "text": "WhO eve 「 「 eads a newspape 「 f 「 om cove 「 tO cove 「 ? ClearIy almost nobody.\nThe 「 e isn't time in a busy day, and not all the articles a 「 e equally\ninteresting. AII 「 eade 「 s have thei 「 own pe 「 sonal tastes and purposes fO 「\n「 eading, which cause them tO tu 「 n immediately tO whicheve 「 sections\ninterest them, and tO igno 「 e the 「 est. Thus, most Of the pape 「 「 emains\nun 「 ead, yet you still have tO buy all Of it.",
+      "translation": "誰もがコヴォに新しい新聞を読むことはありませんか？明らかに、忙しい日にはほとんど誰もいません。\n記事はすべて同じ趣味や目的を持っていません。すべての人が自分の個人的な趣味や目的を持っていて、その結果、彼らはすぐにその記事に興味がある部分に移動し、それ以外の記事を無視します。したがって、多くの紙は読みませんが、すべての紙を購入する必要があります。",
+      "source_bbox": [
+        27.666668,
+        132.66667,
+        594.6667,
+        111.66667
+      ],
+      "tiled_bbox": [
+        21.666668,
+        128.66667,
+        606.6667,
+        116.83333
+      ],
+      "bg_color": [
+        242,
+        245,
+        254
+      ],
+      "fg_color": [
+        96,
+        95,
+        100
+      ],
+      "font_weight": 600,
+      "font_size_px": 16.666668,
+      "text_align": "left",
+      "fg_bg_delta": 259.8692
+    }
+  ]
+}

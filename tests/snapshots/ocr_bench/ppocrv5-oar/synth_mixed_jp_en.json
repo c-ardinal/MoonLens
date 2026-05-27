@@ -1,0 +1,11 @@
+{
+  "engine": "ppocrv5-oar",
+  "image": "synth/synth_mixed_jp_en.png",
+  "lang": "en-ja",
+  "expected_chars": 217,
+  "detected_lines": 5,
+  "detected_text": "The Rainbow Passage (虹の文章) 音声学のサンプルとて広く使われる文章。出典：Wikipedia When the sunlight strikes raindrops in the air, they act as a prism and form a rainbow. The rainbow is a division of white light into many beautiful colours.",
+  "cer": 0.005434782608695652,
+  "wer": 0.029411764705882353,
+  "latency_ms": 176.5458
+}

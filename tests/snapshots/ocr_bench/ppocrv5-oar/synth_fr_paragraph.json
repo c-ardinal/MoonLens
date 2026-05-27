@@ -1,0 +1,11 @@
+{
+  "engine": "ppocrv5-oar",
+  "image": "synth/synth_fr_paragraph.png",
+  "lang": "fr",
+  "expected_chars": 210,
+  "detected_lines": 4,
+  "detected_text": "Aujourd'hui, maman est morte. Ou peut-etre hier, je ne sais pas. J'ai requ un télégramme de 'asile : 《 Mère décédée.》 Enterrement demain. Sentiments distingués. Cela ne veut rien dire. C'était peut-etre hier.",
+  "cer": 0.03389830508474576,
+  "wer": 0.20588235294117646,
+  "latency_ms": 185.3228
+}

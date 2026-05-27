@@ -1,0 +1,11 @@
+{
+  "engine": "manga-hybrid",
+  "image": "synth/synth_fr_paragraph.png",
+  "lang": "fr",
+  "expected_chars": 210,
+  "detected_lines": 4,
+  "detected_text": "それは、この日の時の日の日は、日本の中には、 あの時は、時間の中ではないのではない。 Harerenton.com.salimententorkes. CopypindinindorderCandionestaching.",
+  "cer": 0.8192090395480226,
+  "wer": 1.0,
+  "latency_ms": 3142.2715000000003
+}

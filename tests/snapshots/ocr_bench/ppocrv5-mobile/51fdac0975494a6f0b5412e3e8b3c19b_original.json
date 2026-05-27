@@ -1,0 +1,11 @@
+{
+  "engine": "ppocrv5-mobile",
+  "image": "51fdac0975494a6f0b5412e3e8b3c19b_original.png",
+  "lang": "en",
+  "expected_chars": 551,
+  "detected_lines": 19,
+  "detected_text": "武龍 UltraNixie Nixie Tube Watch Our previous Nixie-inspired watch unchei of 508 backers. Tht support llwed the design to continue evoling ver the iy refined the details, and focused on what truly matters in everyday wear. Fr Ultraixie, weredesied inti and further optimized perfomance. improving energy efficiency, stability, and battery life. Thispro previous supportersand this version is our way of honoring t. EIXE",
+  "cer": 0.2510729613733906,
+  "wer": 0.46511627906976744,
+  "latency_ms": 3795.5486
+}

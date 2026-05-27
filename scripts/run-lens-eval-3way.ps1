@@ -1,9 +1,12 @@
 # Run lens_eval three times with different forced tiers so we can
-# directly compare translation quality across JA-Std+ (llm-jp 3.1
-# 1.8B), Edge E2B (Gemma 4 E2B), and Edge+ E4B (Gemma 4 E4B) on
-# the same fixture set. Each run's output is snapshot to its own
-# directory under tests/output_3way/<tier>/ before the next run
-# overwrites tests/output/.
+# directly compare translation quality across JA-Std+ (the active
+# JA bridge), Edge E2B (Gemma 4 E2B), and Edge+ E4B (Gemma 4 E4B)
+# on the same fixture set. Each run's output is snapshot to its
+# own subdirectory under
+#   tests/runs/lens_eval_3way/<tier>/
+# (gitignored scratch). Bless a winning run as the new baseline by
+# copying the desired subdirectory over to
+#   tests/snapshots/lens_eval/<tier>/.
 #
 # Usage (from repo root):
 #   pwsh -File scripts/run-lens-eval-3way.ps1
@@ -12,13 +15,13 @@
 # embedded-llm-vulkan feature:
 #   cargo build --example lens_eval --features embedded-llm-vulkan --release
 #
-# Output directory layout:
-#   tests/output_3way/
-#     llm-jp-3.1-1.8b-instruct4-q4_k_m/   # JA-Std+ (current bridge)
+# Layout produced:
+#   tests/runs/lens_eval_3way/
+#     hy-mt2-1.8b-q4_k_m/                 # current JA-Std+ bridge
 #       *_eval.png, *_eval.json, _summary.md, ...
 #     gemma-4-e2b-it-q4_k_m/              # Standard multi
 #       ...
-#     gemma-4-e4b-it-q4_k_m/              # Quality multi (Ollama-equivalent)
+#     gemma-4-e4b-it-q4_k_m/              # Quality multi
 #       ...
 
 # NOTE: `$ErrorActionPreference` deliberately stays at the default
@@ -28,25 +31,24 @@
 # line from a native exe in a NativeCommandError. Setting
 # `ErrorActionPreference = Stop` would escalate those benign init
 # logs into terminating errors and abort the run BEFORE the binary
-# has even finished, leaving us with empty `tests/output/`. We
-# still detect real failures by checking `$LASTEXITCODE` directly
-# after each invocation.
+# has even finished, leaving us with empty output. We still detect
+# real failures by checking `$LASTEXITCODE` directly after each
+# invocation.
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $binary = Join-Path $repoRoot "src-tauri\target\release\examples\lens_eval.exe"
 if (-not (Test-Path $binary)) {
-    Write-Error "lens_eval binary not found at $binary. Build first with `cargo build --example lens_eval --features embedded-llm-vulkan --release`."
+    Write-Error "lens_eval binary not found at $binary. Build first with ``cargo build --example lens_eval --features embedded-llm-vulkan --release``."
 }
 
-$outputDir = Join-Path $repoRoot "tests\output"
-$snapshotRoot = Join-Path $repoRoot "tests\output_3way"
-if (Test-Path $snapshotRoot) {
-    Remove-Item -Recurse -Force $snapshotRoot
+$runRoot = Join-Path $repoRoot "tests\runs\lens_eval_3way"
+if (Test-Path $runRoot) {
+    Remove-Item -Recurse -Force $runRoot
 }
-New-Item -ItemType Directory $snapshotRoot | Out-Null
+New-Item -ItemType Directory $runRoot | Out-Null
 
 $tiers = @(
-    "llm-jp-3.1-1.8b-instruct4-q4_k_m",
+    "hy-mt2-1.8b-q4_k_m",
     "gemma-4-e2b-it-q4_k_m",
     "gemma-4-e4b-it-q4_k_m"
 )
@@ -54,27 +56,21 @@ $tiers = @(
 foreach ($tier in $tiers) {
     Write-Host ""
     Write-Host "=== Running lens_eval with force-tier=$tier ==="
-    # Wipe the eval output before each run so we don't mix tiers.
-    Remove-Item -Recurse -Force $outputDir -ErrorAction SilentlyContinue
-    New-Item -ItemType Directory $outputDir | Out-Null
+
+    $tierOut = Join-Path $runRoot $tier
+    New-Item -ItemType Directory $tierOut | Out-Null
 
     $env:MOONLENS_EVAL_FORCE_TIER = $tier
+    $env:MOONLENS_LENS_EVAL_OUTPUT_DIR = $tierOut
     # Redirect stderr to $null so the llama.cpp init preamble does
     # not flood the terminal — exit code is what we care about.
     & $binary 2>$null
     if ($LASTEXITCODE -ne 0) {
         throw "lens_eval exited with code $LASTEXITCODE for tier $tier"
     }
-
-    $tierSnap = Join-Path $snapshotRoot $tier
-    Move-Item $outputDir $tierSnap
-    New-Item -ItemType Directory $outputDir | Out-Null
-    Write-Host "Snapshot saved to $tierSnap"
+    Write-Host "Output saved to $tierOut"
 }
 
-# Remove the empty trailing tests/output (the last loop iteration
-# leaves an empty dir behind for tier isolation).
-Remove-Item -Recurse -Force $outputDir -ErrorAction SilentlyContinue
-
 Write-Host ""
-Write-Host "Done. Three snapshots ready under $snapshotRoot for side-by-side diff."
+Write-Host "Done. Three runs ready under $runRoot for side-by-side diff."
+Write-Host "Bless a baseline by copying a tier dir into tests\snapshots\lens_eval\."

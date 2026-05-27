@@ -1,0 +1,757 @@
+{
+  "image": "synth_small_body.png",
+  "image_w": 900,
+  "image_h": 260,
+  "line_count": 19,
+  "avg_font_size": 7.5614023,
+  "avg_color_delta": 166.12642,
+  "weight_counts": [
+    0,
+    15,
+    4
+  ],
+  "residual_char_count": 2,
+  "residual_texts": [
+    "b",
+    "ⅱ"
+  ],
+  "overflows": [
+    {
+      "line_index": 0,
+      "source_text": "0 im",
+      "translation": "0は数字です。",
+      "rendered_width_px": 16.666668,
+      "card_inner_width_px": 6.666668,
+      "overflow_ratio": 2.4999998
+    },
+    {
+      "line_index": 1,
+      "source_text": "03 d",
+      "translation": "03rdday.",
+      "rendered_width_px": 8.333334,
+      "card_inner_width_px": 6.666668,
+      "overflow_ratio": 1.2499999
+    },
+    {
+      "line_index": 2,
+      "source_text": "hOfbe( f. W35",
+      "translation": "hOfbe(f.W35)",
+      "rendered_width_px": 10.0,
+      "card_inner_width_px": 8.0,
+      "overflow_ratio": 1.25
+    },
+    {
+      "line_index": 3,
+      "source_text": "5. was",
+      "translation": "5.was.",
+      "rendered_width_px": 7.5,
+      "card_inner_width_px": 6.0,
+      "overflow_ratio": 1.25
+    },
+    {
+      "line_index": 4,
+      "source_text": "0 n ( du",
+      "translation": "0n(done)",
+      "rendered_width_px": 8.333334,
+      "card_inner_width_px": 6.666668,
+      "overflow_ratio": 1.2499999
+    },
+    {
+      "line_index": 5,
+      "source_text": "O n 5.",
+      "translation": "5時です。",
+      "rendered_width_px": 9.166667,
+      "card_inner_width_px": 7.333332,
+      "overflow_ratio": 1.2500002
+    },
+    {
+      "line_index": 6,
+      "source_text": "W35",
+      "translation": "W35.",
+      "rendered_width_px": 6.666667,
+      "card_inner_width_px": 5.333336,
+      "overflow_ratio": 1.2499995
+    },
+    {
+      "line_index": 7,
+      "source_text": "gof .",
+      "translation": "go.",
+      "rendered_width_px": 11.25,
+      "card_inner_width_px": 9.0,
+      "overflow_ratio": 1.25
+    },
+    {
+      "line_index": 8,
+      "source_text": "erofd pair. 、 had",
+      "translation": "erofdpair.ここがです。",
+      "rendered_width_px": 10.416668,
+      "card_inner_width_px": 8.333336,
+      "overflow_ratio": 1.2499998
+    },
+    {
+      "line_index": 9,
+      "source_text": "ing",
+      "translation": "に",
+      "rendered_width_px": 10.833334,
+      "card_inner_width_px": 8.666664,
+      "overflow_ratio": 1.2500005
+    },
+    {
+      "line_index": 10,
+      "source_text": "bef",
+      "translation": "以前に",
+      "rendered_width_px": 17.5,
+      "card_inner_width_px": 7.0,
+      "overflow_ratio": 2.5
+    },
+    {
+      "line_index": 11,
+      "source_text": "gbefO",
+      "translation": "gbefO",
+      "rendered_width_px": 11.25,
+      "card_inner_width_px": 9.0,
+      "overflow_ratio": 1.25
+    },
+    {
+      "line_index": 12,
+      "source_text": "had no",
+      "translation": "私は何もありません。",
+      "rendered_width_px": 16.666668,
+      "card_inner_width_px": 6.666664,
+      "overflow_ratio": 2.5000012
+    },
+    {
+      "line_index": 14,
+      "source_text": "ⅱ t>dw 50 %",
+      "translation": "II.50%",
+      "rendered_width_px": 8.75,
+      "card_inner_width_px": 7.0,
+      "overflow_ratio": 1.25
+    },
+    {
+      "line_index": 16,
+      "source_text": "i ⅲ 53 d00",
+      "translation": "I53d00.",
+      "rendered_width_px": 8.333334,
+      "card_inner_width_px": 6.6666718,
+      "overflow_ratio": 1.2499992
+    },
+    {
+      "line_index": 17,
+      "source_text": "its i 0 d. ⅸ g02",
+      "translation": "It'si0d.g02.",
+      "rendered_width_px": 11.25,
+      "card_inner_width_px": 9.0,
+      "overflow_ratio": 1.25
+    },
+    {
+      "line_index": 18,
+      "source_text": "ompa ⅱ",
+      "translation": "オマピ。",
+      "rendered_width_px": 10.416668,
+      "card_inner_width_px": 8.333328,
+      "overflow_ratio": 1.250001
+    }
+  ],
+  "timings_ms": {
+    "preprocess": 0.0,
+    "winrt_ocr": 0.0,
+    "ocrs_detect": 0.0,
+    "compute_cards": 0.0,
+    "translate": 39458.09,
+    "inpaint": 1.9889,
+    "post_ocr_residual": 46.4198,
+    "total": 39518.19
+  },
+  "cards": [
+    {
+      "line_index": 0,
+      "text": "0 im",
+      "translation": "0は数字です。",
+      "source_bbox": [
+        166.66667,
+        26.666668,
+        20.666672,
+        6.666668
+      ],
+      "tiled_bbox": [
+        160.66667,
+        22.666668,
+        136.33333,
+        14.666668
+      ],
+      "bg_color": [
+        232,
+        232,
+        234
+      ],
+      "fg_color": [
+        127,
+        127,
+        130
+      ],
+      "font_weight": 600,
+      "font_size_px": 6.666667,
+      "text_align": "left",
+      "fg_bg_delta": 181.28983
+    },
+    {
+      "line_index": 1,
+      "text": "03 d",
+      "translation": "03rdday.",
+      "source_bbox": [
+        228.66667,
+        26.666668,
+        45.66667,
+        6.666668
+      ],
+      "tiled_bbox": [
+        222.66667,
+        22.666668,
+        74.33333,
+        14.666668
+      ],
+      "bg_color": [
+        225,
+        225,
+        227
+      ],
+      "fg_color": [
+        148,
+        148,
+        151
+      ],
+      "font_weight": 600,
+      "font_size_px": 6.666667,
+      "text_align": "left",
+      "fg_bg_delta": 132.79308
+    },
+    {
+      "line_index": 2,
+      "text": "hOfbe( f. W35",
+      "translation": "hOfbe(f.W35)",
+      "source_bbox": [
+        179.66667,
+        42.0,
+        59.66667,
+        8.0
+      ],
+      "tiled_bbox": [
+        173.66667,
+        38.0,
+        123.33333,
+        16.0
+      ],
+      "bg_color": [
+        244,
+        244,
+        246
+      ],
+      "fg_color": [
+        151,
+        151,
+        154
+      ],
+      "font_weight": 600,
+      "font_size_px": 8.0,
+      "text_align": "left",
+      "fg_bg_delta": 160.50545
+    },
+    {
+      "line_index": 3,
+      "text": "5. was",
+      "translation": "5.was.",
+      "source_bbox": [
+        119.66667,
+        44.0,
+        27.666672,
+        6.0
+      ],
+      "tiled_bbox": [
+        119.5,
+        40.0,
+        177.5,
+        14.0
+      ],
+      "bg_color": [
+        238,
+        238,
+        240
+      ],
+      "fg_color": [
+        144,
+        144,
+        146
+      ],
+      "font_weight": 600,
+      "font_size_px": 6.0,
+      "text_align": "left",
+      "fg_bg_delta": 162.81277
+    },
+    {
+      "line_index": 4,
+      "text": "0 n ( du",
+      "translation": "0n(done)",
+      "source_bbox": [
+        23.666668,
+        58.666668,
+        35.666668,
+        6.666668
+      ],
+      "tiled_bbox": [
+        17.666668,
+        54.666668,
+        279.33334,
+        14.666668
+      ],
+      "bg_color": [
+        231,
+        231,
+        233
+      ],
+      "fg_color": [
+        137,
+        137,
+        139
+      ],
+      "font_weight": 600,
+      "font_size_px": 6.666667,
+      "text_align": "left",
+      "fg_bg_delta": 162.81277
+    },
+    {
+      "line_index": 5,
+      "text": "O n 5.",
+      "translation": "5時です。",
+      "source_bbox": [
+        238.66667,
+        58.666668,
+        34.66667,
+        7.333332
+      ],
+      "tiled_bbox": [
+        232.66667,
+        54.833336,
+        64.33333,
+        15.166664
+      ],
+      "bg_color": [
+        245,
+        245,
+        247
+      ],
+      "fg_color": [
+        151,
+        151,
+        154
+      ],
+      "font_weight": 600,
+      "font_size_px": 7.3333335,
+      "text_align": "left",
+      "fg_bg_delta": 162.23749
+    },
+    {
+      "line_index": 6,
+      "text": "W35",
+      "translation": "W35.",
+      "source_bbox": [
+        81.66667,
+        60.0,
+        13.666664,
+        5.333336
+      ],
+      "tiled_bbox": [
+        75.66667,
+        56.0,
+        221.33333,
+        13.333336
+      ],
+      "bg_color": [
+        241,
+        241,
+        243
+      ],
+      "fg_color": [
+        140,
+        140,
+        143
+      ],
+      "font_weight": 700,
+      "font_size_px": 5.3333335,
+      "text_align": "left",
+      "fg_bg_delta": 174.3617
+    },
+    {
+      "line_index": 7,
+      "text": "gof .",
+      "translation": "go.",
+      "source_bbox": [
+        77.66667,
+        74.333336,
+        34.66667,
+        9.0
+      ],
+      "tiled_bbox": [
+        71.66667,
+        70.333336,
+        225.33333,
+        16.5
+      ],
+      "bg_color": [
+        242,
+        242,
+        244
+      ],
+      "fg_color": [
+        137,
+        137,
+        140
+      ],
+      "font_weight": 600,
+      "font_size_px": 9.0,
+      "text_align": "left",
+      "fg_bg_delta": 181.28983
+    },
+    {
+      "line_index": 8,
+      "text": "erofd pair. 、 had",
+      "translation": "erofdpair.ここがです。",
+      "source_bbox": [
+        165.66667,
+        74.333336,
+        73.33333,
+        8.333336
+      ],
+      "tiled_bbox": [
+        159.66667,
+        70.333336,
+        137.33333,
+        16.333336
+      ],
+      "bg_color": [
+        242,
+        242,
+        244
+      ],
+      "fg_color": [
+        147,
+        147,
+        150
+      ],
+      "font_weight": 600,
+      "font_size_px": 8.333334,
+      "text_align": "left",
+      "fg_bg_delta": 163.96951
+    },
+    {
+      "line_index": 9,
+      "text": "ing",
+      "translation": "に",
+      "source_bbox": [
+        268.0,
+        74.66667,
+        11.0,
+        8.666664
+      ],
+      "tiled_bbox": [
+        262.0,
+        70.66667,
+        35.0,
+        16.666664
+      ],
+      "bg_color": [
+        238,
+        238,
+        240
+      ],
+      "fg_color": [
+        131,
+        131,
+        134
+      ],
+      "font_weight": 600,
+      "font_size_px": 8.666667,
+      "text_align": "left",
+      "fg_bg_delta": 184.75389
+    },
+    {
+      "line_index": 10,
+      "text": "bef",
+      "translation": "以前に",
+      "source_bbox": [
+        24.0,
+        90.333336,
+        11.333336,
+        7.0
+      ],
+      "tiled_bbox": [
+        18.0,
+        86.333336,
+        279.0,
+        15.0
+      ],
+      "bg_color": [
+        240,
+        240,
+        242
+      ],
+      "fg_color": [
+        153,
+        153,
+        155
+      ],
+      "font_weight": 700,
+      "font_size_px": 7.0,
+      "text_align": "left",
+      "fg_bg_delta": 150.68842
+    },
+    {
+      "line_index": 11,
+      "text": "gbefO",
+      "translation": "gbefO",
+      "source_bbox": [
+        111.66667,
+        90.333336,
+        21.333328,
+        9.0
+      ],
+      "tiled_bbox": [
+        105.66667,
+        86.833336,
+        191.33333,
+        16.5
+      ],
+      "bg_color": [
+        238,
+        238,
+        240
+      ],
+      "fg_color": [
+        132,
+        132,
+        135
+      ],
+      "font_weight": 600,
+      "font_size_px": 9.0,
+      "text_align": "left",
+      "fg_bg_delta": 183.02185
+    },
+    {
+      "line_index": 12,
+      "text": "had no",
+      "translation": "私は何もありません。",
+      "source_bbox": [
+        73.0,
+        90.66667,
+        24.0,
+        6.666664
+      ],
+      "tiled_bbox": [
+        67.0,
+        87.0,
+        230.0,
+        14.333336
+      ],
+      "bg_color": [
+        229,
+        229,
+        231
+      ],
+      "fg_color": [
+        133,
+        133,
+        136
+      ],
+      "font_weight": 700,
+      "font_size_px": 6.666667,
+      "text_align": "left",
+      "fg_bg_delta": 165.70154
+    },
+    {
+      "line_index": 13,
+      "text": "goingdi (\nw 03",
+      "translation": "こんにちは、世界。",
+      "source_bbox": [
+        166.33334,
+        90.66667,
+        68.66666,
+        8.666664
+      ],
+      "tiled_bbox": [
+        15.0,
+        86.66667,
+        282.0,
+        16.166656
+      ],
+      "bg_color": [
+        241,
+        241,
+        243
+      ],
+      "fg_color": [
+        144,
+        144,
+        147
+      ],
+      "font_weight": 600,
+      "font_size_px": 8.666667,
+      "text_align": "center",
+      "fg_bg_delta": 167.43356
+    },
+    {
+      "line_index": 14,
+      "text": "ⅱ t>dw 50 %",
+      "translation": "II.50%",
+      "source_bbox": [
+        221.66667,
+        106.333336,
+        47.66667,
+        7.0
+      ],
+      "tiled_bbox": [
+        221.5,
+        102.833336,
+        75.5,
+        14.5
+      ],
+      "bg_color": [
+        241,
+        241,
+        243
+      ],
+      "fg_color": [
+        144,
+        144,
+        147
+      ],
+      "font_weight": 600,
+      "font_size_px": 7.0,
+      "text_align": "left",
+      "fg_bg_delta": 167.43356
+    },
+    {
+      "line_index": 15,
+      "text": "goi d ⅳ\nep p iOd. (",
+      "translation": "GoIdo.",
+      "source_bbox": [
+        45.666668,
+        106.66667,
+        64.66667,
+        24.333328
+      ],
+      "tiled_bbox": [
+        15.0,
+        102.66667,
+        282.0,
+        32.0
+      ],
+      "bg_color": [
+        241,
+        241,
+        243
+      ],
+      "fg_color": [
+        143,
+        143,
+        145
+      ],
+      "font_weight": 600,
+      "font_size_px": 8.666667,
+      "text_align": "center",
+      "fg_bg_delta": 169.74098
+    },
+    {
+      "line_index": 16,
+      "text": "i ⅲ 53 d00",
+      "translation": "I53d00.",
+      "source_bbox": [
+        222.66667,
+        122.66667,
+        49.66667,
+        6.6666718
+      ],
+      "tiled_bbox": [
+        216.66667,
+        118.66667,
+        80.33333,
+        14.666672
+      ],
+      "bg_color": [
+        226,
+        226,
+        229
+      ],
+      "fg_color": [
+        139,
+        139,
+        142
+      ],
+      "font_weight": 700,
+      "font_size_px": 6.666667,
+      "text_align": "left",
+      "fg_bg_delta": 150.68842
+    },
+    {
+      "line_index": 17,
+      "text": "its i 0 d. ⅸ g02",
+      "translation": "It'si0d.g02.",
+      "source_bbox": [
+        24.0,
+        138.33334,
+        95.333336,
+        9.0
+      ],
+      "tiled_bbox": [
+        18.0,
+        134.66667,
+        279.0,
+        16.333328
+      ],
+      "bg_color": [
+        247,
+        247,
+        249
+      ],
+      "fg_color": [
+        155,
+        155,
+        158
+      ],
+      "font_weight": 600,
+      "font_size_px": 9.0,
+      "text_align": "left",
+      "fg_bg_delta": 158.77342
+    },
+    {
+      "line_index": 18,
+      "text": "ompa ⅱ",
+      "translation": "オマピ。",
+      "source_bbox": [
+        27.666668,
+        154.66667,
+        25.666668,
+        8.333328
+      ],
+      "tiled_bbox": [
+        21.666668,
+        151.0,
+        275.33334,
+        16.0
+      ],
+      "bg_color": [
+        237,
+        237,
+        239
+      ],
+      "fg_color": [
+        135,
+        135,
+        138
+      ],
+      "font_weight": 600,
+      "font_size_px": 8.333334,
+      "text_align": "left",
+      "fg_bg_delta": 176.09372
+    }
+  ]
+}

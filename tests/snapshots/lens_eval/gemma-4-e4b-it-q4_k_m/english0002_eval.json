@@ -1,0 +1,177 @@
+{
+  "image": "english0002.png",
+  "image_w": 891,
+  "image_h": 252,
+  "line_count": 4,
+  "avg_font_size": 16.166668,
+  "avg_color_delta": 150.36905,
+  "weight_counts": [
+    1,
+    2,
+    1
+  ],
+  "residual_char_count": 0,
+  "residual_texts": [],
+  "overflows": [
+    {
+      "line_index": 0,
+      "source_text": "The North Wind and the Sun (",
+      "translation": "北風と太陽(",
+      "rendered_width_px": 22.916668,
+      "card_inner_width_px": 18.333332,
+      "overflow_ratio": 1.2500001
+    },
+    {
+      "line_index": 1,
+      "source_text": "Wikipedia",
+      "translation": "ウィキペディア",
+      "rendered_width_px": 37.5,
+      "card_inner_width_px": 15.0,
+      "overflow_ratio": 2.5
+    },
+    {
+      "line_index": 3,
+      "source_text": "and at last the North Wind gave up the attempt. Then the Sun shined out warmly, and immediatelythe travelertook Off his cloak.\nAnd SO the NO 「 th Wind was obliged tO confess that the Sun was the stronger Ofthe two.",
+      "translation": "そして、最後に北風は試みを放棄しました。その代わり、太陽は暖かく光ってきました。そして旅人は包を脱ぎました。\nそして故に、「北風」は太陽が二つの中で強くであることを認めざるを得ませんでした。",
+      "rendered_width_px": 56.0,
+      "card_inner_width_px": 43.66667,
+      "overflow_ratio": 1.2824426
+    }
+  ],
+  "timings_ms": {
+    "preprocess": 0.0,
+    "winrt_ocr": 0.0,
+    "ocrs_detect": 0.0,
+    "compute_cards": 0.0,
+    "translate": 8930.469,
+    "inpaint": 6.0367002,
+    "post_ocr_residual": 40.8498,
+    "total": 8994.831
+  },
+  "cards": [
+    {
+      "line_index": 0,
+      "text": "The North Wind and the Sun (",
+      "translation": "北風と太陽(",
+      "source_bbox": [
+        18.0,
+        21.666668,
+        238.0,
+        18.333332
+      ],
+      "tiled_bbox": [
+        12.0,
+        17.666668,
+        872.0,
+        26.333332
+      ],
+      "bg_color": [
+        220,
+        222,
+        234
+      ],
+      "fg_color": [
+        115,
+        113,
+        118
+      ],
+      "font_weight": 700,
+      "font_size_px": 18.333334,
+      "text_align": "left",
+      "fg_bg_delta": 190.68823
+    },
+    {
+      "line_index": 1,
+      "text": "Wikipedia",
+      "translation": "ウィキペディア",
+      "source_bbox": [
+        63.333336,
+        80.0,
+        64.0,
+        15.0
+      ],
+      "tiled_bbox": [
+        57.333336,
+        76.0,
+        826.6667,
+        23.0
+      ],
+      "bg_color": [
+        186,
+        209,
+        225
+      ],
+      "fg_color": [
+        80,
+        162,
+        196
+      ],
+      "font_weight": 400,
+      "font_size_px": 15.0,
+      "text_align": "left",
+      "fg_bg_delta": 119.524055
+    },
+    {
+      "line_index": 2,
+      "text": "The North Wind and the Sun were disputing which was the stronger, when a t 「 aveler came along wrapped in a warm cloak. They\nagreed that the one wh0 first succeeded in making the t 「 aveler take his cloak 0ff should be conside 「 ed stronge 「 than the 0ther.\nThen the North Wind blew as hard as he could, but the more he blew the more closely did the traveler fo\nhis cloak a 「 ound him;",
+      "translation": "北風と太陽がどちらが強いか争っていたとき、暖かいコートをいていた「avelerがやってきた。彼らは、最初にcloakを脱いで成功した者を選ばれるべきであると同意した。\nそして北風は全力で吹き、「avelerがコートを身につけたままの様子を見つける。",
+      "source_bbox": [
+        22.0,
+        107.66667,
+        853.00006,
+        71.66667
+      ],
+      "tiled_bbox": [
+        9.0,
+        103.66667,
+        875.0,
+        79.66667
+      ],
+      "bg_color": [
+        209,
+        211,
+        223
+      ],
+      "fg_color": [
+        130,
+        128,
+        135
+      ],
+      "font_weight": 600,
+      "font_size_px": 15.666667,
+      "text_align": "center",
+      "fg_bg_delta": 144.47838
+    },
+    {
+      "line_index": 3,
+      "text": "and at last the North Wind gave up the attempt. Then the Sun shined out warmly, and immediatelythe travelertook Off his cloak.\nAnd SO the NO 「 th Wind was obliged tO confess that the Sun was the stronger Ofthe two.",
+      "translation": "そして、最後に北風は試みを放棄しました。その代わり、太陽は暖かく光ってきました。そして旅人は包を脱ぎました。\nそして故に、「北風」は太陽が二つの中で強くであることを認めざるを得ませんでした。",
+      "source_bbox": [
+        22.0,
+        191.66667,
+        848.3334,
+        43.66667
+      ],
+      "tiled_bbox": [
+        16.0,
+        187.66667,
+        868.0,
+        51.66667
+      ],
+      "bg_color": [
+        209,
+        211,
+        223
+      ],
+      "fg_color": [
+        129,
+        126,
+        134
+      ],
+      "font_weight": 600,
+      "font_size_px": 15.666667,
+      "text_align": "left",
+      "fg_bg_delta": 146.78555
+    }
+  ]
+}

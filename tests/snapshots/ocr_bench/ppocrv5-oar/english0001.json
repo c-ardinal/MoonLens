@@ -1,0 +1,11 @@
+{
+  "engine": "ppocrv5-oar",
+  "image": "english0001.png",
+  "lang": "en-ja",
+  "expected_chars": 467,
+  "detected_lines": 6,
+  "detected_text": "The Elicitation Paragraph (Please Call Stella) The Speech Accent Archive (SAA)により使われている文。 出典：SAA本文ページ（ページ最下部に本文あり） Please call Stella. Ask her to bring these things with her from the store: Six spoons of fresh snow peas, five thick slabs of blue cheese, and maybe a snack for her brother Bob. We also need a smallplastic snake and a big toy frog for the kids. She can scoop these things into three red bags, and we will go meet her Wednesday at the train station.",
+  "cer": 0.0,
+  "wer": 0.08333333333333333,
+  "latency_ms": 522.0297
+}

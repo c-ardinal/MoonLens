@@ -1,0 +1,840 @@
+{
+  "image": "synth_two_columns.png",
+  "image_w": 900,
+  "image_h": 260,
+  "line_count": 21,
+  "avg_font_size": 9.857143,
+  "avg_color_delta": 203.94466,
+  "weight_counts": [
+    10,
+    11,
+    0
+  ],
+  "residual_char_count": 0,
+  "residual_texts": [],
+  "overflows": [
+    {
+      "line_index": 0,
+      "source_text": "Windand the Sunwere",
+      "translation": "風と太陽は",
+      "rendered_width_px": 10.833334,
+      "card_inner_width_px": 8.666668,
+      "overflow_ratio": 1.2499999
+    },
+    {
+      "line_index": 1,
+      "source_text": "Wind blew 35 hard",
+      "translation": "風が35強めに吹きつきました。",
+      "rendered_width_px": 21.666668,
+      "card_inner_width_px": 8.666668,
+      "overflow_ratio": 2.4999998
+    },
+    {
+      "line_index": 2,
+      "source_text": "The No",
+      "translation": "名の",
+      "rendered_width_px": 10.416668,
+      "card_inner_width_px": 8.333334,
+      "overflow_ratio": 1.25
+    },
+    {
+      "line_index": 3,
+      "source_text": "Then the No",
+      "translation": "それから、そして、No",
+      "rendered_width_px": 20.833336,
+      "card_inner_width_px": 8.333334,
+      "overflow_ratio": 2.5
+    },
+    {
+      "line_index": 4,
+      "source_text": "disputing which W35 stronger when",
+      "translation": "W35がどの程度強くか議論していました。",
+      "rendered_width_px": 14.166668,
+      "card_inner_width_px": 11.333336,
+      "overflow_ratio": 1.2499999
+    },
+    {
+      "line_index": 5,
+      "source_text": "he could, butthe more he blew",
+      "translation": "彼は吹くことができたが、もっと吹くと更に大変だった。",
+      "rendered_width_px": 25.0,
+      "card_inner_width_px": 10.0,
+      "overflow_ratio": 2.5
+    },
+    {
+      "line_index": 6,
+      "source_text": "3 traveler came along wrapped in",
+      "translation": "3人の光客が包まれて現れた。",
+      "rendered_width_px": 14.166668,
+      "card_inner_width_px": 11.333336,
+      "overflow_ratio": 1.2499999
+    },
+    {
+      "line_index": 7,
+      "source_text": "the more closely did the traveler",
+      "translation": "旅人の彼が接近するほど、",
+      "rendered_width_px": 13.75,
+      "card_inner_width_px": 11.0,
+      "overflow_ratio": 1.25
+    },
+    {
+      "line_index": 8,
+      "source_text": "the",
+      "translation": "彼女はこれらのものを赤い袋3つにめてくれるでしょう。水曜日にで待ち合わせましょう。",
+      "rendered_width_px": 227.50002,
+      "card_inner_width_px": 8.666664,
+      "overflow_ratio": 26.25001
+    },
+    {
+      "line_index": 9,
+      "source_text": "his cloak around him; and at",
+      "translation": "彼はそのcloakを身につけている。そしてatでは何が起こったのか。",
+      "rendered_width_px": 25.0,
+      "card_inner_width_px": 10.0,
+      "overflow_ratio": 2.5
+    },
+    {
+      "line_index": 10,
+      "source_text": "a warm cloak. They",
+      "translation": "暖かいコートです。彼らは…",
+      "rendered_width_px": 26.666668,
+      "card_inner_width_px": 10.666664,
+      "overflow_ratio": 2.5000007
+    },
+    {
+      "line_index": 12,
+      "source_text": "st the North Wind gave up the",
+      "translation": "北風は北風がめました。",
+      "rendered_width_px": 14.166668,
+      "card_inner_width_px": 11.333336,
+      "overflow_ratio": 1.2499999
+    },
+    {
+      "line_index": 13,
+      "source_text": "the traveler take his cloak 0",
+      "translation": "旅人はcloakを取ります。",
+      "rendered_width_px": 10.833334,
+      "card_inner_width_px": 8.666672,
+      "overflow_ratio": 1.2499993
+    },
+    {
+      "line_index": 14,
+      "source_text": "n shined 0",
+      "translation": "shine0",
+      "rendered_width_px": 11.25,
+      "card_inner_width_px": 9.0,
+      "overflow_ratio": 1.25
+    },
+    {
+      "line_index": 15,
+      "source_text": "attempt. Then",
+      "translation": "試みた後、",
+      "rendered_width_px": 13.333334,
+      "card_inner_width_px": 10.666672,
+      "overflow_ratio": 1.2499995
+    },
+    {
+      "line_index": 16,
+      "source_text": "shou",
+      "translation": "束ねて、青い袋3つにめてください。水曜日にで待ち合わせましょう。",
+      "rendered_width_px": 123.75,
+      "card_inner_width_px": 9.0,
+      "overflow_ratio": 13.75
+    },
+    {
+      "line_index": 17,
+      "source_text": "considered stronger than",
+      "translation": "比較して強いです。",
+      "rendered_width_px": 14.166668,
+      "card_inner_width_px": 11.333328,
+      "overflow_ratio": 1.2500007
+    },
+    {
+      "line_index": 18,
+      "source_text": "warmly, and the traveter t00k 0",
+      "translation": "暖かく、そして旅人は帽子を取った。",
+      "rendered_width_px": 13.75,
+      "card_inner_width_px": 11.0,
+      "overflow_ratio": 1.25
+    },
+    {
+      "line_index": 19,
+      "source_text": "his cloak.",
+      "translation": "彼のcloak.",
+      "rendered_width_px": 11.25,
+      "card_inner_width_px": 9.0,
+      "overflow_ratio": 1.25
+    },
+    {
+      "line_index": 20,
+      "source_text": "the other.",
+      "translation": "それの他のものです。",
+      "rendered_width_px": 21.666668,
+      "card_inner_width_px": 8.666672,
+      "overflow_ratio": 2.4999986
+    }
+  ],
+  "timings_ms": {
+    "preprocess": 0.0,
+    "winrt_ocr": 0.0,
+    "ocrs_detect": 0.0,
+    "compute_cards": 0.0,
+    "translate": 18701.217,
+    "inpaint": 2.0325,
+    "post_ocr_residual": 9.498,
+    "total": 18726.793
+  },
+  "cards": [
+    {
+      "line_index": 0,
+      "text": "Windand the Sunwere",
+      "translation": "風と太陽は",
+      "source_bbox": [
+        71.66667,
+        27.0,
+        103.66667,
+        8.666668
+      ],
+      "tiled_bbox": [
+        65.66667,
+        23.0,
+        127.33333,
+        16.666668
+      ],
+      "bg_color": [
+        243,
+        243,
+        245
+      ],
+      "fg_color": [
+        123,
+        123,
+        126
+      ],
+      "font_weight": 600,
+      "font_size_px": 8.666667,
+      "text_align": "left",
+      "fg_bg_delta": 207.27036
+    },
+    {
+      "line_index": 1,
+      "text": "Wind blew 35 hard",
+      "translation": "風が35強めに吹きつきました。",
+      "source_bbox": [
+        550.3334,
+        27.0,
+        82.0,
+        8.666668
+      ],
+      "tiled_bbox": [
+        544.3334,
+        23.0,
+        96.666626,
+        16.666668
+      ],
+      "bg_color": [
+        244,
+        244,
+        246
+      ],
+      "fg_color": [
+        128,
+        128,
+        131
+      ],
+      "font_weight": 600,
+      "font_size_px": 8.666667,
+      "text_align": "left",
+      "fg_bg_delta": 200.34221
+    },
+    {
+      "line_index": 2,
+      "text": "The No",
+      "translation": "名の",
+      "source_bbox": [
+        24.0,
+        27.333334,
+        32.0,
+        8.333334
+      ],
+      "tiled_bbox": [
+        18.0,
+        23.333334,
+        175.0,
+        16.333334
+      ],
+      "bg_color": [
+        239,
+        239,
+        241
+      ],
+      "fg_color": [
+        122,
+        122,
+        126
+      ],
+      "font_weight": 600,
+      "font_size_px": 8.333334,
+      "text_align": "left",
+      "fg_bg_delta": 201.50186
+    },
+    {
+      "line_index": 3,
+      "text": "Then the No",
+      "translation": "それから、そして、No",
+      "source_bbox": [
+        480.0,
+        27.333334,
+        54.666687,
+        8.333334
+      ],
+      "tiled_bbox": [
+        474.0,
+        23.333334,
+        167.0,
+        16.333334
+      ],
+      "bg_color": [
+        243,
+        243,
+        245
+      ],
+      "fg_color": [
+        120,
+        120,
+        123
+      ],
+      "font_weight": 600,
+      "font_size_px": 8.333334,
+      "text_align": "left",
+      "fg_bg_delta": 212.46646
+    },
+    {
+      "line_index": 4,
+      "text": "disputing which W35 stronger when",
+      "translation": "W35がどの程度強くか議論していました。",
+      "source_bbox": [
+        24.0,
+        48.0,
+        159.0,
+        11.333336
+      ],
+      "tiled_bbox": [
+        15.0,
+        44.0,
+        178.0,
+        19.333336
+      ],
+      "bg_color": [
+        248,
+        248,
+        250
+      ],
+      "fg_color": [
+        131,
+        131,
+        134
+      ],
+      "font_weight": 400,
+      "font_size_px": 11.333334,
+      "text_align": "center",
+      "fg_bg_delta": 202.07425
+    },
+    {
+      "line_index": 5,
+      "text": "he could, butthe more he blew",
+      "translation": "彼は吹くことができたが、もっと吹くと更に大変だった。",
+      "source_bbox": [
+        492.6667,
+        48.0,
+        139.33331,
+        10.0
+      ],
+      "tiled_bbox": [
+        486.6667,
+        44.0,
+        154.33331,
+        18.0
+      ],
+      "bg_color": [
+        247,
+        247,
+        249
+      ],
+      "fg_color": [
+        131,
+        131,
+        134
+      ],
+      "font_weight": 400,
+      "font_size_px": 10.0,
+      "text_align": "left",
+      "fg_bg_delta": 200.34221
+    },
+    {
+      "line_index": 6,
+      "text": "3 traveler came along wrapped in",
+      "translation": "3人の光客が包まれて現れた。",
+      "source_bbox": [
+        24.0,
+        69.0,
+        150.0,
+        11.333336
+      ],
+      "tiled_bbox": [
+        18.0,
+        65.0,
+        175.0,
+        19.333336
+      ],
+      "bg_color": [
+        248,
+        248,
+        250
+      ],
+      "fg_color": [
+        132,
+        132,
+        135
+      ],
+      "font_weight": 400,
+      "font_size_px": 11.333334,
+      "text_align": "left",
+      "fg_bg_delta": 200.34221
+    },
+    {
+      "line_index": 7,
+      "text": "the more closely did the traveler",
+      "translation": "旅人の彼が接近するほど、",
+      "source_bbox": [
+        480.0,
+        69.0,
+        145.66669,
+        11.0
+      ],
+      "tiled_bbox": [
+        471.0,
+        65.0,
+        170.0,
+        19.0
+      ],
+      "bg_color": [
+        247,
+        247,
+        249
+      ],
+      "fg_color": [
+        134,
+        134,
+        137
+      ],
+      "font_weight": 400,
+      "font_size_px": 11.0,
+      "text_align": "center",
+      "fg_bg_delta": 195.1461
+    },
+    {
+      "line_index": 8,
+      "text": "the",
+      "translation": "彼女はこれらのものを赤い袋3つにめてくれるでしょう。水曜日にで待ち合わせましょう。",
+      "source_bbox": [
+        167.33334,
+        90.0,
+        15.0,
+        8.666664
+      ],
+      "tiled_bbox": [
+        161.33334,
+        86.0,
+        31.666656,
+        16.666664
+      ],
+      "bg_color": [
+        245,
+        245,
+        247
+      ],
+      "fg_color": [
+        121,
+        121,
+        124
+      ],
+      "font_weight": 600,
+      "font_size_px": 8.666667,
+      "text_align": "left",
+      "fg_bg_delta": 214.1985
+    },
+    {
+      "line_index": 9,
+      "text": "his cloak around him; and at",
+      "translation": "彼はそのcloakを身につけている。そしてatでは何が起こったのか。",
+      "source_bbox": [
+        500.33334,
+        90.0,
+        127.00003,
+        10.0
+      ],
+      "tiled_bbox": [
+        494.33334,
+        86.0,
+        146.66666,
+        18.0
+      ],
+      "bg_color": [
+        247,
+        247,
+        249
+      ],
+      "fg_color": [
+        131,
+        131,
+        134
+      ],
+      "font_weight": 400,
+      "font_size_px": 10.0,
+      "text_align": "left",
+      "fg_bg_delta": 200.34221
+    },
+    {
+      "line_index": 10,
+      "text": "a warm cloak. They",
+      "translation": "暖かいコートです。彼らは…",
+      "source_bbox": [
+        24.0,
+        90.333336,
+        87.0,
+        10.666664
+      ],
+      "tiled_bbox": [
+        18.0,
+        86.333336,
+        175.0,
+        18.666664
+      ],
+      "bg_color": [
+        247,
+        247,
+        249
+      ],
+      "fg_color": [
+        133,
+        133,
+        136
+      ],
+      "font_weight": 400,
+      "font_size_px": 10.666667,
+      "text_align": "left",
+      "fg_bg_delta": 196.87813
+    },
+    {
+      "line_index": 11,
+      "text": "one whO\nst succeeded in making",
+      "translation": "一匹の犬が成功しました。",
+      "source_bbox": [
+        24.0,
+        111.0,
+        156.0,
+        11.333336
+      ],
+      "tiled_bbox": [
+        15.0,
+        107.0,
+        178.0,
+        19.333336
+      ],
+      "bg_color": [
+        244,
+        244,
+        246
+      ],
+      "fg_color": [
+        120,
+        120,
+        123
+      ],
+      "font_weight": 600,
+      "font_size_px": 11.333334,
+      "text_align": "center",
+      "fg_bg_delta": 214.1985
+    },
+    {
+      "line_index": 12,
+      "text": "st the North Wind gave up the",
+      "translation": "北風は北風がめました。",
+      "source_bbox": [
+        488.33334,
+        111.0,
+        133.00003,
+        11.333336
+      ],
+      "tiled_bbox": [
+        471.0,
+        107.0,
+        170.0,
+        19.333336
+      ],
+      "bg_color": [
+        246,
+        246,
+        248
+      ],
+      "fg_color": [
+        130,
+        130,
+        133
+      ],
+      "font_weight": 400,
+      "font_size_px": 11.333334,
+      "text_align": "center",
+      "fg_bg_delta": 200.34221
+    },
+    {
+      "line_index": 13,
+      "text": "the traveler take his cloak 0",
+      "translation": "旅人はcloakを取ります。",
+      "source_bbox": [
+        24.0,
+        132.0,
+        123.66667,
+        8.666672
+      ],
+      "tiled_bbox": [
+        18.0,
+        128.0,
+        175.0,
+        16.666672
+      ],
+      "bg_color": [
+        243,
+        243,
+        245
+      ],
+      "fg_color": [
+        123,
+        123,
+        126
+      ],
+      "font_weight": 600,
+      "font_size_px": 8.666667,
+      "text_align": "left",
+      "fg_bg_delta": 207.27036
+    },
+    {
+      "line_index": 14,
+      "text": "n shined 0",
+      "translation": "shine0",
+      "source_bbox": [
+        575.6667,
+        132.0,
+        45.666687,
+        9.0
+      ],
+      "tiled_bbox": [
+        569.6667,
+        128.0,
+        71.33331,
+        17.0
+      ],
+      "bg_color": [
+        240,
+        240,
+        242
+      ],
+      "fg_color": [
+        124,
+        124,
+        128
+      ],
+      "font_weight": 600,
+      "font_size_px": 9.0,
+      "text_align": "left",
+      "fg_bg_delta": 199.76987
+    },
+    {
+      "line_index": 15,
+      "text": "attempt. Then",
+      "translation": "試みた後、",
+      "source_bbox": [
+        480.0,
+        132.33334,
+        64.33331,
+        10.666672
+      ],
+      "tiled_bbox": [
+        474.0,
+        128.33334,
+        167.0,
+        18.666672
+      ],
+      "bg_color": [
+        247,
+        247,
+        249
+      ],
+      "fg_color": [
+        124,
+        124,
+        128
+      ],
+      "font_weight": 400,
+      "font_size_px": 10.666667,
+      "text_align": "left",
+      "fg_bg_delta": 211.89384
+    },
+    {
+      "line_index": 16,
+      "text": "shou",
+      "translation": "束ねて、青い袋3つにめてください。水曜日にで待ち合わせましょう。",
+      "source_bbox": [
+        24.0,
+        153.0,
+        21.666668,
+        9.0
+      ],
+      "tiled_bbox": [
+        18.0,
+        149.0,
+        175.0,
+        17.0
+      ],
+      "bg_color": [
+        245,
+        245,
+        247
+      ],
+      "fg_color": [
+        128,
+        128,
+        131
+      ],
+      "font_weight": 600,
+      "font_size_px": 9.0,
+      "text_align": "left",
+      "fg_bg_delta": 202.07425
+    },
+    {
+      "line_index": 17,
+      "text": "considered stronger than",
+      "translation": "比較して強いです。",
+      "source_bbox": [
+        70.66667,
+        153.0,
+        113.33333,
+        11.333328
+      ],
+      "tiled_bbox": [
+        64.66667,
+        149.0,
+        128.33333,
+        19.333328
+      ],
+      "bg_color": [
+        247,
+        247,
+        249
+      ],
+      "fg_color": [
+        130,
+        130,
+        133
+      ],
+      "font_weight": 400,
+      "font_size_px": 11.333334,
+      "text_align": "left",
+      "fg_bg_delta": 202.07425
+    },
+    {
+      "line_index": 18,
+      "text": "warmly, and the traveter t00k 0",
+      "translation": "暖かく、そして旅人は帽子を取った。",
+      "source_bbox": [
+        479.6667,
+        153.0,
+        141.0,
+        11.0
+      ],
+      "tiled_bbox": [
+        473.6667,
+        149.0,
+        167.33331,
+        19.0
+      ],
+      "bg_color": [
+        247,
+        247,
+        249
+      ],
+      "fg_color": [
+        129,
+        129,
+        132
+      ],
+      "font_weight": 400,
+      "font_size_px": 11.0,
+      "text_align": "left",
+      "fg_bg_delta": 203.80627
+    },
+    {
+      "line_index": 19,
+      "text": "his cloak.",
+      "translation": "彼のcloak.",
+      "source_bbox": [
+        480.6667,
+        174.0,
+        41.333313,
+        9.0
+      ],
+      "tiled_bbox": [
+        474.6667,
+        170.0,
+        166.33331,
+        17.0
+      ],
+      "bg_color": [
+        247,
+        247,
+        249
+      ],
+      "fg_color": [
+        124,
+        124,
+        127
+      ],
+      "font_weight": 600,
+      "font_size_px": 9.0,
+      "text_align": "left",
+      "fg_bg_delta": 212.46646
+    },
+    {
+      "line_index": 20,
+      "text": "the other.",
+      "translation": "それの他のものです。",
+      "source_bbox": [
+        24.0,
+        174.33334,
+        44.0,
+        8.666672
+      ],
+      "tiled_bbox": [
+        18.0,
+        170.33334,
+        175.0,
+        16.666672
+      ],
+      "bg_color": [
+        244,
+        244,
+        246
+      ],
+      "fg_color": [
+        129,
+        129,
+        133
+      ],
+      "font_weight": 600,
+      "font_size_px": 8.666667,
+      "text_align": "left",
+      "fg_bg_delta": 198.03787
+    }
+  ]
+}

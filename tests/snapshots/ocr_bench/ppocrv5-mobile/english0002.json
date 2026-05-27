@@ -1,0 +1,11 @@
+{
+  "engine": "ppocrv5-mobile",
+  "image": "english0002.png",
+  "lang": "en-ja",
+  "expected_chars": 682,
+  "detected_lines": 3,
+  "detected_text": "TheNorthWindandteun(北風太) 英語のアクセント調査だけでなく較言語学でも使われることで有名。らしい 出典：Wikipediaページ",
+  "cer": 0.8698752228163993,
+  "wer": 0.9918032786885246,
+  "latency_ms": 2284.4698000000003
+}

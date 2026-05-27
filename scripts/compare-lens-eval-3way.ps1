@@ -6,19 +6,32 @@
 #
 # Usage (from repo root):
 #   pwsh -File scripts/compare-lens-eval-3way.ps1
+#       -SnapshotsRoot tests/runs/lens_eval_3way   (fresh run, default)
+#   pwsh -File scripts/compare-lens-eval-3way.ps1 `
+#       -SnapshotsRoot tests/snapshots/lens_eval    (committed baseline)
 #
-# Output: tests/output_3way/_compare.md
+# Output: <SnapshotsRoot>/_compare.md
+
+param(
+    [string]$SnapshotsRoot = ""
+)
 
 $ErrorActionPreference = "Stop"
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
-$snapRoot = Join-Path $repoRoot "tests\output_3way"
+if ([string]::IsNullOrEmpty($SnapshotsRoot)) {
+    $snapRoot = Join-Path $repoRoot "tests\runs\lens_eval_3way"
+} elseif ([System.IO.Path]::IsPathRooted($SnapshotsRoot)) {
+    $snapRoot = $SnapshotsRoot
+} else {
+    $snapRoot = Join-Path $repoRoot $SnapshotsRoot
+}
 if (-not (Test-Path $snapRoot)) {
     Write-Error "Snapshot directory $snapRoot not found. Run run-lens-eval-3way.ps1 first."
 }
 
 $tierDirs = [ordered]@{
-    "JA-Std+ (llm-jp 3.1 1.8B)" = Join-Path $snapRoot "llm-jp-3.1-1.8b-instruct4-q4_k_m"
+    "JA-Std+ (Hy-MT2 1.8B)" = Join-Path $snapRoot "hy-mt2-1.8b-q4_k_m"
     "Edge E2B (Gemma 4 E2B)" = Join-Path $snapRoot "gemma-4-e2b-it-q4_k_m"
     "Edge+ E4B (Gemma 4 E4B)" = Join-Path $snapRoot "gemma-4-e4b-it-q4_k_m"
 }

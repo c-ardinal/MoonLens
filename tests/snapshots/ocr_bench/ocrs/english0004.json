@@ -1,0 +1,11 @@
+{
+  "engine": "ocrs",
+  "image": "english0004.png",
+  "lang": "en-ja",
+  "expected_chars": 475,
+  "detected_lines": 10,
+  "detected_text": "O? 1FI? K\"OXFFADS**TUTTYADET. UU-ETBACOHRIT tLSLTa?\"tEa. Who ever reads a newspaper from cover to cover? Clearly almost nobody. There isn't time in a busy day, and not all the articles are equally interesting. All readers have their own personal tastes and purposes for reading, which Cause them to turn immediately to whichever sections interest them, and to ignore the rest. Thus, most of the paper remains unread, yet you still have to buy all of it. (ARX*AICiMARARADVSHAT)",
+  "cer": 0.20595533498759305,
+  "wer": 0.0958904109589041,
+  "latency_ms": 1054.1795
+}

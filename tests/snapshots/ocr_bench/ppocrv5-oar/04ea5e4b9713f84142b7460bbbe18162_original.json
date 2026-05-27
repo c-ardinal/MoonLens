@@ -1,0 +1,11 @@
+{
+  "engine": "ppocrv5-oar",
+  "image": "04ea5e4b9713f84142b7460bbbe18162_original.png",
+  "lang": "en",
+  "expected_chars": 487,
+  "detected_lines": 30,
+  "detected_text": "e Brand: UltraNixie Model: UNW2IN16SMV10DL Case Material: zinc-Aluminum Alloy Manufacturing Process : Precision Die Casting & CNC Machining Glass: Tempered Protective Glass Case Dimensions : 55.3×40×15.3 mm (±0.2 mm) Weight: 85g Display: Authentic Soviet-era IN-16 Nixie Tube Battery Capacity: 90mAh Charging Method: Qi Wireless Charging Battery Life: Up to 5 days with regular use (Approx.100 activations per day) Standby Time: Up to 60 days Interaction: Physical Buttons",
+  "cer": 0.0049382716049382715,
+  "wer": 0.3855421686746988,
+  "latency_ms": 250.48090000000002
+}

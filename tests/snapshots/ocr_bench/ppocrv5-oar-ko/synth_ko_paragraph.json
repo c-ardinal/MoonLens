@@ -1,0 +1,11 @@
+{
+  "engine": "ppocrv5-oar-ko",
+  "image": "synth/synth_ko_paragraph.png",
+  "lang": "ko",
+  "expected_chars": 69,
+  "detected_lines": 4,
+  "detected_text": "동해 물과 백두산이 마르고 닿도록 하느님이 보우하사우리나라만세 무궁화삼천리 화려강산 대한 사람대한으로길이 보전하세",
+  "cer": 0.019230769230769232,
+  "wer": 0.6111111111111112,
+  "latency_ms": 156.0175
+}

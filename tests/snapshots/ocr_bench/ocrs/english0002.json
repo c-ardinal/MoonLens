@@ -1,0 +1,11 @@
+{
+  "engine": "ocrs",
+  "image": "english0002.png",
+  "lang": "en-ja",
+  "expected_chars": 682,
+  "detected_lines": 13,
+  "detected_text": "The North Wind and the Sun (ALAl*[5) OTOEY AtTto H The North Wind and the Sun were disputing which was the stronger, when agreed that the.one who first succeeded in making the traveler take his cloak off should be considered stronger than the other. Then the North Wind blew as hard as he could. but the more he blew the more closely did the traveler fold his cloak around him; and at last the North Wind gave up the attempt. Then the Sun shined out warmly, and immediately the traveler took off his cloak. And so the North Wind was obliged to confess that the Sun was the stronger of the two. H*s* Toft?cCTAzo 5Llo Wikipedian?- traveler came along wrapped in warm cloak. They",
+  "cer": 0.3065953654188948,
+  "wer": 0.23770491803278687,
+  "latency_ms": 1313.0307
+}

@@ -1,0 +1,11 @@
+{
+  "engine": "ppocrv5-oar-ko",
+  "image": "synth/synth_ja_vertical.png",
+  "lang": "ja-vertical",
+  "expected_chars": 36,
+  "detected_lines": 19,
+  "detected_text": "1$ T Z 0 1$ $t 61 o 2 = T n t H h 2 2 3 b",
+  "cer": 1.0,
+  "wer": 4.75,
+  "latency_ms": 203.7245
+}
