@@ -277,7 +277,6 @@ pub enum TextAlign {
     Right,
 }
 
-
 /// Emitted once per flow, immediately after OCR completes. Gives the
 /// UI enough to draw placeholder cards at bbox positions before any
 /// translation arrives.
@@ -1202,6 +1201,17 @@ pub fn compute_card_region(
 /// divide bboxes by 2 after OCR returns. Returns the original bytes
 /// on decode/encode failure so the pipeline degrades gracefully.
 pub fn preprocess_png_for_ocr(png_bytes: &[u8], scale: u32) -> anyhow::Result<Vec<u8>> {
+    // `scale == 1` is a no-op fast-path: PP-OCRv5 (the sole OCR
+    // engine as of the 2026-05-28 consolidation) runs its own
+    // detection + internal scaling, so it wants the captured image
+    // close to native resolution. Upscaling 3× there only made the
+    // image 9× larger and the recogniser ~3× slower for no accuracy
+    // gain (the bench measured PP-OCRv5 on raw PNGs at CER ~0). A
+    // modest 2× still helps very small screen text without the 9×
+    // pixel blow-up.
+    if scale <= 1 {
+        return Ok(png_bytes.to_vec());
+    }
     let img = image::load_from_memory(png_bytes)?;
     let (w, h) = (img.width(), img.height());
     let upscaled = img.resize_exact(
@@ -1513,9 +1523,10 @@ pub fn compute_lens_cards(
             // surfaces a Center / Right when the text sits clearly
             // off the left edge — the user-visible behaviour the old
             // hardcoded Left fallback could never produce.
-            let effective_block_bbox = paragraph
-                .block_bbox
-                .or(Some([0.0, 0.0, image_w as f32, image_h as f32]));
+            let effective_block_bbox =
+                paragraph
+                    .block_bbox
+                    .or(Some([0.0, 0.0, image_w as f32, image_h as f32]));
             let text_align = detect_text_align(&members, &rendered, effective_block_bbox);
             // Card render bbox = inpaint bbox extended toward the
             // layout block in the direction OPPOSITE the alignment.
@@ -1709,10 +1720,7 @@ pub(crate) fn ocr_line_inside_any_block(
 /// Japanese should render at ~21 px (24 × 0.88); the same bbox
 /// in English should render at ~17 px (24 × 0.72) so descenders
 /// (`g`, `p`, `y`) sit within the bbox instead of below it.
-pub(crate) fn paragraph_cap_height_ratio(
-    members: &[usize],
-    rendered: &[OcrLine],
-) -> f32 {
+pub(crate) fn paragraph_cap_height_ratio(members: &[usize], rendered: &[OcrLine]) -> f32 {
     // Weight CJK characters at 2x because they occupy roughly
     // twice the horizontal cell width of a Latin glyph. A
     // paragraph like `翻訳ツール「Open Source」` has 7 CJK chars +
@@ -3190,10 +3198,7 @@ impl WindowStabilityGate {
         self.poll_ms
     }
 
-    pub(crate) fn observe(
-        &mut self,
-        cur: Option<(i32, i32, u32, u32)>,
-    ) -> GateOutcome {
+    pub(crate) fn observe(&mut self, cur: Option<(i32, i32, u32, u32)>) -> GateOutcome {
         self.ticks_elapsed = self.ticks_elapsed.saturating_add(1);
         match (cur, self.last_seen) {
             (Some(c), Some(prev)) if c == prev => {
@@ -3377,14 +3382,8 @@ async fn run_capture_loop(
         // can pin (e.g.) "en" to skip provider script detection
         // when they already know the source.
         let config = PipelineConfig {
-            source_language: snapshot
-                .translation
-                .default_source_language
-                .clone(),
-            target_language: snapshot
-                .translation
-                .default_target_language
-                .clone(),
+            source_language: snapshot.translation.default_source_language.clone(),
+            target_language: snapshot.translation.default_target_language.clone(),
             max_concurrent_translate: snapshot.performance.max_concurrent_tasks.max(1) as usize,
             // 3× upscale recovers small body-text recognition (see
             // PipelineConfig::default for the rationale).
@@ -4217,13 +4216,11 @@ mod tests {
         // Bug 5a guard: Latin paragraphs need the smaller ~0.72
         // ratio because descenders / ascenders make the bbox 25-30%
         // taller than the cap height.
-        let rendered = vec![
-            OcrLine {
-                text: "Hello, world.".into(),
-                bbox: [0.0, 0.0, 120.0, 20.0],
-                confidence: 1.0,
-            },
-        ];
+        let rendered = vec![OcrLine {
+            text: "Hello, world.".into(),
+            bbox: [0.0, 0.0, 120.0, 20.0],
+            confidence: 1.0,
+        }];
         let ratio = paragraph_cap_height_ratio(&[0], &rendered);
         assert!(
             (ratio - 0.72).abs() < 1e-6,
@@ -4236,13 +4233,11 @@ mod tests {
         // Bug 5a guard: a single trailing English word in an
         // otherwise-Japanese paragraph should still pick the CJK
         // ratio because Japanese glyph cells dominate the line.
-        let rendered = vec![
-            OcrLine {
-                text: "翻訳ツール「Open Source」".into(),
-                bbox: [0.0, 0.0, 200.0, 20.0],
-                confidence: 1.0,
-            },
-        ];
+        let rendered = vec![OcrLine {
+            text: "翻訳ツール「Open Source」".into(),
+            bbox: [0.0, 0.0, 200.0, 20.0],
+            confidence: 1.0,
+        }];
         let ratio = paragraph_cap_height_ratio(&[0], &rendered);
         assert!(
             (ratio - 0.88).abs() < 1e-6,
@@ -4302,15 +4297,28 @@ mod tests {
         // the previous drag tick), so it counts as 0 matches —
         // last_seen advances, stable_ticks stays at 0.
         let r = g.observe(Some((104, 100, 800, 600)));
-        assert_eq!(r, GateOutcome::KeepWaiting, "first observation of release pos");
+        assert_eq!(
+            r,
+            GateOutcome::KeepWaiting,
+            "first observation of release pos"
+        );
         // Now we need 6 ticks where `cur == last_seen` to reach
         // stable_required_ticks (300 / 50 = 6).
         for i in 0..5 {
             let r = g.observe(Some((104, 100, 800, 600)));
-            assert_eq!(r, GateOutcome::KeepWaiting, "match #{} after release", i + 1);
+            assert_eq!(
+                r,
+                GateOutcome::KeepWaiting,
+                "match #{} after release",
+                i + 1
+            );
         }
         let r = g.observe(Some((104, 100, 800, 600)));
-        assert_eq!(r, GateOutcome::Stable, "6th consecutive match should fire Stable");
+        assert_eq!(
+            r,
+            GateOutcome::Stable,
+            "6th consecutive match should fire Stable"
+        );
     }
 
     #[test]
@@ -4358,10 +4366,7 @@ mod tests {
         for _ in 0..5 {
             g.observe(Some((10, 10, 800, 600)));
         }
-        assert_eq!(
-            g.observe(Some((10, 10, 800, 600))),
-            GateOutcome::Stable,
-        );
+        assert_eq!(g.observe(Some((10, 10, 800, 600))), GateOutcome::Stable,);
     }
 
     #[test]
@@ -5149,12 +5154,8 @@ mod tests {
         // Heading (h=32) directly above body lines (h=14) — the kind
         // of layout that would otherwise produce one card with the
         // body coming out bold.
-        let lines = make_ocr_lines_for_heights(&[
-            (0.0, 32.0),
-            (40.0, 14.0),
-            (58.0, 14.0),
-            (76.0, 14.0),
-        ]);
+        let lines =
+            make_ocr_lines_for_heights(&[(0.0, 32.0), (40.0, 14.0), (58.0, 14.0), (76.0, 14.0)]);
         let groups = split_subgroup_by_height_discontinuity(&[0, 1, 2, 3], &lines);
         assert_eq!(groups.len(), 2);
         assert_eq!(groups[0], vec![0]);
@@ -5165,12 +5166,8 @@ mod tests {
     fn split_subgroup_by_height_keeps_uniform_paragraph() {
         // All four lines within 10% of each other — should NOT
         // split. Standard body paragraph.
-        let lines = make_ocr_lines_for_heights(&[
-            (0.0, 14.0),
-            (18.0, 14.5),
-            (36.5, 14.0),
-            (54.5, 13.5),
-        ]);
+        let lines =
+            make_ocr_lines_for_heights(&[(0.0, 14.0), (18.0, 14.5), (36.5, 14.0), (54.5, 13.5)]);
         let groups = split_subgroup_by_height_discontinuity(&[0, 1, 2, 3], &lines);
         assert_eq!(groups.len(), 1);
         assert_eq!(groups[0], vec![0, 1, 2, 3]);

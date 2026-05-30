@@ -597,7 +597,10 @@ mod tests {
     fn format_accelerator_mirrors_frontend_format() {
         // Matches the JS test in src/lib/hotkey.test.ts so the tray
         // and the in-app chip can never visually drift.
-        assert_eq!(format_accelerator("CommandOrControl+Shift+Space"), "⌘⇧Space");
+        assert_eq!(
+            format_accelerator("CommandOrControl+Shift+Space"),
+            "⌘⇧Space"
+        );
         assert_eq!(format_accelerator("Control+K"), "⌃K");
         assert_eq!(format_accelerator("Shift+F1"), "⇧F1");
         assert_eq!(format_accelerator("Control+ArrowLeft"), "⌃←");

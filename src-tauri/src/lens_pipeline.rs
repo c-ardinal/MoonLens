@@ -28,7 +28,7 @@
 
 use anyhow::Result;
 use async_trait::async_trait;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use crate::lens_watcher::{compute_lens_cards, preprocess_ocr_lines, LensOcrLine};
 use crate::providers::OcrLine;
@@ -270,8 +270,7 @@ pub async fn run_lens_pipeline(
     // ~300 ms. Producers that hit the gate but fail to return a
     // glossary fall through to `Vec::new()`.
     let glossary = if cards.len() >= config.glossary_min_lines.max(1) {
-        let line_refs: Vec<&str> =
-            cards.iter().map(|c| c.text.as_str()).collect();
+        let line_refs: Vec<&str> = cards.iter().map(|c| c.text.as_str()).collect();
         translator
             .extract_glossary(&line_refs, &source_lang, &target_lang)
             .await
@@ -296,23 +295,95 @@ pub async fn run_lens_pipeline(
         let line_index = card.line_index;
         let sink_c = sink.clone();
         let glossary_c = glossary.clone();
-        let chunk_sink: Arc<dyn Fn(String, bool) + Send + Sync> = {
+        let real_chunk_sink: Arc<dyn Fn(String, bool) + Send + Sync> = {
             let sink_for_chunk = sink.clone();
             Arc::new(move |delta, done| {
                 sink_for_chunk.on_line_chunk(flow_id, line_index, delta, done);
             })
         };
+        // 2026-05-27 Lens UX guard: OCR can split mid-word at small
+        // font sizes ("of incredulity, it was the season of Light,
+        // it was the season of Darkness," → `"ing"` standalone on a
+        // 9-line panel), and feeding those fragments to a generative
+        // translator triggers the model to hallucinate an entire
+        // unrelated sentence (`"ing"` → 24-char JA sentence, 1170 %
+        // overflow on the source bbox). Short-circuit obvious
+        // fragments — single chars, pure punctuation, and the
+        // common-suffix word-tail list — straight to a pass-through
+        // chunk that surfaces the source on the card without an LLM
+        // call. The translator never sees a token it cannot
+        // meaningfully translate.
+        if !is_translatable_segment(&text) {
+            tracing::debug!(
+                "lens skip-translate line {line_index}: non-translatable segment {:?}",
+                text
+            );
+            real_chunk_sink(text.clone(), true);
+            continue;
+        }
+        // 2026-05-28 Lens UX guard #2: even when the source looks
+        // translatable (passes is_translatable_segment), generative
+        // models occasionally hallucinate when the source is a few
+        // chars of low-confidence OCR text — `"Save your WO 「 k."`
+        // can come back as a normal-length sentence and that's
+        // fine, but `"of"` becomes `"これは英語の前置詞オブを意味します"`
+        // which is plainly wrong and tanks the overlay readability.
+        // Buffer the streamed deltas, evaluate the FULL translation
+        // against the source once the translator is done, and only
+        // forward the LLM output to the sink if the ratio looks
+        // sane. The translator's own return value would work too,
+        // but some backends emit through `chunk_sink` and return an
+        // empty string; the buffer covers both paths.
+        let text_for_translate = text.clone();
+        let text_for_check = text.clone();
+        let real_chunk_sink_for_task = real_chunk_sink.clone();
         let task = tokio::spawn(async move {
             let _permit = match sem.acquire_owned().await {
                 Ok(p) => p,
                 Err(_) => return,
             };
-            if let Err(e) = translator
-                .translate_with_glossary(text, source_c, target_c, glossary_c, chunk_sink)
-                .await
-            {
-                tracing::info!("translate failed for line {line_index}: {e}");
-            }
+            let buffer: Arc<Mutex<String>> = Arc::new(Mutex::new(String::new()));
+            let buffer_for_sink = buffer.clone();
+            let buffered_chunk_sink: Arc<dyn Fn(String, bool) + Send + Sync> =
+                Arc::new(move |delta, _done| {
+                    if let Ok(mut buf) = buffer_for_sink.lock() {
+                        buf.push_str(&delta);
+                    }
+                });
+            let translate_outcome = translator
+                .translate_with_glossary(
+                    text_for_translate,
+                    source_c,
+                    target_c,
+                    glossary_c,
+                    buffered_chunk_sink,
+                )
+                .await;
+            let buffered = buffer.lock().map(|b| b.clone()).unwrap_or_default();
+            let full_translation = match translate_outcome {
+                Ok(returned) if !returned.is_empty() => returned,
+                Ok(_) => buffered,
+                Err(e) => {
+                    tracing::info!("translate failed for line {line_index}: {e}");
+                    String::new()
+                }
+            };
+            let final_text = if full_translation.is_empty() {
+                // Translator returned nothing — fall back to source
+                // so the card has SOMETHING legible.
+                text_for_check.clone()
+            } else if is_hallucinated_translation(&text_for_check, &full_translation) {
+                tracing::info!(
+                    "lens hallucination drop line {line_index}: \
+                     src={:?} -> tr={:?} (kept source)",
+                    text_for_check,
+                    full_translation,
+                );
+                text_for_check.clone()
+            } else {
+                full_translation
+            };
+            real_chunk_sink_for_task(final_text, true);
             let _ = sink_c;
         });
         tasks.push(task);
@@ -640,6 +711,135 @@ impl LensTranslator for ChainBackedLensTranslator {
     }
 }
 
+/// Pre-translate triage: returns `false` when the OCR-emitted text
+/// looks like a fragment with no meaningful content to translate.
+/// The caller pass-throughs the original text onto the lens card
+/// instead of paying for an LLM call that would only invite a
+/// hallucination.
+///
+/// The filter is deliberately conservative — it only catches the
+/// shapes the 2026-05-27 lens_eval review surfaced as concrete
+/// hallucination triggers:
+///
+/// 1. Empty / whitespace-only input (degenerate OCR row).
+/// 2. No alphanumeric / CJK content at all — pure punctuation like
+///    `"..."` or `"—"`.
+/// 3. A single non-CJK alphanumeric character — `"b"`, `"0"`, `"ⅱ"`
+///    (the OCR small-font noise that makes up most of the
+///    `residual_texts` array in the eval JSON). Single CJK chars
+///    like `"の"` or `"見"` STAY translatable because they carry
+///    real meaning in their writing system.
+/// 4. A short ASCII fragment that matches a common English word-
+///    ending (`"ing"`, `"ed"`, `"tion"`, ...) — these only appear
+///    when OCR splits a wider word at a layout-detection boundary.
+///    The exact list mirrors the suffixes observed in the
+///    `synth_small_body` overflow rows that produced the most
+///    extreme hallucinations (e.g. `"ing"` → a 24-char unrelated
+///    JA sentence, 1170 % overflow).
+pub(crate) fn is_translatable_segment(text: &str) -> bool {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    let has_letter_or_cjk = trimmed
+        .chars()
+        .any(|c| c.is_alphanumeric() || is_cjk_char(c));
+    if !has_letter_or_cjk {
+        return false;
+    }
+    let has_cjk = trimmed.chars().any(is_cjk_char);
+    let printable_count = trimmed.chars().filter(|c| !c.is_whitespace()).count();
+    // Single-character ASCII / Latin-script fragments are noise;
+    // single-character CJK glyphs are not (the writing system
+    // packs meaning per glyph). Same rule for the rare 2-char-but-
+    // pure-digit case (`"00"`, `"42"`) — keep those translatable
+    // only when CJK content is mixed in.
+    if printable_count <= 1 && !has_cjk {
+        return false;
+    }
+    // ASCII-only short fragments — the OCR-split-mid-word case.
+    // Two-letter alpha tokens like `"to"`, `"of"`, `"OK"` stay
+    // translatable; longer ASCII text only fails the suffix-list
+    // check if it EXACTLY matches a known word-ending fragment
+    // (case-insensitive, punctuation stripped).
+    let cleaned: String = trimmed
+        .trim_matches(|c: char| c.is_ascii_punctuation())
+        .to_ascii_lowercase();
+    if !cleaned.is_empty() && cleaned.chars().all(|c| c.is_ascii_alphabetic()) {
+        if WORD_ENDING_FRAGMENTS.contains(&cleaned.as_str()) {
+            return false;
+        }
+    }
+    true
+}
+
+/// Post-translation triage: detect when the translator hallucinated
+/// extra content unrelated to the source. Returns `true` when the
+/// source/translation length ratio is high enough that the
+/// translation almost certainly invented material — the caller
+/// drops the LLM output and falls back to surfacing the source on
+/// the card.
+///
+/// The rules are deliberately conservative — both languages can
+/// legitimately swing 2–3× in either direction (English ↔ Japanese
+/// for instance: `"Quit the application."` → `"アプリケーションを終了してください。"`
+/// is a 1.0× character ratio but a 1.8× rendered-width ratio, which
+/// is normal). Only flag when:
+///
+/// 1. **Tiny source, full sentence translation.** Source has 1–3
+///    non-whitespace chars and the translation exceeds 10. This is
+///    the `"of"` → `"これは英語の前置詞オブを意味します"` case the
+///    2026-05-27 lens_eval review surfaced.
+/// 2. **Extreme inflation.** Translation is more than 5× the source
+///    in character count. Real translations very rarely cross 3×;
+///    crossing 5× is the LLM padding the output with explanation
+///    text or repeating itself.
+///
+/// Both rules ignore whitespace so multi-line layouts with cosmetic
+/// newlines don't bias the ratio.
+pub(crate) fn is_hallucinated_translation(source: &str, translation: &str) -> bool {
+    let src_chars = source.chars().filter(|c| !c.is_whitespace()).count();
+    let trans_chars = translation.chars().filter(|c| !c.is_whitespace()).count();
+    if src_chars == 0 || trans_chars == 0 {
+        return false;
+    }
+    if src_chars <= 3 && trans_chars > 10 {
+        return true;
+    }
+    if trans_chars > src_chars.saturating_mul(5) {
+        return true;
+    }
+    false
+}
+
+/// Common English word-ending fragments OCR tends to leave behind
+/// when it splits a wider word at a column or layout boundary.
+/// Matched case-insensitively against the trimmed-+ -punctuation-
+/// stripped segment in [`is_translatable_segment`]. Order does not
+/// matter; this is a contains check.
+const WORD_ENDING_FRAGMENTS: &[&str] = &[
+    "ing", "ed", "tion", "tions", "ies", "ment", "ments", "ness", "able", "ible", "ly", "er",
+    "ers", "est", "ful", "less", "ish", "ous",
+];
+
+/// True for code points in the common CJK ideograph and kana
+/// ranges. Mirrors `lens_watcher::is_cjk_character` so the same
+/// notion of "CJK content" governs both the cap-height ratio
+/// (rendering side) and the translate-skip filter (input side).
+fn is_cjk_char(ch: char) -> bool {
+    matches!(
+        ch as u32,
+        0x3000..=0x303F   // CJK symbols and punctuation
+        | 0x3040..=0x309F // Hiragana
+        | 0x30A0..=0x30FF // Katakana
+        | 0x3400..=0x4DBF // CJK Extension A
+        | 0x4E00..=0x9FFF // CJK Unified Ideographs
+        | 0xF900..=0xFAFF // CJK Compatibility Ideographs
+        | 0xFF00..=0xFFEF // Halfwidth/Fullwidth forms
+        | 0xAC00..=0xD7AF // Hangul syllables
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -806,5 +1006,111 @@ mod tests {
             cards_idx.unwrap() < first_chunk_idx.unwrap(),
             "cards_ready must fire BEFORE line_chunk — got {events:?}"
         );
+    }
+
+    // ---------------------------------------------------------------
+    // is_translatable_segment unit tests. Each case mirrors a row
+    // from the 2026-05-27 lens_eval overflow JSONs that triggered
+    // a hallucination on `synth_small_body`, plus the obvious
+    // bystander cases we MUST keep translating.
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn translatable_segment_skips_obvious_ocr_fragments() {
+        for fragment in &[
+            "",         // empty
+            "   ",      // whitespace only
+            "...",      // punctuation only
+            "—",        // em-dash only
+            "b",        // single ASCII letter
+            "0",        // single digit
+            "ⅱ",        // single Roman numeral (Unicode)
+            "ing",      // word ending — the synth_small_body trigger
+            "ed",       // past-tense fragment
+            "tion",     // -tion suffix
+            "ies",      // -ies suffix
+            "  ING.  ", // case + trim + trailing punct still rejected
+        ] {
+            assert!(
+                !is_translatable_segment(fragment),
+                "expected SKIP for {fragment:?}"
+            );
+        }
+    }
+
+    // ---------------------------------------------------------------
+    // is_hallucinated_translation tests
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn hallucination_detector_flags_tiny_source_long_translation() {
+        // The 2026-05-27 review case: a 2-3 char OCR fragment that
+        // came back as a full sentence.
+        for (src, trans) in &[
+            ("of", "これは英語の前置詞オブを意味します"),
+            ("ing", "あなたの仕事を保存してください"),
+            ("0", "これは数値のゼロを意味します"),
+        ] {
+            assert!(
+                is_hallucinated_translation(src, trans),
+                "expected HALLUCINATION for src={src:?} trans={trans:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn hallucination_detector_flags_extreme_inflation() {
+        // 8 chars in → 50 chars out is way over the 5× threshold.
+        let src = "tabletop";
+        let trans = "卓上 ".to_string() + &"テスト".repeat(15);
+        assert!(
+            is_hallucinated_translation(src, &trans),
+            "expected HALLUCINATION for >5x inflation"
+        );
+    }
+
+    #[test]
+    fn hallucination_detector_keeps_normal_translation() {
+        // These are real lens_eval outputs that MUST pass through.
+        for (src, trans) in &[
+            (
+                "Quit the application.",
+                "アプリケーションを終了してください。",
+            ),
+            ("Save your work.", "あなたの仕事を保存してください。"),
+            ("Open a new file.", "新しいファイルを開く"),
+            ("hello", "こんにちは"),
+            ("It was the best of times", "それは最良の時代だった"),
+            ("OK", "了解"),    // 2× — normal CJK expansion
+            ("the cat", "猫"), // shrinking is always OK
+            ("", "anything"),  // empty source → not a hallucination
+            ("anything", ""),  // empty translation → not a hallucination
+        ] {
+            assert!(
+                !is_hallucinated_translation(src, trans),
+                "expected NORMAL for src={src:?} trans={trans:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn translatable_segment_keeps_meaningful_input() {
+        for keeper in &[
+            "Hello",                    // English word
+            "to",                       // 2-letter word — common
+            "OK",                       // 2-letter abbreviation
+            "the cat",                  // multi-word
+            "翻訳",                     // CJK only
+            "の",                       // single CJK char — meaning-bearing
+            "見",                       // single CJK char
+            "Hello, 世界",              // mixed
+            "It was the best of times", // clean source
+            "1234 ABC",                 // digits + letters
+        ] {
+            assert!(
+                is_translatable_segment(keeper),
+                "expected TRANSLATE for {keeper:?}"
+            );
+        }
     }
 }
