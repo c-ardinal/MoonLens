@@ -84,6 +84,14 @@
    *  on the LensOcrLines event without us manually re-triggering. */
   let pendingLines = $state<LineCard[]>([]);
   let pendingChunks = new Map<number, { text: string; done: boolean }>();
+  /** Line indices whose translation has RESOLVED for the current
+   *  flow — either committed to a visible card OR determined to be
+   *  a passthrough (source == translation) that intentionally
+   *  renders no card. The pending-placeholder shimmer keys off this
+   *  so a passthrough line stops shimmering instead of pulsing
+   *  forever (it has no card to "replace" the placeholder). Reset
+   *  per flow in onLensOcrLines. */
+  let resolvedIndices = $state(new Set<number>());
   let imageW = $state(1);
   let imageH = $state(1);
   let currentFlowId = $state<number | null>(null);
@@ -219,27 +227,34 @@
     const [br, bgc, bb] = line.bg_color;
     const [fr, fg, fb] = line.fg_color;
     const weight = line.font_weight || 400;
-    // Prefer the backend-computed source-derived font size when
-    // available — keeps eval and production visually aligned and
-    // guarantees the translation renders at the same scale as the
-    // original glyphs. Legacy payloads without `font_size_px` fall
-    // back to the old area/chars heuristic so older backends still
-    // render something readable.
+    // Font size, the DPR/upscale-robust way (2026-05-28 rework).
+    //
+    // The backend's `font_size_px` is the per-line cap height in the
+    // OCR coordinate space (`median_line_height × cap_height_ratio`).
+    // The card's render bbox `[x,y,w,h]` is in that SAME space. The
+    // ratio `font_size_px / h` is therefore dimensionless — it
+    // survives BOTH the 3× OCR upscale AND any devicePixelRatio,
+    // because both numerator and denominator scale together.
+    //
+    // `.lens-card` declares `container-type: size`, so `1cqh` = 1% of
+    // the card's RENDERED height. Setting the font to
+    // `(font_size_px / h) × 100` cqh makes the glyphs occupy exactly
+    // the same fraction of the card that the source glyphs occupied
+    // of their bbox — at any DPR, any zoom, any upscale — with no
+    // `/ dpr` guesswork and no absolute-px assumptions about how the
+    // window maps to the captured region. This is what fixes the
+    // "翻訳文のフォントサイズが原文に即していない" report.
+    //
+    // `fontPx` is kept ONLY as the legacy fallback for payloads that
+    // predate `font_size_px`; modern backends always populate it so
+    // the cqh path is the live one.
+    let fontCqh: number | null = null;
     let fontPx: number;
-    if (typeof line.font_size_px === 'number' && line.font_size_px > 0) {
-      // Backend computes font size in captured-image PHYSICAL pixels
-      // (source_bbox[3] * 0.82). CSS `px` is a LOGICAL unit — the
-      // browser multiplies by devicePixelRatio when rasterising to
-      // the screen. On DPR > 1 this double-scales the text, so the
-      // translation renders (DPR×) bigger than the source glyphs,
-      // spilling out of its card and *looking* like a position drift.
-      // The eval renders straight to a PNG in physical pixels, so it
-      // never hits this class of bug — this divide reunites the two
-      // paths visually.
-      const dpr = typeof window !== 'undefined' && window.devicePixelRatio > 0
-        ? window.devicePixelRatio
-        : 1;
-      fontPx = Math.max(7, Math.min(80, line.font_size_px / dpr));
+    if (typeof line.font_size_px === 'number' && line.font_size_px > 0 && h > 0) {
+      fontCqh = Math.max(2, Math.min(100, (line.font_size_px / h) * 100));
+      // Approximate px mirror for the legacy `--font-px` consumers
+      // (e.g. the fit routine's first paint before layout settles).
+      fontPx = Math.max(7, Math.min(80, line.font_size_px));
     } else {
       const text = line.translation.length > 0 ? line.translation : line.text;
       const chars = Math.max(1, text.length);
@@ -326,6 +341,10 @@
       `width:${(w / imageW) * 100}%;` +
       `height:${(h / imageH) * 100}%;` +
       `--font-px:${fontPx.toFixed(1)};` +
+      // The live font-size: a `cqh` length (card-relative, DPR-proof)
+      // when the backend gave us `font_size_px`, else the legacy
+      // absolute-px fallback. `.line-text` reads `--line-font-size`.
+      `--line-font-size:${fontCqh != null ? `${fontCqh.toFixed(2)}cqh` : `${fontPx.toFixed(1)}px`};` +
       `--fw:${weight};` +
       `--lh:${lineHeight.toFixed(2)};` +
       `--ta:${textAlign};` +
@@ -336,52 +355,90 @@
   }
 
   /// Fit translation to its card. Strategy in order:
-  ///   1. Measure: does the rendered text overflow?
-  ///   2. If yes, reduce font-size proportionally (down to 70%).
+  ///   1. Measure: does the rendered text overflow horizontally OR
+  ///      vertically? The 2026-05-28 lens_eval review surfaced
+  ///      cards at 1.80× width overflow (`Quit the application.`
+  ///      → `アプリケーションを終了してください。`) where the
+  ///      previous height-only check passed but the card visibly
+  ///      truncated the translation. Both axes need a measurement
+  ///      pass.
+  ///   2. If yes, reduce font-size proportionally to the WORST-
+  ///      case axis (down to 60%, was 70%).
   ///   3. If still overflowing, fall back to horizontal scaleX
-  ///      compression (down to 60%) — the prior single-step
-  ///      behaviour. Stretching is uglier than shrinking so it's
-  ///      a last-resort guard, not the default path.
+  ///      compression (down to 55%) — stretching is uglier than
+  ///      shrinking so it's a last-resort guard, not the default.
+  ///   4. If still overflowing after scaleX, clip with
+  ///      `text-overflow: ellipsis` so the card never displays
+  ///      partial-glyph noise. The browser draws "…" at the
+  ///      cut-off and stops.
   ///
-  /// The measurement uses `scrollHeight` vs `clientHeight` directly
-  /// (both include the same padding box) so the test is independent
-  /// of how the stylesheet expresses line-height (px vs unitless).
-  /// A 5% tolerance shields against Chromium's integer-pixel
-  /// rounding so already-fitting single-line cards aren't pointlessly
-  /// shrunk.
+  /// `.line-text` carries `white-space: pre-wrap` so multi-line
+  /// translations naturally wrap; the width measurement uses the
+  /// widest WRAPPED line via `scrollWidth`, not the natural single-
+  /// line width.
+  ///
+  /// A 5% tolerance on each axis shields against Chromium's
+  /// integer-pixel rounding so already-fitting single-line cards
+  /// aren't pointlessly shrunk.
   function applySourceLineFit(): void {
     if (typeof document === 'undefined') return;
     const els = document.querySelectorAll<HTMLElement>('.line-text');
     for (const el of Array.from(els)) {
-      // Reset any prior fit state so we measure at the natural
-      // size first.
+      // The card (`.lens-card`) is the box we must fit INTO. The
+      // `.line-text` <p> is grid-centered with auto height, so its
+      // own clientHeight tracks content, not the card — measuring
+      // overflow against it would always read ~1.0 vertically. Use
+      // the card's clientHeight/clientWidth as the real bounds.
+      const card = el.closest('.lens-card') as HTMLElement | null;
+      if (!card) continue;
+
+      // Reset prior fit state so we measure at the natural,
+      // cqh-derived size first (clearing inline fontSize lets the
+      // stylesheet's `--line-font-size` cqh value take over again).
       el.style.transform = '';
       el.style.width = '';
-      const baseFontPx = parseFloat(
-        getComputedStyle(el).getPropertyValue('--font-px') || '14',
-      );
-      el.style.fontSize = `${baseFontPx}px`;
-      const client = Math.max(1, el.clientHeight);
-      let overflowRatio = el.scrollHeight / client;
+      el.style.textOverflow = '';
+      el.style.fontSize = '';
+
+      const cardH = Math.max(1, card.clientHeight);
+      const cardW = Math.max(1, card.clientWidth);
+      let overflowH = el.scrollHeight / cardH;
+      let overflowW = el.scrollWidth / cardW;
+      let overflowRatio = Math.max(overflowH, overflowW);
       if (overflowRatio <= 1.05) continue;
 
-      // Step 1: shrink font-size. Most translations only overflow
-      // by 5-30%, which a 5-25% font reduction reliably resolves
-      // without distorting glyph proportions.
-      const sizeRatio = Math.max(0.7, 1 / overflowRatio);
+      // Base font = the cqh-resolved computed size. Shrinking works
+      // off the ACTUAL rendered px so the proportional reduction is
+      // correct regardless of DPR.
+      const baseFontPx = parseFloat(getComputedStyle(el).fontSize) || 14;
+
+      // Step 1: shrink font-size proportionally to the worst axis,
+      // down to 60%. Covers the common "translation is a bit longer
+      // than the source" overflow without distorting glyphs.
+      const sizeRatio = Math.max(0.6, 1 / overflowRatio);
       const shrunkPx = Math.max(7, baseFontPx * sizeRatio);
       el.style.fontSize = `${shrunkPx.toFixed(2)}px`;
-      overflowRatio = el.scrollHeight / Math.max(1, el.clientHeight);
-      if (overflowRatio <= 1.05) continue;
+      overflowH = el.scrollHeight / cardH;
+      overflowW = el.scrollWidth / cardW;
+      if (Math.max(overflowH, overflowW) <= 1.05) continue;
 
-      // Step 2: still overflowing — fall back to horizontal scaleX
-      // compression on top of the smaller font size. Floor at 0.6
-      // so glyphs stay legible; past that, accept clipping rather
-      // than render unreadable narrow strokes.
-      const ratio = Math.max(0.6, 1 / overflowRatio);
-      el.style.transformOrigin = 'top left';
-      el.style.transform = `scaleX(${ratio.toFixed(3)})`;
-      el.style.width = `${(100 / ratio).toFixed(2)}%`;
+      // Step 2: still overflowing horizontally — scaleX compress on
+      // top of the smaller font. Floor 0.55 keeps glyphs legible.
+      if (overflowW > 1.05) {
+        const ratio = Math.max(0.55, 1 / overflowW);
+        el.style.transformOrigin = 'top left';
+        el.style.transform = `scaleX(${ratio.toFixed(3)})`;
+        el.style.width = `${(100 / ratio).toFixed(2)}%`;
+        overflowH = el.scrollHeight / cardH;
+        overflowW = el.scrollWidth / cardW;
+      }
+
+      // Step 3 (last resort): card is overflow:hidden, so any
+      // residual overflow clips mid-glyph. Ellipsis makes the cut
+      // visually honest with a "…" marker.
+      if (overflowW > 1.05 || overflowH > 1.05) {
+        el.style.textOverflow = 'ellipsis';
+      }
     }
   }
 
@@ -442,11 +499,37 @@
     const src = pendingLines.find((l) => l.line_index === lineIndex);
     if (!src) return;
     const chunk = pendingChunks.get(lineIndex);
-    const raw = chunk?.text ?? '';
-    const translation = raw.trim().length > 0 ? raw.trim() : src.text;
+    const raw = (chunk?.text ?? '').trim();
+
+    // 2026-05-28 "翻訳されない card" fix: the backend forwards the
+    // SOURCE text verbatim when it deliberately skips translation
+    // (is_translatable_segment rejected an OCR fragment), when the
+    // translator falls back on error, or when it returns empty.
+    // Re-rendering that source on an inpainted patch — in a font /
+    // weight / alignment we only approximate — looks broken: the
+    // user sees their own untranslated text redrawn slightly wrong.
+    // Detect the passthrough (translation == source) and DON'T
+    // create a card: with no card, the original source pixels show
+    // through untouched, which is strictly better than a wrong
+    // re-render. Any existing card for this slot is removed.
+    // Mark the line resolved so its pending-placeholder shimmer
+    // stops, whether or not we end up rendering a card.
+    if (!resolvedIndices.has(lineIndex)) {
+      resolvedIndices = new Set(resolvedIndices).add(lineIndex);
+    }
+
+    const isPassthrough = raw.length === 0 || raw === src.text.trim();
+    if (isPassthrough) {
+      const idx = visibleLines.findIndex((l) => l.line_index === lineIndex);
+      if (idx >= 0) {
+        visibleLines = visibleLines.filter((l) => l.line_index !== lineIndex);
+      }
+      return;
+    }
+
     const committed: LineCard = {
       ...src,
-      translation,
+      translation: raw,
       done: chunk?.done ?? true
     };
     const idx = visibleLines.findIndex((l) => l.line_index === lineIndex);
@@ -550,22 +633,23 @@
           translation: '',
           done: false
         }));
-        if (pendingLines.length === 0) {
-          visibleLines = [];
-        } else {
-          // Prune stale lines from the previous flow whose
-          // `line_index` is not present in the new OCR layout. Without
-          // this, when flow B has fewer lines than flow A (or the
-          // line indices shift because the Lens moved to a different
-          // region), the extra flow-A cards stay visible on top of
-          // the new background until `LensFlowDone` runs the
-          // forceCommitRemaining sweep — and if `LensFlowDone` is
-          // delayed or lost, they linger forever. Pruning at OCR-
-          // commit time guarantees the visible set never contains
-          // a `line_index` the current flow does not own.
-          const validIndices = new Set(pendingLines.map((l) => l.line_index));
-          visibleLines = visibleLines.filter((l) => validIndices.has(l.line_index));
-        }
+        // 2026-05-28 stale-overlay fix: clear the ENTIRE visible set
+        // when a new flow's OCR layout arrives. A new flow is only
+        // emitted when the captured region's average-hash changed
+        // past `HASH_DIFF_THRESHOLD` (lens_watcher.rs) — i.e. the
+        // lens is now over DIFFERENT text — so every card from the
+        // previous flow is stale by definition. The earlier
+        // prune-by-`line_index` approach left flow-A's translation
+        // on cards 0..n that flow-B happens to reuse (line indices
+        // are per-flow 0,1,2… and collide across flows), which is
+        // exactly the "過去にかざした文章の翻訳が次の文章に重なる"
+        // bug. The pendingLines placeholders render a shimmer in the
+        // new layout's positions until each translation lands via
+        // commitLine, so the gap reads as "loading", not "blank".
+        visibleLines = [];
+        // Fresh flow → no line has resolved yet. (Stale entries would
+        // otherwise suppress the new flow's placeholders.)
+        resolvedIndices = new Set();
       })
     );
 
@@ -769,7 +853,13 @@
       title="クリックでコピー"
       aria-label="翻訳をコピー: {line.translation || line.text}"
     >
-      <p class="line-text" data-line-index={line.line_index}>
+      <p
+        class="line-text"
+        data-line-index={line.line_index}
+        data-fs-px={line.font_size_px ?? 0}
+        data-src-h={line.source_bbox[3]}
+        data-src-lines={line.source_line_count ?? 1}
+      >
         {line.translation || line.text}
       </p>
       {#if !line.done}
@@ -787,7 +877,7 @@
     card above.
   -->
   {#each pendingLines as line (line.line_index)}
-    {#if !visibleLines.some((v) => v.line_index === line.line_index)}
+    {#if !visibleLines.some((v) => v.line_index === line.line_index) && !resolvedIndices.has(line.line_index)}
       <div
         class="lens-card lens-card-pending absolute overflow-hidden"
         style={cardStyle({ ...line, translation: '', done: false })}
@@ -1265,7 +1355,11 @@
        commas. `kern` enables Latin pair kerning so the Geist /
        Noto handoff isn't visibly loose. */
     font-feature-settings: 'palt', 'kern';
-    font-size: calc(var(--font-px, 14) * 1px);
+    /* `--line-font-size` is a card-relative `cqh` length on modern
+       payloads (DPR/upscale-proof) and an absolute `px` on legacy
+       ones. The `--font-px` calc is the last-resort default if the
+       card emitted neither (should not happen in practice). */
+    font-size: var(--line-font-size, calc(var(--font-px, 14) * 1px));
     font-weight: var(--fw, 400);
     /* Source-derived ratio; JS rewrites scaleX when the wrapped
        output would exceed `source_line_count` rows so the text

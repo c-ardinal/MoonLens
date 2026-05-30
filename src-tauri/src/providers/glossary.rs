@@ -67,8 +67,7 @@ pub fn build_prompt(lines: &[&str], src_lang: &str, tgt_lang: &str) -> String {
 /// System prompt for the glossary pass. Kept separate from
 /// `build_prompt` so the inference layer can apply chat-template
 /// system / user role tagging cleanly.
-pub const SYSTEM_PROMPT: &str =
-    "You are a glossary extractor for a translation pipeline. \
+pub const SYSTEM_PROMPT: &str = "You are a glossary extractor for a translation pipeline. \
      You read source text and emit only `source_term=target_translation` lines. \
      You never invent terms not present in the source. \
      You never add commentary or markdown formatting around the output.";
@@ -145,7 +144,8 @@ pub fn render_for_system_prompt(glossary: &[GlossaryEntry]) -> String {
     if glossary.is_empty() {
         return String::new();
     }
-    let mut s = String::from("\n\nUse this glossary verbatim for terms that appear in the source:\n");
+    let mut s =
+        String::from("\n\nUse this glossary verbatim for terms that appear in the source:\n");
     for e in glossary {
         s.push_str("- ");
         s.push_str(&e.source);

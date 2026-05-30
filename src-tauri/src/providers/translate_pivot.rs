@@ -575,9 +575,6 @@ mod tests {
         // The trade-off is acceptable for natural-language
         // translation, where literal `<|im_end|>` as content is
         // vanishingly rare.
-        assert_eq!(
-            clean_pivot_intermediate("text<|im_end|>more"),
-            "text"
-        );
+        assert_eq!(clean_pivot_intermediate("text<|im_end|>more"), "text");
     }
 }

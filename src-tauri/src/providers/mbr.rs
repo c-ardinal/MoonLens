@@ -266,10 +266,7 @@ mod tests {
             "wildly different content".to_string(),
         ];
         let scores = score_candidates(&candidates);
-        assert!(
-            scores[0] > scores[2],
-            "consensus > outlier: {scores:?}"
-        );
+        assert!(scores[0] > scores[2], "consensus > outlier: {scores:?}");
         assert!(scores[1] > scores[2]);
     }
 
@@ -351,8 +348,7 @@ mod tests {
 
     #[test]
     fn select_best_with_source_singleton_passes_through() {
-        let best =
-            select_best_with_source(vec!["only".to_string()], "source").unwrap();
+        let best = select_best_with_source(vec!["only".to_string()], "source").unwrap();
         assert_eq!(best, "only");
     }
 

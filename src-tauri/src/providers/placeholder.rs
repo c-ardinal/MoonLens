@@ -338,10 +338,7 @@ fn safe_emit_boundary(pending: &str) -> usize {
     // earlier `_` chars are followed by non-`_` so they can't be
     // the start of an upcoming `__` pair.
     let last_paired_end = positions.last().map(|p| p + 2).unwrap_or(0);
-    if pending.len() > last_paired_end
-        && bytes[pending.len() - 1] == b'_'
-        && pending.len() >= 1
-    {
+    if pending.len() > last_paired_end && bytes[pending.len() - 1] == b'_' && pending.len() >= 1 {
         return floor_char_boundary(pending, pending.len() - 1);
     }
     pending.len()
@@ -443,15 +440,13 @@ mod tests {
 
     #[test]
     fn round_trip_rust_tracing_log_line() {
-        assert_round_trip(
-            "2026-05-18T00:51:11.674022Z  INFO embedded_llm_perf: warmup",
-        );
+        assert_round_trip("2026-05-18T00:51:11.674022Z  INFO embedded_llm_perf: warmup");
     }
 
     #[test]
     fn round_trip_toml_block() {
         assert_round_trip(
-            "[providers.configs.\"embedded.llm\"]\nrepo = \"Qwen/Qwen2.5-1.5B\"",
+            "[providers.configs.\"embedded.llm\"]\nrepo = \"mmnga/llm-jp-3-980m-instruct3-gguf\"",
         );
     }
 
@@ -482,11 +477,15 @@ mod tests {
     #[test]
     fn mask_html_tags() {
         // Open tag with attribute, close tag, plain prose between.
-        let (masked, map) = mask(
-            r#"<p class="intro">Welcome to <strong>MoonLens</strong>, the tool.</p>"#,
-        );
+        let (masked, map) =
+            mask(r#"<p class="intro">Welcome to <strong>MoonLens</strong>, the tool.</p>"#);
         // Three tags: <p class="intro">, <strong>, </strong>, </p> = 4 total.
-        assert_eq!(map.len(), 4, "expected 4 HTML tags, got {}: {masked}", map.len());
+        assert_eq!(
+            map.len(),
+            4,
+            "expected 4 HTML tags, got {}: {masked}",
+            map.len()
+        );
         // Prose text must remain visible to the model.
         assert!(masked.contains("Welcome to"), "prose stripped: {masked}");
         assert!(masked.contains("MoonLens"), "MoonLens stripped: {masked}");
@@ -515,11 +514,15 @@ mod tests {
         // asked to translate the structured-json fixture. Masking
         // every double-quoted string takes the JA content out of
         // the model's surface entirely.
-        let (masked, map) = mask(
-            r#"{"task": "Translate", "output": {"Text": "こんにちは、世界。"}, "n": 1760}"#,
-        );
+        let (masked, map) =
+            mask(r#"{"task": "Translate", "output": {"Text": "こんにちは、世界。"}, "n": 1760}"#);
         // Six quoted strings: "task", "Translate", "output", "Text", "こんにちは、世界。", "n"
-        assert_eq!(map.len(), 6, "expected 6 string literals, got {}: {masked}", map.len());
+        assert_eq!(
+            map.len(),
+            6,
+            "expected 6 string literals, got {}: {masked}",
+            map.len()
+        );
         // The JA content must be inside the map, not in the masked text.
         assert!(
             !masked.contains("こんにちは"),
@@ -538,7 +541,10 @@ mod tests {
         let (masked, map) = mask(r#"line 1<br/>line 2<hr />line 3<img src="x.png">"#);
         assert_eq!(map.len(), 3, "expected 3 tags, got {}: {masked}", map.len());
         let restored = unmask(&masked, &map);
-        assert_eq!(restored, r#"line 1<br/>line 2<hr />line 3<img src="x.png">"#);
+        assert_eq!(
+            restored,
+            r#"line 1<br/>line 2<hr />line 3<img src="x.png">"#
+        );
     }
 
     #[test]

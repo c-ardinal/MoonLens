@@ -82,7 +82,6 @@ impl UserTier {
     }
 }
 
-
 /// Host hardware bucket the inference runtime will run on. Picked
 /// from `services::hardware_probe::HostCapabilities::hw_kind` at
 /// runtime; tests can pass either variant directly.
