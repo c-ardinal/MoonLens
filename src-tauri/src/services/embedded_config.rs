@@ -92,6 +92,26 @@ impl ResolvedConfig {
     /// Preconditions: `app_data` is the directory `Pipeline::set_app_data_dir`
     /// was called with (i.e. `<platform-app-data>/moonlens/`).
     pub fn from_settings(settings: &Settings, app_data: &Path) -> Self {
+        // 2026-05-28: when the user has opted into a routing tier,
+        // the embedded-model surface (status badge, tier snapshot,
+        // download target) MUST reflect the tier's primary model —
+        // not the legacy `embedded.llm` config block. That block can
+        // still carry a stale single-model filename from before tier
+        // routing existed (a leftover Qwen-7B Quality entry, say),
+        // which the `RoutedTranslator` never actually loads under a
+        // Compact tier. Reading the tier here keeps the settings
+        // status ("準備済み 626 MB / llm-jp-3 980M") and the runtime
+        // dispatch in agreement instead of advertising a 4.36 GB Qwen
+        // that no translate call will ever touch.
+        if let Some(user_tier) = settings.providers.user_tier {
+            if let Some(tier) =
+                crate::providers::translate_routed::RoutedTranslator::tier_ids_for(user_tier)
+                    .first()
+                    .and_then(|id| crate::model_registry::tier_by_id(id))
+            {
+                return Self::from_tier(tier, app_data);
+            }
+        }
         let cfg = settings
             .providers
             .configs
@@ -99,6 +119,32 @@ impl ResolvedConfig {
             .cloned()
             .unwrap_or(serde_json::Value::Null);
         Self::from_json(&cfg, app_data)
+    }
+
+    /// Resolve directly from a registry tier. Used by
+    /// [`from_settings`] when a routing `user_tier` is active so the
+    /// embedded-model surface tracks the tier's primary model rather
+    /// than the legacy `embedded.llm` config. Multi-part tiers (e.g.
+    /// the split Quality GGUF) flow their extra parts through
+    /// `filenames_remote_extra` so `present`/`size` aggregation still
+    /// sees every file.
+    fn from_tier(tier: &crate::model_registry::ModelTier, app_data: &Path) -> Self {
+        let primary = tier.primary_filename().to_string();
+        let filenames_remote_extra = tier
+            .filenames
+            .iter()
+            .skip(1)
+            .map(|s| (*s).to_string())
+            .collect();
+        let model_path = app_data.join("models").join(&primary);
+        Self {
+            repo: tier.repo.to_string(),
+            filename_remote: primary,
+            filenames_remote_extra,
+            model_path,
+            license: tier.license.to_string(),
+            license_url: tier.license_url.to_string(),
+        }
     }
 
     /// Variant that takes the raw JSON config blob directly. Exposed so
@@ -193,8 +239,24 @@ impl ResolvedConfig {
 mod tests {
     use super::*;
 
+    /// Settings with no routing tier selected, so `from_settings`
+    /// exercises the LEGACY `embedded.llm` config-resolution path
+    /// these tests target. default.toml ships `user_tier =
+    /// "standard"`; clearing it keeps the resolver reading the
+    /// config block instead of following the tier (which the
+    /// dedicated `*_when_user_tier_*` tests cover separately).
     fn empty_settings() -> Settings {
-        toml::from_str(include_str!("../settings/default.toml")).unwrap()
+        let mut s: Settings = toml::from_str(include_str!("../settings/default.toml")).unwrap();
+        s.providers.user_tier = None;
+        s
+    }
+
+    /// Variant that keeps default.toml's `user_tier = "standard"`
+    /// so the tier-following branch of `from_settings` is reachable.
+    fn settings_with_tier(tier: crate::translation_router::UserTier) -> Settings {
+        let mut s: Settings = toml::from_str(include_str!("../settings/default.toml")).unwrap();
+        s.providers.user_tier = Some(tier);
+        s
     }
 
     #[test]
@@ -220,19 +282,19 @@ mod tests {
         s.providers.configs.insert(
             "embedded.llm".into(),
             serde_json::json!({
-                "repo": "Qwen/Qwen2.5-0.5B-Instruct-GGUF",
-                "filename_remote": "qwen2.5-0.5b-instruct-q4_k_m.gguf",
+                "repo": "myorg/custom-finetune-GGUF",
+                "filename_remote": "custom-finetune-q4_k_m.gguf",
                 "license": "Apache-2.0",
                 "license_url": "https://example.test/LICENSE",
             }),
         );
         let r = ResolvedConfig::from_settings(&s, Path::new("/tmp/moonlens"));
-        assert_eq!(r.repo, "Qwen/Qwen2.5-0.5B-Instruct-GGUF");
-        assert_eq!(r.filename_remote, "qwen2.5-0.5b-instruct-q4_k_m.gguf");
+        assert_eq!(r.repo, "myorg/custom-finetune-GGUF");
+        assert_eq!(r.filename_remote, "custom-finetune-q4_k_m.gguf");
         // `model_path` was not overridden → resolves to <app_data>/models/<filename>.
         assert_eq!(
             r.model_path,
-            Path::new("/tmp/moonlens/models").join("qwen2.5-0.5b-instruct-q4_k_m.gguf")
+            Path::new("/tmp/moonlens/models").join("custom-finetune-q4_k_m.gguf")
         );
     }
 
@@ -288,5 +350,75 @@ mod tests {
         let r = ResolvedConfig::from_settings(&s, Path::new("/x"));
         let r2 = r.clone();
         assert_eq!(r, r2);
+    }
+
+    #[test]
+    fn follows_user_tier_compact_over_embedded_config() {
+        use crate::translation_router::UserTier;
+        // Repro of the 2026-05-28 report: a stale `embedded.llm`
+        // config still points at the split Qwen-7B Quality model
+        // (from a prior tier selection), but the user has switched
+        // to the Compact routing tier. The resolver MUST follow the
+        // tier (llm-jp-3 980M), NOT the dead Qwen config — otherwise
+        // the settings UI advertises a 4.36 GB model no translate
+        // call will ever load.
+        let mut s = settings_with_tier(UserTier::Compact);
+        s.providers.configs.insert(
+            "embedded.llm".into(),
+            serde_json::json!({
+                "repo": "Qwen/Qwen2.5-7B-Instruct-GGUF",
+                "filename_remote": "qwen2.5-7b-instruct-q4_k_m-00001-of-00002.gguf",
+                "filenames_remote_extra": ["qwen2.5-7b-instruct-q4_k_m-00002-of-00002.gguf"],
+                "license": "Apache-2.0",
+            }),
+        );
+        let r = ResolvedConfig::from_settings(&s, Path::new("/tmp/moonlens"));
+        assert_eq!(
+            r.filename_remote, "llm-jp-3-980m-instruct3-Q4_K_M.gguf",
+            "Compact tier must resolve to llm-jp-3 980M, not the stale Qwen config"
+        );
+        assert!(
+            !r.coord().contains("qwen2.5-7b"),
+            "stale Qwen config must NOT leak through when a tier is active; got {}",
+            r.coord()
+        );
+        // The model_path tracks the tier filename inside app-data.
+        assert_eq!(
+            r.model_path,
+            Path::new("/tmp/moonlens/models").join("llm-jp-3-980m-instruct3-Q4_K_M.gguf")
+        );
+    }
+
+    #[test]
+    fn follows_user_tier_standard_to_ja_bridge() {
+        use crate::translation_router::UserTier;
+        // Standard's primary (aux) tier is the JA bridge
+        // (hy-mt2-1.8b). The legacy config is irrelevant.
+        let s = settings_with_tier(UserTier::Standard);
+        let r = ResolvedConfig::from_settings(&s, Path::new("/x"));
+        assert!(
+            r.coord().to_lowercase().contains("hy-mt2-1.8b"),
+            "Standard tier should resolve to the JA bridge hy-mt2-1.8b; got {}",
+            r.coord()
+        );
+    }
+
+    #[test]
+    fn tier_following_coord_is_registry_resolvable() {
+        use crate::model_registry::tier_by_coord;
+        use crate::translation_router::UserTier;
+        // Every tier-followed coord must round-trip through the
+        // registry so the settings dropdown can highlight the
+        // matching entry rather than rendering "カスタム".
+        for tier in [UserTier::Compact, UserTier::Standard, UserTier::Quality] {
+            let s = settings_with_tier(tier);
+            let r = ResolvedConfig::from_settings(&s, Path::new("/x"));
+            let coord = r.coord();
+            let (repo, filename) = coord.split_once(':').unwrap();
+            assert!(
+                tier_by_coord(repo, filename).is_some(),
+                "tier {tier:?} coord {coord} not registered in model_registry",
+            );
+        }
     }
 }

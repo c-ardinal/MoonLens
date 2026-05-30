@@ -1190,6 +1190,23 @@ mod tests {
         let cfg_path = tmp.path().join("config.toml");
         std::fs::write(&cfg_path, include_str!("../settings/default.toml")).unwrap();
         let settings = Arc::new(SettingsStore::load_from(cfg_path).unwrap());
+        // These fixtures exercise the LEGACY single-model surface
+        // (`embedded.llm` config → Qwen 1.5B default): download URLs,
+        // status `model_id`, and `set_tier` persistence all assert
+        // against that config block. Since `ResolvedConfig` now
+        // follows `user_tier` when it is set (so the settings UI
+        // reflects the routed tier, not a stale Qwen entry), and
+        // default.toml ships `user_tier = "standard"`, clear it here
+        // so the legacy path under test stays reachable. Routing-
+        // following behaviour is covered by the dedicated
+        // `*_follows_user_tier` tests below.
+        {
+            let mut snap = (*settings.snapshot()).clone();
+            snap.providers.user_tier = None;
+            settings
+                .save(snap)
+                .expect("force legacy user_tier=None for model-service fixtures");
+        }
         // Storage backs onto the in-memory map; cheat the path
         // resolution by parking the app-data dir at the storage's
         // pretend root so `ResolvedConfig::model_path` lands inside
@@ -1217,14 +1234,14 @@ mod tests {
         assert!(!s.present);
         assert_eq!(s.size_bytes, 0);
         assert_eq!(s.license, "Apache-2.0");
-        assert!(s.model_id.contains(":qwen2.5-1.5b-instruct-q4_k_m.gguf"));
+        assert!(s.model_id.contains(":llm-jp-3-980m-instruct3-Q4_K_M.gguf"));
     }
 
     #[tokio::test]
     async fn download_writes_payload_and_status_flips_to_present() {
         let storage = InMemoryStorage::new();
         let payload = vec![0xABu8; 2048];
-        let url = "https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/qwen2.5-1.5b-instruct-q4_k_m.gguf";
+        let url = "https://huggingface.co/mmnga/llm-jp-3-980m-instruct3-gguf/resolve/main/llm-jp-3-980m-instruct3-Q4_K_M.gguf";
         let downloader = ScriptedDownloader::new().respond_to(
             url,
             ScriptedResponse::ok(payload.clone()).with_chunk_size(512),
@@ -1242,9 +1259,9 @@ mod tests {
 
     #[tokio::test]
     async fn second_download_is_a_noop_unless_force_is_set() {
-        let storage =
-            InMemoryStorage::new().with_file("qwen2.5-1.5b-instruct-q4_k_m.gguf", vec![1u8; 1024]);
-        let url = "https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/qwen2.5-1.5b-instruct-q4_k_m.gguf";
+        let storage = InMemoryStorage::new()
+            .with_file("llm-jp-3-980m-instruct3-Q4_K_M.gguf", vec![1u8; 1024]);
+        let url = "https://huggingface.co/mmnga/llm-jp-3-980m-instruct3-gguf/resolve/main/llm-jp-3-980m-instruct3-Q4_K_M.gguf";
         let downloader =
             ScriptedDownloader::new().respond_to(url, ScriptedResponse::ok(vec![2u8; 1024]));
         let svc = build_service(8.0, 4, downloader, storage);
@@ -1266,7 +1283,7 @@ mod tests {
     #[tokio::test]
     async fn mid_download_failure_leaves_storage_clean() {
         let storage = InMemoryStorage::new();
-        let url = "https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/qwen2.5-1.5b-instruct-q4_k_m.gguf";
+        let url = "https://huggingface.co/mmnga/llm-jp-3-980m-instruct3-gguf/resolve/main/llm-jp-3-980m-instruct3-Q4_K_M.gguf";
         let downloader = ScriptedDownloader::new().respond_to(
             url,
             ScriptedResponse::fail_at(vec![3u8; 4096], 1024).with_chunk_size(256),
@@ -1290,11 +1307,11 @@ mod tests {
     async fn tier_snapshot_recommends_compact_for_low_ram() {
         let svc = build_service(2.0, 2, ScriptedDownloader::new(), InMemoryStorage::new());
         let snap = svc.tier_snapshot();
-        // Phase 21 ordering: Qwen 3 0.6B now precedes Qwen 2.5 0.5B
-        // in TIERS (smaller GGUF + better multilingual quality), so
-        // it is the first Compact-class tier the recommender picks.
+        // 2026-05-30: after Qwen was removed from the registry, the
+        // JA-specialised llm-jp 3 980M is the sole (and therefore
+        // first) Compact-class tier the recommender picks.
         assert_eq!(snap.recommended.class, ModelTierClass::Compact);
-        assert_eq!(snap.recommended.id, "qwen3-0.6b-q4_k_m");
+        assert_eq!(snap.recommended.id, "llm-jp-3-980m-instruct3-q4_k_m");
         assert!(snap.recommended_reason.contains("Compact"));
         assert!(snap.recommended_reason.contains("2.0"));
     }
@@ -1303,23 +1320,24 @@ mod tests {
     async fn tier_snapshot_recommends_quality_on_workstations() {
         let svc = build_service(64.0, 32, ScriptedDownloader::new(), InMemoryStorage::new());
         let snap = svc.tier_snapshot();
-        assert_eq!(snap.recommended.id, "qwen2.5-7b-instruct-q4_k_m");
+        assert_eq!(snap.recommended.id, "gemma-4-e4b-it-q4_k_m");
         assert!(snap.recommended_reason.contains("Quality"));
     }
 
     #[tokio::test]
     async fn tier_snapshot_flags_underpowered_when_ram_below_min() {
-        // Repro of the user-reported "Lens で 7B を選んだら 8 GB
-        // PC でタイムアウト連発" case. The 8 GB host should NOT
-        // be flagged as adequate for the 7B tier (min_ram_gb = 16).
+        // Repro of the user-reported "Lens で重いティアを選んだら
+        // 8 GB PC でタイムアウト連発" case. The 8 GB host should NOT
+        // be flagged as adequate for the Quality tier (Edge+ E4B,
+        // min_ram_gb = 12).
         let svc = build_service(8.0, 4, ScriptedDownloader::new(), InMemoryStorage::new());
-        // Switch to Quality (7B) — this is what the bug report
-        // user did and what triggered the timeout cascade.
-        svc.set_tier("qwen2.5-7b-instruct-q4_k_m").await.unwrap();
+        // Switch to Quality (Edge+ E4B) — this is what the bug
+        // report user did and what triggered the timeout cascade.
+        svc.set_tier("gemma-4-e4b-it-q4_k_m").await.unwrap();
         let snap = svc.tier_snapshot();
         assert!(
             snap.current_underpowered,
-            "8GB-RAM host running the 7B tier MUST be flagged as underpowered"
+            "8GB-RAM host running the Quality tier MUST be flagged as underpowered"
         );
     }
 
@@ -1462,12 +1480,14 @@ mod tests {
     #[tokio::test]
     async fn set_tier_persists_repo_and_filename_to_settings() {
         let svc = build_service(4.0, 2, ScriptedDownloader::new(), InMemoryStorage::new());
-        svc.set_tier("qwen2.5-0.5b-instruct-q4_k_m").await.unwrap();
+        svc.set_tier("llm-jp-3-980m-instruct3-q4_k_m")
+            .await
+            .unwrap();
         let resolved = svc.resolved();
-        assert_eq!(resolved.repo, "Qwen/Qwen2.5-0.5B-Instruct-GGUF");
+        assert_eq!(resolved.repo, "mmnga/llm-jp-3-980m-instruct3-gguf");
         assert_eq!(
             resolved.filename_remote,
-            "qwen2.5-0.5b-instruct-q4_k_m.gguf"
+            "llm-jp-3-980m-instruct3-Q4_K_M.gguf"
         );
         // Switching tier MUST drop any pinned model_path so the
         // resolution falls through to <app_data>/models/<filename>.
@@ -1494,10 +1514,11 @@ mod tests {
     /// that do not require running infrastructure.
     #[tokio::test]
     async fn e2e_fresh_install_through_first_translation_ready() {
-        // Phase 21 ordering: Qwen 3 0.6B is the recommended Compact
-        // for fresh installs (first Compact-class tier in TIERS).
+        // 2026-05-30: llm-jp 3 980M is the recommended Compact for
+        // fresh installs (sole Compact-class tier after Qwen's
+        // registry removal).
         let url =
-            "https://huggingface.co/unsloth/Qwen3-0.6B-GGUF/resolve/main/Qwen3-0.6B-Q4_K_M.gguf";
+            "https://huggingface.co/mmnga/llm-jp-3-980m-instruct3-gguf/resolve/main/llm-jp-3-980m-instruct3-Q4_K_M.gguf";
         let storage = InMemoryStorage::new();
         let downloader = ScriptedDownloader::new().respond_to(
             url,
@@ -1511,7 +1532,7 @@ mod tests {
 
         // 2. Tier snapshot recommends Compact.
         let tier = svc.tier_snapshot();
-        assert_eq!(tier.recommended.id, "qwen3-0.6b-q4_k_m");
+        assert_eq!(tier.recommended.id, "llm-jp-3-980m-instruct3-q4_k_m");
 
         // 3. User accepts the recommendation.
         svc.set_tier(tier.recommended.id).await.unwrap();
@@ -1524,6 +1545,6 @@ mod tests {
         let s = svc.status().await.unwrap();
         assert!(s.present);
         assert_eq!(s.license, "Apache-2.0");
-        assert!(s.model_id.contains("Qwen3-0.6B-Q4_K_M.gguf"));
+        assert!(s.model_id.contains("llm-jp-3-980m-instruct3-Q4_K_M.gguf"));
     }
 }

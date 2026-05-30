@@ -151,23 +151,22 @@ allow_network = false
 max_cost_per_request = 0.0
 sticky_session_ms = 30000
 
-# OCR chain. On Windows we prefer the built-in `Windows.Media.Ocr`
-# engine because it supports Japanese / Chinese / Korean language
-# packs out of the box — `ocrs` is Latin-focused and produces
-# Latin gibberish on CJK source. The chain falls back to `ocrs`
-# automatically when the `windows` provider returns LowConfidence
-# (no detected text, missing language pack on a locked-down host,
-# etc.). Non-Windows builds skip `windows` silently — it's a
-# cfg-gated compile.
+# OCR chain. 2026-05-28: consolidated to a SINGLE local OCR engine —
+# `paddle` (PP-OCRv5 via oar-ocr). The OCR bench (iter1) measured it
+# at CER 0.005 (en) / 0.003 (en-ja) / 0.000 on english0001, vs `ocrs`
+# at 0.314 (en, Latin-only) and WinRT whose recognition accuracy was
+# never benchmarked and which in practice mis-reads small anti-aliased
+# screen text (`Please`→`PIease`, `from`→`f「om`) badly enough to make
+# the Compact translator echo the source instead of translating.
+# Unlike WinRT, oar-ocr is cross-platform (ONNX Runtime) and the same
+# engine on every OS. It requires the PP-OCRv5 ONNX models on disk
+# (downloaded on first run, like the embedded LLM); there is no WinRT
+# fallback because a fallback that mis-recognises is worse than a
+# clear "download the OCR model" prompt. Translation keeps its tiers
+# (Compact/Standard/Quality); OCR does not need tiers — one accurate
+# engine serves every capture.
 [providers.ocr]
-# Phase 28 (2026-05-14): `paddle` (PP-OCRv5 via oar-ocr) is the new
-# primary. It wins on every language tested by 5× CER over `ocrs`
-# (see docs/benchmarks/2026-05-14-ocr-bench-iter5.md) and runs
-# 3-5× faster on DirectML GPU than CPU. `windows` (Windows.Media.Ocr)
-# stays as a Japanese-strong fallback on Windows; `ocrs` is the
-# pure-Rust last-resort fallback for hosts where the PaddleOCR ONNX
-# files have not been downloaded yet.
-chain = ["paddle", "windows", "ocrs"]
+chain = ["paddle"]
 parallel_race = false
 fallback_on = ["low_confidence", "error"]
 # First OCR call after a cold start has to load ~60MB of rten models
@@ -262,19 +261,22 @@ sticky_session_ms = 0
 # absolute path. `repo`/`filename_remote` describe the HuggingFace
 # coordinates the download IPC pulls from.
 #
-# 2026-05-09 default switched Gemma 3 1B → Qwen 2.5 1.5B-Instruct.
-# Driver: Apache 2.0 license vs. Gemma's bespoke "Gemma Terms of
-# Use" — Apache 2.0 removes the redistribution paperwork (must
-# include the LICENSE file, no Prohibited Use Policy obligations),
-# which matters for offline corporate deployments where the
-# package travels via fileserver and IT has to greenlight every
-# bundled license. Architecture stays decoder-only so the runtime
-# (`mistral.rs::GgufModelBuilder`) is unchanged.
+# 2026-05-09 default switched Gemma 3 1B → Qwen 2.5 1.5B-Instruct
+# for the Apache 2.0 redistribution win over Gemma's TOS paperwork.
+#
+# 2026-05-30 default switched off Qwen entirely → llm-jp 3 980M
+# Instruct3. Qwen was removed from the registry (Chinese-script
+# leakage + unnatural-translation bench rejections), so the bundled
+# default now points at the JA-specialised llm-jp 3 980M (still
+# Apache 2.0, decoder-only, mmnga's canonical Q4_K_M mirror — the
+# runtime `mistral.rs::GgufModelBuilder` is unchanged). This is the
+# bare fallback coordinate; the routed pipeline runs the user's
+# actual tier (Standard by default) via the Hy-MT2 / Gemma bridges.
 [providers.configs."embedded.llm"]
-repo = "Qwen/Qwen2.5-1.5B-Instruct-GGUF"
-filename_remote = "qwen2.5-1.5b-instruct-q4_k_m.gguf"
+repo = "mmnga/llm-jp-3-980m-instruct3-gguf"
+filename_remote = "llm-jp-3-980m-instruct3-Q4_K_M.gguf"
 license = "Apache-2.0"
-license_url = "https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/blob/main/LICENSE"
+license_url = "https://huggingface.co/llm-jp/llm-jp-3-980m-instruct3/blob/main/LICENSE"
 # Streaming on by default. The runtime emits per-token deltas via
 # `Provider::run_streaming`, which the Lens line sinks consume to
 # render translation tokens live. Set false to receive the result

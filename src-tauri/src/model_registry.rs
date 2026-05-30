@@ -219,69 +219,6 @@ pub const TIERS: &[ModelTier] = &[
     //     only the mmnga Instruct3 mirror.
     // See docs/benchmarks/2026-05-12-phase26-llmjp3-small-
     // quality-review.md for the full evidence.
-    ModelTier {
-        id: "qwen3-0.6b-q4_k_m",
-        display_name: "Compact+ (Qwen 3 0.6B)",
-        description: "Qwen 2.5 0.5B 後継。多言語品質向上、特に日本語で上回る (Apache 2.0)。",
-        // The original Qwen org does not ship GGUF quants for the
-        // small Qwen 3 sizes; unsloth's mirror is the canonical
-        // community quantisation for these.
-        repo: "unsloth/Qwen3-0.6B-GGUF",
-        filenames: &["Qwen3-0.6B-Q4_K_M.gguf"],
-        size_mb: 397,
-        min_ram_gb: 4,
-        license: "Apache-2.0",
-        license_url:
-            "https://huggingface.co/unsloth/Qwen3-0.6B-GGUF/blob/main/LICENSE",
-        class: ModelTierClass::Compact,
-        // Qwen 3 ships with deliberative-reasoning mode on by default,
-        // emitting `<think>...</think>` blocks before answering. For
-        // short-output translation that wastes the entire token budget
-        // on internal monologue. The no-think template primes the
-        // assistant turn with empty `<think></think>` to bypass it.
-        chat_template: ChatTemplate::ChatMlQwen3NoThink,
-        drafter: None,
-    },
-    ModelTier {
-        id: "qwen2.5-0.5b-instruct-q4_k_m",
-        display_name: "Compact (Qwen 2.5 0.5B)",
-        description: "低スペックPC向け。最小サイズ・最速起動、翻訳品質は控えめ。",
-        repo: "Qwen/Qwen2.5-0.5B-Instruct-GGUF",
-        filenames: &["qwen2.5-0.5b-instruct-q4_k_m.gguf"],
-        size_mb: 400,
-        min_ram_gb: 4,
-        license: "Apache-2.0",
-        license_url:
-            "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/blob/main/LICENSE",
-        class: ModelTierClass::Compact,
-        chat_template: ChatTemplate::ChatMl,
-        drafter: None,
-    },
-    // Qwen 3.5 0.8B was rejected in Phase 23 v23c (Chinese leakage:
-    // "欢迎来到未来翻译的殿堂"). Re-added in Phase 25 to validate
-    // whether the new few-shot prompt + strengthened "no other
-    // scripts" system directive (see `build_translation_few_shots`
-    // and the system_prompt default in translate_embedded_llm.rs)
-    // can rescue this candidate. Keep or drop based on the v25
-    // bench evidence.
-    ModelTier {
-        id: "qwen3.5-0.8b-q4_k_m",
-        display_name: "Compact++ (Qwen 3.5 0.8B)",
-        description: "Qwen 3.5 系最小。Compact と Standard の間、Phase 25 few-shot で言語ロック検証中 (Apache 2.0)。",
-        repo: "unsloth/Qwen3.5-0.8B-GGUF",
-        filenames: &["Qwen3.5-0.8B-Q4_K_M.gguf"],
-        size_mb: 508,
-        min_ram_gb: 4,
-        license: "Apache-2.0",
-        license_url:
-            "https://huggingface.co/unsloth/Qwen3.5-0.8B-GGUF/blob/main/LICENSE",
-        class: ModelTierClass::Compact,
-        // See registry comment on qwen3.5-4b: model card claims
-        // thinking is default OFF but the GGUF still emits
-        // `<think>` blocks. Same no-think primer applies.
-        chat_template: ChatTemplate::ChatMlQwen3NoThink,
-        drafter: None,
-    },
     // llm-jp 3 980m instruct3 — sub-1B JA-specialised tier
     // (Phase 26 v1). mmnga's Q4_K_M is the canonical GGUF mirror;
     // upstream llm-jp ships only safetensors for this size. base
@@ -315,36 +252,6 @@ pub const TIERS: &[ModelTier] = &[
     // 35-language model card claim. The translation directive in
     // our prompt is apparently outside EuroLLM's training
     // distribution.
-    ModelTier {
-        id: "qwen3-1.7b-q4_k_m",
-        display_name: "Standard+ (Qwen 3 1.7B)",
-        description: "Qwen 2.5 1.5B 後継。標準ティアの正統進化版 (Apache 2.0)。",
-        repo: "unsloth/Qwen3-1.7B-GGUF",
-        filenames: &["Qwen3-1.7B-Q4_K_M.gguf"],
-        size_mb: 1056,
-        min_ram_gb: 8,
-        license: "Apache-2.0",
-        license_url:
-            "https://huggingface.co/unsloth/Qwen3-1.7B-GGUF/blob/main/LICENSE",
-        class: ModelTierClass::Standard,
-        chat_template: ChatTemplate::ChatMlQwen3NoThink,
-        drafter: None,
-    },
-    ModelTier {
-        id: "qwen2.5-1.5b-instruct-q4_k_m",
-        display_name: "Standard (Qwen 2.5 1.5B)",
-        description: "標準。一般的なオフィスPCでバランスよく動作する既定ティア。",
-        repo: "Qwen/Qwen2.5-1.5B-Instruct-GGUF",
-        filenames: &["qwen2.5-1.5b-instruct-q4_k_m.gguf"],
-        size_mb: 1100,
-        min_ram_gb: 8,
-        license: "Apache-2.0",
-        license_url:
-            "https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/blob/main/LICENSE",
-        class: ModelTierClass::Standard,
-        chat_template: ChatTemplate::ChatMl,
-        drafter: None,
-    },
     ModelTier {
         id: "llm-jp-3.1-1.8b-instruct4-q4_k_m",
         display_name: "JA-Standard+ (llm-jp 3.1 1.8B)",
@@ -392,63 +299,6 @@ pub const TIERS: &[ModelTier] = &[
         chat_template: ChatTemplate::ChatMl,
         drafter: None,
     },
-    // Qwen 3.5 2B was rejected in Phase 23 v23c (semantic breaks:
-    // "急げんこつなうとんぼが lazy なぬまを越す"). Re-added in
-    // Phase 25 on the same basis as the 0.8B re-introduction —
-    // we want to confirm whether few-shot anchoring fixes the
-    // 狐→とんぼ kind of substitution noise.
-    ModelTier {
-        id: "qwen3.5-2b-q4_k_m",
-        display_name: "Standard++ (Qwen 3.5 2B)",
-        description: "Qwen 3.5 2B。Standard と Quality- の間、Phase 25 few-shot で品質再評価中 (Apache 2.0)。",
-        repo: "unsloth/Qwen3.5-2B-GGUF",
-        filenames: &["Qwen3.5-2B-Q4_K_M.gguf"],
-        size_mb: 1221,
-        min_ram_gb: 8,
-        license: "Apache-2.0",
-        license_url:
-            "https://huggingface.co/unsloth/Qwen3.5-2B-GGUF/blob/main/LICENSE",
-        class: ModelTierClass::Standard,
-        chat_template: ChatTemplate::ChatMlQwen3NoThink,
-        drafter: None,
-    },
-    ModelTier {
-        id: "qwen3-4b-instruct-2507-q4_k_m",
-        display_name: "Quality- (Qwen 3 4B Instruct 2507)",
-        description: "中量級 (Standard と Quality の中間)。8-16GB RAM PC で実用的な品質と速度のバランス (Apache 2.0)。",
-        repo: "unsloth/Qwen3-4B-Instruct-2507-GGUF",
-        filenames: &["Qwen3-4B-Instruct-2507-Q4_K_M.gguf"],
-        size_mb: 2497,
-        min_ram_gb: 12,
-        license: "Apache-2.0",
-        license_url:
-            "https://huggingface.co/unsloth/Qwen3-4B-Instruct-2507-GGUF/blob/main/LICENSE",
-        class: ModelTierClass::Standard,
-        // Phase 21 v2 finding: the "Instruct-2507" variant has its
-        // reasoning mode removed at the checkpoint level — the
-        // empty-think primer that works for Qwen 3 0.6B / 1.7B
-        // makes 2507 emit EOS immediately (5 samples → 3 produced
-        // 0 tokens, 2 echoed the source verbatim). Plain ChatML
-        // (no primer) is the right template here.
-        chat_template: ChatTemplate::ChatMl,
-        drafter: None,
-    },
-    ModelTier {
-        id: "qwen3.5-4b-q4_k_m",
-        display_name: "Quality-- (Qwen 3.5 4B)",
-        description: "Qwen 3.5 4B 中量級。Qwen 3 4B 2507 後継。201言語、thinking デフォルトOFF (Apache 2.0)。",
-        repo: "unsloth/Qwen3.5-4B-GGUF",
-        filenames: &["Qwen3.5-4B-Q4_K_M.gguf"],
-        size_mb: 2614,
-        min_ram_gb: 12,
-        license: "Apache-2.0",
-        license_url:
-            "https://huggingface.co/unsloth/Qwen3.5-4B-GGUF/blob/main/LICENSE",
-        class: ModelTierClass::Standard,
-        // See Qwen 3.5 0.8B note: same no-think primer needed.
-        chat_template: ChatTemplate::ChatMlQwen3NoThink,
-        drafter: None,
-    },
     // Gemma 4 nano (E2B / E4B) — Google's edge-optimised family with
     // sparse activation (effective param count smaller than total).
     // **License caveat**: Gemma Terms of Use, NOT Apache 2.0. Commercial
@@ -481,32 +331,6 @@ pub const TIERS: &[ModelTier] = &[
         }),
     },
     ModelTier {
-        id: "qwen2.5-7b-instruct-q4_k_m",
-        display_name: "Quality (Qwen 2.5 7B)",
-        description:
-            "高品質ティア。16GB+ RAM の高性能PC向け、翻訳品質はクラウドAPIに迫る。",
-        repo: "Qwen/Qwen2.5-7B-Instruct-GGUF",
-        // Qwen 2.5 7B Q4_K_M is split across two LFS files in the
-        // upstream repo. Listing both parts here is what fixes the
-        // 9.x-era 404: the pre-9.x registry recorded a single
-        // synthetic filename `qwen2.5-7b-instruct-q4_k_m.gguf`
-        // that does not exist on HuggingFace. llama-cpp-2 follows
-        // the part chain via mmap, so loading transparently joins
-        // them at runtime.
-        filenames: &[
-            "qwen2.5-7b-instruct-q4_k_m-00001-of-00002.gguf",
-            "qwen2.5-7b-instruct-q4_k_m-00002-of-00002.gguf",
-        ],
-        size_mb: 4700,
-        min_ram_gb: 16,
-        license: "Apache-2.0",
-        license_url:
-            "https://huggingface.co/Qwen/Qwen2.5-7B-Instruct-GGUF/blob/main/LICENSE",
-        class: ModelTierClass::Quality,
-        chat_template: ChatTemplate::ChatMl,
-        drafter: None,
-    },
-    ModelTier {
         id: "gemma-4-e4b-it-q4_k_m",
         display_name: "Edge+ (Gemma 4 E4B)",
         description: "Gemma 4 nano E4B 版。effective 4B 活性化 (total ~8B)。Gemma TOS。",
@@ -527,12 +351,20 @@ pub const TIERS: &[ModelTier] = &[
     },
 ];
 
-/// The tier the tool defaults to on a fresh install. Reads as
-/// "qwen2.5-1.5b-instruct-q4_k_m" — must stay in sync with
-/// `DEFAULT_MODEL_FILENAME_REMOTE` in `translate_embedded_llm.rs`
-/// (the constants there are the legacy single-model surface; this
-/// registry is its multi-tier replacement).
-pub const DEFAULT_TIER_ID: &str = "qwen2.5-1.5b-instruct-q4_k_m";
+/// The tier the tool defaults to on a fresh install and the
+/// fallback when the user's settings reference a coord we no longer
+/// ship. Reads as "llm-jp-3-980m-instruct3-q4_k_m" — must stay in
+/// sync with `DEFAULT_MODEL_FILENAME_REMOTE` in
+/// `translate_embedded_llm.rs` (the constants there are the legacy
+/// single-model surface; this registry is its multi-tier
+/// replacement). 2026-05-30: switched off the Qwen 2.5 1.5B default
+/// to the JA-specialised llm-jp 3 980M after Qwen was removed from
+/// the registry entirely (Chinese-leakage / unnatural-output bench
+/// rejections). This makes the default a **Compact**-class tier —
+/// the routed pipeline still runs the user's actual UserTier
+/// (Standard by default), so this constant only governs the bare
+/// legacy fallback and the unknown-coord recovery path.
+pub const DEFAULT_TIER_ID: &str = "llm-jp-3-980m-instruct3-q4_k_m";
 
 /* ---------------- Translation router anchor tier IDs --------------- */
 //
@@ -976,19 +808,25 @@ mod tests {
         // because a future migration tweaked the canonical name),
         // the tier lookup MUST still resolve so the picker shows
         // the right entry rather than "カスタム".
-        let quality = tier_by_id("qwen2.5-7b-instruct-q4_k_m").unwrap();
-        if quality.filenames.len() < 2 {
-            return; // single-file tier — invariant trivially holds.
-        }
-        for f in quality.filenames {
-            let resolved = tier_by_coord(quality.repo, f);
+        //
+        // 2026-05-30: the registry no longer ships a multi-part tier
+        // (Qwen 2.5 7B was the only split GGUF and was removed). The
+        // `tier_by_coord` part-matching code stays in place for any
+        // future split tier, so this guard discovers one dynamically
+        // and skips when none is registered rather than pinning a
+        // now-deleted id.
+        let Some(split) = TIERS.iter().find(|t| t.filenames.len() >= 2) else {
+            return; // no multi-part tier currently shipped — invariant trivially holds.
+        };
+        for f in split.filenames {
+            let resolved = tier_by_coord(split.repo, f);
             assert!(
                 resolved.is_some(),
                 "tier_by_coord({}, {}) failed to resolve a known part",
-                quality.repo,
+                split.repo,
                 f,
             );
-            assert_eq!(resolved.unwrap().id, quality.id);
+            assert_eq!(resolved.unwrap().id, split.id);
         }
     }
 
@@ -1046,37 +884,39 @@ mod tests {
     }
 
     #[test]
-    fn migration_rewrites_pre_9x_quality_synthetic_filename() {
-        // Repro of the user-reported 9.x 404: pre-9.x recorded a
-        // synthetic single-file name that does not exist on HF.
+    fn migration_rewrites_synthetic_filename_to_registered_primary() {
+        // A user.toml whose `repo` matches a shipped tier but whose
+        // `filename_remote` is a synthetic name that does not exist
+        // on HF (hand-edit, or a pre-rename canonical name) must be
+        // upgraded to the registered tier's real primary filename.
+        // 2026-05-30: exercised against the single-file llm-jp 3
+        // 980M tier (the multi-part Qwen 7B that originally drove
+        // this 9.x-404 repro was removed from the registry); the
+        // single-file branch must also CLEAR any stale extras.
         let mut cfg = serde_json::json!({
-            "repo": "Qwen/Qwen2.5-7B-Instruct-GGUF",
-            "filename_remote": "qwen2.5-7b-instruct-q4_k_m.gguf",
+            "repo": "mmnga/llm-jp-3-980m-instruct3-gguf",
+            "filename_remote": "llm-jp-3-980m-instruct3.gguf",
+            "filenames_remote_extra": ["stale-part-00002-of-00002.gguf"],
             "license": "Apache-2.0",
         });
         let migrated = migrate_legacy_embedded_config(&mut cfg);
-        assert!(migrated, "stale 7B config must trigger migration");
+        assert!(migrated, "synthetic filename must trigger migration");
         let obj = cfg.as_object().unwrap();
         assert_eq!(
             obj.get("filename_remote").and_then(|v| v.as_str()),
-            Some("qwen2.5-7b-instruct-q4_k_m-00001-of-00002.gguf")
+            Some("llm-jp-3-980m-instruct3-Q4_K_M.gguf")
         );
-        let extras = obj
-            .get("filenames_remote_extra")
-            .and_then(|v| v.as_array())
-            .expect("extras populated");
-        assert_eq!(extras.len(), 1);
-        assert_eq!(
-            extras[0].as_str(),
-            Some("qwen2.5-7b-instruct-q4_k_m-00002-of-00002.gguf"),
+        assert!(
+            obj.get("filenames_remote_extra").is_none(),
+            "single-file tier must clear any stale extras"
         );
     }
 
     #[test]
     fn migration_is_a_noop_for_already_correct_configs() {
         let mut cfg = serde_json::json!({
-            "repo": "Qwen/Qwen2.5-1.5B-Instruct-GGUF",
-            "filename_remote": "qwen2.5-1.5b-instruct-q4_k_m.gguf",
+            "repo": "mmnga/llm-jp-3-980m-instruct3-gguf",
+            "filename_remote": "llm-jp-3-980m-instruct3-Q4_K_M.gguf",
         });
         let migrated = migrate_legacy_embedded_config(&mut cfg);
         assert!(!migrated, "matching config must not be touched");
@@ -1096,8 +936,8 @@ mod tests {
             chain = ["embedded.gemma"]
 
             [providers.configs."embedded.gemma"]
-            repo = "Qwen/Qwen2.5-1.5B-Instruct-GGUF"
-            filename_remote = "qwen2.5-1.5b-instruct-q4_k_m.gguf"
+            repo = "mmnga/llm-jp-3-980m-instruct3-gguf"
+            filename_remote = "llm-jp-3-980m-instruct3-Q4_K_M.gguf"
             license = "Apache-2.0"
         "#;
         let defaults = include_str!("settings/default.toml");
@@ -1148,18 +988,23 @@ mod tests {
         // block. But because `default.toml` already provides an
         // `embedded.llm` block, the merged Settings ALWAYS had both
         // `embedded.gemma` (from user.toml — the user's authoritative
-        // state) AND `embedded.llm` (from defaults — Standard 1.5B).
-        // `or_insert` kept the default-derived entry and silently
-        // discarded the user's tier selection, rolling Quality 7B
-        // back to Standard 1.5B on every restart.
+        // state) AND `embedded.llm` (from defaults — the bundled
+        // model). `or_insert` kept the default-derived entry and
+        // silently discarded the user's tier selection, rolling the
+        // user's picked model back to the bundled default on every
+        // restart. A custom multi-part repo (unknown to the registry,
+        // so the synthetic-filename migration leaves it untouched)
+        // exercises the data-survival path — including the
+        // `filenames_remote_extra` array — without depending on a
+        // shipped tier.
         let user_toml = r#"
             [providers.translate]
             chain = ["embedded.gemma"]
 
             [providers.configs."embedded.gemma"]
-            repo = "Qwen/Qwen2.5-7B-Instruct-GGUF"
-            filename_remote = "qwen2.5-7b-instruct-q4_k_m-00001-of-00002.gguf"
-            filenames_remote_extra = ["qwen2.5-7b-instruct-q4_k_m-00002-of-00002.gguf"]
+            repo = "myorg/custom-split-GGUF"
+            filename_remote = "custom-split-q4_k_m-00001-of-00002.gguf"
+            filenames_remote_extra = ["custom-split-q4_k_m-00002-of-00002.gguf"]
             license = "Apache-2.0"
         "#;
         let defaults = include_str!("settings/default.toml");
@@ -1182,8 +1027,7 @@ mod tests {
         assert!(migrated, "migration must report a change");
 
         // After migration: legacy key gone, embedded.llm carries
-        // the USER'S Quality 7B selection (NOT the default Standard
-        // 1.5B).
+        // the USER'S picked selection (NOT the bundled default).
         assert!(!s.providers.configs.contains_key("embedded.gemma"));
         let llm = s
             .providers
@@ -1192,14 +1036,14 @@ mod tests {
             .expect("embedded.llm must exist post-migration");
         assert_eq!(
             llm.get("repo").and_then(|v| v.as_str()),
-            Some("Qwen/Qwen2.5-7B-Instruct-GGUF"),
-            "user's Quality 7B repo MUST survive migration; \
+            Some("myorg/custom-split-GGUF"),
+            "user's picked repo MUST survive migration; \
              a default-derived `embedded.llm` value here means the \
              rollback bug has regressed"
         );
         assert_eq!(
             llm.get("filename_remote").and_then(|v| v.as_str()),
-            Some("qwen2.5-7b-instruct-q4_k_m-00001-of-00002.gguf"),
+            Some("custom-split-q4_k_m-00001-of-00002.gguf"),
             "user's primary filename MUST survive"
         );
         let extras = llm
@@ -1209,7 +1053,7 @@ mod tests {
         assert_eq!(extras.len(), 1);
         assert_eq!(
             extras[0].as_str(),
-            Some("qwen2.5-7b-instruct-q4_k_m-00002-of-00002.gguf")
+            Some("custom-split-q4_k_m-00002-of-00002.gguf")
         );
     }
 
@@ -1254,10 +1098,9 @@ mod tests {
             chain = ["embedded.llm"]
 
             [providers.configs."embedded.llm"]
-            repo = "Qwen/Qwen2.5-7B-Instruct-GGUF"
-            filename_remote = "qwen2.5-7b-instruct-q4_k_m-00001-of-00002.gguf"
-            filenames_remote_extra = ["qwen2.5-7b-instruct-q4_k_m-00002-of-00002.gguf"]
-            license = "Apache-2.0"
+            repo = "unsloth/gemma-4-E4B-it-GGUF"
+            filename_remote = "gemma-4-E4B-it-Q4_K_M.gguf"
+            license = "Gemma-Terms-of-Use"
         "#;
         let defaults = include_str!("settings/default.toml");
         let mut s = crate::settings::store::layer_user_over_defaults_for_test(defaults, user_toml)
@@ -1270,7 +1113,7 @@ mod tests {
         s.providers.user_tier = None;
         let migrated = migrate_legacy_embedded_settings(&mut s);
         assert!(migrated, "user_tier derivation must report a change");
-        // The Qwen 2.5 7B tier's class is Quality → UserTier::Quality.
+        // The Gemma 4 E4B tier's class is Quality → UserTier::Quality.
         assert_eq!(
             s.providers.user_tier,
             Some(crate::translation_router::UserTier::Quality),
@@ -1306,12 +1149,17 @@ mod tests {
     }
 
     #[test]
-    fn default_tier_is_the_standard_class() {
-        // The install-and-go default targets typical office hardware
-        // (8 GB RAM). If a future tuning pass swaps the default to a
-        // Compact, this test fails so we re-evaluate the on-boarding
-        // copy ("約 1GB のモデルをダウンロードします") which assumes
-        // the Standard tier.
-        assert_eq!(default_tier().class, ModelTierClass::Standard);
+    fn default_tier_is_the_compact_ja_class() {
+        // 2026-05-30: the bare default switched off Qwen (removed
+        // from the registry) to the JA-specialised llm-jp 3 980M,
+        // which is a **Compact**-class tier (~600 MB). The routed
+        // pipeline still runs the user's actual UserTier (Standard
+        // by default), so this constant only governs the legacy
+        // fallback / unknown-coord recovery — a Compact default is
+        // the safe, smallest-footprint choice there. If a future
+        // tuning pass swaps it back to a Standard tier, this test
+        // fails so we re-evaluate the on-boarding download-size copy.
+        assert_eq!(default_tier().class, ModelTierClass::Compact);
+        assert_eq!(default_tier().id, "llm-jp-3-980m-instruct3-q4_k_m");
     }
 }

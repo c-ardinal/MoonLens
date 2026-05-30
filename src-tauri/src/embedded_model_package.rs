@@ -548,10 +548,10 @@ mod tests {
     fn sample_template() -> PackageManifestInput {
         PackageManifestInput {
             model_id: "embedded.llm".into(),
-            model_filename: "qwen2.5-1.5b-instruct-q4_k_m.gguf".into(),
+            model_filename: "llm-jp-3-980m-instruct3-Q4_K_M.gguf".into(),
             extra_filenames: Vec::new(),
-            source_repo: "Qwen/Qwen2.5-1.5B-Instruct-GGUF".into(),
-            source_filename: "qwen2.5-1.5b-instruct-q4_k_m.gguf".into(),
+            source_repo: "mmnga/llm-jp-3-980m-instruct3-gguf".into(),
+            source_filename: "llm-jp-3-980m-instruct3-Q4_K_M.gguf".into(),
             license: Some("Apache-2.0".into()),
             license_url: Some("https://example.test/LICENSE".into()),
             exporter_version: "0.1.0".into(),
@@ -624,7 +624,7 @@ mod tests {
         // touched when the import fails.
         let target = tmp.path().join("imported");
         std::fs::create_dir_all(&target).unwrap();
-        let victim = target.join("qwen2.5-1.5b-instruct-q4_k_m.gguf");
+        let victim = target.join("llm-jp-3-980m-instruct3-Q4_K_M.gguf");
         std::fs::write(&victim, b"victim contents").unwrap();
 
         let err = apply_package(&tampered, &target).expect_err("must reject tampered package");
@@ -709,37 +709,38 @@ mod tests {
     #[test]
     fn multi_part_round_trip_preserves_every_part() {
         // Build a package containing a primary GGUF + 2 extra
-        // parts (mirrors the Qwen 2.5 7B Q4_K_M layout). Verify
-        // every part round-trips byte-for-byte and the manifest
-        // records each part's sha256 + size.
+        // parts (mirrors a generic large split-GGUF layout — the
+        // packaging machinery is registry-agnostic, so a synthetic
+        // multi-part name exercises it without depending on any
+        // shipped tier). Verify every part round-trips byte-for-byte
+        // and the manifest records each part's sha256 + size.
         let tmp = tempfile::tempdir().unwrap();
         let primary = write_fake_gguf(
             tmp.path(),
-            "qwen2.5-7b-instruct-q4_k_m-00001-of-00002.gguf",
+            "split-model-q4_k_m-00001-of-00002.gguf",
             &b"PRIMARY".repeat(512),
         );
         write_fake_gguf(
             tmp.path(),
-            "qwen2.5-7b-instruct-q4_k_m-00002-of-00002.gguf",
+            "split-model-q4_k_m-00002-of-00002.gguf",
             &b"PART2".repeat(700),
         );
         let pkg = tmp.path().join("bundle.moonlens-model");
         let mut tmpl = sample_template();
-        tmpl.model_filename = "qwen2.5-7b-instruct-q4_k_m-00001-of-00002.gguf".into();
-        tmpl.extra_filenames = vec!["qwen2.5-7b-instruct-q4_k_m-00002-of-00002.gguf".into()];
+        tmpl.model_filename = "split-model-q4_k_m-00001-of-00002.gguf".into();
+        tmpl.extra_filenames = vec!["split-model-q4_k_m-00002-of-00002.gguf".into()];
         let manifest = build_package(&primary, &pkg, tmpl).expect("build");
         assert_eq!(manifest.parts.len(), 1);
         assert_eq!(
             manifest.parts[0].filename,
-            "qwen2.5-7b-instruct-q4_k_m-00002-of-00002.gguf"
+            "split-model-q4_k_m-00002-of-00002.gguf"
         );
 
         let target = tmp.path().join("imported");
         let (final_path, applied) = apply_package(&pkg, &target).expect("apply");
-        assert!(final_path.ends_with("qwen2.5-7b-instruct-q4_k_m-00001-of-00002.gguf"));
-        let recovered_part2 =
-            std::fs::read(target.join("qwen2.5-7b-instruct-q4_k_m-00002-of-00002.gguf"))
-                .expect("part 2 was extracted");
+        assert!(final_path.ends_with("split-model-q4_k_m-00001-of-00002.gguf"));
+        let recovered_part2 = std::fs::read(target.join("split-model-q4_k_m-00002-of-00002.gguf"))
+            .expect("part 2 was extracted");
         assert_eq!(recovered_part2, b"PART2".repeat(700));
         assert_eq!(applied.parts.len(), 1);
     }
