@@ -252,12 +252,7 @@ impl MangaOcrRecognizer {
 
     fn recognise(&self, crop: &DynamicImage) -> Result<String> {
         let pixel_values = Self::preprocess(crop);
-        let pix_shape = [
-            1i64,
-            3,
-            Self::IMG_SIZE as i64,
-            Self::IMG_SIZE as i64,
-        ];
+        let pix_shape = [1i64, 3, Self::IMG_SIZE as i64, Self::IMG_SIZE as i64];
         let pix_data: Vec<f32> = pixel_values.iter().copied().collect();
         let pix_tensor = ort::value::Tensor::from_array((pix_shape, pix_data))
             .map_err(|e| anyhow!("encoder tensor: {e}"))?;
@@ -358,9 +353,7 @@ fn ort_session_config_from_env() -> Option<oar_ocr_core::core::config::OrtSessio
     use oar_ocr_core::core::config::{OrtExecutionProvider, OrtSessionConfig};
     let raw = std::env::var("MOONLENS_OCR_GPU").ok()?;
     let provider = match raw.to_ascii_lowercase().as_str() {
-        "directml" | "dml" => OrtExecutionProvider::DirectML {
-            device_id: Some(0),
-        },
+        "directml" | "dml" => OrtExecutionProvider::DirectML { device_id: Some(0) },
         "cuda" => OrtExecutionProvider::CUDA {
             device_id: Some(0),
             gpu_mem_limit: None,
@@ -370,15 +363,12 @@ fn ort_session_config_from_env() -> Option<oar_ocr_core::core::config::OrtSessio
         },
         "cpu" | "" => return None,
         other => {
-            eprintln!(
-                "warning: MOONLENS_OCR_GPU={other} not recognised; falling back to CPU"
-            );
+            eprintln!("warning: MOONLENS_OCR_GPU={other} not recognised; falling back to CPU");
             return None;
         }
     };
     Some(
-        OrtSessionConfig::new()
-            .with_execution_providers(vec![provider, OrtExecutionProvider::CPU]),
+        OrtSessionConfig::new().with_execution_providers(vec![provider, OrtExecutionProvider::CPU]),
     )
 }
 
@@ -649,9 +639,7 @@ impl OarOcrEngine {
         if let Some(cfg) = ort_session_config_from_env() {
             b = b.ort_session(cfg);
         }
-        let engine = b
-            .build()
-            .map_err(|e| anyhow!("oar-ocr builder: {e}"))?;
+        let engine = b.build().map_err(|e| anyhow!("oar-ocr builder: {e}"))?;
         Ok(Self {
             name: "ppocrv5-oar",
             engine,
@@ -682,9 +670,7 @@ impl OarOcrEngine {
         if let Some(cfg) = ort_session_config_from_env() {
             b = b.ort_session(cfg);
         }
-        let engine = b
-            .build()
-            .map_err(|e| anyhow!("oar-ocr-ko builder: {e}"))?;
+        let engine = b.build().map_err(|e| anyhow!("oar-ocr-ko builder: {e}"))?;
         Ok(Self {
             name: "ppocrv5-oar-ko",
             engine,
@@ -821,8 +807,7 @@ fn main() -> Result<()> {
         Ok(p) if !p.is_empty() => std::path::PathBuf::from(p),
         _ => project_root.join("tests").join("runs").join("ocr_bench"),
     };
-    fs::create_dir_all(&out_dir)
-        .with_context(|| format!("create {}", out_dir.display()))?;
+    fs::create_dir_all(&out_dir).with_context(|| format!("create {}", out_dir.display()))?;
 
     let gts = load_ground_truth(&gt_dir)?;
     if gts.is_empty() {
@@ -876,8 +861,8 @@ fn main() -> Result<()> {
 
         for gt in &gts {
             let img_path = input_dir.join(&gt.image);
-            let img = image::open(&img_path)
-                .with_context(|| format!("open {}", img_path.display()))?;
+            let img =
+                image::open(&img_path).with_context(|| format!("open {}", img_path.display()))?;
 
             let start = Instant::now();
             let detected = match engine.run(&img) {
@@ -955,10 +940,9 @@ fn load_ground_truth(gt_dir: &Path) -> Result<Vec<GroundTruth>> {
         .collect();
     paths.sort();
     for p in paths {
-        let content = fs::read_to_string(&p)
-            .with_context(|| format!("read {}", p.display()))?;
-        let gt: GroundTruth = serde_json::from_str(&content)
-            .with_context(|| format!("parse {}", p.display()))?;
+        let content = fs::read_to_string(&p).with_context(|| format!("read {}", p.display()))?;
+        let gt: GroundTruth =
+            serde_json::from_str(&content).with_context(|| format!("parse {}", p.display()))?;
         out.push(gt);
     }
     Ok(out)
@@ -1044,11 +1028,7 @@ fn render_markdown(summaries: &[Summary], records: &[RunRecord]) -> String {
     s.push_str("| Image | Lang | Engine | CER | WER | Latency (ms) |\n");
     s.push_str("|---|---|---|---:|---:|---:|\n");
     let mut sorted: Vec<&RunRecord> = records.iter().collect();
-    sorted.sort_by(|a, b| {
-        a.image
-            .cmp(&b.image)
-            .then_with(|| a.engine.cmp(&b.engine))
-    });
+    sorted.sort_by(|a, b| a.image.cmp(&b.image).then_with(|| a.engine.cmp(&b.engine)));
     for r in sorted {
         s.push_str(&format!(
             "| {} | {} | {} | {:.3} | {:.3} | {:.1} |\n",

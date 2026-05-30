@@ -21,7 +21,15 @@ pub const RECOGNITION_MODEL_URL: &str =
     "https://ocrs-models.s3-accelerate.amazonaws.com/text-recognition.rten";
 
 pub fn default_models_dir() -> Option<PathBuf> {
-    dirs_like("moonlens/models")
+    // Must match the Tauri app-data identifier (`io.moonlens.app`)
+    // used by the embedded-LLM model path + settings store. The
+    // legacy `"moonlens/models"` here resolved to a DIFFERENT
+    // directory than the rest of the app, so OCR models dropped into
+    // the real app-data dir were never found — the 2026-05-28 audit
+    // traced the lens's silent fall-through to WinRT to this exact
+    // mismatch (paddle models reported "missing" because we looked in
+    // `%APPDATA%\moonlens` instead of `%APPDATA%\io.moonlens.app`).
+    dirs_like("io.moonlens.app/models")
 }
 
 /// Minimal, dependency-free XDG-ish data dir lookup. Good enough for the

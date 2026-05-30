@@ -379,28 +379,9 @@ impl Pipeline {
                 map.insert(id, handle);
             }
         }
-        // Auto-register the Windows Media OCR provider even when the
-        // user's `user.toml` lacks a `[providers.configs.windows]`
-        // section. Without this, every pre-S2 user keeps the old
-        // config shape after upgrade and the new engine never gets
-        // a chance to run — the chain's "windows" id resolves to
-        // "not registered" and falls through to the Latin-only
-        // `ocrs` path on Japanese source.
-        #[cfg(target_os = "windows")]
-        if !map.contains_key("windows") {
-            let default_cfg = serde_json::json!({ "language": "ja" });
-            map.insert(
-                "windows".into(),
-                Arc::new(crate::providers::ocr_windows::WindowsOcrProvider::new(
-                    "windows",
-                    &default_cfg,
-                )),
-            );
-            tracing::info!(
-                "pipeline: auto-registered `windows` OCR provider (user.toml lacked the section)"
-            );
-        }
-        // Same auto-register treatment for the Phase 28 PP-OCRv5
+        // 2026-05-28: the `windows` OCR auto-register was removed when
+        // OCR consolidated to the single `paddle` (PP-OCRv5) engine.
+        // Auto-register the Phase 28 PP-OCRv5
         // (`paddle`) provider. Users upgrading from pre-Phase-28
         // installs may still have a chain that lacks the
         // `[providers.configs.paddle]` block — without this fallback
@@ -486,7 +467,10 @@ impl Pipeline {
             let Some(p) = providers.get(&id) else {
                 continue;
             };
-            match p.extract_glossary(lines, source_language, target_language).await {
+            match p
+                .extract_glossary(lines, source_language, target_language)
+                .await
+            {
                 Ok(Some(entries)) => {
                     tracing::debug!(
                         "glossary: {} entries from {id} ({} lines, {source_language}->{target_language})",
@@ -542,19 +526,15 @@ impl Pipeline {
         let mut reasons = Vec::new();
         let started = Instant::now();
 
-        // Auto-migrate: on Windows, always give the native OCR engine
-        // a first shot even if the user's `user.toml` still has the
-        // pre-WinRT chain (`["ocrs", "paddle"]`). Without this, every
-        // upgrade would require the user to hand-edit their config to
-        // see the Japanese / CJK improvements.
-        let mut effective_chain: Vec<String> = chain.chain.clone();
-        #[cfg(target_os = "windows")]
-        if matches!(capability, Capability::Ocr)
-            && !effective_chain.iter().any(|id| id == "windows")
-        {
-            tracing::info!("pipeline: prepending `windows` OCR provider to chain (auto-migration)");
-            effective_chain.insert(0, "windows".into());
-        }
+        // 2026-05-28: OCR consolidated to the single `paddle`
+        // (PP-OCRv5) engine. The previous Windows-only auto-migration
+        // here force-prepended `windows` to every OCR chain — which
+        // is exactly why the bench-recommended PaddleOCR never ran in
+        // production: WinRT always sat first and always "succeeded"
+        // (it's the OS engine, needs no models), so the chain never
+        // fell through to `paddle`. Removing the force-prepend lets
+        // the configured chain (`["paddle"]`) actually take effect.
+        let effective_chain: Vec<String> = chain.chain.clone();
 
         let ordered = apply_stickiness(&self.sticky, capability, &effective_chain);
         tracing::debug!(

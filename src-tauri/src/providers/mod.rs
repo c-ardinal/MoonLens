@@ -8,12 +8,12 @@
 pub mod asr_whisper;
 pub mod glossary;
 pub mod mbr;
-pub mod placeholder;
 pub mod ocr_ocrs;
 #[cfg(feature = "paddleocr-engine")]
 pub mod ocr_paddle;
 #[cfg(target_os = "windows")]
 pub mod ocr_windows;
+pub mod placeholder;
 pub mod qr_rqrr;
 pub mod search_serpapi;
 pub mod translate_deepl;

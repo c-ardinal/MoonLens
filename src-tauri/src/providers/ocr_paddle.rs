@@ -42,10 +42,8 @@ const DICT_KO_FILE: &str = "dict_ko.txt";
 /// Mirror URLs. Hosted at `monkt/paddleocr-onnx` on HuggingFace,
 /// Apache 2.0. Sizes: det 4.7 MB, rec_multi 16.5 MB, dict_multi
 /// 74 KB, rec_ko 12.8 MB, dict_ko 47 KB. Total ~34 MB.
-pub const DET_URL: &str =
-    "https://huggingface.co/monkt/paddleocr-onnx/resolve/main/det.onnx";
-pub const REC_MULTI_URL: &str =
-    "https://huggingface.co/monkt/paddleocr-onnx/resolve/main/rec.onnx";
+pub const DET_URL: &str = "https://huggingface.co/monkt/paddleocr-onnx/resolve/main/det.onnx";
+pub const REC_MULTI_URL: &str = "https://huggingface.co/monkt/paddleocr-onnx/resolve/main/rec.onnx";
 pub const DICT_MULTI_URL: &str =
     "https://huggingface.co/monkt/paddleocr-onnx/resolve/main/ppocrv5_dict.txt";
 pub const REC_KO_URL: &str =
@@ -89,11 +87,7 @@ impl OarOcrProvider {
         }
     }
 
-    pub fn from_default_dir(
-        id: impl Into<String>,
-        use_gpu: bool,
-        enable_korean: bool,
-    ) -> Self {
+    pub fn from_default_dir(id: impl Into<String>, use_gpu: bool, enable_korean: bool) -> Self {
         let dir = default_models_dir().unwrap_or_else(|| PathBuf::from("./models/paddleocr"));
         Self::new(id, dir, use_gpu, enable_korean)
     }
@@ -103,11 +97,7 @@ impl OarOcrProvider {
     /// the global GPU toggle as `gpu_hint`, and resolves
     /// `paddleocr-directml` feature-availability at compile time
     /// before promising GPU offload.
-    pub fn from_config(
-        id: impl Into<String>,
-        cfg: &serde_json::Value,
-        gpu_hint: bool,
-    ) -> Self {
+    pub fn from_config(id: impl Into<String>, cfg: &serde_json::Value, gpu_hint: bool) -> Self {
         let enable_korean = cfg
             .get("enable_korean")
             .and_then(|v| v.as_bool())
@@ -234,9 +224,7 @@ impl Provider for OarOcrProvider {
                             *g = Some(engine);
                             tracing::info!("paddleocr ko engine preloaded");
                         }
-                        Err(e) => tracing::warn!(
-                            "paddleocr ko preload skipped: {e}"
-                        ),
+                        Err(e) => tracing::warn!("paddleocr ko preload skipped: {e}"),
                     }
                 }
             }
@@ -324,9 +312,9 @@ impl Provider for OarOcrProvider {
                     }
                 }
                 if let Some(ko_engine) = ko_guard.as_ref() {
-                    let ko_results = ko_engine.predict(vec![rgb]).map_err(|e| {
-                        anyhow::anyhow!("paddleocr ko predict: {e}")
-                    })?;
+                    let ko_results = ko_engine
+                        .predict(vec![rgb])
+                        .map_err(|e| anyhow::anyhow!("paddleocr ko predict: {e}"))?;
                     let ko_boxes: Vec<Boxed> = ko_results
                         .iter()
                         .flat_map(|r| r.text_regions.iter())
