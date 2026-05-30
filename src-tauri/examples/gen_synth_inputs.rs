@@ -327,8 +327,7 @@ fn generate_multilingual_panels(out_dir: &Path) -> Result<()> {
             "ko" => &malgun_ko,
             _ => &latin,
         };
-        let mut img =
-            RgbaImage::from_pixel(panel.width, panel.height, Rgba([248, 248, 250, 255]));
+        let mut img = RgbaImage::from_pixel(panel.width, panel.height, Rgba([248, 248, 250, 255]));
         let scale = PxScale::from(panel.font_px);
         let scaled = font.as_scaled(scale);
         let ink = Rgba([34, 34, 38, 255]);
@@ -337,8 +336,8 @@ fn generate_multilingual_panels(out_dir: &Path) -> Result<()> {
         let x = 24i32;
         let y0 = 24i32;
         for (i, line) in panel.lines.iter().enumerate() {
-            let y = y0 + baseline_offset - scaled.ascent().round() as i32
-                + (i as i32) * line_advance;
+            let y =
+                y0 + baseline_offset - scaled.ascent().round() as i32 + (i as i32) * line_advance;
             draw_text_mut(&mut img, ink, x, y, scale, font, line);
         }
         let path = out_dir.join(format!("{}.png", panel.name));
@@ -389,8 +388,7 @@ fn render_vertical_ja(out_dir: &Path) -> Result<()> {
         // Tategaki advances RIGHT-TO-LEFT. col 0 is rightmost.
         let x = width as i32 - right_margin - (col_idx as i32 + 1) * col_advance;
         for (row_idx, ch) in col.iter().enumerate() {
-            let y = 24 + (row_idx as i32) * row_advance + ascent
-                - scaled.ascent().round() as i32;
+            let y = 24 + (row_idx as i32) * row_advance + ascent - scaled.ascent().round() as i32;
             draw_text_mut(&mut img, ink, x, y, scale, &font, &ch.to_string());
         }
     }
@@ -415,7 +413,15 @@ fn render_decorative_ja(out_dir: &Path) -> Result<()> {
     let title_scale = PxScale::from(44.0);
     let body_scale = PxScale::from(20.0);
     let ink = Rgba([34, 34, 38, 255]);
-    draw_text_mut(&mut img, ink, 32, 24, title_scale, &bold, "新章「月光」開幕！");
+    draw_text_mut(
+        &mut img,
+        ink,
+        32,
+        24,
+        title_scale,
+        &bold,
+        "新章「月光」開幕！",
+    );
     let body_lines = [
         "主人公が立ち上がり、",
         "世界は再び動き始める。",

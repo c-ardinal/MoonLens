@@ -28,7 +28,12 @@
 // we later want to compute the unused metric.
 #![allow(dead_code)]
 
-use std::{fs, path::{Path, PathBuf}, sync::Arc, time::Instant};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+    sync::Arc,
+    time::Instant,
+};
 
 use anyhow::{anyhow, Context, Result};
 use parking_lot::Mutex;
@@ -238,11 +243,7 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-async fn bench_one_tier(
-    tier: &ModelTier,
-    model_path: &Path,
-    n_samples: u32,
-) -> Result<TierResult> {
+async fn bench_one_tier(tier: &ModelTier, model_path: &Path, n_samples: u32) -> Result<TierResult> {
     let cfg = serde_json::json!({
         "model_path": model_path.display().to_string(),
         "repo": tier.repo,

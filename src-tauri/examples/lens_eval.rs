@@ -199,34 +199,12 @@ fn main() -> Result<()> {
     // `tests/snapshots/lens_eval/` to refresh the baseline.
     let output_dir = match std::env::var("MOONLENS_LENS_EVAL_OUTPUT_DIR") {
         Ok(p) if !p.is_empty() => PathBuf::from(p),
-        _ => project_root
-            .join("tests")
-            .join("runs")
-            .join("lens_eval"),
+        _ => project_root.join("tests").join("runs").join("lens_eval"),
     };
-    fs::create_dir_all(&output_dir)
-        .with_context(|| format!("create {}", output_dir.display()))?;
+    fs::create_dir_all(&output_dir).with_context(|| format!("create {}", output_dir.display()))?;
 
     let fonts = Fonts::load().context("load system fonts")?;
-    let detector_choice = SecondaryDetector::from_env();
-    println!("detector config: {}", detector_choice.label());
-
-    let ocrs_engine = if detector_choice == SecondaryDetector::Ocrs {
-        let e = try_load_ocrs_engine();
-        if e.is_none() {
-            eprintln!(
-                "note: ocrs models not found under {}, skipping secondary detection",
-                default_models_dir()
-                    .map(|p| p.display().to_string())
-                    .unwrap_or_else(|| "<no appdata>".to_string())
-            );
-        } else {
-            println!("ocrs engine loaded");
-        }
-        e
-    } else {
-        None
-    };
+    println!("OCR engine: paddle (PP-OCRv5 / oar-ocr) — single production OCR");
 
     // Tokio runtime: the translator's Provider trait is async but
     // the eval itself is sync. A single current-thread runtime is
@@ -235,123 +213,76 @@ fn main() -> Result<()> {
         .enable_all()
         .build()
         .context("build tokio runtime for translation")?;
-    // Load the SAME translator config production uses. Reading from
-    // the bundled default.toml (rather than hardcoding num_predict
-    // / examples / system_prompt in the eval) guarantees the two
-    // paths never drift: any change to the prompt or few-shot
-    // examples automatically flows to both the evaluator and the
-    // shipped Lens runtime.
-    let translator_cfg =
-        load_default_ollama_gemma4_config().context("load default.toml ollama.gemma4 config")?;
-    let translator = OllamaTranslator::new("ollama.gemma4", &translator_cfg);
-    // Translator selection (in priority order):
-    //   1. `MOONLENS_EVAL_FORCE_TIER=<tier_id>` — bypass the routing
-    //      matrix entirely and run every translate call through one
-    //      specific tier id (e.g. `gemma-4-e2b-it-q4_k_m`). Used by
-    //      the multi-model comparison workflow: run the same fixture
-    //      set 3× with different forced tiers, diff the resulting
-    //      summaries. The output dir is the same `tests/output/` —
-    //      callers are expected to rename / snapshot between runs.
-    //   2. `MOONLENS_EVAL_LENS_TIER=compact|standard|quality` — drive
-    //      the eval through `RoutedTranslator` using local GGUFs from
-    //      the production app-data dir. Picks the model the matrix
-    //      would select per `(src, tgt)` pair, including pivot routes
-    //      on GPU builds.
-    //   3. Otherwise: keep the legacy Ollama probe. Online → real
-    //      translations via `ollama.gemma4`; offline → echo source
-    //      text so the cards-only rendering pipeline still produces
-    //      a comparable PNG.
-    let routed_translator: Option<Arc<dyn Provider>> =
-        if let Ok(forced_id) = std::env::var("MOONLENS_EVAL_FORCE_TIER") {
-            let forced_id = forced_id.trim().to_string();
-            let tier = tier_by_id(&forced_id)
-                .with_context(|| format!("MOONLENS_EVAL_FORCE_TIER={forced_id:?} not in TIERS"))?;
-            let app_data = resolve_app_data_dir().context(
-                "resolve app-data dir for embedded models \
-             (set MOONLENS_EVAL_APP_DATA if running outside the installed app)",
-            )?;
-            println!(
-                "embedded force-tier: tier={} app_data={}",
-                forced_id,
-                app_data.display()
-            );
-            let cfg = config_for_eval_tier(tier);
-            let mut t = EmbeddedLlmTranslator::new(format!("embedded.llm.eval:{forced_id}"), &cfg);
-            t = t.with_app_data_dir(&app_data);
-            // Match production's GPU resolution: feature ON → all
-            // layers offloaded; feature OFF → CPU. The eval harness
-            // is most useful on a GPU-enabled build anyway.
-            let gpu_layers = if GPU_FEATURE_ENABLED { 99 } else { 0 };
-            t = t.with_gpu_layers(gpu_layers);
-            Some(Arc::new(t) as Arc<dyn Provider>)
-        } else {
-            match std::env::var("MOONLENS_EVAL_LENS_TIER")
-                .ok()
-                .and_then(|s| UserTier::from_id(s.trim().to_ascii_lowercase().as_str()))
-            {
-                Some(tier) => {
-                    let app_data = resolve_app_data_dir().context(
-                        "resolve app-data dir for embedded models \
-                     (set MOONLENS_EVAL_APP_DATA if running outside the installed app)",
-                    )?;
-                    let hw = if GPU_FEATURE_ENABLED {
-                        Hardware::Gpu
-                    } else {
-                        Hardware::Cpu
-                    };
-                    println!(
-                        "embedded routing: tier={tier:?} hw={hw:?} app_data={}",
-                        app_data.display()
-                    );
-                    // GPU layers: 99 when the binary was built with a
-                    // GPU backend feature (the eval harness sets the
-                    // feature explicitly via cargo --features), 0
-                    // otherwise. Keeps the eval consistent with the
-                    // production `Pipeline::resolved_gpu_layers` path.
-                    let gpu_layers = if GPU_FEATURE_ENABLED { 99 } else { 0 };
-                    let rt = RoutedTranslator::new(
-                        "embedded.llm",
-                        tier,
-                        hw,
-                        gpu_layers,
-                        Some(&app_data),
-                        None,
-                    );
-                    Some(Arc::new(rt) as Arc<dyn Provider>)
-                }
-                None => None,
-            }
-        };
-    // The Ollama probe is still useful as a fallback path when the
-    // embedded route is not selected. Skip it entirely on the
-    // embedded path so a missing Ollama daemon does not pollute
-    // logs.
-    let translator_ok = if routed_translator.is_some() {
-        true
-    } else {
-        let ok = probe_translator(&translate_runtime, &translator);
-        if !ok {
-            eprintln!(
-                "note: Ollama translation unreachable — right panel will show OCR text placeholder"
-            );
-        }
-        ok
-    };
 
-    let paddle_engine = if detector_choice == SecondaryDetector::Paddle {
-        match try_load_paddle_engine(project_root) {
-            Ok(engine) => {
-                println!("PaddleOCR PP-OCRv5 engine loaded");
-                Some(engine)
-            }
-            Err(e) => {
-                eprintln!("note: PaddleOCR unavailable ({e:#}), falling back to WinRT only");
-                None
-            }
+    // 2026-05-29 PARITY: build the EXACT pipeline production uses so the
+    // eval and the live Lens differ ONLY in input source (file vs
+    // screen capture) and sink (RecordingSink vs TauriLensSink). OCR +
+    // translation flow through the real `Pipeline` (paddle OCR chain +
+    // RoutedTranslator) via the same `PipelineLensOcr` /
+    // `ChainBackedLensTranslator` adapters `lens_watcher` wires — no
+    // more eval-only `ProviderLensOcr` / Ollama-echo divergence. The
+    // settings come from the user's live `config.toml` (copied to a
+    // temp file so the eval never writes the live one), so chains /
+    // tier / languages match production exactly.
+    let parity_app_data = resolve_app_data_dir()
+        .context("resolve app-data dir (set MOONLENS_EVAL_APP_DATA to the app-data root)")?;
+    let parity_settings = {
+        let live_cfg = parity_app_data.join("config.toml");
+        let tmp_cfg = std::env::temp_dir().join("moonlens_eval_parity_config.toml");
+        if live_cfg.exists() {
+            fs::copy(&live_cfg, &tmp_cfg)
+                .with_context(|| format!("copy {} for eval", live_cfg.display()))?;
+        } else if tmp_cfg.exists() {
+            let _ = fs::remove_file(&tmp_cfg);
         }
-    } else {
-        None
+        Arc::new(
+            moonlens_lib::settings::SettingsStore::load_from(tmp_cfg)
+                .context("load settings for parity pipeline")?,
+        )
     };
+    let parity_storage = Arc::new(
+        moonlens_lib::storage::Storage::open_in_memory().context("open in-memory storage")?,
+    );
+    let parity_pipeline = Arc::new(moonlens_lib::pipeline::Pipeline::with_providers(
+        parity_settings.clone(),
+        parity_storage,
+        std::collections::HashMap::new(),
+    ));
+    parity_pipeline.set_app_data_dir(parity_app_data.clone());
+    parity_pipeline.rebuild_providers();
+    {
+        let snap = parity_settings.snapshot();
+        println!(
+            "parity pipeline: app_data={} ocr_chain={:?} translate_chain={:?} user_tier={:?}",
+            parity_app_data.display(),
+            snap.providers.ocr.chain,
+            snap.providers.translate.chain,
+            snap.providers.user_tier,
+        );
+    }
+    let lens_ocr: Arc<dyn moonlens_lib::lens_pipeline::LensOcr> = Arc::new(
+        moonlens_lib::lens_pipeline::PipelineLensOcr::new(parity_pipeline.clone()),
+    );
+    let lens_translator: Arc<dyn LensTranslator> = Arc::new(
+        moonlens_lib::lens_pipeline::ChainBackedLensTranslator::new(parity_pipeline.clone()),
+    );
+    let lens_config = {
+        let snap = parity_settings.snapshot();
+        PipelineConfig {
+            source_language: snap.translation.default_source_language.clone(),
+            target_language: snap.translation.default_target_language.clone(),
+            max_concurrent_translate: snap.performance.max_concurrent_tasks.max(1) as usize,
+            ocr_scale: 3,
+            glossary_min_lines: snap.providers.glossary_min_lines as usize,
+        }
+    };
+    // 2026-05-29 PARITY: the OCR + translator now come from the real
+    // `Pipeline` built above (`lens_ocr` / `lens_translator`), so the
+    // old eval-only translator selection (Ollama probe, force-tier,
+    // lens-tier) and the secondary-detector engines are gone. They
+    // were the source of the eval-vs-production divergence. Tier
+    // comparison, if needed again, should drive the production
+    // pipeline with a settings override — not a parallel code path.
 
     // Walk one level deep so synthetic images under
     // `tests/input/synth/` show up in the same eval run as the
@@ -380,6 +311,21 @@ fn main() -> Result<()> {
     }
     entries.sort();
 
+    // Optional fast-path filter: `MOONLENS_EVAL_ONLY=english0001` (a
+    // substring match on the file stem) runs the eval on a single
+    // fixture. Useful when iterating on the display layer against one
+    // known image instead of re-OCRing the whole corpus each run.
+    if let Ok(only) = std::env::var("MOONLENS_EVAL_ONLY") {
+        let only = only.trim().to_string();
+        if !only.is_empty() {
+            entries.retain(|p| {
+                p.file_stem()
+                    .and_then(|s| s.to_str())
+                    .is_some_and(|s| s.contains(&only))
+            });
+        }
+    }
+
     if entries.is_empty() {
         anyhow::bail!(
             "no supported input images at {} (avif is intentionally skipped \
@@ -388,9 +334,8 @@ fn main() -> Result<()> {
         );
     }
 
-    let mut summary = format!(
-        "# Lens pipeline evaluation\n\nDetector: **{}**\n\n",
-        detector_choice.label()
+    let mut summary = String::from(
+        "# Lens pipeline evaluation\n\nOCR: **paddle (PP-OCRv5 / oar-ocr)** — parity with production\n\n",
     );
     summary.push_str("## Quality (residual fragments after inpainting)\n\n");
     summary.push_str(
@@ -415,12 +360,10 @@ fn main() -> Result<()> {
             path,
             &output_dir,
             &fonts,
-            ocrs_engine.as_ref(),
-            paddle_engine.as_ref(),
             &translate_runtime,
-            &translator_cfg,
-            translator_ok,
-            routed_translator.as_ref(),
+            &lens_ocr,
+            &lens_translator,
+            &lens_config,
         ) {
             Ok(report) => {
                 let residual_display = if report.residual_texts.is_empty() {
@@ -664,12 +607,10 @@ fn evaluate_one(
     input: &Path,
     output_dir: &Path,
     fonts: &Fonts,
-    _ocrs_engine: Option<&ocrs::OcrEngine>,
-    _paddle_engine: Option<&pure_onnx_ocr::OcrEngine>,
     runtime: &tokio::runtime::Runtime,
-    translator_cfg: &serde_json::Value,
-    translator_ok: bool,
-    routed_translator: Option<&Arc<dyn Provider>>,
+    lens_ocr: &Arc<dyn moonlens_lib::lens_pipeline::LensOcr>,
+    lens_translator: &Arc<dyn LensTranslator>,
+    lens_config: &PipelineConfig,
 ) -> Result<EvalReport> {
     use std::time::Instant;
     let t_start = Instant::now();
@@ -679,61 +620,30 @@ fn evaluate_one(
     let img = image::load_from_memory(&bytes).context("decode image")?;
     let (w, h) = img.dimensions();
 
-    // Every step below the dotted line is literally the same
-    // `run_lens_pipeline` production drives. The only difference is
-    // the input source (here: a file-loaded PNG via PreCapturedInput)
-    // and the sink (here: RecordingSink so we can render the cards
-    // + translations into a side-by-side evaluator PNG afterwards).
-    // If eval and Lens ever disagree again, the divergence is in
-    // an adapter — not in the pipeline.
-    // Drive the shared pipeline via adapters. `PreCapturedInput`
-    // hands the file-loaded PNG into the same entry point the
-    // production loop uses; `RecordingSink` captures the flow so
-    // we can render it into the side-by-side PNG below.
-    let pipeline_config = PipelineConfig {
-        source_language: "auto".to_string(),
-        target_language: TARGET_LANGUAGE.to_string(),
-        max_concurrent_translate: 2,
-        ocr_scale: 3,
-        glossary_min_lines: 5,
-    };
+    // Every step below is literally the same `run_lens_pipeline`
+    // production drives, with the SAME OCR + translator adapters
+    // (`PipelineLensOcr` + `ChainBackedLensTranslator`) built from the
+    // SAME `Pipeline` in `main`. The ONLY differences from the live
+    // Lens are the input source (file-loaded PNG via PreCapturedInput
+    // vs screen capture) and the sink (RecordingSink vs TauriLensSink)
+    // — both legitimately I/O. There is no eval-only OCR / translator
+    // construction here anymore: that was the divergence the
+    // 2026-05-29 parity audit removed.
     let mut pipeline_input = PreCapturedInput::new(CapturedFrame {
         png: bytes.clone(),
         width: w,
         height: h,
     });
     let sink = RecordingSink::new();
-    let ocr_provider: Arc<dyn Provider> =
-        Arc::new(WindowsOcrProvider::new("windows", &serde_json::Value::Null));
-    let ocr: Arc<dyn moonlens_lib::lens_pipeline::LensOcr> =
-        Arc::new(ProviderLensOcr::new(ocr_provider));
-    let translator_for_pipeline: Arc<dyn moonlens_lib::lens_pipeline::LensTranslator> =
-        if let Some(inner) = routed_translator {
-            Arc::new(ProviderLensAdapter {
-                inner: inner.clone(),
-            })
-        } else if translator_ok {
-            // The legacy `OllamaLensTranslator` wrapper was removed
-            // when the trait was generalised; ProviderLensAdapter
-            // covers the same use case by wrapping any `Provider`
-            // (here: the bundled-config OllamaTranslator) onto
-            // `LensTranslator`.
-            let ollama: Arc<dyn Provider> =
-                Arc::new(OllamaTranslator::new("ollama.gemma4", translator_cfg));
-            Arc::new(ProviderLensAdapter { inner: ollama })
-        } else {
-            Arc::new(EchoTranslator)
-        };
-
     let pipeline_sink: Arc<dyn LensSink> = sink.clone();
     let t0 = Instant::now();
     runtime
         .block_on(run_lens_pipeline(
             &mut pipeline_input,
             pipeline_sink,
-            ocr,
-            translator_for_pipeline,
-            &pipeline_config,
+            lens_ocr.clone(),
+            lens_translator.clone(),
+            lens_config,
             0,
         ))
         .map_err(|e| anyhow::anyhow!("pipeline: {e}"))?;

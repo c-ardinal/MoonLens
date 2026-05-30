@@ -242,11 +242,15 @@ fn parse_args() -> Result<CliArgs> {
     while let Some(flag) = iter.next() {
         match flag.as_str() {
             "--samples" => {
-                let v = iter.next().ok_or_else(|| anyhow!("--samples needs value"))?;
+                let v = iter
+                    .next()
+                    .ok_or_else(|| anyhow!("--samples needs value"))?;
                 samples = v.parse().context("--samples must be a positive integer")?;
             }
             "--app-data" => {
-                let v = iter.next().ok_or_else(|| anyhow!("--app-data needs value"))?;
+                let v = iter
+                    .next()
+                    .ok_or_else(|| anyhow!("--app-data needs value"))?;
                 app_data = Some(PathBuf::from(v));
             }
             "--write-report" => {
@@ -352,7 +356,12 @@ async fn main() -> Result<()> {
     for cand in MODELS {
         let path = models_dir.join(cand.gguf);
         if !path.is_file() {
-            println!("SKIP  {}  ({}) — file missing: {}", cand.label, cand.gguf, path.display());
+            println!(
+                "SKIP  {}  ({}) — file missing: {}",
+                cand.label,
+                cand.gguf,
+                path.display()
+            );
             continue;
         }
         println!("---- {} ({}) ----", cand.label, cand.gguf);
@@ -387,7 +396,11 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-async fn bench_one_model(cand: &Candidate, model_path: &PathBuf, n_samples: u32) -> Result<ModelResult> {
+async fn bench_one_model(
+    cand: &Candidate,
+    model_path: &PathBuf,
+    n_samples: u32,
+) -> Result<ModelResult> {
     // Build a bare EmbeddedLlmTranslator pointing at this GGUF.
     // Sampling temperature/top_p are passed through the config —
     // the existing code path reads them in `EmbeddedLlmTranslator::new`.
@@ -719,7 +732,9 @@ fn snake_case(tok: &str) -> bool {
     parts
         .iter()
         .all(|p| !p.is_empty() && p.chars().next().is_some_and(|c| c.is_ascii_alphanumeric()))
-        && parts.iter().all(|p| p.chars().all(|c| c.is_ascii_alphanumeric()))
+        && parts
+            .iter()
+            .all(|p| p.chars().all(|c| c.is_ascii_alphanumeric()))
 }
 
 fn version_like(tok: &str) -> bool {
@@ -742,14 +757,25 @@ fn print_summary(results: &[ModelResult]) {
     }
     println!("== Summary (sorted by mean id_score) ==");
     let mut sorted = results.to_vec();
-    sorted.sort_by(|a, b| b.mean_id.partial_cmp(&a.mean_id).unwrap_or(std::cmp::Ordering::Equal));
-    println!("{:<60} {:>8} {:>8} {:>12} {:>12}", "model", "ws", "id", "translated", "decode tps");
+    sorted.sort_by(|a, b| {
+        b.mean_id
+            .partial_cmp(&a.mean_id)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    println!(
+        "{:<60} {:>8} {:>8} {:>12} {:>12}",
+        "model", "ws", "id", "translated", "decode tps"
+    );
     println!("{}", "-".repeat(105));
     for r in &sorted {
         let label: String = r.label.chars().take(60).collect();
         println!(
             "{:<60} {:>8.2} {:>8.2} {:>11.0}% {:>12.1}",
-            label, r.mean_ws, r.mean_id, r.translated_ratio * 100.0, r.mean_decode_tps
+            label,
+            r.mean_ws,
+            r.mean_id,
+            r.translated_ratio * 100.0,
+            r.mean_decode_tps
         );
     }
 }
@@ -762,11 +788,19 @@ fn render_markdown(results: &[ModelResult], args: &CliArgs) -> String {
     out.push_str("## Ranking (sorted by id_score)\n\n");
     out.push_str("| Model | ws | id | translated | decode tok/s |\n|---|---:|---:|---:|---:|\n");
     let mut sorted = results.to_vec();
-    sorted.sort_by(|a, b| b.mean_id.partial_cmp(&a.mean_id).unwrap_or(std::cmp::Ordering::Equal));
+    sorted.sort_by(|a, b| {
+        b.mean_id
+            .partial_cmp(&a.mean_id)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     for r in &sorted {
         out.push_str(&format!(
             "| {} | {:.2} | {:.2} | {:.0}% | {:.1} |\n",
-            r.label, r.mean_ws, r.mean_id, r.translated_ratio * 100.0, r.mean_decode_tps
+            r.label,
+            r.mean_ws,
+            r.mean_id,
+            r.translated_ratio * 100.0,
+            r.mean_decode_tps
         ));
     }
     out.push('\n');

@@ -1,0 +1,281 @@
+<!doctype html>
+<!--
+  Lens card visual harness — 2026-05-28.
+
+  Mirrors the EXACT card CSS + cardStyle/applySourceLineFit logic from
+  src/routes/lens-frame/+page.svelte so the DPR/upscale-proof `cqh`
+  font sizing, the overflow fit, and alignment/weight wiring can be
+  verified in a real Chromium (jsdom can't resolve container-query
+  units or layout). Open with browser-use and screenshot.
+
+  IMPORTANT: keep the .lens-card / .line-text CSS and the cardStyle /
+  applySourceLineFit functions byte-for-byte in sync with the
+  component. If they drift this harness stops being a faithful test.
+-->
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      body {
+        margin: 0;
+        background: #0d0e10;
+        font-family: system-ui, sans-serif;
+        color: #ddd;
+      }
+      .panel {
+        margin: 16px;
+      }
+      .panel h2 {
+        font-size: 13px;
+        font-weight: 600;
+        margin: 0 0 6px;
+        color: #9fb4c8;
+      }
+      /* The lens body — cards are positioned as % of this box, just
+         like the real lens window body. Sized to the mock image
+         space (800x300) at 1:1 so 1 image px == 1 css px, making the
+         expected font size easy to eyeball against the labels. */
+      .lens-body {
+        position: relative;
+        width: 800px;
+        height: 300px;
+        background: #1b1d21;
+        outline: 1px solid #333;
+      }
+      /* Source bbox guides (dashed) + expected-size labels so the
+         screenshot is self-documenting. */
+      .src-guide {
+        position: absolute;
+        border: 1px dashed rgba(255, 120, 120, 0.6);
+        pointer-events: none;
+        box-sizing: border-box;
+      }
+      .src-label {
+        position: absolute;
+        font-size: 9px;
+        color: rgba(255, 150, 150, 0.9);
+        background: rgba(0, 0, 0, 0.5);
+        padding: 0 2px;
+        pointer-events: none;
+        white-space: nowrap;
+      }
+
+      /* ===== EXACT copy of .lens-card from +page.svelte ===== */
+      .lens-card {
+        container-type: size;
+        border: 0;
+        padding: 0;
+        cursor: copy;
+        color: inherit;
+        text-align: inherit;
+        font: inherit;
+        display: grid;
+        place-content: center stretch;
+        position: absolute;
+        overflow: hidden;
+      }
+      /* ===== EXACT copy of .line-text from +page.svelte ===== */
+      .line-text {
+        margin: 0;
+        padding: 0 1px;
+        box-sizing: border-box;
+        overflow: hidden;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+        word-break: break-word;
+        font-family:
+          'Geist', 'Noto Sans JP', 'Noto Sans KR', 'Yu Gothic UI',
+          'Hiragino Sans', 'Malgun Gothic', system-ui, -apple-system, sans-serif;
+        font-synthesis: none;
+        font-feature-settings: 'palt', 'kern';
+        font-size: var(--line-font-size, calc(var(--font-px, 14) * 1px));
+        font-weight: var(--fw, 400);
+        line-height: var(--lh, 1.25);
+        text-align: var(--ta, left);
+        -webkit-font-smoothing: antialiased;
+        text-rendering: geometricPrecision;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="panel">
+      <h2>
+        Lens card rendering — cqh font sizing (red dashed = source bbox,
+        red label = expected px). Translation glyph height should match the
+        source bbox height × cap-ratio.
+      </h2>
+      <div class="lens-body" id="body"></div>
+    </div>
+
+    <script>
+      const imageW = 800;
+      const imageH = 300;
+
+      // ===== cqh font formula mirrored from cardStyle (+page.svelte) =====
+      // fontCqh = (font_size_px / bbox_h) * 100, clamped [2,100].
+      function cardStyle(line) {
+        const [x, y, w, h] = line.bbox;
+        const weight = line.font_weight || 400;
+        let fontCqh = null;
+        let fontPx;
+        if (typeof line.font_size_px === 'number' && line.font_size_px > 0 && h > 0) {
+          fontCqh = Math.max(2, Math.min(100, (line.font_size_px / h) * 100));
+          fontPx = Math.max(7, Math.min(80, line.font_size_px));
+        } else {
+          fontPx = 14;
+        }
+        const lineHeight =
+          typeof line.line_height === 'number' && line.line_height > 0
+            ? line.line_height
+            : 1.25;
+        const textAlign =
+          line.text_align === 'center' || line.text_align === 'right'
+            ? line.text_align
+            : 'left';
+        const [br, bgc, bb] = line.bg_color;
+        const [fr, fg, fb] = line.fg_color;
+        return (
+          `left:${(x / imageW) * 100}%;` +
+          `top:${(y / imageH) * 100}%;` +
+          `width:${(w / imageW) * 100}%;` +
+          `height:${(h / imageH) * 100}%;` +
+          `--font-px:${fontPx.toFixed(1)};` +
+          `--line-font-size:${fontCqh != null ? `${fontCqh.toFixed(2)}cqh` : `${fontPx.toFixed(1)}px`};` +
+          `--fw:${weight};` +
+          `--lh:${lineHeight.toFixed(2)};` +
+          `--ta:${textAlign};` +
+          `background-color:rgb(${br},${bgc},${bb});` +
+          `color:rgb(${fr},${fg},${fb});`
+        );
+      }
+
+      // ===== applySourceLineFit mirrored from +page.svelte =====
+      function applySourceLineFit() {
+        const els = document.querySelectorAll('.line-text');
+        for (const el of Array.from(els)) {
+          const card = el.closest('.lens-card');
+          if (!card) continue;
+          el.style.transform = '';
+          el.style.width = '';
+          el.style.textOverflow = '';
+          el.style.fontSize = '';
+          const cardH = Math.max(1, card.clientHeight);
+          const cardW = Math.max(1, card.clientWidth);
+          let overflowH = el.scrollHeight / cardH;
+          let overflowW = el.scrollWidth / cardW;
+          let overflowRatio = Math.max(overflowH, overflowW);
+          if (overflowRatio <= 1.05) continue;
+          const baseFontPx = parseFloat(getComputedStyle(el).fontSize) || 14;
+          const sizeRatio = Math.max(0.6, 1 / overflowRatio);
+          const shrunkPx = Math.max(7, baseFontPx * sizeRatio);
+          el.style.fontSize = `${shrunkPx.toFixed(2)}px`;
+          overflowH = el.scrollHeight / cardH;
+          overflowW = el.scrollWidth / cardW;
+          if (Math.max(overflowH, overflowW) <= 1.05) continue;
+          if (overflowW > 1.05) {
+            const ratio = Math.max(0.55, 1 / overflowW);
+            el.style.transformOrigin = 'top left';
+            el.style.transform = `scaleX(${ratio.toFixed(3)})`;
+            el.style.width = `${(100 / ratio).toFixed(2)}%`;
+          }
+          if (overflowW > 1.05 || overflowH > 1.05) {
+            el.style.textOverflow = 'ellipsis';
+          }
+        }
+      }
+
+      // Mock cards exercising: Latin source (0.72 ratio), CJK source
+      // (0.88), bold+centered heading, right-aligned, and an
+      // overflowing translation that must shrink/scaleX.
+      const cards = [
+        {
+          bbox: [20, 20, 220, 30],
+          font_size_px: 30 * 0.72, // ~21.6
+          font_weight: 400,
+          text_align: 'left',
+          line_height: 1.25,
+          bg_color: [40, 44, 52],
+          fg_color: [235, 238, 240],
+          translation: '作業を保存しました',
+          src: 'Save your work. (exp ~21px)',
+        },
+        {
+          bbox: [20, 70, 420, 42],
+          font_size_px: 42 * 0.72, // ~30
+          font_weight: 700,
+          text_align: 'center',
+          line_height: 1.2,
+          bg_color: [40, 44, 52],
+          fg_color: [255, 235, 180],
+          translation: '重要なお知らせ',
+          src: 'IMPORTANT NOTICE — bold/center (exp ~30px)',
+        },
+        {
+          bbox: [420, 130, 360, 26],
+          font_size_px: 26 * 0.72, // ~18.7
+          font_weight: 400,
+          text_align: 'right',
+          line_height: 1.25,
+          bg_color: [40, 44, 52],
+          fg_color: [200, 230, 255],
+          translation: '更新が完了しました',
+          src: 'right-aligned (exp ~19px)',
+        },
+        {
+          bbox: [20, 175, 120, 26],
+          font_size_px: 26 * 0.72,
+          font_weight: 400,
+          text_align: 'left',
+          line_height: 1.25,
+          bg_color: [52, 40, 40],
+          fg_color: [255, 220, 220],
+          translation: 'これは非常に長い翻訳文なのでカード幅を超えて縮小されるはず',
+          src: 'overflow → shrink/scaleX',
+        },
+        {
+          bbox: [20, 230, 240, 34],
+          font_size_px: 34 * 0.88, // ~30 (CJK ratio)
+          font_weight: 400,
+          text_align: 'left',
+          line_height: 1.25,
+          bg_color: [40, 48, 44],
+          fg_color: [220, 255, 230],
+          translation: '日本語の原文に対する訳',
+          src: 'CJK source 0.88 (exp ~30px)',
+        },
+      ];
+
+      const body = document.getElementById('body');
+      for (const c of cards) {
+        const [x, y, w, h] = c.bbox;
+        // source guide + label
+        const g = document.createElement('div');
+        g.className = 'src-guide';
+        g.style.left = `${(x / imageW) * 100}%`;
+        g.style.top = `${(y / imageH) * 100}%`;
+        g.style.width = `${(w / imageW) * 100}%`;
+        g.style.height = `${(h / imageH) * 100}%`;
+        body.appendChild(g);
+        const lbl = document.createElement('div');
+        lbl.className = 'src-label';
+        lbl.style.left = `${(x / imageW) * 100}%`;
+        lbl.style.top = `calc(${(y / imageH) * 100}% - 11px)`;
+        lbl.textContent = c.src;
+        body.appendChild(lbl);
+        // card
+        const card = document.createElement('div');
+        card.className = 'lens-card';
+        card.setAttribute('style', cardStyle(c));
+        const p = document.createElement('p');
+        p.className = 'line-text';
+        p.textContent = c.translation;
+        card.appendChild(p);
+        body.appendChild(card);
+      }
+
+      // Run the fit after layout settles.
+      requestAnimationFrame(() => requestAnimationFrame(applySourceLineFit));
+      window.__harnessReady = true;
+    </script>
+  </body>
+</html>

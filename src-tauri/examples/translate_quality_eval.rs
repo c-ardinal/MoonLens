@@ -384,7 +384,9 @@ fn parse_user_tier(s: &str) -> Result<UserTier> {
         "compact" => Ok(UserTier::Compact),
         "standard" => Ok(UserTier::Standard),
         "quality" => Ok(UserTier::Quality),
-        other => Err(anyhow!("unknown user-tier `{other}` (compact|standard|quality)")),
+        other => Err(anyhow!(
+            "unknown user-tier `{other}` (compact|standard|quality)"
+        )),
     }
 }
 
@@ -528,7 +530,15 @@ async fn main() -> Result<()> {
     let mut all_results: Vec<UserTierResult> = Vec::new();
     for &user_tier in user_tiers {
         println!("---- UserTier::{:?} ----", user_tier);
-        match eval_user_tier(user_tier, args.hardware, &args.app_data, &fixtures, args.samples).await {
+        match eval_user_tier(
+            user_tier,
+            args.hardware,
+            &args.app_data,
+            &fixtures,
+            args.samples,
+        )
+        .await
+        {
             Ok(result) => {
                 println!(
                     "      mean: ws={:.2}  id={:.2}  len_ratio={:.2}  translated={:.0}%  decode={:.1} tok/s  ({} supported, {} unsupported)",
@@ -971,10 +981,7 @@ fn is_protected_token(tok: &str) -> bool {
     if iso_timestamp_like(tok) {
         return true;
     }
-    if tok.starts_with("0x")
-        && tok.len() > 2
-        && tok[2..].chars().all(|c| c.is_ascii_hexdigit())
-    {
+    if tok.starts_with("0x") && tok.len() > 2 && tok[2..].chars().all(|c| c.is_ascii_hexdigit()) {
         return true;
     }
     if has_snake_case_shape(tok) {
@@ -1269,12 +1276,7 @@ fn render_markdown(
         for v in violations {
             out.push_str(&format!(
                 "| {} | {} | {:?}={:.2} | {:?}={:.2} |\n",
-                v.fixture_id,
-                v.metric,
-                v.upper,
-                v.upper_value,
-                v.lower,
-                v.lower_value,
+                v.fixture_id, v.metric, v.upper, v.upper_value, v.lower, v.lower_value,
             ));
         }
         out.push('\n');
@@ -1309,7 +1311,10 @@ fn render_markdown(
 
     out.push_str("## Per-UserTier × fixture detail\n\n");
     for r in &sorted {
-        out.push_str(&format!("### UserTier::{}\n\n", user_tier_label(r.user_tier)));
+        out.push_str(&format!(
+            "### UserTier::{}\n\n",
+            user_tier_label(r.user_tier)
+        ));
         out.push_str(
             "| Fixture | Category | Routing | ws | id (kept/total) | len_ratio | translated | output preview |\n",
         );
@@ -1458,9 +1463,18 @@ mod tests {
 
     #[test]
     fn parse_user_tier_known_values() {
-        assert!(matches!(parse_user_tier("compact").unwrap(), UserTier::Compact));
-        assert!(matches!(parse_user_tier("STANDARD").unwrap(), UserTier::Standard));
-        assert!(matches!(parse_user_tier("Quality").unwrap(), UserTier::Quality));
+        assert!(matches!(
+            parse_user_tier("compact").unwrap(),
+            UserTier::Compact
+        ));
+        assert!(matches!(
+            parse_user_tier("STANDARD").unwrap(),
+            UserTier::Standard
+        ));
+        assert!(matches!(
+            parse_user_tier("Quality").unwrap(),
+            UserTier::Quality
+        ));
         assert!(parse_user_tier("invalid").is_err());
     }
 }
