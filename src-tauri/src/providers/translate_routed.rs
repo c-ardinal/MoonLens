@@ -42,7 +42,6 @@ use std::sync::Arc;
 
 use super::mbr::{mbr_n_for_tier, select_best_with_source};
 use super::placeholder::{mask, unmask, PlaceholderMap, StreamUnmask};
-use parking_lot::Mutex;
 use super::translate_embedded_llm::{EmbeddedLlmTranslator, EmbeddedLoadNotifier};
 use super::translate_pivot::PivotTranslator;
 use super::{
@@ -50,6 +49,7 @@ use super::{
 };
 use crate::model_registry::{tier_by_id, ModelTier};
 use crate::translation_router::{route, Hardware, RoutingDecision, UserTier};
+use parking_lot::Mutex;
 
 /// Wrapper provider that picks the right inner translator per
 /// translate request. See module docs for the full contract.
@@ -237,22 +237,30 @@ impl RoutedTranslator {
 /// overrides — those don't apply to routing-managed models.
 /// Build the JSON config block an `EmbeddedLlmTranslator` reads for
 /// `tier`. The `user_tier` argument picks per-tier sampling defaults
-/// — upper tiers run with lower temperature so the strict ordering
-/// invariant (Quality ≥ Standard ≥ Compact, eval-enforced) survives
-/// the per-sample variance that 0.4 / 0.95 sampling exhibits.
+/// — every tier runs at a LOW temperature so the sampler stays close
+/// to the model's mode (faithful translation) instead of exploring
+/// trajectories that copy the English source verbatim.
 ///
-/// Rationale for the curve: the user-visible eval ran into cases
-/// where Quality scored worse than Standard on a specific fixture
-/// purely because temperature=0.4 produced one bad sample. Dropping
-/// the temperature for upper tiers tightens the distribution toward
-/// the model's mode — faithfulness over creativity — which is the
-/// right tradeoff when "upper tier MUST NOT lose to lower tier" is
-/// a hard contract.
+/// Rationale for the curve: the Standard / Quality eval ran into
+/// cases where Quality scored worse than Standard on a specific
+/// fixture purely because temperature=0.4 produced one bad sample.
+/// Dropping the temperature for those tiers tightened the
+/// distribution toward the model's mode — faithfulness over
+/// creativity — which is the right tradeoff when "upper tier MUST
+/// NOT lose to lower tier" is a hard contract.
 ///
-/// Compact stays at 0.4 because llm-jp 980M needs the exploratory
-/// slack to find idiomatic phrasing; greedy sampling on the smallest
-/// tier produces wooden output the Phase 27 Lens eval already
-/// captured.
+/// 2026-05-29: Compact dropped 0.4 → 0.1 after the `echo_probe`
+/// harness measured the long-line English-echo rate against the
+/// `english0001` cards (the exact text production OCRs). The old
+/// 0.4 "exploratory slack" assumption was REFUTED: at 0.4 the
+/// clock-seeded sampler echoed the English source on ~20 % of long
+/// lines (8/40 samples); at 0.1 that fell to 3/40 with no loss of
+/// fluency (greedy 0.0 was worse still — no repeat-penalty, so the
+/// 980M looped to the 180 s timeout or emitted nothing). Lower
+/// temperature is a zero-latency, no-model-change echo fix. The
+/// non-strict "small-model" prompt was A/B-tested here too and made
+/// echo WORSE (52.5 % vs 32.5 % visible-fail at 0.1), so Compact
+/// keeps the strict prompt.
 /// Test-only re-export of [`config_for_tier`] for the
 /// `routed_inner_translators_load_their_tier_specific_gguf` seam
 /// test in `translate_embedded_llm`. Keeps the production
@@ -290,31 +298,47 @@ fn config_for_tier(tier: &ModelTier, user_tier: UserTier) -> serde_json::Value {
         serde_json::Value::String(tier.license.into()),
     );
 
-    // Per-UserTier sampling. Upper tiers tighten toward the model's
-    // mode for strict-ordering safety; lower tiers keep enough
-    // entropy to find idiomatic phrasings the model's mode wouldn't
-    // surface. The 0.95 top_p stays constant — clipping the nucleus
-    // is orthogonal to temperature and the existing baseline already
-    // works there.
-    // 2026-05-22: tightened further after a --samples 3 eval surfaced
-    // four persistent violations driven by llm-jp 3.1 1.8B's
-    // creativity on technical content (log timestamps, TOML keys,
-    // markdown code blocks). Compact uses llm-jp 3 980M which has
-    // less "translation-y" behaviour and faithfully echoes
-    // identifiers; Standard/Quality both go through the bigger 1.8B
-    // bridge and inherit its tendency to paraphrase. Dropping their
-    // temperature pulls the output back toward the model's mode,
-    // which on llm-jp 1.8B is closer to verbatim preservation.
-    let temperature = match user_tier {
-        UserTier::Compact => 0.4,
+    // Per-UserTier sampling. Every tier stays at a low temperature so
+    // the sampler hugs the model's mode (faithful translation) rather
+    // than exploring trajectories that copy the source verbatim. The
+    // 0.95 top_p stays constant — clipping the nucleus is orthogonal
+    // to temperature and the baseline already works there.
+    //
+    // - Standard/Quality (llm-jp 1.8B bridge): 0.2 / 0.1, set 2026-05-22
+    //   after a --samples 3 eval surfaced strict-ordering violations
+    //   driven by the 1.8B's creativity on technical content.
+    // - Compact (llm-jp 3 980M): 0.1, set 2026-05-29 after `echo_probe`
+    //   measured the long-line English-echo rate (8/40 at 0.4 → 3/40 at
+    //   0.1, no fluency loss). See the function doc comment for the
+    //   full data; 0.4's "exploratory slack" assumption was refuted.
+    let mut temperature = match user_tier {
+        UserTier::Compact => 0.1,
         UserTier::Standard => 0.2,
         UserTier::Quality => 0.1,
     };
+    // Tuning knob (read in the production routing path, so the offline
+    // `echo_probe` / `lens_eval` and the live Lens resolve the SAME
+    // temperature — no eval-only divergence). Unset = the tuned default
+    // above. This is the lever the echo_probe sweeps; keep it so future
+    // re-tuning stays a measurement, not a guess.
+    if user_tier == UserTier::Compact {
+        if let Ok(raw) = std::env::var("MOONLENS_LENS_COMPACT_TEMP") {
+            if let Ok(parsed) = raw.trim().parse::<f32>() {
+                if parsed >= 0.0 {
+                    temperature = parsed;
+                }
+            }
+        }
+    }
     obj.insert(
         "temperature".into(),
         serde_json::Value::from(temperature as f64),
     );
     obj.insert("top_p".into(), serde_json::Value::from(0.95));
+    // Compact keeps the STRICT system prompt (the `EmbeddedLlmTranslator`
+    // fallback). The non-strict "small-model" variant was A/B-tested via
+    // `echo_probe` and made the English echo WORSE (52.5 % vs 32.5 %
+    // visible-fail at temp 0.1), so it is intentionally NOT wired here.
 
     serde_json::Value::Object(obj)
 }
@@ -324,9 +348,7 @@ fn config_for_tier(tier: &ModelTier, user_tier: UserTier) -> serde_json::Value {
 /// substituted in alongside the [`PlaceholderMap`] that records
 /// the originals. Otherwise returns `(None, empty map)` so the
 /// caller can skip the mask/unmask roundtrip on the fast path.
-fn maybe_mask_translate(
-    input: &TaskInput,
-) -> (Option<TaskInput>, PlaceholderMap) {
+fn maybe_mask_translate(input: &TaskInput) -> (Option<TaskInput>, PlaceholderMap) {
     if let TaskInput::Translate {
         text,
         source_language,
@@ -633,27 +655,58 @@ mod tests {
 
     #[test]
     fn config_for_tier_lists_extras_for_split_files() {
-        // Multi-part: Qwen 2.5 7B Q4_K_M ships split. The router
-        // never picks it (matrix uses Edge family for Quality
-        // multi), but exercising the code path here keeps the
-        // config builder honest.
-        let split = tier_by_id("qwen2.5-7b-instruct-q4_k_m").unwrap();
-        if split.filenames.len() < 2 {
-            return;
-        }
-        let cfg = config_for_tier(split, UserTier::Quality);
+        // The config builder must surface `filenames_remote_extra`
+        // for any multi-part tier so the downloader fetches every
+        // LFS object. 2026-05-30: the registry no longer ships a
+        // split GGUF (Qwen 2.5 7B was the only one and was removed),
+        // so we drive the code path with a synthetic two-part tier
+        // rather than pinning a deleted id — the builder is
+        // registry-agnostic, it only reads `ModelTier::filenames`.
+        let split = ModelTier {
+            id: "synthetic-split-q4_k_m",
+            display_name: "Synthetic Split",
+            description: "test-only multi-part tier",
+            repo: "test/synthetic-split-GGUF",
+            filenames: &[
+                "synthetic-split-q4_k_m-00001-of-00002.gguf",
+                "synthetic-split-q4_k_m-00002-of-00002.gguf",
+            ],
+            size_mb: 4096,
+            min_ram_gb: 16,
+            license: "Apache-2.0",
+            license_url: "https://example.test/LICENSE",
+            class: crate::model_registry::ModelTierClass::Quality,
+            chat_template: crate::model_registry::ChatTemplate::ChatMl,
+            drafter: None,
+        };
+        let cfg = config_for_tier(&split, UserTier::Quality);
+        assert_eq!(
+            cfg.get("filename_remote").and_then(|v| v.as_str()),
+            Some(split.primary_filename())
+        );
         let extras = cfg
             .get("filenames_remote_extra")
             .and_then(|v| v.as_array())
             .expect("extras present for multi-part");
         assert_eq!(extras.len(), split.filenames.len() - 1);
+        assert_eq!(
+            extras[0].as_str(),
+            Some("synthetic-split-q4_k_m-00002-of-00002.gguf")
+        );
     }
 
     #[test]
-    fn config_for_tier_uses_lower_temperature_for_upper_tiers() {
-        // Strict-ordering safety net: lower temperature → tighter
-        // distribution → less per-sample variance → less chance of
-        // Quality randomly losing to Standard on a given fixture.
+    fn config_for_tier_keeps_every_tier_low_temperature() {
+        // All tiers sample at a low temperature so the sampler hugs
+        // the model's mode (faithful translation) instead of copying
+        // the source verbatim. Two facts this test pins:
+        //   1. Quality ≤ Standard — the upper-tier tightening that
+        //      protects the strict-ordering invariant (Quality MUST
+        //      NOT lose to Standard) survives.
+        //   2. Compact ≤ Standard — the 2026-05-29 echo fix: Compact
+        //      (llm-jp 980M) dropped 0.4 → 0.1 after `echo_probe`
+        //      measured 0.4's clock-seeded sampler echoing English on
+        //      ~20 % of long lines. It is NO LONGER the highest tier.
         let tier = tier_by_id(STANDARD_JA_BRIDGE_TIER_ID).unwrap();
         let compact_temp = config_for_tier(tier, UserTier::Compact)
             .get("temperature")
@@ -668,13 +721,23 @@ mod tests {
             .and_then(|v| v.as_f64())
             .unwrap();
         assert!(
-            quality_temp < standard_temp,
-            "Quality temp {quality_temp} should be < Standard {standard_temp}"
+            quality_temp <= standard_temp,
+            "Quality temp {quality_temp} should be <= Standard {standard_temp}"
         );
         assert!(
-            standard_temp < compact_temp,
-            "Standard temp {standard_temp} should be < Compact {compact_temp}"
+            compact_temp <= standard_temp,
+            "Compact temp {compact_temp} should be <= Standard {standard_temp} (echo fix)"
         );
+        for (name, t) in [
+            ("compact", compact_temp),
+            ("standard", standard_temp),
+            ("quality", quality_temp),
+        ] {
+            assert!(
+                t > 0.0 && t <= 0.25,
+                "{name} temp {t} should be in (0.0, 0.25] — low but not greedy"
+            );
+        }
     }
 
     #[test]
@@ -701,10 +764,7 @@ mod tests {
         // Aux id is `embedded.llm.routed:<tier>` per
         // `RoutedTranslator::new`. For Standard that's the JA
         // bridge.
-        assert_eq!(
-            h.id(),
-            "embedded.llm.routed:hy-mt2-1.8b-q4_k_m"
-        );
+        assert_eq!(h.id(), "embedded.llm.routed:hy-mt2-1.8b-q4_k_m");
     }
 
     #[test]

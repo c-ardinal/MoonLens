@@ -75,36 +75,40 @@ pub enum EmbeddedLoadEvent {
 pub type EmbeddedLoadNotifier = Arc<dyn Fn(EmbeddedLoadEvent) + Send + Sync>;
 
 /// Default GGUF primary filename. The "primary" caveat is for
-/// multi-part tiers (e.g. Qwen 2.5 7B Q4_K_M ships as two LFS
-/// objects) — those have additional parts the registry tracks via
-/// `ModelTier::filenames`, but `DEFAULT_MODEL_FILE` only cares
-/// about the first one because it is the surface used by status
-/// labels, package manifests' legacy `model_filename` field, and
-/// path resolution where a single file name is needed.
+/// multi-part tiers (HuggingFace splits very large GGUFs across two
+/// or more LFS objects) — those have additional parts the registry
+/// tracks via `ModelTier::filenames`, but `DEFAULT_MODEL_FILE` only
+/// cares about the first one because it is the surface used by
+/// status labels, package manifests' legacy `model_filename` field,
+/// and path resolution where a single file name is needed.
 ///
-/// 2026-05-09: switched from `gemma-3-1b-it-q4_k_m.gguf` to the
-/// Qwen 2.5 1.5B-Instruct Q4_K_M variant. The driver was a license
-/// review for commercial deployments — Gemma's "Gemma Terms of Use"
-/// permits commercial redistribution but obliges every redistributor
-/// to ship the license terms and the Prohibited Use Policy.
-/// Qwen 2.5 1.5B is **Apache 2.0**, which removes the redistribution
-/// paperwork entirely. Architecture remains decoder-only Transformer
-/// (compatible with `mistral.rs::GgufModelBuilder`); MADLAD-400, the
-/// other Apache-2.0 candidate we evaluated, is T5 encoder-decoder
-/// and would require a parallel runtime.
-pub const DEFAULT_MODEL_FILE: &str = "qwen2.5-1.5b-instruct-q4_k_m.gguf";
+/// 2026-05-09: switched from `gemma-3-1b-it-q4_k_m.gguf` to a Qwen
+/// 2.5 GGUF for the Apache-2.0 redistribution win over Gemma's TOS
+/// paperwork.
+///
+/// 2026-05-30: switched off Qwen entirely. Qwen was removed from the
+/// registry (Chinese-script leakage + unnatural-translation bench
+/// rejections — see `model_registry::TIERS` history), so the legacy
+/// single-model default now points at the JA-specialised
+/// **llm-jp 3 980M Instruct3** (still Apache 2.0, decoder-only
+/// Transformer, mmnga's canonical Q4_K_M mirror). This is the bare
+/// fallback the embedded provider loads when no routing tier is
+/// resolved; the routed pipeline otherwise runs the user's actual
+/// tier (Standard by default → the Hy-MT2 / Gemma bridge models).
+pub const DEFAULT_MODEL_FILE: &str = "llm-jp-3-980m-instruct3-Q4_K_M.gguf";
 
 /// HuggingFace repo + file the download IPC fetches. The
-/// `Qwen/Qwen2.5-1.5B-Instruct-GGUF` repo carries the canonical
-/// quants from the model authors (Apache 2.0). Settings can
-/// override both fields per-install — power users who want a
-/// different variant (Q3_K_M, Q4_0, IQ3_XS, ...) just point
-/// `filename_remote` at the matching file in the same repo.
-pub const DEFAULT_MODEL_REPO: &str = "Qwen/Qwen2.5-1.5B-Instruct-GGUF";
-pub const DEFAULT_MODEL_FILENAME_REMOTE: &str = "qwen2.5-1.5b-instruct-q4_k_m.gguf";
+/// `mmnga/llm-jp-3-980m-instruct3-gguf` repo carries the canonical
+/// Q4_K_M mirror (upstream llm-jp ships only safetensors at this
+/// size; the model itself is Apache 2.0). Settings can override both
+/// fields per-install — power users who want a different variant
+/// (Q3_K_M, Q4_0, IQ3_XS, ...) just point `filename_remote` at the
+/// matching file in the same repo.
+pub const DEFAULT_MODEL_REPO: &str = "mmnga/llm-jp-3-980m-instruct3-gguf";
+pub const DEFAULT_MODEL_FILENAME_REMOTE: &str = "llm-jp-3-980m-instruct3-Q4_K_M.gguf";
 
 /// Default extra parts, beyond `DEFAULT_MODEL_FILENAME_REMOTE`.
-/// Empty for the bundled Qwen 2.5 1.5B (single-file). Configs that
+/// Empty for the bundled llm-jp 3 980M (single-file). Configs that
 /// pin a multi-part tier override this via the
 /// `filenames_remote_extra` array in user.toml.
 pub const DEFAULT_MODEL_FILENAMES_EXTRA: &[&str] = &[];
@@ -115,7 +119,7 @@ pub const DEFAULT_MODEL_FILENAMES_EXTRA: &[&str] = &[];
 /// licenses up front.
 pub const DEFAULT_MODEL_LICENSE: &str = "Apache-2.0";
 pub const DEFAULT_MODEL_LICENSE_URL: &str =
-    "https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/blob/main/LICENSE";
+    "https://huggingface.co/llm-jp/llm-jp-3-980m-instruct3/blob/main/LICENSE";
 
 /// Resolve the on-disk path for the embedded model. Mirrors the
 /// directory scheme used by `crate::settings::store::config_path`
@@ -284,81 +288,14 @@ impl EmbeddedLlmTranslator {
         let system_prompt = config
             .get("system_prompt")
             .and_then(|v| v.as_str())
-            .unwrap_or(
-                // Aligned with the proven `ollama.gemma4` system
-                // prompt. The previous embedded prompt was an
-                // expanded Phase 25 variant that added paranoid
-                // language-locking directives ("100% target
-                // language only / no Chinese 简体...") to mitigate
-                // the Qwen 3.5 0.8B/2B Chinese-leakage failure
-                // mode. Phase 27 Lens eval surfaced that those
-                // additions caused the smaller llm-jp model to
-                // become overly cautious — producing wooden
-                // translations and odd word choices instead of
-                // idiomatic phrasing. Going back to the Ollama-
-                // tested shape restores natural register; the
-                // Chinese-leakage failure mode is now mitigated by
-                // few-shots (see `build_translation_few_shots`)
-                // and the runtime stop-suffix scrubbing rather
-                // than by a paranoid system message.
-                // 2026-05-18: Added explicit whitespace + identifier
-                // preservation directives after a user report where
-                // Qwen 2.5 1.5B translating a Rust tracing log produced
-                // (a) all inline whitespace collapsed (`embedded LLM
-                // warmup: 38 ms` → `ンコーーの初期化:38ミリ秒`) and
-                // (b) module identifiers transliterated to katakana
-                // (`embedded_llm_perf` → `ンコーー`).
-                //
-                // 2026-05-19: Strengthened whitespace clause with a
-                // concrete before/after example, and added a script-
-                // consistency clause to keep Korean / Japanese / etc.
-                // outputs in their native script (gemma-4-e2b/e4b
-                // routinely mixed Hangul with Hanja / Katakana /
-                // English fragments on multilingual targets — eval
-                // captured `달성은개인隐私을priority로` style mixing).
-                // Concrete example tokens help the model generalise
-                // via in-context pattern matching where abstract
-                // rules alone get ignored.
-                "You are a professional translator. Render the user's text \
-                 naturally and idiomatically in the target language — match \
-                 the meaning, tone, and register a native reader would expect, \
-                 not the word order of the source. \
-                 \
-                 Preserve the line structure exactly: if the source has N \
-                 newlines, the output MUST also have N newlines. Translate \
-                 each line independently — one source line maps to exactly \
-                 one output line, in the same order, with the same blank \
-                 lines between them. Never merge two source lines into one \
-                 output line, and never split one source line into two output \
-                 lines. \
-                 \
-                 Preserve ALL whitespace exactly: newlines, leading indentation, \
-                 and every run of spaces between tokens. Never collapse, insert, \
-                 or remove whitespace. Example: `Z  INFO  embedded_llm_perf` \
-                 MUST stay `Z  INFO  embedded_llm_perf`, NEVER \
-                 `ZINFOembedded_llm_perf`. Column alignment matters. \
-                 \
-                 Output ONLY in the target language's native script. Never mix \
-                 scripts (do NOT emit Latin words, Han characters, or Katakana \
-                 inside a Hangul / Hiragana / Cyrillic output) unless the \
-                 source itself contained that token verbatim — proper nouns \
-                 and trademarks may keep their original form. \
-                 \
-                 Keep the following tokens unchanged — never translated, never \
-                 transliterated, never re-cased: code identifiers and module \
-                 paths (e.g. `n_threads`, `embedded_llm_perf`, \
-                 `moonlens_lib::pipeline`), file paths, URLs, ISO timestamps \
-                 (e.g. `2026-05-18T00:51:11.674022Z`), log levels (INFO, WARN, \
-                 ERROR, DEBUG, TRACE), CLI flags, numeric literals, version \
-                 strings, hex digits, and any token containing `_`, `::`, `/`, \
-                 `.`, `=`, or backticks. When in doubt, leave the token as-is. \
-                 \
-                 Output ONLY the translated text. Never include commentary, \
-                 explanations, romanizations, alternative translations, notes \
-                 in parentheses, surrounding quotes, or bracketed markers like \
-                 `[1]` / `[2]`.",
-            )
-            .to_string();
+            .map(|s| s.to_string())
+            // Fallback (no config-provided prompt): keep the strict
+            // line-structure variant so the legacy single-tier path
+            // and any caller that doesn't go through
+            // `config_for_tier` behaves exactly as before. The
+            // routed path overrides this per-tier — Compact gets the
+            // non-strict variant via `config_for_tier`.
+            .unwrap_or_else(|| default_translation_system_prompt(true));
         // Read `num_predict` (legacy Ollama-compat key) from config
         // and apply it as the mistral.rs sampler max_len. Default
         // 512 is a translation-shaped cap — most Lens lines fit
@@ -686,12 +623,7 @@ impl Provider for EmbeddedLlmTranslator {
             // Glossary needs a different system prompt than the
             // translator's natural-language one — its job is
             // structured `src=tgt` extraction, not idiomatic prose.
-            let prompt = render_prompt(
-                self.chat_template,
-                glossary::SYSTEM_PROMPT,
-                &[],
-                &user_msg,
-            );
+            let prompt = render_prompt(self.chat_template, glossary::SYSTEM_PROMPT, &[], &user_msg);
             // Bound output at 512 tokens — small batches need ~10
             // entries × ~10 tokens = 100, large batches still fit
             // comfortably. Temperature 0 for deterministic extraction.
@@ -699,10 +631,7 @@ impl Provider for EmbeddedLlmTranslator {
             let source_text = lines.join("\n");
             let entries = glossary::parse_response(&raw, Some(&source_text));
             Ok(Some(
-                entries
-                    .into_iter()
-                    .map(|e| (e.source, e.target))
-                    .collect(),
+                entries.into_iter().map(|e| (e.source, e.target)).collect(),
             ))
         }
         #[cfg(not(feature = "embedded-llm"))]
@@ -1733,12 +1662,12 @@ fn run_inference_in_context_spec(
     // suffix — callers MUST NOT do a final flush in that case
     // because the held-back tail IS (or led up to) the suffix.
     let emit = |aggregated: &mut String,
-                    emit_cursor: &mut usize,
-                    suffix_hit: &mut bool,
-                    produced: &mut usize,
-                    decoder: &mut encoding_rs::Decoder,
-                    on_token: &mut Option<Box<dyn FnMut(String) + Send>>,
-                    tok: LlamaToken|
+                emit_cursor: &mut usize,
+                suffix_hit: &mut bool,
+                produced: &mut usize,
+                decoder: &mut encoding_rs::Decoder,
+                on_token: &mut Option<Box<dyn FnMut(String) + Send>>,
+                tok: LlamaToken|
      -> Result<bool, String> {
         if model.is_eog_token(tok) {
             return Ok(true);
@@ -2145,6 +2074,82 @@ pub fn language_name(code: &str) -> String {
             s
         }
     }
+}
+
+/// Build the default translation system prompt.
+///
+/// `strict_line_structure` toggles the rigid per-line directive
+/// added 2026-05-26 (`feat(translate): scrub malformed chat-template
+/// leaks + enforce newline preservation`). That clause —
+/// "translate each line independently, one source line maps to
+/// exactly one output line, never merge, never split" — was meant
+/// to stop capable models from collapsing multi-line log / TOML
+/// content. But on the 980M Compact model (llm-jp-3) it backfires:
+/// the directive is so structurally prescriptive that the small
+/// model COPIES the source lines verbatim instead of translating
+/// them. The 2026-05-27 routing fix (`5da7316`) exposed this — once
+/// Compact actually loaded llm-jp-3-980m (it had been silently
+/// loading Qwen-1.5B), the Lens started echoing OCR'd English on
+/// multi-line title+body blocks. The bigger Standard / Quality
+/// bridge models follow the directive AND translate, so they keep
+/// it; Compact drops it for a gentle line-count hint that avoids
+/// the merge/split failure without the copy pressure.
+///
+/// Everything else (whitespace preservation, script consistency,
+/// identifier preservation, output-only-translation) is identical
+/// across tiers.
+pub fn default_translation_system_prompt(strict_line_structure: bool) -> String {
+    let line_clause = if strict_line_structure {
+        "Preserve the line structure exactly: if the source has N \
+         newlines, the output MUST also have N newlines. Translate \
+         each line independently — one source line maps to exactly \
+         one output line, in the same order, with the same blank \
+         lines between them. Never merge two source lines into one \
+         output line, and never split one source line into two output \
+         lines. "
+    } else {
+        // Compact / small-model variant: a light touch. Encourages
+        // keeping the rough line count without the prescriptive
+        // 1:1 mapping that makes a 980M model copy instead of
+        // translate.
+        "Keep roughly the same number of lines as the source, but \
+         always TRANSLATE each line into the target language — never \
+         copy the source text verbatim. "
+    };
+    format!(
+        "You are a professional translator. Render the user's text \
+         naturally and idiomatically in the target language — match \
+         the meaning, tone, and register a native reader would expect, \
+         not the word order of the source. \
+         \
+         {line_clause}\
+         \
+         Preserve ALL whitespace exactly: newlines, leading indentation, \
+         and every run of spaces between tokens. Never collapse, insert, \
+         or remove whitespace. Example: `Z  INFO  embedded_llm_perf` \
+         MUST stay `Z  INFO  embedded_llm_perf`, NEVER \
+         `ZINFOembedded_llm_perf`. Column alignment matters. \
+         \
+         Output ONLY in the target language's native script. Never mix \
+         scripts (do NOT emit Latin words, Han characters, or Katakana \
+         inside a Hangul / Hiragana / Cyrillic output) unless the \
+         source itself contained that token verbatim — proper nouns \
+         and trademarks may keep their original form. \
+         \
+         Keep the following tokens unchanged — never translated, never \
+         transliterated, never re-cased: code identifiers and module \
+         paths (e.g. `n_threads`, `embedded_llm_perf`, \
+         `moonlens_lib::pipeline`), file paths, URLs, ISO timestamps \
+         (e.g. `2026-05-18T00:51:11.674022Z`), log levels (INFO, WARN, \
+         ERROR, DEBUG, TRACE), CLI flags, numeric literals, version \
+         strings, hex digits, and any token containing `_`, `::`, `/`, \
+         `.`, `=`, or backticks. When in doubt, leave the token as-is. \
+         \
+         Output ONLY the translated text. Never include commentary, \
+         explanations, romanizations, alternative translations, notes \
+         in parentheses, surrounding quotes, or bracketed markers like \
+         `[1]` / `[2]`."
+    )
 }
 
 /// User-prompt builder shared by the single-shot and streaming
@@ -2580,12 +2585,7 @@ async fn run_inference(
     let user = build_user_prompt(&input)?;
     let few_shots = build_few_shots(&input);
     let system = system_prompt_with_glossary(&provider.system_prompt, &input);
-    let prompt = render_prompt(
-        provider.chat_template,
-        &system,
-        &few_shots,
-        &user,
-    );
+    let prompt = render_prompt(provider.chat_template, &system, &few_shots, &user);
     let max_predict = provider.max_predict_tokens.unwrap_or(512);
     let aggregated = worker
         .submit(
@@ -2603,10 +2603,7 @@ async fn run_inference(
 /// the input carries one. Returns a Cow so the common no-glossary
 /// path doesn't allocate.
 #[cfg(feature = "embedded-llm")]
-fn system_prompt_with_glossary<'a>(
-    base: &'a str,
-    input: &TaskInput,
-) -> std::borrow::Cow<'a, str> {
+fn system_prompt_with_glossary<'a>(base: &'a str, input: &TaskInput) -> std::borrow::Cow<'a, str> {
     if let TaskInput::Translate { glossary, .. } = input {
         if !glossary.is_empty() {
             let entries: Vec<crate::providers::glossary::GlossaryEntry> = glossary
@@ -2633,12 +2630,7 @@ async fn run_inference_streaming(
     let user = build_user_prompt(&input)?;
     let few_shots = build_few_shots(&input);
     let system = system_prompt_with_glossary(&provider.system_prompt, &input);
-    let prompt = render_prompt(
-        provider.chat_template,
-        &system,
-        &few_shots,
-        &user,
-    );
+    let prompt = render_prompt(provider.chat_template, &system, &few_shots, &user);
     let max_predict = provider.max_predict_tokens.unwrap_or(512);
 
     // Bridge the worker's per-token callback into the async sink.
@@ -2723,7 +2715,9 @@ mod tests {
             .with_app_data_dir(Path::new("C:\\Users\\test\\AppData\\Roaming\\moonlens"));
         assert_eq!(
             p.model_path(),
-            Path::new("C:\\Users\\test\\AppData\\Roaming\\moonlens\\models\\Hy-MT2-1.8B-Q4_K_M.gguf"),
+            Path::new(
+                "C:\\Users\\test\\AppData\\Roaming\\moonlens\\models\\Hy-MT2-1.8B-Q4_K_M.gguf"
+            ),
             "filename_remote must resolve to <app-data>/models/<filename>, not DEFAULT_MODEL_FILE"
         );
     }
@@ -2763,14 +2757,13 @@ mod tests {
             (QUALITY_MULTI_TIER_ID, UserTier::Quality),
         ];
         for (tier_id, user_tier) in cases {
-            let tier = tier_by_id(tier_id)
-                .unwrap_or_else(|| panic!("tier `{tier_id}` not in registry"));
+            let tier =
+                tier_by_id(tier_id).unwrap_or_else(|| panic!("tier `{tier_id}` not in registry"));
             let cfg = test_only_config_for_tier(tier, *user_tier);
             let translator =
                 EmbeddedLlmTranslator::new(format!("embedded.llm.routed:{tier_id}"), &cfg)
                     .with_app_data_dir(app_data);
-            let expected =
-                app_data.join("models").join(tier.primary_filename());
+            let expected = app_data.join("models").join(tier.primary_filename());
             assert_eq!(
                 translator.model_path(),
                 expected.as_path(),
@@ -3306,9 +3299,7 @@ mod tests {
         // language with hand-authored examples MUST surface at
         // least one (source, target) pair. Regression guard against
         // a future cleanup deleting the wrong branch.
-        for target in [
-            "ja", "en", "fr", "de", "ko", "zh", "French", "GERMAN", "Ja",
-        ] {
+        for target in ["ja", "en", "fr", "de", "ko", "zh", "French", "GERMAN", "Ja"] {
             let shots = build_translation_few_shots(target);
             assert!(
                 !shots.is_empty(),
