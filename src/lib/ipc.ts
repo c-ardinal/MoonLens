@@ -141,6 +141,56 @@ export const installPluginFromPath = (archivePath: string) =>
 export const pickAndInstallPlugin = () =>
   safeInvoke<string | null>('pick_and_install_plugin');
 export const installOcrModels = () => safeInvoke<string>('install_ocr_models');
+
+/** A GGUF model the built-in translation engine can run. */
+export interface LlmModel {
+  id: string;
+  label: string;
+  note: string;
+  file: string;
+  url: string;
+  size: number;
+  sha256: string;
+  license: string;
+  license_url: string;
+  style: 'chat_template' | 'pfml3';
+  installed: boolean;
+  partial_bytes: number;
+  downloading: boolean;
+}
+
+export type LlmRole = 'translate' | 'assistant';
+
+export interface LlmModels {
+  /** Model used for translation. */
+  selected: string;
+  /** Model used for explain / summarize. */
+  assistant: string;
+  dir: string;
+  models: LlmModel[];
+}
+
+export interface LlmProgress {
+  id: string;
+  downloaded: number;
+  total: number;
+  fraction: number;
+}
+
+export const listLlmModels = () =>
+  safeInvoke<LlmModels>('list_llm_models', undefined, {
+    selected: '',
+    assistant: '',
+    dir: '',
+    models: []
+  });
+export const installLlmModel = (id: string) => safeInvoke<string>('install_llm_model', { id });
+export const cancelLlmDownload = (id: string) => safeInvoke<boolean>('cancel_llm_download', { id });
+export const deleteLlmModel = (id: string) => safeInvoke<void>('delete_llm_model', { id });
+export const selectLlmModel = (id: string, role: LlmRole = 'translate') =>
+  safeInvoke<void>('select_llm_model', { id, role });
+export const onLlmProgress = (handler: (p: LlmProgress) => void): Promise<UnlistenFn> =>
+  listen<LlmProgress>('moonlens://llm-model-progress', (e) => handler(e.payload));
 export const showMain = () => safeInvoke<void>('show_main');
 export const hideOverlay = () => safeInvoke<void>('hide_overlay');
 
