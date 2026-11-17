@@ -8,6 +8,10 @@ the project adheres to [SemVer](https://semver.org/).
 
 ### Fixed
 
+- The app's own styling never loaded: Tailwind v4 ignored
+  `tailwind.config.ts`, so every design-token class (accent buttons, muted
+  text, rounded cards, shadows) compiled to nothing and unlayered element
+  resets stripped padding and backgrounds from every button.
 - Ollama translations were slow or blank. The seeded model
   `gemma4:7b-instruct-q4_K_M` does not exist (404 was treated as an empty
   success); thinking-capable models reasoned before every answer because
