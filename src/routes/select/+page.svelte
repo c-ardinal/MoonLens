@@ -9,7 +9,6 @@
     Languages,
     Pin,
     QrCode,
-    Search,
     Sparkles,
     TextSelect,
     X
@@ -259,12 +258,6 @@
     }
   }
 
-  async function search() {
-    const q = joinedText(blocks, 'source') || qrPayload;
-    if (!q) return;
-    await runReverseImageSearch(`https://www.google.com/search?q=${encodeURIComponent(q.slice(0, 1500))}`);
-  }
-
   async function explain() {
     const src = joinedText(blocks, 'source');
     if (!src) return;
@@ -447,7 +440,10 @@
               class="fit h-full w-full"
               use:fit={{ text: b.translation, max: (b.line_height / scale) * 0.92 }}
             >
-              <span class="fit-text">{b.translation}</span>
+              <span
+                class="fit-text"
+                style="text-align: {b.align ?? 'left'}; font-weight: {b.bold ? 700 : 500}"
+              >{b.translation}</span>
             </div>
           {/if}
         </div>
@@ -520,7 +516,6 @@
           <TextSelect class="h-4 w-4" />テキスト
         </button>
         <button class="tb" onclick={explain} title="内容を説明"><Languages class="h-4 w-4" />説明</button>
-        <button class="tb" onclick={search} title="Google で検索"><Search class="h-4 w-4" />検索</button>
         <button class="tb" onclick={pin} disabled={pinned} title="ピン留め: 同じ領域を自動再翻訳">
           <Pin class="h-4 w-4" />
         </button>
@@ -629,6 +624,12 @@
     line-height: 1.18;
     overflow-wrap: anywhere;
     word-break: normal;
+    /* Japanese: break between phrases where the engine supports it
+       (Chromium / WebView2), and never start a line with small kana or
+       closing punctuation (kinsoku). */
+    word-break: auto-phrase;
+    line-break: strict;
+    text-wrap: pretty;
     font-family: var(--ml-font-ui);
     font-weight: 500;
   }

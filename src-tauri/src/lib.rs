@@ -25,6 +25,7 @@ pub mod selector;
 pub mod settings;
 pub mod storage;
 pub mod subtitle;
+pub mod translation_cache;
 
 use tracing_subscriber::{fmt, EnvFilter};
 

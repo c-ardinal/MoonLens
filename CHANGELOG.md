@@ -31,7 +31,25 @@ the project adheres to [SemVer](https://semver.org/).
   E4B quality at 2.5x the speed and resists prompt injection; it is the
   recommended translator. Reproducible with `bench/translation/`.
 
+### Removed
+
+- The selector's "検索" button (opened a Google web search). MoonLens is
+  fully local and does not hand text to web services.
+
 ### Added
+
+- Overlay typography closer to the source: centred headings stay
+  centred (alignment inferred from the OCR line edges), bold source text
+  (headings, buttons) is drawn bold (stroke-width estimate, separate
+  thresholds for CJK and Latin), and Japanese translations wrap between
+  phrases without starting a line with small kana or closing punctuation
+  (`word-break: auto-phrase`, `line-break: strict`).
+
+- Translation cache. Each paragraph's translation is kept in memory
+  (per target language, up to 2,000 paragraphs) so re-selecting the same
+  text, scrolling back, or a pinned region re-rendering shows the
+  translation instantly; only paragraphs not seen before go to the
+  model. Cleared whenever settings / providers change.
 
 - Built-in local LLM engine: translation, explanation and summaries now
   run in-process through llama.cpp (`llama-cpp-2`, statically linked),
@@ -43,6 +61,7 @@ the project adheres to [SemVer](https://semver.org/).
   launch, and the KV cache of the shared prompt prefix is reused between
   requests. Metal on macOS; `llm-vulkan` / `llm-cuda` features are
   opt-in.
+
 - Target language in the selector. Text that is already in the target
   language (detected from its script, plus English function words for
   Latin text) and text without letters (prices, times) is no longer sent

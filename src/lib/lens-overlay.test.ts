@@ -140,6 +140,14 @@ describe('target language', () => {
     expect(applyStreaming(bs, 'A').map((b) => b.translation)).toEqual(['A', 'すでに日本語', null]);
   });
 
+  it('skips cached blocks too', () => {
+    const bs = [
+      block({ source: 'a', translation: 'キャッシュ', from_cache: true }),
+      block({ source: 'b', translation: null })
+    ];
+    expect(applyStreaming(bs, 'B').map((b) => b.translation)).toEqual(['キャッシュ', 'B']);
+  });
+
   it('labels languages', () => {
     expect(languageLabel('ja')).toBe('日本語');
     expect(languageLabel('EN')).toBe('英語');

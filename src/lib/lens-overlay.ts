@@ -143,11 +143,14 @@ export function joinedText(blocks: LensBlock[], which: 'translation' | 'source')
 
 /**
  * Apply a partially streamed translation to the blocks that were sent
- * to the translator. Blocks already in the target language were left out
- * of the request, so paragraphs map onto the remaining blocks in order.
+ * to the translator. Blocks already in the target language or served
+ * from the translation cache were left out of the request, so
+ * paragraphs map onto the remaining blocks in order.
  */
 export function applyStreaming(blocks: LensBlock[], text: string): LensBlock[] {
-  const pending = blocks.map((b, i) => (b.same_language ? -1 : i)).filter((i) => i >= 0);
+  const pending = blocks
+    .map((b, i) => (b.same_language || b.from_cache ? -1 : i))
+    .filter((i) => i >= 0);
   const parts = splitStreaming(text, pending.length);
   const out = blocks.slice();
   pending.forEach((bi, k) => {
