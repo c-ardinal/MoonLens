@@ -57,6 +57,10 @@ export interface LensBlock {
   same_language?: boolean;
   /** Translation came from the local translation cache (shown at once). */
   from_cache?: boolean;
+  /** Horizontal alignment of the source lines. */
+  align?: 'left' | 'center' | 'right';
+  /** Source text looks bold; draw the translation bold too. */
+  bold?: boolean;
 }
 
 export interface CaptureFlowResult {

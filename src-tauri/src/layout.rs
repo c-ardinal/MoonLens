@@ -38,6 +38,58 @@ pub struct TextBlock {
     pub line_height: f32,
     /// Number of source lines in the block.
     pub line_count: usize,
+    /// Horizontal alignment of the source lines, so the translation is
+    /// laid out the same way (centred headings stay centred).
+    #[serde(default)]
+    pub align: Align,
+}
+
+/// Horizontal text alignment of a block.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum Align {
+    #[default]
+    Left,
+    Center,
+    Right,
+}
+
+/// Infer alignment from line rects. Needs at least two lines of clearly
+/// different widths; otherwise (single lines, justified paragraphs)
+/// every edge lines up and left is the safe answer.
+pub fn detect_align(lines: &[BBox]) -> Align {
+    if lines.len() < 2 {
+        return Align::Left;
+    }
+    let spread = |f: &dyn Fn(&BBox) -> f32| {
+        let (mut lo, mut hi) = (f32::MAX, f32::MIN);
+        for b in lines {
+            let v = f(b);
+            lo = lo.min(v);
+            hi = hi.max(v);
+        }
+        hi - lo
+    };
+    let mut heights: Vec<f32> = lines.iter().map(|b| b[3]).collect();
+    let h = median(&mut heights).max(1.0);
+    let left = spread(&|b| b[0]);
+    let right = spread(&|b| right(b));
+    let center = spread(&|b| b[0] + b[2] / 2.0);
+    let widths = spread(&|b| b[2]);
+    // All lines about the same width: alignment is not observable.
+    if widths < h {
+        return Align::Left;
+    }
+    let tol = 0.6 * h;
+    if left <= tol {
+        Align::Left
+    } else if center <= tol && center < right {
+        Align::Center
+    } else if right <= tol {
+        Align::Right
+    } else {
+        Align::Left
+    }
 }
 
 fn bottom(b: &BBox) -> f32 {
@@ -101,6 +153,7 @@ pub fn group_lines(lines: &[OcrLine]) -> Vec<TextBlock> {
             bbox: [0.0, 0.0, 0.0, 0.0],
             line_height: 0.0,
             line_count: usable.len(),
+            align: Align::Left,
         }];
     }
 
@@ -190,6 +243,7 @@ pub fn group_lines(lines: &[OcrLine]) -> Vec<TextBlock> {
                 bbox: b.bbox,
                 line_height: median(&mut heights),
                 line_count: b.lines.len(),
+                align: detect_align(&b.lines.iter().map(|l| l.bbox).collect::<Vec<_>>()),
             }
         })
         .collect();
@@ -307,6 +361,83 @@ fn split_paragraphs(s: &str) -> Vec<String> {
         parts.push(cur.join("\n").trim().to_string());
     }
     parts
+}
+
+/// Typical stroke thickness of the text in `bbox` relative to the line
+/// height, used to tell bold from regular text. Pixels are split into
+/// ink / background between the two estimated luminances, and the
+/// median horizontal ink run is taken: most runs cross vertical stems,
+/// whose width is the stroke weight. The ink threshold sits 65 % of the
+/// way from background to text colour so anti-aliased edges (which make
+/// light-on-dark text look heavier) are mostly excluded. `None` when
+/// there is too little ink to judge.
+pub fn stroke_ratio(
+    img: &RgbaImage,
+    bbox: BBox,
+    colors: BlockColors,
+    line_height: f32,
+) -> Option<f32> {
+    let (iw, ih) = (img.width() as i64, img.height() as i64);
+    let x0 = (bbox[0].floor() as i64).clamp(0, iw);
+    let y0 = (bbox[1].floor() as i64).clamp(0, ih);
+    let x1 = ((bbox[0] + bbox[2]).ceil() as i64).clamp(0, iw);
+    let y1 = ((bbox[1] + bbox[3]).ceil() as i64).clamp(0, ih);
+    let bg = luma(colors.background);
+    let fg = luma(colors.foreground);
+    if line_height < 6.0 || (bg - fg).abs() < 40.0 || x1 <= x0 || y1 <= y0 {
+        return None;
+    }
+    let mid = bg + (fg - bg) * 0.65;
+    let dark_ink = fg < bg;
+    // Sample at most ~200 rows.
+    let step = (((y1 - y0) / 200).max(1)) as usize;
+    let mut runs: Vec<u32> = Vec::new();
+    for y in (y0..y1).step_by(step) {
+        let mut run = 0u32;
+        for x in x0..=x1 {
+            let ink = x < x1 && {
+                let p = img.get_pixel(x as u32, y as u32).0;
+                let l = luma([p[0], p[1], p[2]]);
+                if dark_ink {
+                    l < mid
+                } else {
+                    l > mid
+                }
+            };
+            if ink {
+                run += 1;
+            } else if run > 0 {
+                runs.push(run);
+                run = 0;
+            }
+        }
+    }
+    if runs.len() < 20 {
+        return None;
+    }
+    runs.sort_unstable();
+    Some(runs[runs.len() / 2] as f32 / line_height)
+}
+
+/// Whether the text in a block looks bold, from [`stroke_ratio`].
+/// CJK glyphs have thinner strokes relative to their height than Latin
+/// ones, so each script gets its own threshold (calibrated on rendered
+/// regular / bold samples at 13–32 px, 1x and 2x scale, light and dark
+/// backgrounds).
+pub fn looks_bold(text: &str, stroke_ratio: Option<f32>) -> bool {
+    let Some(r) = stroke_ratio else {
+        return false;
+    };
+    let (mut cjk, mut other) = (0usize, 0usize);
+    for c in text.chars().filter(|c| c.is_alphanumeric()) {
+        if is_cjk(c) {
+            cjk += 1;
+        } else {
+            other += 1;
+        }
+    }
+    let threshold = if cjk >= other { 0.093 } else { 0.112 };
+    r >= threshold
 }
 
 /// Background / foreground colour estimate for one block.
@@ -554,12 +685,84 @@ mod tests {
     }
 
     #[test]
+    fn alignment_from_line_edges() {
+        let h = 20.0;
+        // Centred heading: different widths, shared centre.
+        let centred = [[100.0, 0.0, 400.0, h], [175.0, 24.0, 250.0, h]];
+        assert_eq!(detect_align(&centred), Align::Center);
+        // Ragged-right paragraph.
+        let left = [
+            [10.0, 0.0, 400.0, h],
+            [10.0, 24.0, 380.0, h],
+            [10.0, 48.0, 120.0, h],
+        ];
+        assert_eq!(detect_align(&left), Align::Left);
+        // Right-aligned (numbers column, RTL-ish captions).
+        let right = [[100.0, 0.0, 300.0, h], [250.0, 24.0, 150.0, h]];
+        assert_eq!(detect_align(&right), Align::Right);
+        // Justified / single line: not observable.
+        let justified = [[10.0, 0.0, 400.0, h], [10.0, 24.0, 395.0, h]];
+        assert_eq!(detect_align(&justified), Align::Left);
+        assert_eq!(detect_align(&[[0.0, 0.0, 10.0, h]]), Align::Left);
+    }
+
+    #[test]
+    fn group_lines_reports_centred_blocks() {
+        let l = |x: f32, y: f32, w: f32| OcrLine {
+            text: "x".into(),
+            bbox: [x, y, w, 20.0],
+            confidence: 1.0,
+        };
+        let blocks = group_lines(&[l(100.0, 0.0, 400.0), l(175.0, 24.0, 250.0)]);
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].align, Align::Center);
+    }
+
+    #[test]
+    fn stroke_ratio_separates_thin_and_thick_strokes() {
+        // White background, black vertical stems 2 px (regular) or 4 px
+        // (bold) wide on a 20 px line.
+        let stems = |w: u32| {
+            let mut img = RgbaImage::from_pixel(200, 20, Rgba([255, 255, 255, 255]));
+            for x0 in (10..190).step_by(12) {
+                for x in x0..x0 + w {
+                    for y in 2..18 {
+                        img.put_pixel(x, y, Rgba([0, 0, 0, 255]));
+                    }
+                }
+            }
+            img
+        };
+        let colors = BlockColors {
+            background: [255, 255, 255],
+            foreground: [0, 0, 0],
+        };
+        let bbox = [0.0, 0.0, 200.0, 20.0];
+        let thin = stroke_ratio(&stems(2), bbox, colors, 20.0).unwrap();
+        let thick = stroke_ratio(&stems(4), bbox, colors, 20.0).unwrap();
+        assert!((thin - 0.1).abs() < 1e-6);
+        assert!((thick - 0.2).abs() < 1e-6);
+        assert!(!looks_bold("Hello world", Some(0.09)));
+        assert!(looks_bold("Hello world", Some(0.13)));
+        assert!(!looks_bold("日本語の文章", Some(0.07)));
+        assert!(looks_bold("日本語の文章", Some(0.1)));
+        assert!(!looks_bold("anything", None));
+        // No contrast: undecidable.
+        let flat = BlockColors {
+            background: [128, 128, 128],
+            foreground: [120, 120, 120],
+        };
+        assert!(stroke_ratio(&stems(2), bbox, flat, 20.0).is_none());
+    }
+
+    #[test]
     fn join_blocks_uses_blank_line() {
         let b = |t: &str| TextBlock {
             text: t.into(),
             bbox: [0.0; 4],
             line_height: 0.0,
             line_count: 1,
+            align: Align::Left,
         };
         assert_eq!(join_blocks(&[b("a"), b("b")]), "a\n\nb");
     }

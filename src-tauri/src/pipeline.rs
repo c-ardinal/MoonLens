@@ -353,14 +353,25 @@ impl Pipeline {
         let rgba = img.to_rgba8();
         let blocks: Vec<LensBlock> = text_blocks
             .iter()
-            .map(|b| LensBlock {
-                bbox: b.bbox,
-                line_height: b.line_height,
-                source: b.text.clone(),
-                translation: None,
-                colors: (b.bbox[2] > 0.0).then(|| layout::estimate_colors(&rgba, b.bbox)),
-                same_language: false,
-                from_cache: false,
+            .map(|b| {
+                let colors = (b.bbox[2] > 0.0).then(|| layout::estimate_colors(&rgba, b.bbox));
+                let bold = colors.is_some_and(|c| {
+                    layout::looks_bold(
+                        &b.text,
+                        layout::stroke_ratio(&rgba, b.bbox, c, b.line_height),
+                    )
+                });
+                LensBlock {
+                    bbox: b.bbox,
+                    line_height: b.line_height,
+                    source: b.text.clone(),
+                    translation: None,
+                    colors,
+                    same_language: false,
+                    from_cache: false,
+                    align: b.align,
+                    bold,
+                }
             })
             .collect();
 
@@ -620,6 +631,13 @@ pub struct LensBlock {
     /// than this request.
     #[serde(default)]
     pub from_cache: bool,
+    /// Horizontal alignment of the source text.
+    #[serde(default)]
+    pub align: layout::Align,
+    /// The source text looks bold (headings, buttons); the translation
+    /// is drawn bold too.
+    #[serde(default)]
+    pub bold: bool,
 }
 
 impl LensBlock {

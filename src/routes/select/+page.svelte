@@ -440,7 +440,10 @@
               class="fit h-full w-full"
               use:fit={{ text: b.translation, max: (b.line_height / scale) * 0.92 }}
             >
-              <span class="fit-text">{b.translation}</span>
+              <span
+                class="fit-text"
+                style="text-align: {b.align ?? 'left'}; font-weight: {b.bold ? 700 : 500}"
+              >{b.translation}</span>
             </div>
           {/if}
         </div>
@@ -621,6 +624,12 @@
     line-height: 1.18;
     overflow-wrap: anywhere;
     word-break: normal;
+    /* Japanese: break between phrases where the engine supports it
+       (Chromium / WebView2), and never start a line with small kana or
+       closing punctuation (kinsoku). */
+    word-break: auto-phrase;
+    line-break: strict;
+    text-wrap: pretty;
     font-family: var(--ml-font-ui);
     font-weight: 500;
   }

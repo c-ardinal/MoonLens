@@ -13,6 +13,13 @@ the project adheres to [SemVer](https://semver.org/).
 
 ### Added
 
+- Overlay typography closer to the source: centred headings stay
+  centred (alignment inferred from the OCR line edges), bold source text
+  (headings, buttons) is drawn bold (stroke-width estimate, separate
+  thresholds for CJK and Latin), and Japanese translations wrap between
+  phrases without starting a line with small kana or closing punctuation
+  (`word-break: auto-phrase`, `line-break: strict`).
+
 - Translation cache. Each paragraph's translation is kept in memory
   (per target language, up to 2,000 paragraphs) so re-selecting the same
   text, scrolling back, or a pinned region re-rendering shows the
