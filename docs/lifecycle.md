@@ -115,5 +115,5 @@ MoonLens が導入から削除までの各段階で遭遇するケースと、�
 
 ## 既知の課題（本表作成時点）
 
-- **ライブ字幕の遅延（GPU なし）**：既定の Whisper large-v3-turbo は 30 秒の窓を毎回処理するため、CPU のみでは 1 チャンクの認識に数秒〜十数秒かかる（4 コアのクラウド VM で約 14 秒）。音声は欠落しないが字幕は遅れる。GPU（Metal／Vulkan／CUDA）では大幅に短縮される見込み（未計測）。低速 PC 向けに Whisper small（約 3 倍速、日本語の精度は低下）を用意。詳細は [asr-models.md](asr-models.md)。
+- **ライブ字幕の遅延（GPU なし）**：既定の Whisper large-v3-turbo は 30 秒の窓を毎回処理するため、CPU のみでは 1 チャンクの認識に数秒〜十数秒かかる（4 コアのクラウド VM で約 15 秒）。音声は欠落しないが字幕は遅れる。GPU（Metal／Vulkan／CUDA）では大幅に短縮される見込み（未計測）。低速 PC 向けに Whisper small（約 3 倍速、日本語の精度は低下）を用意。詳細は [asr-models.md](asr-models.md)。
 - **ocrs モデルの整合性検証なし**：PP-OCRv5 と LLM はハッシュ固定だが、ocrs（英語のみの予備エンジン）は配布元がハッシュを公開していない。
