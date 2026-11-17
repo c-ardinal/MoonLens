@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onDestroy, onMount } from 'svelte';
   import { listen, type UnlistenFn } from '@tauri-apps/api/event';
+  import { getSettings, onSettingsChanged, type Settings } from '$lib/ipc';
 
   type SubtitleEvent =
     | { kind: 'started' }
@@ -12,8 +13,19 @@
   let translated = $state('');
   let status = $state<'idle' | 'listening' | 'error'>('idle');
   let unlisten: UnlistenFn | undefined;
+  let unlistenSettings: UnlistenFn | undefined;
+  // Settings → ライブ字幕.
+  let showOriginal = $state(true);
+  let fontSize = $state(22);
+
+  function applySettings(s: Settings) {
+    showOriginal = s?.subtitle?.show_original ?? true;
+    fontSize = s?.subtitle?.font_size_px ?? 22;
+  }
 
   onMount(async () => {
+    getSettings().then(applySettings).catch(() => {});
+    unlistenSettings = await onSettingsChanged(applySettings);
     unlisten = await listen<SubtitleEvent>('moonlens://subtitle', (e) => {
       const ev = e.payload;
       if (ev.kind === 'started') status = 'listening';
@@ -27,7 +39,10 @@
       }
     });
   });
-  onDestroy(() => unlisten?.());
+  onDestroy(() => {
+    unlisten?.();
+    unlistenSettings?.();
+  });
 </script>
 
 <section
@@ -35,10 +50,10 @@
   aria-live="polite"
 >
   <div class="rounded-ml bg-black/70 px-5 py-3 text-center text-white shadow-ml backdrop-blur-xl">
-    {#if original}
-      <p class="text-xs opacity-70">{original}</p>
+    {#if original && showOriginal}
+      <p class="opacity-70" style="font-size: {Math.round(fontSize * 0.55)}px">{original}</p>
     {/if}
-    <p class="mt-1 text-xl font-semibold leading-snug">
+    <p class="mt-1 font-semibold leading-snug break-words" style="font-size: {fontSize}px">
       {#if status === 'idle'}
         音声ループバック待機中…
       {:else if status === 'error'}

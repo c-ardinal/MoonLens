@@ -1,275 +1,207 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
   import { onDestroy, onMount } from 'svelte';
+  import { AlertCircle, Camera, Focus, Maximize, Mic, Square } from 'lucide-svelte';
   import {
-    Camera,
-    Focus,
-    Keyboard,
-    Puzzle,
-    History,
-    Download,
-    Settings as SettingsIcon
-  } from 'lucide-svelte';
-  import {
-    captureAndProcess,
-    installOcrModels,
+    getSettings,
+    listLlmModels,
     newLensWindow,
+    ocrModelsStatus,
     onHotkey,
-    onModelProgress,
+    onSettingsChanged,
     onSubtitle,
+    startRegionSelection,
     startSubtitle,
     stopSubtitle,
-    subtitleState,
-    type ModelProgress
+    subtitleState
   } from '$lib/ipc';
-  import LocalModels from '$lib/components/LocalModels.svelte';
+  import { displayAccelerator } from '$lib/hotkey';
+  import { languageLabel } from '$lib/lens-overlay';
 
-  let running = $state(false);
   let lastError = $state<string | null>(null);
-  let lastProvider = $state<string | null>(null);
-  let installing = $state(false);
-  let modelsPath = $state<string | null>(null);
-  let modelProgress = $state<ModelProgress | null>(null);
-  let unlistenProgress: (() => void) | undefined;
   let subtitleRunning = $state(false);
   let subtitlePreview = $state<string | null>(null);
-  let unlisten: (() => void) | undefined;
-  let unlistenSubtitle: (() => void) | undefined;
+  let hotkeys = $state<Record<string, string>>({});
+  let targetLanguage = $state('ja');
+  /** What still has to be downloaded before translation works. */
+  let missing = $state<string[]>([]);
+  const unlisteners: (() => void)[] = [];
+
+  async function checkSetup() {
+    try {
+      const [ocr, llm] = await Promise.all([ocrModelsStatus(), listLlmModels()]);
+      const out: string[] = [];
+      if (!llm.models.find((m) => m.id === llm.selected)?.installed) out.push('翻訳モデル');
+      if (!ocr.ppocr) out.push('文字認識（OCR）モデル');
+      missing = out;
+    } catch {
+      missing = [];
+    }
+  }
+
+  function applySettings(s: any) {
+    hotkeys = s?.hotkeys ?? {};
+    targetLanguage = s?.subtitle?.target_language ?? 'ja';
+  }
 
   onMount(async () => {
-    unlisten = await onHotkey((action) => {
-      if (action === 'open_history') goto('/history/');
-      if (action === 'open_command_palette') goto('/settings/');
-    });
-    unlistenSubtitle = await onSubtitle((event) => {
-      if (event.kind === 'started') subtitleRunning = true;
-      else if (event.kind === 'stopped') subtitleRunning = false;
-      else if (event.kind === 'chunk') subtitlePreview = event.translated || event.original;
-      else if (event.kind === 'error') lastError = `字幕エラー: ${event.message}`;
-    });
-    subtitleRunning = await subtitleState();
-    unlistenProgress = await onModelProgress((p) => {
-      modelProgress = p;
-    });
-  });
-  onDestroy(() => {
-    unlisten?.();
-    unlistenSubtitle?.();
-    unlistenProgress?.();
-  });
-
-  async function startSub() {
+    getSettings().then(applySettings).catch(() => {});
+    checkSetup();
     try {
-      await startSubtitle();
-      subtitleRunning = true;
-    } catch (e) {
-      lastError = String(e);
+      unlisteners.push(await onSettingsChanged(applySettings));
+      unlisteners.push(
+        await onHotkey((action) => {
+          if (action === 'toggle_subtitle_failed')
+            lastError = 'ライブ字幕を開始できませんでした。';
+          if (action === 'toggle_pin_overlay_empty')
+            lastError = 'ピン留めする範囲がありません。先に範囲を選んで翻訳してください。';
+        })
+      );
+      unlisteners.push(
+        await onSubtitle((event) => {
+          if (event.kind === 'started') subtitleRunning = true;
+          else if (event.kind === 'stopped') subtitleRunning = false;
+          else if (event.kind === 'chunk') subtitlePreview = event.translated || event.original;
+          else if (event.kind === 'error') lastError = `字幕エラー: ${event.message}`;
+        })
+      );
+      subtitleRunning = await subtitleState();
+    } catch {
+      /* pure frontend dev */
     }
-  }
-  async function stopSub() {
-    try {
-      await stopSubtitle();
-      subtitleRunning = false;
-      subtitlePreview = null;
-    } catch (e) {
-      lastError = String(e);
-    }
-  }
+  });
+  onDestroy(() => unlisteners.forEach((u) => u()));
 
-  async function capture() {
-    running = true;
+  async function attempt(fn: () => Promise<unknown>) {
     lastError = null;
     try {
-      const res = await captureAndProcess();
-      lastProvider = res.result.used_provider;
+      await fn();
     } catch (e) {
-      lastError = String(e);
-    } finally {
-      running = false;
+      lastError = String(e).replace(/^Error:\s*/, '');
     }
   }
 
-  async function createLens() {
-    try {
-      await newLensWindow();
-    } catch (e) {
-      lastError = String(e);
-    }
-  }
-
-  async function setupModels() {
-    installing = true;
-    try {
-      modelsPath = await installOcrModels();
-    } catch (e) {
-      lastError = String(e);
-    } finally {
-      installing = false;
-    }
-  }
-
-  const nav = [
-    { href: '/settings/', label: '設定', icon: SettingsIcon, hint: '⌘,' },
-    { href: '/plugins/', label: 'プラグイン', icon: Puzzle, hint: '' },
-    { href: '/history/', label: '履歴', icon: History, hint: '⌘⇧H' },
-    { href: '/subtitle/', label: '字幕', icon: Keyboard, hint: '⌘⇧S' }
-  ];
+  const key = (name: string) => (hotkeys[name] ? displayAccelerator(hotkeys[name]) : '');
 </script>
 
-<main class="mx-auto flex max-w-3xl flex-col gap-6 p-8">
-  <header class="flex items-baseline justify-between">
-    <h1 class="text-2xl font-semibold tracking-tight">MoonLens</h1>
-    <p class="text-sm text-ink-muted">Lens + 字幕 + 検索、すべて1つのホットキーで。</p>
+<main class="mx-auto flex max-w-3xl flex-col gap-4 px-4 py-6 sm:gap-5 sm:px-6">
+  <header>
+    <h1 class="text-xl font-semibold tracking-tight">画面をその場で翻訳</h1>
+    <p class="text-sm text-ink-muted">
+      すべてこの端末の中で処理します。翻訳先: {languageLabel(targetLanguage) || targetLanguage}
+      <a href="/settings/" class="ml-1 text-accent underline-offset-2 hover:underline">変更</a>
+    </p>
   </header>
 
-  <section class="rounded-ml border border-border bg-surface-elevated p-5 shadow-ml">
-    <div class="flex items-center justify-between gap-4">
-      <div>
-        <h2 class="text-base font-semibold">キャプチャ</h2>
-        <p class="text-sm text-ink-muted">
-          ワンショットは <code class="font-mono">⌘⇧Space</code> でドラッグ選択。<br />
-          Lens ウィンドウは領域を常駐させて継続監視（動画字幕・ゲームUIに最適）。
+  {#if missing.length > 0}
+    <section
+      class="flex flex-col gap-3 rounded-ml border border-accent/40 bg-accent-soft p-4 sm:flex-row sm:items-center sm:justify-between"
+    >
+      <div class="flex min-w-0 gap-2">
+        <AlertCircle class="mt-0.5 h-4 w-4 shrink-0 text-accent" />
+        <p class="text-sm">
+          はじめに{missing.join('と')}のダウンロードが必要です。
         </p>
       </div>
-      <div class="flex flex-col gap-2">
-        <button
-          class="inline-flex items-center gap-2 rounded-ml-sm bg-accent px-4 py-2 text-sm font-medium text-white shadow-ml transition hover:opacity-90 disabled:opacity-40"
-          onclick={capture}
-          disabled={running}
-        >
-          <Camera class="h-4 w-4" />
-          {running ? '処理中…' : '全画面キャプチャ'}
-        </button>
-        <button
-          class="inline-flex items-center gap-2 rounded-ml-sm border border-border bg-surface px-4 py-2 text-sm font-medium text-ink-muted transition hover:border-accent/60 hover:text-ink"
-          onclick={createLens}
-        >
-          <Focus class="h-4 w-4" />
-          Lens ウィンドウを開く
-        </button>
-      </div>
+      <button
+        class="shrink-0 self-start rounded-ml-sm bg-accent px-3 py-1.5 text-sm font-medium text-white sm:self-auto"
+        onclick={() => goto('/settings/#section-models')}
+      >
+        モデルを準備する
+      </button>
+    </section>
+  {/if}
+
+  <section class="rounded-ml border border-border bg-surface-elevated p-4 shadow-ml sm:p-5">
+    <h2 class="text-base font-semibold">画面を翻訳</h2>
+    <p class="text-sm text-ink-muted">
+      画面を止めて、文字の上に訳文を重ねて表示します。どのアプリからでもショートカットで呼び出せます。
+    </p>
+    <div class="mt-4 grid gap-2 sm:grid-cols-2">
+      <button
+        class="flex items-center justify-between gap-3 rounded-ml-sm bg-accent px-4 py-2.5 text-left text-sm font-medium text-white shadow-ml transition hover:opacity-90"
+        onclick={() => attempt(() => startRegionSelection(false))}
+      >
+        <span class="flex items-center gap-2"><Camera class="h-4 w-4 shrink-0" />範囲を選んで翻訳</span>
+        {#if key('capture_region')}<kbd class="font-mono text-xs opacity-80">{key('capture_region')}</kbd>{/if}
+      </button>
+      <button
+        class="flex items-center justify-between gap-3 rounded-ml-sm border border-border bg-surface px-4 py-2.5 text-left text-sm font-medium transition hover:border-accent/60"
+        onclick={() => attempt(() => startRegionSelection(true))}
+      >
+        <span class="flex items-center gap-2"><Maximize class="h-4 w-4 shrink-0" />画面全体を翻訳</span>
+        {#if key('capture_window')}<kbd class="font-mono text-xs text-ink-faint">{key('capture_window')}</kbd>{/if}
+      </button>
     </div>
-    {#if lastProvider}
-      <p class="mt-3 text-xs text-ink-faint">
-        前回のプロバイダ: <code class="font-mono">{lastProvider}</code>
+    <div class="mt-3 flex flex-col gap-2 border-t border-border pt-3 sm:flex-row sm:items-center sm:justify-between">
+      <p class="text-xs text-ink-muted">
+        Lens ウィンドウ: 動画の字幕やゲーム画面など、同じ場所を続けて翻訳したいときに。
       </p>
-    {/if}
-    {#if lastError}
-      <p class="mt-3 text-xs text-red-500">エラー: {lastError}</p>
-    {/if}
+      <button
+        class="inline-flex shrink-0 items-center gap-2 self-start rounded-ml-sm border border-border bg-surface px-3 py-1.5 text-sm text-ink-muted transition hover:border-accent/60 hover:text-ink sm:self-auto"
+        onclick={() => attempt(newLensWindow)}
+      >
+        <Focus class="h-4 w-4" />
+        Lens ウィンドウを開く
+      </button>
+    </div>
   </section>
 
-  <section class="rounded-ml border border-border bg-surface-elevated p-5 shadow-ml">
-    <div class="flex items-center justify-between gap-4">
-      <div>
-        <h2 class="flex items-center gap-2 text-base font-semibold">
+  <section class="rounded-ml border border-border bg-surface-elevated p-4 shadow-ml sm:p-5">
+    <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+      <div class="min-w-0">
+        <h2 class="flex flex-wrap items-center gap-2 text-base font-semibold">
           ライブ字幕
           {#if subtitleRunning}
             <span
               class="inline-flex items-center gap-1 rounded-full bg-accent-soft px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-accent"
             >
-              <span
-                class="block h-1.5 w-1.5 animate-pulse rounded-full bg-accent"
-                aria-hidden="true"
-              ></span>
+              <span class="block h-1.5 w-1.5 animate-pulse rounded-full bg-accent" aria-hidden="true"></span>
               ON AIR
             </span>
           {/if}
         </h2>
-        <p class="text-sm text-ink-muted">
-          システム音声 (ループバック) を書き起こし → 翻訳してオーバーレイ表示します。
-        </p>
+        <p class="text-sm text-ink-muted">パソコンで再生中の音声を文字起こしして、翻訳を字幕で表示します。</p>
         {#if subtitlePreview}
-          <p class="mt-2 line-clamp-2 font-mono text-xs text-ink-faint">
-            {subtitlePreview}
-          </p>
+          <p class="mt-2 line-clamp-2 text-xs break-words text-ink-faint">{subtitlePreview}</p>
         {/if}
       </div>
-      <div class="flex flex-col gap-2">
-        {#if subtitleRunning}
-          <button
-            class="inline-flex items-center gap-2 rounded-ml-sm border border-red-500/60 bg-red-500/10 px-4 py-2 text-sm font-medium text-red-500"
-            onclick={stopSub}
-          >
-            停止
-          </button>
-        {:else}
-          <button
-            class="inline-flex items-center gap-2 rounded-ml-sm border border-border bg-surface px-4 py-2 text-sm font-medium text-ink-muted hover:border-accent/60 hover:text-ink"
-            onclick={startSub}
-          >
-            開始 (⌘⇧S)
-          </button>
-        {/if}
-      </div>
+      {#if subtitleRunning}
+        <button
+          class="inline-flex shrink-0 items-center gap-2 self-start rounded-ml-sm border border-red-500/60 bg-red-500/10 px-4 py-2 text-sm font-medium text-red-500"
+          onclick={() =>
+            attempt(async () => {
+              await stopSubtitle();
+              subtitleRunning = false;
+              subtitlePreview = null;
+            })}
+        >
+          <Square class="h-4 w-4" /> 停止
+        </button>
+      {:else}
+        <button
+          class="inline-flex shrink-0 items-center gap-2 self-start rounded-ml-sm border border-border bg-surface px-4 py-2 text-sm font-medium transition hover:border-accent/60"
+          onclick={() =>
+            attempt(async () => {
+              await startSubtitle();
+              subtitleRunning = true;
+            })}
+        >
+          <Mic class="h-4 w-4" /> 開始
+          {#if key('toggle_subtitle')}<kbd class="font-mono text-xs text-ink-faint">{key('toggle_subtitle')}</kbd>{/if}
+        </button>
+      {/if}
     </div>
   </section>
 
-  <LocalModels />
+  {#if lastError}
+    <p class="rounded-ml border border-red-500/50 bg-red-500/10 p-3 text-sm break-words text-red-500" role="alert">
+      {lastError}
+    </p>
+  {/if}
 
-  <section
-    class="rounded-ml border border-border bg-surface-elevated p-5 shadow-ml"
-  >
-    <div class="flex items-center justify-between gap-4">
-      <div>
-        <h2 class="text-base font-semibold">OCR モデル</h2>
-        <p class="text-sm text-ink-muted">
-          初回のみ OCR モデルをダウンロードします（日本語・中国語・英語用 PP-OCRv5 約 26 MB ＋ 英語用 ocrs 約 12 MB）。
-        </p>
-      </div>
-      <button
-        class="inline-flex items-center gap-2 rounded-ml-sm border border-border bg-surface px-3 py-1.5 text-sm text-ink-muted transition hover:border-accent/50 hover:text-ink disabled:opacity-40"
-        onclick={setupModels}
-        disabled={installing}
-      >
-        <Download class="h-4 w-4" />
-        {installing ? '取得中…' : 'モデル取得'}
-      </button>
-    </div>
-    {#if modelProgress}
-      <div class="mt-3">
-        <div class="flex items-center justify-between text-xs text-ink-faint">
-          <span class="font-mono">{modelProgress.filename}</span>
-          <span>
-            {(modelProgress.downloaded / 1_048_576).toFixed(1)} MB
-            {#if modelProgress.total}
-              / {(modelProgress.total / 1_048_576).toFixed(1)} MB
-            {/if}
-          </span>
-        </div>
-        <div class="mt-1 h-1.5 overflow-hidden rounded-full bg-surface-muted">
-          <div
-            class="h-full rounded-full bg-accent transition-[width]"
-            style="width: {((modelProgress.fraction ?? 0) * 100).toFixed(1)}%"
-          ></div>
-        </div>
-      </div>
-    {/if}
-    {#if modelsPath}
-      <p class="mt-3 text-xs text-ink-faint">
-        インストール先: <code class="font-mono">{modelsPath}</code>
-      </p>
-    {/if}
-  </section>
-
-  <section class="grid grid-cols-2 gap-3">
-    {#each nav as item}
-      <a
-        href={item.href}
-        class="group flex items-center justify-between rounded-ml border border-border bg-surface-elevated p-4 shadow-ml transition hover:border-accent/40"
-      >
-        <span class="flex items-center gap-3">
-          <item.icon class="h-5 w-5 text-ink-muted group-hover:text-accent" />
-          <span class="font-medium">{item.label}</span>
-        </span>
-        {#if item.hint}
-          <kbd class="font-mono text-xs text-ink-faint">{item.hint}</kbd>
-        {/if}
-      </a>
-    {/each}
-  </section>
-
-  <footer class="text-xs text-ink-faint">
-    キャプチャ: ⌘⇧Space / ピン留め: ⌘⇧P / 字幕: ⌘⇧S / 検索: ⌘⇧G
-  </footer>
+  <p class="text-xs text-ink-faint">
+    {#if key('open_command_palette')}<kbd class="font-mono">{key('open_command_palette')}</kbd> でコマンドパレット。{/if}
+    ショートカットは<a href="/settings/#section-hotkeys" class="underline-offset-2 hover:underline">設定</a>で変更できます。
+  </p>
 </main>

@@ -2,6 +2,7 @@
   import { onDestroy, onMount } from 'svelte';
   import { Search, Trash2, RefreshCw, Cloud, Cpu, XCircle } from 'lucide-svelte';
   import {
+    getSettings,
     listHistory,
     deleteHistoryEntry,
     clearHistory,
@@ -14,6 +15,18 @@
   let error = $state<string | null>(null);
   let confirmClear = $state(false);
   let refreshTimer: ReturnType<typeof setTimeout> | undefined;
+  let keepHistory = $state<boolean | null>(null);
+
+  const KIND_LABELS: Record<string, string> = {
+    translate: '翻訳',
+    capture: '画面翻訳',
+    ocr: '文字認識',
+    qr: 'QR コード',
+    explain: '説明',
+    summarize: '要約',
+    transcript: '字幕',
+    asr: '字幕'
+  };
 
   async function refresh(query = q) {
     loading = true;
@@ -29,6 +42,9 @@
 
   onMount(() => {
     refresh();
+    getSettings()
+      .then((s) => (keepHistory = s?.storage?.keep_history ?? true))
+      .catch(() => {});
   });
   onDestroy(() => {
     if (refreshTimer) clearTimeout(refreshTimer);
@@ -73,8 +89,8 @@
   }
 </script>
 
-<main class="mx-auto flex max-w-3xl flex-col gap-4 p-8">
-  <header class="flex items-center justify-between gap-3">
+<main class="mx-auto flex max-w-3xl flex-col gap-4 px-4 py-6 sm:px-6">
+  <header class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
     <div>
       <h1 class="text-xl font-semibold tracking-tight">履歴</h1>
       <p class="text-sm text-ink-muted">
@@ -85,28 +101,30 @@
         {/if}
       </p>
     </div>
-    <div class="flex items-center gap-2">
-      <div class="relative">
+    <div class="flex min-w-0 items-center gap-2">
+      <div class="relative min-w-0 flex-1 sm:flex-none">
         <Search
           class="pointer-events-none absolute left-2 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-faint"
         />
         <input
           value={q}
           oninput={(e) => onQueryInput((e.target as HTMLInputElement).value)}
-          placeholder="検索 (原文 / 訳文 / プロバイダ / 種別)"
-          class="w-72 rounded-ml-sm border border-border bg-surface-elevated py-1.5 pl-7 pr-3 text-sm"
+          placeholder="原文・訳文を検索"
+          aria-label="履歴を検索"
+          class="w-full rounded-ml-sm sm:w-72 border border-border bg-surface-elevated py-1.5 pl-7 pr-3 text-sm"
         />
       </div>
       <button
         class="inline-flex items-center gap-1 rounded-ml-sm border border-border bg-surface px-3 py-1.5 text-sm text-ink-muted transition hover:border-accent/60 hover:text-ink"
         onclick={() => refresh()}
         title="再読み込み"
+        aria-label="再読み込み"
       >
         <RefreshCw class="h-4 w-4" />
       </button>
       {#if entries.length > 0}
         <button
-          class="inline-flex items-center gap-1 rounded-ml-sm border border-border bg-surface px-3 py-1.5 text-sm text-red-500 transition hover:border-red-500/60"
+          class="inline-flex shrink-0 items-center gap-1 rounded-ml-sm border border-border bg-surface px-3 py-1.5 text-sm text-red-500 transition hover:border-red-500/60"
           onclick={() => (confirmClear = true)}
         >
           <Trash2 class="h-4 w-4" />
@@ -129,9 +147,11 @@
       class="rounded-ml border border-dashed border-border bg-surface-elevated p-8 text-center text-ink-muted"
     >
       {#if q.trim().length > 0}
-        <p>「{q}」に一致する履歴はありません。</p>
+        <p class="break-words">「{q}」に一致する履歴はありません。</p>
+      {:else if keepHistory === false}
+        <p>履歴の保存はオフになっています。<a href="/settings/#section-history" class="text-accent underline-offset-2 hover:underline">設定</a>でオンにできます。</p>
       {:else}
-        <p>まだ履歴がありません。⌘⇧Space でキャプチャすると追加されます。</p>
+        <p>まだ履歴がありません。画面を翻訳すると、ここに残ります。</p>
       {/if}
     </div>
   {/if}
@@ -139,11 +159,13 @@
   <ul class="flex flex-col gap-2">
     {#each entries as e (e.id)}
       <li class="group rounded-ml border border-border bg-surface-elevated p-3 shadow-ml">
-        <div class="flex items-center justify-between text-xs text-ink-faint">
-          <span class="flex items-center gap-2">
-            {when(e.created_at)}
-            <span class="rounded-full bg-surface-muted px-2 py-0.5 uppercase tracking-wide">
-              {e.kind}
+        <div class="flex items-center justify-between gap-2 text-xs text-ink-faint">
+          <span class="flex min-w-0 flex-wrap items-center gap-2">
+            <time datetime={new Date(e.created_at * 1000).toISOString()} title={new Date(e.created_at * 1000).toLocaleString('ja-JP')}>
+              {when(e.created_at)}
+            </time>
+            <span class="rounded-full bg-surface-muted px-2 py-0.5">
+              {KIND_LABELS[e.kind] ?? e.kind}
             </span>
             {#if e.provider}
               <span class="inline-flex items-center gap-1 font-mono">
@@ -157,20 +179,21 @@
             {/if}
           </span>
           <button
-            class="opacity-0 transition group-hover:opacity-100"
+            class="shrink-0 rounded-ml-sm p-1 opacity-60 transition group-hover:opacity-100 focus-visible:opacity-100"
             onclick={() => remove(e.id)}
             title="削除"
+            aria-label="この履歴を削除"
           >
             <XCircle class="h-4 w-4 text-ink-faint hover:text-red-500" />
           </button>
         </div>
         {#if e.source_text}
-          <p class="mt-1 font-mono text-xs text-ink-faint whitespace-pre-wrap">
+          <p class="mt-1 font-mono text-xs break-words text-ink-faint whitespace-pre-wrap">
             {e.source_text}
           </p>
         {/if}
         {#if e.result_text}
-          <p class="mt-1 text-sm leading-relaxed whitespace-pre-wrap">{e.result_text}</p>
+          <p class="mt-1 text-sm leading-relaxed break-words whitespace-pre-wrap">{e.result_text}</p>
         {/if}
       </li>
     {/each}
@@ -186,7 +209,10 @@
     <div
       class="w-full max-w-sm rounded-ml border border-border bg-surface-elevated p-5 shadow-ml-lg"
       role="dialog"
+      aria-modal="true"
+      tabindex="-1"
       onclick={(e) => e.stopPropagation()}
+      onkeydown={(e) => e.key === 'Escape' && (confirmClear = false)}
     >
       <h2 class="text-base font-semibold">履歴を全て削除しますか？</h2>
       <p class="mt-1 text-sm text-ink-muted">この操作は取り消せません。</p>

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatAccelerator, isValidAccelerator } from './hotkey';
+import { acceleratorFromEvent, formatAccelerator, isValidAccelerator } from './hotkey';
 
 describe('formatAccelerator', () => {
   it('turns Tauri accelerator into macOS-like symbols', () => {
@@ -49,5 +49,33 @@ describe('isValidAccelerator', () => {
   it('rejects accelerators with empty segments', () => {
     expect(isValidAccelerator('Shift++A')).toBe(false);
     expect(isValidAccelerator('+Shift+A')).toBe(false);
+  });
+});
+
+describe('formatAccelerator (Windows / Linux)', () => {
+  it('spells modifiers out instead of using Mac symbols', () => {
+    expect(formatAccelerator('CommandOrControl+Shift+Space', false)).toBe('Ctrl+Shift+Space');
+    expect(formatAccelerator('Alt+ArrowLeft', false)).toBe('Alt+←');
+  });
+});
+
+describe('acceleratorFromEvent', () => {
+  const ev = (o: Partial<KeyboardEvent>) =>
+    ({ key: '', code: '', ctrlKey: false, metaKey: false, altKey: false, shiftKey: false, ...o }) as KeyboardEvent;
+
+  it('maps Ctrl and Cmd to CommandOrControl', () => {
+    expect(acceleratorFromEvent(ev({ key: 'k', code: 'KeyK', ctrlKey: true }))).toBe('CommandOrControl+K');
+    expect(acceleratorFromEvent(ev({ key: 'k', code: 'KeyK', metaKey: true }))).toBe('CommandOrControl+K');
+  });
+
+  it('uses the physical key so Shift does not change the letter', () => {
+    expect(
+      acceleratorFromEvent(ev({ key: '!', code: 'Digit1', ctrlKey: true, shiftKey: true }))
+    ).toBe('CommandOrControl+Shift+1');
+    expect(acceleratorFromEvent(ev({ key: ' ', code: 'Space', altKey: true }))).toBe('Alt+Space');
+  });
+
+  it('waits while only modifiers are held', () => {
+    expect(acceleratorFromEvent(ev({ key: 'Shift', code: 'ShiftLeft', shiftKey: true }))).toBeNull();
   });
 });

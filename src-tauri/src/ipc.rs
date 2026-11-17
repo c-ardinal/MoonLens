@@ -37,6 +37,8 @@ pub async fn set_settings(
     state.pipeline.rebuild_providers();
     // Hotkey bindings might have changed; re-register atomically.
     hotkey::reapply(&app).map_err(|e| e.to_string())?;
+    // Windows learn about the change from the settings subscriber in app.rs
+    // (moonlens://settings-changed).
     Ok(())
 }
 
@@ -388,6 +390,17 @@ pub async fn process_frozen_selection(
         w: r.w,
         h: r.h,
     });
+    state
+        .region_watcher
+        .remember(crate::region_watcher::WatchTarget {
+            rect: CaptureRect {
+                monitor_index,
+                x: r.x as i32,
+                y: r.y as i32,
+                w: r.w,
+                h: r.h,
+            },
+        });
     if bundle.needs_translation() {
         // The selector remembers the language last picked in its toolbar;
         // otherwise use the configured target.
@@ -484,6 +497,26 @@ pub async fn install_ocr_models(app: AppHandle) -> Result<String, String> {
         .await
         .map_err(|e| e.to_string())?;
     Ok(dir.display().to_string())
+}
+
+/// Whether the OCR models are on disk, for the setup / settings screens.
+#[derive(serde::Serialize)]
+pub struct OcrModelsStatus {
+    /// PP-OCRv5 (Japanese / Chinese / English), the default engine.
+    pub ppocr: bool,
+    /// ocrs (Latin only), the fallback engine.
+    pub ocrs: bool,
+    pub dir: String,
+}
+
+#[tauri::command]
+pub async fn ocr_models_status() -> Result<OcrModelsStatus, String> {
+    let dir = ocr_ocrs::default_models_dir().ok_or("no data dir")?;
+    Ok(OcrModelsStatus {
+        ppocr: crate::providers::ocr_ppocr::models_installed(&dir),
+        ocrs: ocr_ocrs::model_paths(&dir).is_some(),
+        dir: dir.display().to_string(),
+    })
 }
 
 /// Local LLM models the app can download, with install state, plus the
@@ -794,8 +827,17 @@ pub async fn clear_history(state: State<'_, AppState>) -> Result<usize, String> 
 }
 
 #[tauri::command]
-pub async fn start_region_selection(app: AppHandle) -> Result<(), String> {
-    tokio::task::spawn_blocking(move || selector::show(&app))
+pub async fn start_region_selection(app: AppHandle, full: Option<bool>) -> Result<(), String> {
+    // Started from a button in the main window: get the window out of the
+    // way first, or it would be frozen into the frame being translated.
+    if let Some(main) = app.get_webview_window("main") {
+        if main.is_visible().unwrap_or(false) {
+            main.hide().ok();
+            tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+        }
+    }
+    let full = full.unwrap_or(false);
+    tokio::task::spawn_blocking(move || selector::show_with(&app, full))
         .await
         .map_err(|e| e.to_string())?
         .map_err(|e| e.to_string())

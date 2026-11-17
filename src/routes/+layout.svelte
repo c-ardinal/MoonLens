@@ -1,28 +1,37 @@
 <script lang="ts">
   import '../app.css';
-  import { onMount } from 'svelte';
-  import { getSettings } from '$lib/ipc';
+  import { onDestroy, onMount } from 'svelte';
+  import { page } from '$app/state';
+  import { getSettings, onSettingsChanged } from '$lib/ipc';
+  import { applyAppearance } from '$lib/appearance';
   import MacOnboarding from '$lib/components/MacOnboarding.svelte';
+  import AppNav from '$lib/components/AppNav.svelte';
+  import CommandPalette from '$lib/components/CommandPalette.svelte';
 
   let { children } = $props();
-  let theme = $state<'light' | 'dark' | 'system'>('system');
-  let density = $state<'compact' | 'normal' | 'comfortable'>('normal');
+  let unlisten: (() => void) | undefined;
+
+  // Overlay-type windows (selector, overlay, subtitle, lens) draw their own
+  // chrome; only the main window's pages get the menu and palette.
+  const MAIN_ROUTES = ['/', '/settings/', '/history/', '/plugins/'];
+  const isMain = $derived(MAIN_ROUTES.includes(page.url.pathname));
 
   onMount(async () => {
     try {
-      const s = (await getSettings()) as any;
-      theme = s?.appearance?.theme ?? 'system';
-      density = s?.appearance?.density ?? 'normal';
+      applyAppearance(await getSettings());
+      unlisten = await onSettingsChanged(applyAppearance);
     } catch {
       /* backend not reachable during pure-frontend dev; keep defaults */
     }
   });
-
-  $effect(() => {
-    document.documentElement.dataset.theme = theme;
-    document.documentElement.dataset.density = density;
-  });
+  onDestroy(() => unlisten?.());
 </script>
 
-{@render children()}
+{#if isMain}
+  <AppNav />
+  {@render children()}
+  <CommandPalette />
+{:else}
+  {@render children()}
+{/if}
 <MacOnboarding />

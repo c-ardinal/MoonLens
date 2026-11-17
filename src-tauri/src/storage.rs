@@ -140,6 +140,34 @@ impl Storage {
 
     /// Delete a single entry by primary key. Returns the number of rows
     /// removed (0 if the id did not exist).
+    /// Keep only the newest `max_entries` rows (0 = no limit).
+    pub fn prune_to_count(&self, max_entries: u32) -> Result<usize> {
+        if max_entries == 0 {
+            return Ok(0);
+        }
+        let db = self.db.lock();
+        let n = db.execute(
+            "DELETE FROM history WHERE id NOT IN (
+               SELECT id FROM history ORDER BY created_at DESC, id DESC LIMIT ?1
+             )",
+            [max_entries as i64],
+        )?;
+        Ok(n)
+    }
+
+    /// Apply the history retention settings: drop rows older than
+    /// `retention_days` (0 = keep forever), then cap at `max_entries`
+    /// (0 = no cap). Returns the number of rows removed.
+    pub fn apply_retention(&self, retention_days: u32, max_entries: u32) -> Result<usize> {
+        let mut removed = 0;
+        if retention_days > 0 {
+            let cutoff = now_seconds() - i64::from(retention_days) * 86_400;
+            removed += self.prune_older_than(cutoff)?;
+        }
+        removed += self.prune_to_count(max_entries)?;
+        Ok(removed)
+    }
+
     pub fn delete(&self, id: i64) -> Result<usize> {
         let db = self.db.lock();
         let n = db.execute("DELETE FROM history WHERE id = ?1", [id])?;
@@ -214,6 +242,36 @@ mod tests {
         let deleted = s.prune_older_than(now_seconds() + 1).unwrap();
         assert_eq!(deleted, 1);
         assert!(s.recent(10).unwrap().is_empty());
+    }
+
+    #[test]
+    fn prune_to_count_keeps_the_newest_rows() {
+        let s = Storage::open_in_memory().unwrap();
+        for i in 0..5 {
+            s.append("translate", Some(&i.to_string()), None, None, false, None)
+                .unwrap();
+        }
+        assert_eq!(s.prune_to_count(2).unwrap(), 3);
+        let left: Vec<_> = s
+            .recent(10)
+            .unwrap()
+            .into_iter()
+            .map(|e| e.source_text.unwrap())
+            .collect();
+        assert_eq!(left, vec!["4", "3"]);
+        // 0 means "no cap".
+        assert_eq!(s.prune_to_count(0).unwrap(), 0);
+        assert_eq!(s.recent(10).unwrap().len(), 2);
+    }
+
+    #[test]
+    fn apply_retention_zero_keeps_everything() {
+        let s = Storage::open_in_memory().unwrap();
+        s.append("translate", Some("a"), None, None, false, None)
+            .unwrap();
+        assert_eq!(s.apply_retention(0, 0).unwrap(), 0);
+        assert_eq!(s.apply_retention(30, 10).unwrap(), 0);
+        assert_eq!(s.recent(10).unwrap().len(), 1);
     }
 
     #[test]

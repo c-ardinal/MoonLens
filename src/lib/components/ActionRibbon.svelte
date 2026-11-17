@@ -1,11 +1,10 @@
 <script lang="ts">
-  import { Copy, Search, Sparkles, Languages, Pin, QrCode, ExternalLink } from 'lucide-svelte';
+  import { Copy, Sparkles, Languages, Pin, ExternalLink } from 'lucide-svelte';
   import type { Intent } from '$lib/ipc';
 
   export type ActionId =
     | 'translate'
     | 'copy'
-    | 'search'
     | 'explain'
     | 'pin'
     | 'open_url';
@@ -25,7 +24,6 @@
   const all: Record<ActionId, Action> = {
     translate: { id: 'translate', label: '翻訳', icon: Languages },
     copy: { id: 'copy', label: 'コピー', icon: Copy },
-    search: { id: 'search', label: '画像検索', icon: Search },
     explain: { id: 'explain', label: '説明', icon: Sparkles },
     pin: { id: 'pin', label: 'ピン', icon: Pin },
     open_url: { id: 'open_url', label: 'URL を開く', icon: ExternalLink }
@@ -38,14 +36,14 @@
         // action; translate is irrelevant but keep copy + explain.
         return ['open_url', 'copy', 'explain', 'pin'];
       case 'photo':
-        // Reverse image search wins; translate is unlikely but cheap
-        // to offer in case OCR found text the classifier missed.
-        return ['search', 'explain', 'translate', 'copy', 'pin'];
+        // Explain first; translate is unlikely but cheap to offer in
+        // case OCR found text the classifier missed. (No reverse image
+        // search: it would send the capture to a web service.)
+        return ['explain', 'translate', 'copy', 'pin'];
       case 'mixed':
-        return ['translate', 'search', 'copy', 'explain', 'pin'];
       case 'text':
       default:
-        return ['translate', 'copy', 'search', 'explain', 'pin'];
+        return ['translate', 'copy', 'explain', 'pin'];
     }
   });
 

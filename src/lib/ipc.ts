@@ -142,6 +142,24 @@ export const pickAndInstallPlugin = () =>
   safeInvoke<string | null>('pick_and_install_plugin');
 export const installOcrModels = () => safeInvoke<string>('install_ocr_models');
 
+export interface OcrModelsStatus {
+  /** PP-OCRv5 (Japanese / Chinese / English), the default engine. */
+  ppocr: boolean;
+  /** ocrs (Latin only), the fallback engine. */
+  ocrs: boolean;
+  dir: string;
+}
+export const ocrModelsStatus = () =>
+  safeInvoke<OcrModelsStatus>('ocr_models_status', undefined, { ppocr: false, ocrs: false, dir: '' });
+
+/** Fired after settings are saved, so every window can apply them at once. */
+export const onSettingsChanged = (handler: (s: Settings) => void): Promise<UnlistenFn> =>
+  listen<Settings>('moonlens://settings-changed', (e) => handler(e.payload));
+
+/** Pin state changed from the pin hotkey. */
+export const onPinState = (handler: (pinned: boolean) => void): Promise<UnlistenFn> =>
+  listen<boolean>('moonlens://pin-state', (e) => handler(e.payload));
+
 /** A GGUF model the built-in translation engine can run. */
 export interface LlmModel {
   id: string;
@@ -205,6 +223,9 @@ export const processFrozenSelection = (rect: FrameRect | null, targetLanguage?: 
 export const retranslateSelection = (targetLanguage: string) =>
   safeInvoke<CaptureFlowResult>('retranslate_selection', { targetLanguage });
 export const closeSelector = () => safeInvoke<void>('close_selector');
+/** Open the Lens selector (hides the main window first). */
+export const startRegionSelection = (full = false) =>
+  safeInvoke<void>('start_region_selection', { full });
 
 export const pinOverlay = (args: CaptureFlowRect) =>
   safeInvoke<void>('pin_overlay', { args });

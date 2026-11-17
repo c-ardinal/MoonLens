@@ -6,7 +6,7 @@ use anyhow::Result;
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, TrayIconBuilder, TrayIconEvent},
-    AppHandle, Manager,
+    AppHandle, Emitter, Manager,
 };
 
 use crate::{
@@ -46,6 +46,7 @@ macro_rules! all_commands {
             ipc::pin_overlay,
             ipc::unpin_overlay,
             ipc::install_ocr_models,
+            ipc::ocr_models_status,
             ipc::list_llm_models,
             ipc::install_llm_model,
             ipc::cancel_llm_download,
@@ -107,6 +108,7 @@ pub fn build() -> Result<()> {
         .setup(|app| {
             let handle = app.handle().clone();
             let settings = Arc::new(SettingsStore::load_or_default(&handle)?);
+            crate::apply_log_level(settings.snapshot().privacy.log_level);
             let settings_watcher = Watcher::spawn(settings.clone())?;
             // Wire disk reloads to the parts of the app that need to
             // react (providers + hotkeys). `subscribe` returns a fresh
@@ -115,8 +117,18 @@ pub fn build() -> Result<()> {
             let reload_handle = handle.clone();
             let mut reload_rx = settings.subscribe();
             tauri::async_runtime::spawn(async move {
-                while let Ok(_snapshot) = reload_rx.recv().await {
+                while let Ok(snapshot) = reload_rx.recv().await {
+                    crate::apply_log_level(snapshot.privacy.log_level);
+                    // Let every window (overlay, subtitle, lens) apply theme
+                    // or font changes, whether saved here or edited on disk.
+                    let _ = reload_handle.emit("moonlens://settings-changed", &*snapshot);
                     let state = reload_handle.state::<AppState>();
+                    if let Err(e) = state.storage.apply_retention(
+                        snapshot.storage.retention_days,
+                        snapshot.storage.max_entries,
+                    ) {
+                        tracing::warn!("history retention failed: {e}");
+                    }
                     state.inner().pipeline.rebuild_providers();
                     let pipeline = state.inner().pipeline.clone();
                     tauri::async_runtime::spawn(async move { pipeline.warm_up().await });
@@ -126,6 +138,15 @@ pub fn build() -> Result<()> {
                 }
             });
             let storage = Arc::new(Storage::open(&handle)?);
+            {
+                // History written before the retention settings changed.
+                let st = settings.snapshot();
+                if let Err(e) =
+                    storage.apply_retention(st.storage.retention_days, st.storage.max_entries)
+                {
+                    tracing::warn!("history retention failed: {e}");
+                }
+            }
             let plugins = Arc::new(PluginRegistry::load(&handle, settings.clone())?);
             let pipeline = Arc::new(Pipeline::new(
                 settings.clone(),
@@ -153,12 +174,16 @@ pub fn build() -> Result<()> {
             let lenses: LensRegistryHandle = Arc::new(LensRegistry::new());
             let region_watcher = Arc::new(RegionWatcher::new());
 
-            hotkey::register_all(
+            // A hotkey another app already owns must not stop MoonLens
+            // from starting; the others still register.
+            if let Err(e) = hotkey::register_all(
                 &handle,
                 settings.clone(),
                 pipeline.clone(),
                 subtitle.clone(),
-            )?;
+            ) {
+                tracing::warn!("{e}");
+            }
             build_tray(&handle)?;
 
             app.manage(AppState {
@@ -242,14 +267,14 @@ fn build_tray(app: &AppHandle) -> Result<()> {
     Ok(())
 }
 
-fn show_main_window(app: &AppHandle) {
+pub(crate) fn show_main_window(app: &AppHandle) {
     if let Some(w) = app.get_webview_window("main") {
         let _ = w.show();
         let _ = w.set_focus();
     }
 }
 
-fn route_main(app: &AppHandle, path: &str) {
+pub(crate) fn route_main(app: &AppHandle, path: &str) {
     if let Some(w) = app.get_webview_window("main") {
         let _ = w.eval(format!(
             "location.hash = '#{path}'; location.pathname = '{path}';"

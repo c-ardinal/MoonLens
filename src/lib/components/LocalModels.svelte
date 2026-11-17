@@ -86,8 +86,8 @@
   }
 </script>
 
-<section class="rounded-ml border border-border bg-surface-elevated p-5 shadow-ml">
-  <h2 class="text-base font-semibold">翻訳モデル</h2>
+<section class="rounded-ml border border-border bg-surface-elevated p-4 shadow-ml sm:p-5">
+  <h3 class="text-base font-semibold">翻訳・説明モデル</h3>
   <p class="text-sm text-ink-muted">
     翻訳・説明・要約はアプリ内蔵のエンジンで端末内だけで動きます（Ollama などは不要）。
     翻訳には PLaMo 3 Translate、説明・要約には Gemma 4 をダウンロードしてください。
@@ -104,9 +104,9 @@
           ? 'border-accent/60 bg-accent/5'
           : 'border-border bg-surface'}"
       >
-        <div class="flex items-center justify-between gap-3">
+        <div class="flex flex-col gap-2 md:flex-row md:items-center md:justify-between md:gap-3">
           <div class="min-w-0">
-            <div class="flex items-center gap-2">
+            <div class="flex flex-wrap items-center gap-2">
               <span class="font-medium">{m.label}</span>
               {#if forTranslate}
                 <span class="rounded-full bg-accent/15 px-2 py-0.5 text-xs text-accent">翻訳</span>
@@ -124,7 +124,7 @@
               >
             </p>
           </div>
-          <div class="flex shrink-0 items-center gap-2">
+          <div class="flex shrink-0 flex-wrap items-center gap-2">
             {#if m.installed}
               {#if !forTranslate}
                 <button
@@ -186,10 +186,10 @@
   </ul>
 
   {#if error}
-    <p class="mt-3 text-xs text-red-500">{error}</p>
+    <p class="mt-3 text-xs break-words text-red-500">{error}</p>
   {/if}
   {#if data.dir}
-    <p class="mt-3 text-xs text-ink-faint">
+    <p class="mt-3 text-xs break-all text-ink-faint">
       保存先: <code class="font-mono">{data.dir}</code>
     </p>
   {/if}

@@ -1,6 +1,11 @@
 @import 'tailwindcss';
 @import './lib/design/tokens.css';
 
+/* Tailwind v4 ignores tailwind.config.ts unless it is named here; without
+   it every design-token class (bg-accent, text-ink-muted, rounded-ml…)
+   compiled to nothing. */
+@config '../tailwind.config.ts';
+
 :root {
   color-scheme: light dark;
   font-family: var(--ml-font-ui);
@@ -27,20 +32,24 @@ body {
   color: var(--ml-ink);
 }
 
-button {
-  font: inherit;
-  color: inherit;
-  background: transparent;
-  border: 0;
-  padding: 0;
-  cursor: pointer;
-}
+/* Element resets go in the base layer: unlayered rules would override
+   Tailwind's layered utilities (padding, background…) on every button. */
+@layer base {
+  button {
+    font: inherit;
+    color: inherit;
+    background: transparent;
+    border: 0;
+    padding: 0;
+    cursor: pointer;
+  }
 
-input,
-textarea,
-select {
-  font: inherit;
-  color: inherit;
+  input,
+  textarea,
+  select {
+    font: inherit;
+    color: inherit;
+  }
 }
 
 /* Keyboard focus ring only; mouse focus stays quiet. */
@@ -57,4 +66,13 @@ select {
 .scrollbar-minimal::-webkit-scrollbar-thumb {
   background: var(--ml-border);
   border-radius: 999px;
+}
+
+/* Settings → 外観 → 動きを減らす (or the OS preference). */
+[data-reduced-motion='true'] *,
+[data-reduced-motion='true'] *::before,
+[data-reduced-motion='true'] *::after {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
 }

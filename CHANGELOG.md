@@ -8,6 +8,19 @@ the project adheres to [SemVer](https://semver.org/).
 
 ### Fixed
 
+- The pin hotkey, the history hotkey and the command-palette hotkey did
+  nothing (their events went to a hidden window or had no listener). The
+  pin hotkey now pins or unpins the last translated region.
+- One shortcut that could not be registered (taken by another app, or
+  malformed) stopped every later shortcut from registering, and at startup
+  stopped the app. Each shortcut now registers on its own and the
+  settings screen names the ones that failed.
+- Long text and paths overflowed history cards, model rows and plugin
+  cards in narrow windows; layouts now wrap down to the 720 px minimum.
+- The app's own styling never loaded: Tailwind v4 ignored
+  `tailwind.config.ts`, so every design-token class (accent buttons, muted
+  text, rounded cards, shadows) compiled to nothing and unlayered element
+  resets stripped padding and backgrounds from every button.
 - Ollama translations were slow or blank. The seeded model
   `gemma4:7b-instruct-q4_K_M` does not exist (404 was treated as an empty
   success); thinking-capable models reasoned before every answer because
@@ -21,6 +34,31 @@ the project adheres to [SemVer](https://semver.org/).
 
 ### Changed
 
+- Settings that were stored but ignored now work and are on the settings
+  screen: history retention (`storage.retention_days`, `max_entries`;
+  applied on every save, at startup and when settings change), log level
+  (`privacy.log_level`, unless `RUST_LOG` is set), translation-cache
+  lifetime (`performance.cache_ttl_seconds`), and the popup's look
+  (`overlay.font_size_px`, `line_height`, `max_width_px`, `opacity`,
+  `blur_px`, `saturation`, `auto_hide_ms`).
+- Settings screen rebuilt. It showed raw JSON for every section (the
+  generated schema form never followed `$ref`), overflowing the window by
+  2,000+ px. Settings are now grouped (翻訳 / モデル / ショートカット /
+  ライブ字幕 / ピン留め / クリップボード / 履歴 / 外観 / パフォーマンス) with
+  Japanese labels, help text, per-field reset, search, a save bar, and a
+  key recorder for shortcuts. Fields the app does not act on yet, and
+  cloud / network switches, stay in `config.toml` only.
+- Theme, density, accent colour, reduced motion and subtitle font size /
+  original-text display apply as soon as settings are saved
+  (`moonlens://settings-changed`).
+- Every main page shares a menu bar; the command palette works on all of
+  them and from its global shortcut. Shortcuts are shown as Ctrl+… on
+  Windows / Linux instead of ⌘.
+- Home screen: "範囲を選んで翻訳" / "画面全体を翻訳" open the Lens selector
+  (the main window steps aside first), and a banner points to missing
+  models. Model downloads moved to 設定 → モデル, with OCR install state.
+- Removed the reverse-image-search action and hotkey registration: they
+  sent captures / text to Google, Bing or Yandex.
 - Translation prompt names the languages ("from Japanese into English"
   instead of "from auto to ja"), keeps blank-line paragraph breaks, and
   tells the model to treat screen text as content, never instructions.

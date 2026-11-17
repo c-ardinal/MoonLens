@@ -4,8 +4,11 @@
   import PrivacyBadge from '$lib/components/PrivacyBadge.svelte';
   import ActionRibbon from '$lib/components/ActionRibbon.svelte';
   import {
+    getSettings,
     hideOverlay,
     onOverlay,
+    onPinState,
+    onSettingsChanged,
     pinOverlay,
     unpinOverlay,
     runExplain,
@@ -28,8 +31,48 @@
   let intent = $state<Intent | null>(null);
   let sourceRect = $state<CaptureFlowRect | null>(null);
   let unlisten: (() => void) | undefined;
+  let unlistenPin: (() => void) | undefined;
+  let unlistenSettings: (() => void) | undefined;
+  let hideTimer: ReturnType<typeof setTimeout> | undefined;
+
+  // Settings → オーバーレイ.
+  let look = $state({
+    maxWidth: 480,
+    opacity: 0.92,
+    blur: 24,
+    saturation: 1.8,
+    fontSize: 14,
+    lineHeight: 1.5,
+    autoHideMs: 0
+  });
+
+  function applySettings(s: any) {
+    const o = s?.overlay ?? {};
+    look = {
+      maxWidth: o.max_width_px ?? 480,
+      opacity: o.opacity ?? 0.92,
+      blur: o.blur_px ?? 24,
+      saturation: o.saturation ?? 1.8,
+      fontSize: o.font_size_px ?? 14,
+      lineHeight: o.line_height ?? 1.5,
+      autoHideMs: o.auto_hide_ms ?? 0
+    };
+  }
+
+  /** Hide the finished result after `auto_hide_ms` unless it is pinned. */
+  function scheduleAutoHide() {
+    if (hideTimer) clearTimeout(hideTimer);
+    if (look.autoHideMs > 0 && !pinned) {
+      hideTimer = setTimeout(() => {
+        if (status === 'result' && !pinned) hideOverlay().catch(() => {});
+      }, look.autoHideMs);
+    }
+  }
 
   onMount(async () => {
+    getSettings().then(applySettings).catch(() => {});
+    unlistenSettings = await onSettingsChanged(applySettings);
+    unlistenPin = await onPinState((p) => (pinned = p));
     unlisten = await onOverlay((event: OverlayEvent) => {
       if (event.kind === 'processing') {
         status = 'processing';
@@ -42,6 +85,7 @@
         provider = event.result.used_provider;
         intent = event.intent;
         sourceRect = event.source_rect;
+        scheduleAutoHide();
       } else if (event.kind === 'chunk') {
         // Ollama streaming: append deltas as they arrive so the user
         // sees tokens live. The final `Result` event will replace the
@@ -60,7 +104,12 @@
     });
   });
 
-  onDestroy(() => unlisten?.());
+  onDestroy(() => {
+    unlisten?.();
+    unlistenPin?.();
+    unlistenSettings?.();
+    if (hideTimer) clearTimeout(hideTimer);
+  });
 
   function copy() {
     if (translation) navigator.clipboard.writeText(translation).catch(() => {});
@@ -95,7 +144,7 @@
   }
 
   async function onRibbonAction(
-    a: 'translate' | 'copy' | 'search' | 'explain' | 'pin' | 'open_url'
+    a: 'translate' | 'copy' | 'explain' | 'pin' | 'open_url'
   ) {
     if (a === 'copy') {
       copy();
@@ -116,15 +165,16 @@
     }
     if (a === 'translate') {
       // Re-run translation on the currently displayed source_text.
-      // Useful when the user changed target language via settings.
+      // Uses the target language from settings (it may have changed).
       if (source) {
         status = 'processing';
         statusMessage = '翻訳中…';
         try {
+          const settings = await getSettings().catch(() => null);
           const r = await runTranslate({
             text: source,
             source_language: 'auto',
-            target_language: 'ja'
+            target_language: settings?.subtitle?.target_language ?? 'ja'
           });
           translation = extractText(r);
           viaCloud = r.via_cloud;
@@ -155,16 +205,6 @@
       }
       return;
     }
-    if (a === 'search') {
-      // Reverse image search from the overlay is only useful if we
-      // can produce a URL; we would need to upload the captured
-      // image to get a URL first. For now, redirect the user to the
-      // browser search for the source text as a graceful fallback.
-      if (source) {
-        const q = encodeURIComponent(source);
-        await runReverseImageSearch(`https://www.google.com/search?q=${q}`);
-      }
-    }
   }
 
   async function dismiss() {
@@ -173,7 +213,14 @@
 </script>
 
 <section
-  class="pointer-events-auto m-2 max-w-[480px] rounded-ml border border-border bg-surface-elevated/90 p-4 shadow-ml-lg backdrop-blur-2xl backdrop-saturate-150"
+  aria-label="訳文"
+  class="pointer-events-auto m-2 rounded-ml border border-border p-4 shadow-ml-lg"
+  style="max-width: min({look.maxWidth}px, calc(100vw - 16px));
+         background: color-mix(in oklab, var(--ml-surface-elevated) {Math.round(look.opacity * 100)}%, transparent);
+         backdrop-filter: blur({look.blur}px) saturate({look.saturation});
+         -webkit-backdrop-filter: blur({look.blur}px) saturate({look.saturation});"
+  onpointerenter={() => hideTimer && clearTimeout(hideTimer)}
+  onpointerleave={() => status === 'result' && scheduleAutoHide()}
 >
   <header class="mb-2 flex items-center justify-between gap-2">
     <PrivacyBadge {viaCloud} {provider} />
@@ -206,12 +253,15 @@
     <p class="text-sm text-red-500">{statusMessage}</p>
   {:else if status === 'result'}
     {#if source}
-      <p class="font-mono text-xs leading-relaxed text-ink-faint">{source}</p>
+      <p class="font-mono text-xs leading-relaxed break-words text-ink-faint">{source}</p>
       <hr class="my-2 border-border" />
     {/if}
-    <p class="whitespace-pre-wrap text-sm leading-relaxed">{translation}</p>
+    <p
+      class="whitespace-pre-wrap break-words"
+      style="font-size: {look.fontSize}px; line-height: {look.lineHeight}"
+    >{translation}</p>
     <ActionRibbon {intent} onAction={onRibbonAction} />
   {:else}
-    <p class="text-sm text-ink-faint">⌘⇧Space でキャプチャ…</p>
+    <p class="text-sm text-ink-faint">ショートカットで範囲を選ぶと、ここに訳文が出ます。</p>
   {/if}
 </section>

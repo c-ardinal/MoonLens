@@ -8,6 +8,8 @@
 //! setup changes so a new model or prompt is never masked by old output.
 
 use std::collections::{HashMap, VecDeque};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, Instant};
 
 use parking_lot::Mutex;
 
@@ -22,12 +24,15 @@ type Key = (String, String);
 
 pub struct TranslationCache {
     capacity: usize,
+    /// Entries older than this many seconds are treated as missing
+    /// (Settings → performance.cache_ttl_seconds). 0 = never expire.
+    ttl_secs: AtomicU64,
     inner: Mutex<Inner>,
 }
 
 #[derive(Default)]
 struct Inner {
-    map: HashMap<Key, CachedTranslation>,
+    map: HashMap<Key, (CachedTranslation, Instant)>,
     order: VecDeque<Key>,
 }
 
@@ -37,6 +42,7 @@ impl TranslationCache {
     pub fn new(capacity: usize) -> Self {
         Self {
             capacity: capacity.max(1),
+            ttl_secs: AtomicU64::new(0),
             inner: Mutex::new(Inner::default()),
         }
     }
@@ -48,12 +54,23 @@ impl TranslationCache {
         )
     }
 
+    /// Set how long an entry stays usable (0 = forever).
+    pub fn set_ttl_secs(&self, secs: u64) {
+        self.ttl_secs.store(secs, Ordering::Relaxed);
+    }
+
     pub fn get(&self, target: &str, source: &str) -> Option<CachedTranslation> {
-        self.inner
-            .lock()
-            .map
-            .get(&Self::key(target, source))
-            .cloned()
+        self.get_at(target, source, Instant::now())
+    }
+
+    fn get_at(&self, target: &str, source: &str, now: Instant) -> Option<CachedTranslation> {
+        let ttl = self.ttl_secs.load(Ordering::Relaxed);
+        let inner = self.inner.lock();
+        let (value, stored) = inner.map.get(&Self::key(target, source))?;
+        if ttl > 0 && now.saturating_duration_since(*stored) > Duration::from_secs(ttl) {
+            return None;
+        }
+        Some(value.clone())
     }
 
     pub fn put(&self, target: &str, source: &str, value: CachedTranslation) {
@@ -62,7 +79,11 @@ impl TranslationCache {
         }
         let key = Self::key(target, source);
         let mut inner = self.inner.lock();
-        if inner.map.insert(key.clone(), value).is_none() {
+        if inner
+            .map
+            .insert(key.clone(), (value, Instant::now()))
+            .is_none()
+        {
             inner.order.push_back(key);
         }
         while inner.order.len() > self.capacity {
@@ -124,6 +145,18 @@ mod tests {
         assert_eq!(c.get("ja", "b").unwrap().text, "B");
         assert_eq!(c.get("ja", "c").unwrap().text, "C");
         assert_eq!(c.len(), 2);
+    }
+
+    #[test]
+    fn expired_entries_are_misses() {
+        let c = TranslationCache::new(5);
+        c.put("ja", "a", v("A"));
+        let later = Instant::now() + Duration::from_secs(61);
+        // No TTL: kept forever.
+        assert!(c.get_at("ja", "a", later).is_some());
+        c.set_ttl_secs(60);
+        assert!(c.get_at("ja", "a", later).is_none());
+        assert!(c.get("ja", "a").is_some());
     }
 
     #[test]
