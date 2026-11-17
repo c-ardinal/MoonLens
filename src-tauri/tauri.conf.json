@@ -74,6 +74,8 @@
   },
   "bundle": {
     "active": true,
+    "license": "MIT",
+    "copyright": "Copyright (c) 2026 Guren",
     "targets": "all",
     "icon": [
       "icons/32x32.png",
@@ -84,8 +86,6 @@
       "icons/icon.icns"
     ],
     "category": "Productivity",
-    "license": "MIT",
-    "copyright": "Copyright (c) 2026 Guren",
     "shortDescription": "On-device screen OCR and translation",
     "longDescription": "A resident tool that reads text in any screen region and paints the translation in place, fully on-device: OCR and translation run on local models, nothing is sent to the network. Also decodes QR codes, explains and summarizes text, and supports plugins."
   },
