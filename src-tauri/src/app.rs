@@ -118,6 +118,8 @@ pub fn build() -> Result<()> {
                 while let Ok(_snapshot) = reload_rx.recv().await {
                     let state = reload_handle.state::<AppState>();
                     state.inner().pipeline.rebuild_providers();
+                    let pipeline = state.inner().pipeline.clone();
+                    tauri::async_runtime::spawn(async move { pipeline.warm_up().await });
                     if let Err(e) = hotkey::reapply(&reload_handle) {
                         tracing::warn!("hotkey reapply after settings reload: {e}");
                     }
@@ -142,6 +144,10 @@ pub fn build() -> Result<()> {
                         crate::overlay::OverlayEvent::Chunk { delta, done },
                     );
                 })));
+            }
+            {
+                let pipeline = pipeline.clone();
+                tauri::async_runtime::spawn(async move { pipeline.warm_up().await });
             }
             let subtitle = Arc::new(SubtitleService::new(settings.clone(), pipeline.clone()));
             let lenses: LensRegistryHandle = Arc::new(LensRegistry::new());

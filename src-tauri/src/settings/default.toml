@@ -84,7 +84,9 @@ use_gpu_if_available = true
 chain = ["llamacpp"]
 parallel_race = false
 fallback_on = ["timeout", "error", "offline"]
-timeout_ms = 3000
+# Local LLMs stream the translation; 3 s cut paragraph-sized OCR text
+# off mid-stream (a cold CPU request alone takes 3-5 s).
+timeout_ms = 15000
 allow_cloud = false
 allow_network = false
 max_cost_per_request = 0.0
@@ -189,14 +191,27 @@ threads = 0
 
 # Optional: an Ollama server, for anyone who prefers it. Not used by the
 # default chains; add "ollama.gemma4" to a chain to enable it.
+#
+# Model choice for both backends is backed by the benchmark in
+# docs/translation-models.md. With Ollama, `gemma4:e4b` also serves
+# explain / summarize; `hf.co/pfnet/plamo-3-translate-2b-GGUF:Q4_K_M` is the
+# better translator (translation only) and gets its PFML3 prompt
+# automatically.
 [providers.configs."ollama.gemma4"]
 endpoint = "http://127.0.0.1:11434"
-model = "gemma4:7b-instruct-q4_K_M"
-temperature = 0.2
+model = "gemma4:e4b"
+temperature = 0.0
 top_p = 0.9
-num_ctx = 8192
+num_ctx = 4096
 stream = true
-system_prompt = "You are a careful translator. Preserve meaning, tone, and formatting. Output only the translation."
+# Keep the weights resident between captures (Ollama's own default is 5m).
+keep_alive = "30m"
+# Thinking-capable models reason before answering unless told not to;
+# translation does not benefit and it multiplies latency.
+think = false
+# Optional override for the translator prompt. Leave unset to use the
+# built-in prompt, which names the source / target languages.
+# system_prompt = "..."
 
 [providers.configs.deepl]
 api_key_env = "DEEPL_API_KEY"

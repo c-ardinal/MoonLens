@@ -6,6 +6,7 @@
 //! same trait so [`crate::pipeline`] does not care which is which.
 
 pub mod asr_whisper;
+pub mod lang;
 pub mod llm_models;
 pub mod ocr_ocrs;
 pub mod ocr_ppocr;
@@ -139,6 +140,12 @@ pub trait Provider: Send + Sync {
     /// indicator and `allow_cloud`/`allow_network` gates.
     fn is_local(&self) -> bool;
     async fn run(&self, input: TaskInput) -> Result<TaskOutput, ProviderError>;
+    /// Optional: load weights / open connections ahead of the first real
+    /// request. Called in the background at startup and after settings
+    /// reloads; the default does nothing.
+    async fn warm_up(&self) -> Result<(), ProviderError> {
+        Ok(())
+    }
 }
 
 pub type ProviderHandle = Arc<dyn Provider>;

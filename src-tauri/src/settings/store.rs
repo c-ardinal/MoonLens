@@ -46,6 +46,9 @@ impl SettingsStore {
                 },
                 Err(e) => tracing::warn!("cannot read user config: {e}"),
             }
+            if super::migrate::migrate_legacy_defaults(&mut settings) {
+                tracing::info!("upgraded legacy provider defaults in user config");
+            }
         } else {
             // Seed the user file with defaults so the user can edit it.
             let _ = std::fs::write(&config_path, DEFAULT_TOML);
@@ -82,6 +85,7 @@ impl SettingsStore {
                     return Ok(false);
                 }
             }
+            super::migrate::migrate_legacy_defaults(&mut settings);
         }
         let changed = {
             let current = self.inner.read();
