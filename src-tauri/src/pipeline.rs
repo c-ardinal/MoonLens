@@ -151,6 +151,34 @@ impl Pipeline {
         *self.providers.write() = map;
     }
 
+    /// Preload the first local provider of the translate chain (and of
+    /// explain / summarize when it differs) so the first capture after
+    /// launch does not pay a multi-second model load. Best-effort:
+    /// failures are logged, never surfaced.
+    pub async fn warm_up(&self) {
+        let s = self.settings.snapshot();
+        let providers = self.providers.read().clone();
+        let mut seen = std::collections::HashSet::new();
+        for chain in [
+            &s.providers.translate.chain,
+            &s.providers.explain.chain,
+            &s.providers.summarize.chain,
+        ] {
+            let first_local = chain
+                .iter()
+                .filter_map(|id| providers.get(id).map(|p| (id, p)))
+                .find(|(_, p)| p.is_local());
+            if let Some((id, p)) = first_local {
+                if seen.insert(id.clone()) {
+                    match p.warm_up().await {
+                        Ok(()) => tracing::info!("warmed up provider {id}"),
+                        Err(e) => tracing::warn!("warm-up of {id} failed: {e}"),
+                    }
+                }
+            }
+        }
+    }
+
     /// Run a task through the configured chain, respecting privacy gates,
     /// timeouts, fallback conditions, and session stickiness.
     pub async fn run(

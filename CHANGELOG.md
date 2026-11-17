@@ -6,6 +6,31 @@ the project adheres to [SemVer](https://semver.org/).
 
 ## Unreleased
 
+### Fixed
+
+- Ollama translations were slow or blank. The seeded model
+  `gemma4:7b-instruct-q4_K_M` does not exist (404 was treated as an empty
+  success); thinking-capable models reasoned before every answer because
+  `think` was never sent; the 3 s translate timeout cut paragraph-sized
+  OCR text off mid-stream; and the model was unloaded after 5 minutes.
+  Requests now send `think: false` and `keep_alive = "30m"`, the model is
+  preloaded at startup, HTTP / stream errors and empty answers fall
+  through the chain with an actionable message (`ollama pull <model>`),
+  and the translate timeout is 15 s. Existing `config.toml` files that
+  still hold the old seeded values are upgraded at load.
+
+### Changed
+
+- Translation prompt names the languages ("from Japanese into English"
+  instead of "from auto to ja"), keeps blank-line paragraph breaks, and
+  tells the model to treat screen text as content, never instructions.
+- Ollama default model is `gemma4:e4b`; PLaMo 3 Translate models are
+  driven with their native PFML3 prompt (`raw`, tag stop tokens).
+- `docs/translation-models.md`: benchmark of 10 local models (WMT22
+  ja↔en + MoonLens-style cases). PLaMo 3 Translate 2B matches Gemma 4
+  E4B quality at 2.5x the speed and resists prompt injection; it is the
+  recommended translator. Reproducible with `bench/translation/`.
+
 ### Added
 
 - Target language in the selector. Text that is already in the target

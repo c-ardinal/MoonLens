@@ -18,7 +18,7 @@ PC常駐の Google Lens 風ツール。1つのグローバルホットキーで
 - **UI**: Svelte 5 (runes) + Vite + Tailwind CSS v4
 - **OCR**: [`ocrs`](https://github.com/robertknight/ocrs) crate（追加の OCR エンジンはプラグインで差し替え可）
 - **QR**: `rqrr` crate
-- **翻訳 (local)**: Ollama HTTP ストリーミング, デフォルトモデル `gemma4:7b-instruct-q4_K_M`
+- **翻訳 (local)**: Ollama HTTP ストリーミング（`gemma4:e4b`、翻訳専用に PLaMo 3 Translate も可）。モデル選定の根拠は [docs/translation-models.md](docs/translation-models.md)
 - **翻訳 (cloud)**: DeepL / Gemini API（オプションフォールバック）
 - **ASR**: `whisper.cpp` HTTP サーバ（サイドカー起動）
 - **画面キャプチャ**: `xcap` 0.9、**音声ループバック**: `cpal`
@@ -103,7 +103,7 @@ sticky_session_ms = 30000
 - （翻訳用）Ollama + `gemma4` モデル
 
 ```bash
-ollama pull gemma4:7b-instruct-q4_K_M
+ollama pull gemma4:e4b
 ollama serve
 ```
 

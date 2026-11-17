@@ -8,6 +8,7 @@
 //!   automatically. New providers/plugins do not require manual UI work.
 //! - Hot reload via `notify`; subscribers receive a fresh snapshot.
 
+pub mod migrate;
 pub mod profiles;
 pub mod schema;
 pub mod store;
