@@ -553,7 +553,7 @@ mod engine {
             LlamaModel::load_from_file(backend, path, &mp)
         };
         let model = match load(params.n_gpu_layers) {
-            Ok(m) => m,
+            Ok(m) => Ok(m),
             // Not enough GPU memory, or a driver that cannot run the
             // backend: the CPU still translates, just more slowly.
             Err(e) if params.n_gpu_layers > 0 => {
