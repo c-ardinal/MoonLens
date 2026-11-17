@@ -358,7 +358,8 @@ pub async fn get_frozen_frame() -> Result<tauri::ipc::Response, String> {
     Ok(tauri::ipc::Response::new(frame.png.clone()))
 }
 
-/// Process a selection on the frozen frame (`None` = whole frame).
+/// Process a selection on the frozen frame (`None` = whole frame),
+/// translating into `target_language` (default: the configured target).
 ///
 /// Emits `moonlens://selector-analysis` with the positioned, not yet
 /// translated blocks as soon as OCR finishes, so the selector can mask
@@ -367,6 +368,7 @@ pub async fn get_frozen_frame() -> Result<tauri::ipc::Response, String> {
 #[tauri::command]
 pub async fn process_frozen_selection(
     rect: Option<selector::FrameRect>,
+    target_language: Option<String>,
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<CaptureFlowResult, String> {
@@ -387,14 +389,50 @@ pub async fn process_frozen_selection(
         h: r.h,
     });
     if bundle.needs_translation() {
+        // The selector remembers the language last picked in its toolbar;
+        // otherwise use the configured target.
+        let target = target_language
+            .map(|t| t.trim().to_string())
+            .filter(|t| !t.is_empty())
+            .unwrap_or_else(|| state.settings.snapshot().subtitle.target_language.clone());
+        crate::pipeline::Pipeline::mark_same_language(&mut bundle, &target);
+        selector::remember_analysis(&bundle);
         app.emit_to("selector", "moonlens://selector-analysis", &bundle)
             .ok();
         state
             .pipeline
-            .translate_capture(&mut bundle)
+            .translate_capture_to(&mut bundle, &target)
             .await
             .map_err(|e| e.to_string())?;
     }
+    apply_clipboard_policy(&app, &state, &bundle);
+    Ok(bundle)
+}
+
+/// Translate the selection currently shown in the selector into another
+/// language (the toolbar's language switch). Reuses the OCR result, so
+/// only the translation runs again. Emits `moonlens://selector-analysis`
+/// first so the overlay can reset and stream like a fresh selection.
+#[tauri::command]
+pub async fn retranslate_selection(
+    target_language: String,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<CaptureFlowResult, String> {
+    let target = target_language.trim();
+    if target.is_empty() {
+        return Err("target language is empty".into());
+    }
+    let mut bundle =
+        selector::last_analysis().ok_or("nothing to translate; select a region first")?;
+    crate::pipeline::Pipeline::mark_same_language(&mut bundle, target);
+    app.emit_to("selector", "moonlens://selector-analysis", &bundle)
+        .ok();
+    state
+        .pipeline
+        .translate_capture_to(&mut bundle, target)
+        .await
+        .map_err(|e| e.to_string())?;
     apply_clipboard_policy(&app, &state, &bundle);
     Ok(bundle)
 }

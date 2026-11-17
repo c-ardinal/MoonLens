@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
+  allSameLanguage,
+  applyStreaming,
   blockCssRect,
   dragRect,
   fitFontSize,
   joinedText,
+  languageLabel,
   rgb,
   splitStreaming,
   toCssRect,
@@ -122,5 +125,33 @@ describe('misc', () => {
     const bs = [block({ translation: 'A' }), block({ source: 'b', translation: null })];
     expect(joinedText(bs, 'translation')).toBe('A\n\nb');
     expect(joinedText(bs, 'source')).toBe('src\n\nb');
+  });
+});
+
+describe('target language', () => {
+  it('streams only into blocks that were sent for translation', () => {
+    const bs = [
+      block({ source: 'a', translation: null }),
+      block({ source: 'すでに日本語', translation: 'すでに日本語', same_language: true }),
+      block({ source: 'b', translation: null })
+    ];
+    const out = applyStreaming(bs, 'A\n\nB');
+    expect(out.map((b) => b.translation)).toEqual(['A', 'すでに日本語', 'B']);
+    expect(applyStreaming(bs, 'A').map((b) => b.translation)).toEqual(['A', 'すでに日本語', null]);
+  });
+
+  it('labels languages', () => {
+    expect(languageLabel('ja')).toBe('日本語');
+    expect(languageLabel('EN')).toBe('英語');
+    expect(languageLabel('en-US')).toBe('英語');
+    expect(languageLabel('zh')).toBe('中国語');
+    expect(languageLabel('xx')).toBe('xx');
+    expect(languageLabel(null)).toBe('');
+  });
+
+  it('detects when nothing needed translating', () => {
+    expect(allSameLanguage([])).toBe(false);
+    expect(allSameLanguage([block({ same_language: true })])).toBe(true);
+    expect(allSameLanguage([block({ same_language: true }), block()])).toBe(false);
   });
 });

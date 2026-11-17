@@ -28,7 +28,15 @@ use moonlens_lib::{
     storage::Storage,
 };
 
-struct StubOcr;
+/// OCR stub returning `(text, y)` lines, each 16 px tall at x = 10.
+struct StubOcr(Vec<(&'static str, f32)>);
+
+const ENGLISH_LINES: &[(&str, f32)] = &[
+    ("Hello", 10.0),
+    ("world.", 28.0),
+    ("Second", 80.0),
+    ("paragraph.", 98.0),
+];
 
 #[async_trait]
 impl Provider for StubOcr {
@@ -42,18 +50,16 @@ impl Provider for StubOcr {
         true
     }
     async fn run(&self, _input: TaskInput) -> Result<TaskOutput, ProviderError> {
-        let l = |text: &str, y: f32| OcrLine {
-            text: text.into(),
-            bbox: [10.0, y, 200.0, 16.0],
-            confidence: 1.0,
-        };
         Ok(TaskOutput::Ocr {
-            lines: vec![
-                l("Hello", 10.0),
-                l("world.", 28.0),
-                l("Second", 80.0),
-                l("paragraph.", 98.0),
-            ],
+            lines: self
+                .0
+                .iter()
+                .map(|&(text, y)| OcrLine {
+                    text: text.into(),
+                    bbox: [10.0, y, 200.0, 16.0],
+                    confidence: 1.0,
+                })
+                .collect(),
         })
     }
 }
@@ -91,6 +97,15 @@ impl Provider for StubTranslator {
 }
 
 fn pipeline(merge: bool, calls: Arc<AtomicUsize>) -> Pipeline {
+    pipeline_with(ENGLISH_LINES, "en-not-target", merge, calls)
+}
+
+fn pipeline_with(
+    lines: &[(&'static str, f32)],
+    target: &str,
+    merge: bool,
+    calls: Arc<AtomicUsize>,
+) -> Pipeline {
     let tmp = tempfile::tempdir().unwrap();
     let store = SettingsStore::load_from(tmp.path().join("config.toml")).unwrap();
     let mut s = Settings::default();
@@ -106,10 +121,11 @@ fn pipeline(merge: bool, calls: Arc<AtomicUsize>) -> Pipeline {
     };
     // No QR provider in the chain → QR step fails fast and OCR runs.
     s.providers.qr_handler.chain = vec![];
+    s.subtitle.target_language = target.into();
     store.save(s).unwrap();
     std::mem::forget(tmp);
     let mut providers: HashMap<String, ProviderHandle> = HashMap::new();
-    providers.insert("stub_ocr".into(), Arc::new(StubOcr));
+    providers.insert("stub_ocr".into(), Arc::new(StubOcr(lines.to_vec())));
     providers.insert("stub_tr".into(), Arc::new(StubTranslator { merge, calls }));
     Pipeline::with_providers(
         Arc::new(store),
@@ -179,4 +195,72 @@ async fn analyze_then_translate_matches_run_capture_flow() {
     pipe.translate_capture(&mut r).await.unwrap();
     assert!(!r.needs_translation());
     assert!(matches!(&r.result.output, TaskOutput::Text(t) if t.contains("[Hello world.]")));
+}
+
+const MIXED_LINES: &[(&str, f32)] = &[
+    ("これは日本語の文章です。", 10.0),
+    ("This is a test of the system.", 80.0),
+    ("12:30", 140.0),
+];
+
+#[tokio::test]
+async fn blocks_already_in_target_are_not_translated() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let pipe = pipeline_with(MIXED_LINES, "ja", false, calls.clone());
+    let r = pipe.run_capture_flow(white_png(300, 180)).await.unwrap();
+
+    assert_eq!(r.blocks.len(), 3);
+    assert_eq!(r.source_language.as_deref(), Some("ja"));
+    assert_eq!(r.target_language.as_deref(), Some("ja"));
+    assert!(r.blocks[0].same_language);
+    assert_eq!(
+        r.blocks[0].translation.as_deref(),
+        Some("これは日本語の文章です。")
+    );
+    assert!(!r.blocks[1].same_language);
+    assert_eq!(
+        r.blocks[1].translation.as_deref(),
+        Some("[This is a test of the system.]")
+    );
+    assert!(r.blocks[2].same_language, "numbers need no translation");
+    assert_eq!(calls.load(Ordering::Relaxed), 1);
+    // Only the English block went to the translator.
+    assert!(
+        matches!(&r.result.output, TaskOutput::Text(t) if t == "[This is a test of the system.]")
+    );
+}
+
+#[tokio::test]
+async fn retranslating_into_another_language_flips_passthrough() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let pipe = pipeline_with(MIXED_LINES, "ja", false, calls.clone());
+    let mut r = pipe.analyze_capture(white_png(300, 180)).await.unwrap();
+    assert!(r.blocks[0].same_language);
+
+    pipe.translate_capture_to(&mut r, "en-US").await.unwrap();
+    assert_eq!(r.target_language.as_deref(), Some("en-US"));
+    assert!(!r.blocks[0].same_language);
+    assert_eq!(
+        r.blocks[0].translation.as_deref(),
+        Some("[これは日本語の文章です。]")
+    );
+    assert!(r.blocks[1].same_language);
+    assert_eq!(
+        r.blocks[1].translation.as_deref(),
+        Some("This is a test of the system.")
+    );
+    assert_eq!(calls.load(Ordering::Relaxed), 1);
+}
+
+#[tokio::test]
+async fn nothing_to_translate_skips_the_translator() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let pipe = pipeline_with(&MIXED_LINES[..1], "ja", false, calls.clone());
+    let r = pipe.run_capture_flow(white_png(300, 60)).await.unwrap();
+
+    assert_eq!(r.source_language.as_deref(), Some("ja"));
+    assert!(r.blocks.iter().all(|b| b.same_language));
+    assert_eq!(r.result.used_provider, "builtin.passthrough");
+    assert!(!r.needs_translation());
+    assert_eq!(calls.load(Ordering::Relaxed), 0);
 }

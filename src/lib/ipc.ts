@@ -53,6 +53,8 @@ export interface LensBlock {
   /** null while translating, or when translation failed for this block. */
   translation: string | null;
   colors: { background: [number, number, number]; foreground: [number, number, number] } | null;
+  /** Already in the target language (or no letters): not translated. */
+  same_language?: boolean;
 }
 
 export interface CaptureFlowResult {
@@ -64,6 +66,10 @@ export interface CaptureFlowResult {
   blocks?: LensBlock[];
   /** [width, height] of the captured image (coordinate space of blocks). */
   image_size?: [number, number] | null;
+  /** Best guess at the source language ("ja", "en", …). */
+  source_language?: string | null;
+  /** Language the blocks were translated into. */
+  target_language?: string | null;
 }
 
 /** Selection on the selector's frozen frame, in frame pixels. */
@@ -135,8 +141,13 @@ export const hideOverlay = () => safeInvoke<void>('hide_overlay');
 /** PNG bytes of the frame the selector froze when it opened. */
 export const getFrozenFrame = () => safeInvoke<ArrayBuffer>('get_frozen_frame');
 /** OCR + translate a selection of the frozen frame (null = whole frame). */
-export const processFrozenSelection = (rect: FrameRect | null) =>
-  safeInvoke<CaptureFlowResult>('process_frozen_selection', { rect });
+export const processFrozenSelection = (rect: FrameRect | null, targetLanguage?: string | null) =>
+  safeInvoke<CaptureFlowResult>('process_frozen_selection', {
+    rect,
+    targetLanguage: targetLanguage ?? null
+  });
+export const retranslateSelection = (targetLanguage: string) =>
+  safeInvoke<CaptureFlowResult>('retranslate_selection', { targetLanguage });
 export const closeSelector = () => safeInvoke<void>('close_selector');
 
 export const pinOverlay = (args: CaptureFlowRect) =>

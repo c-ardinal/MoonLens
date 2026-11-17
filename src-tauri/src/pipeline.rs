@@ -14,7 +14,7 @@ use tokio::time::timeout;
 use futures::StreamExt;
 
 use crate::{
-    intent, layout,
+    intent, lang, layout,
     plugins::PluginRegistry,
     providers::{
         asr_whisper::WhisperCppProvider, ocr_ocrs::OcrsProvider, qr_rqrr::RqrrProvider,
@@ -288,6 +288,8 @@ impl Pipeline {
                     source_rect: None,
                     blocks: vec![],
                     image_size: Some([img.width(), img.height()]),
+                    source_language: None,
+                    target_language: None,
                 });
             }
         }
@@ -323,6 +325,8 @@ impl Pipeline {
                 source_rect: None,
                 blocks: vec![],
                 image_size,
+                source_language: None,
+                target_language: None,
                 result: TaskResult {
                     task: "capture".into(),
                     output: TaskOutput::Intent(intent),
@@ -343,15 +347,19 @@ impl Pipeline {
                 source: b.text.clone(),
                 translation: None,
                 colors: (b.bbox[2] > 0.0).then(|| layout::estimate_colors(&rgba, b.bbox)),
+                same_language: false,
             })
             .collect();
 
-        Ok(CaptureFlowResult {
+        let mut bundle = CaptureFlowResult {
             intent: Intent::Text,
+            source_language: lang::dominant(blocks.iter().map(|b| b.source.as_str()))
+                .map(str::to_string),
             source_text: Some(ocr_text),
             source_rect: None,
             blocks,
             image_size,
+            target_language: None,
             result: TaskResult {
                 task: "ocr".into(),
                 output: TaskOutput::Empty,
@@ -360,7 +368,21 @@ impl Pipeline {
                 latency_ms: 0,
                 fallback_reasons: vec![],
             },
-        })
+        };
+        let target = self.settings.snapshot().subtitle.target_language.clone();
+        Self::mark_same_language(&mut bundle, &target);
+        Ok(bundle)
+    }
+
+    /// Set the target language on an analysed bundle, flag the blocks
+    /// that are already in it, and clear any previous translation so the
+    /// bundle can be (re)translated with [`Self::translate_capture_to`].
+    pub fn mark_same_language(bundle: &mut CaptureFlowResult, target: &str) {
+        bundle.target_language = Some(target.to_string());
+        for b in &mut bundle.blocks {
+            b.same_language = lang::already_in(&b.source, target);
+            b.translation = b.same_language.then(|| b.source.clone());
+        }
     }
 
     /// Second half of the capture flow: translate the analysed blocks in
@@ -370,15 +392,48 @@ impl Pipeline {
         &self,
         bundle: &mut CaptureFlowResult,
     ) -> Result<(), ProviderError> {
+        let target = self.settings.snapshot().subtitle.target_language.clone();
+        self.translate_capture_to(bundle, &target).await
+    }
+
+    /// [`Self::translate_capture`] into an explicit target language (the
+    /// selector's language switch). Blocks already in `target` are passed
+    /// through untouched and left out of the request.
+    pub async fn translate_capture_to(
+        &self,
+        bundle: &mut CaptureFlowResult,
+        target_language: &str,
+    ) -> Result<(), ProviderError> {
         let s = self.settings.snapshot();
-        let ocr_text = bundle.source_text.clone().unwrap_or_default();
-        let blocks = &mut bundle.blocks;
-        let target_language = s.subtitle.target_language.clone();
+        Self::mark_same_language(bundle, target_language);
+        let pending: Vec<usize> = (0..bundle.blocks.len())
+            .filter(|&i| !bundle.blocks[i].same_language)
+            .collect();
+        let target_language = target_language.to_string();
+
+        if pending.is_empty() {
+            // Everything is already readable: no round-trip at all.
+            bundle.result = TaskResult {
+                task: "translate".into(),
+                output: TaskOutput::Text(bundle.source_text.clone().unwrap_or_default()),
+                used_provider: "builtin.passthrough".into(),
+                via_cloud: false,
+                latency_ms: 0,
+                fallback_reasons: vec![],
+            };
+            return Ok(());
+        }
+
+        let sources: Vec<String> = pending
+            .iter()
+            .map(|&i| bundle.blocks[i].source.clone())
+            .collect();
+        let request_text = sources.join(layout::BLOCK_SEPARATOR);
         let translate = self
             .run(
                 Capability::Translate,
                 TaskInput::Translate {
-                    text: ocr_text.clone(),
+                    text: request_text.clone(),
                     source_language: "auto".into(),
                     target_language: target_language.clone(),
                 },
@@ -389,40 +444,37 @@ impl Pipeline {
             TaskOutput::Text(t) => t.clone(),
             _ => String::new(),
         };
-        match layout::split_translation(&whole, blocks.len()) {
-            Some(parts) => {
-                for (b, t) in blocks.iter_mut().zip(parts) {
-                    b.translation = Some(t);
+        let translations: Vec<Option<String>> =
+            match layout::split_translation(&whole, pending.len()) {
+                Some(parts) => parts.into_iter().map(Some).collect(),
+                None => {
+                    // The translator merged or split paragraphs, so the
+                    // per-block mapping is ambiguous. Translate each block
+                    // on its own (concurrently) so the in-place overlay can
+                    // still put every translation over its source.
+                    let max = s.performance.max_concurrent_tasks.max(1) as usize;
+                    let inputs: Vec<TaskInput> = sources
+                        .iter()
+                        .map(|text| TaskInput::Translate {
+                            text: text.clone(),
+                            source_language: "auto".into(),
+                            target_language: target_language.clone(),
+                        })
+                        .collect();
+                    futures::stream::iter(inputs)
+                        .map(|input| self.translate_one(input))
+                        .buffered(max)
+                        .collect()
+                        .await
                 }
-            }
-            None => {
-                // The translator merged or split paragraphs, so the
-                // per-block mapping is ambiguous. Translate each block on
-                // its own (concurrently) so the in-place overlay can still
-                // put every translation over its source.
-                let max = s.performance.max_concurrent_tasks.max(1) as usize;
-                let inputs: Vec<TaskInput> = blocks
-                    .iter()
-                    .map(|b| TaskInput::Translate {
-                        text: b.source.clone(),
-                        source_language: "auto".into(),
-                        target_language: target_language.clone(),
-                    })
-                    .collect();
-                let per_block: Vec<Option<String>> = futures::stream::iter(inputs)
-                    .map(|input| self.translate_one(input))
-                    .buffered(max)
-                    .collect()
-                    .await;
-                for (b, t) in blocks.iter_mut().zip(per_block) {
-                    b.translation = t;
-                }
-            }
+            };
+        for (&i, t) in pending.iter().zip(translations) {
+            bundle.blocks[i].translation = t;
         }
 
         self.record_history(
             "translate",
-            Some(&ocr_text),
+            Some(&request_text),
             Some(whole.as_str()).filter(|t| !t.is_empty()),
             Some(&translate.used_provider),
             translate.via_cloud,
@@ -481,6 +533,12 @@ pub struct CaptureFlowResult {
     /// `[width, height]` of the captured image, the coordinate space of
     /// every `blocks[].bbox`.
     pub image_size: Option<[u32; 2]>,
+    /// Best guess at the source language (`ja`, `en`, …), if any.
+    #[serde(default)]
+    pub source_language: Option<String>,
+    /// Language the blocks were (or will be) translated into.
+    #[serde(default)]
+    pub target_language: Option<String>,
 }
 
 /// One paragraph of recognised text, positioned in the captured image.
@@ -496,6 +554,11 @@ pub struct LensBlock {
     /// Background / text colour sampled from the capture, used to erase
     /// the original text and paint the translation over it.
     pub colors: Option<layout::BlockColors>,
+    /// True when the block is already in the target language (or has no
+    /// letters), so it was not sent to the translator and `translation`
+    /// is the source text. The overlay leaves such blocks uncovered.
+    #[serde(default)]
+    pub same_language: bool,
 }
 
 impl CaptureFlowResult {
