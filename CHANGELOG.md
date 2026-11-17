@@ -8,6 +8,15 @@ the project adheres to [SemVer](https://semver.org/).
 
 ### Added
 
+- Target language in the selector. Text that is already in the target
+  language (detected from its script, plus English function words for
+  Latin text) and text without letters (prices, times) is no longer sent
+  to the translator and stays uncovered in the overlay, so a Japanese
+  screen no longer round-trips ja→ja. The toolbar shows the detected
+  source language and a target-language menu; changing it re-translates
+  the same OCR result without re-scanning, and the choice is remembered
+  for the next selection. New command `retranslate_selection`.
+
 - Japanese / Chinese OCR: new `ppocr` provider runs PP-OCRv5 mobile
   models (detection + recognition) on rten. It reads kana, kanji,
   simplified/traditional Chinese and English, and is now first in the
