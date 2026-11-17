@@ -7,12 +7,14 @@
 
 pub mod asr_whisper;
 pub mod lang;
+pub mod llm_models;
 pub mod ocr_ocrs;
 pub mod ocr_ppocr;
 pub mod qr_rqrr;
 pub mod search_serpapi;
 pub mod translate_deepl;
 pub mod translate_gemini;
+pub mod translate_llama;
 pub mod translate_ollama;
 
 use std::sync::Arc;

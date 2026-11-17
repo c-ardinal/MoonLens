@@ -46,6 +46,11 @@ macro_rules! all_commands {
             ipc::pin_overlay,
             ipc::unpin_overlay,
             ipc::install_ocr_models,
+            ipc::list_llm_models,
+            ipc::install_llm_model,
+            ipc::cancel_llm_download,
+            ipc::delete_llm_model,
+            ipc::select_llm_model,
             ipc::show_main,
             ipc::hide_overlay,
             ipc::start_region_selection,
@@ -127,7 +132,8 @@ pub fn build() -> Result<()> {
                 storage.clone(),
                 plugins.clone(),
             ));
-            // Forward Ollama streaming chunks to the overlay webview so
+            pipeline.preload_local_llm();
+            // Forward LLM streaming chunks to the overlay webview so
             // the UI renders tokens in real time.
             {
                 let emit_handle = handle.clone();

@@ -77,17 +77,19 @@ use_gpu_if_available = true
 # registered providers (built-in or loaded from plugins).
 # ---------------------------------------------------------------------------
 
+# Translation, explanation and summaries run fully on-device with the
+# built-in engine. Cloud providers (deepl, gemini) stay available but are
+# opt-in: add them to a chain and set allow_cloud / allow_network.
 [providers.translate]
-chain = ["ollama.gemma4", "deepl", "gemini"]
+chain = ["llamacpp"]
 parallel_race = false
 fallback_on = ["timeout", "error", "offline"]
-# Local LLMs stream the translation; 3 s used to cut long OCR blocks off
-# mid-stream and fall back to the cloud. Offline / missing-model errors
-# still fall back immediately.
+# Local LLMs stream the translation; 3 s cut paragraph-sized OCR text
+# off mid-stream (a cold CPU request alone takes 3-5 s).
 timeout_ms = 15000
-allow_cloud = true
-allow_network = true
-max_cost_per_request = 0.01
+allow_cloud = false
+allow_network = false
+max_cost_per_request = 0.0
 sticky_session_ms = 30000
 
 [providers.ocr]
@@ -113,23 +115,23 @@ max_cost_per_request = 0.0
 sticky_session_ms = 0
 
 [providers.explain]
-chain = ["ollama.gemma4", "gemini"]
+chain = ["llamacpp.assistant"]
 parallel_race = false
 fallback_on = ["timeout", "error", "offline"]
 timeout_ms = 10000
-allow_cloud = true
-allow_network = true
-max_cost_per_request = 0.02
+allow_cloud = false
+allow_network = false
+max_cost_per_request = 0.0
 sticky_session_ms = 60000
 
 [providers.summarize]
-chain = ["ollama.gemma4", "gemini"]
+chain = ["llamacpp.assistant"]
 parallel_race = false
 fallback_on = ["timeout", "error", "offline"]
 timeout_ms = 10000
-allow_cloud = true
-allow_network = true
-max_cost_per_request = 0.02
+allow_cloud = false
+allow_network = false
+max_cost_per_request = 0.0
 sticky_session_ms = 60000
 
 [providers.reverse_image_search]
@@ -167,14 +169,34 @@ sticky_session_ms = 0
 # can declare their own settings without the core knowing the shape.
 # ---------------------------------------------------------------------------
 
-# Optional Ollama backend (the built-in engine needs no external server).
-# Model choice is backed by the benchmark in docs/translation-models.md:
-#   gemma4:e4b  default here: one general model that also serves
-#               explain / summarize
-#   hf.co/pfnet/plamo-3-translate-2b-GGUF:Q4_K_M
-#               best translator measured (2.5x faster than gemma4:e4b at
-#               equal quality); translation only, so use it in a
-#               translate-only chain. The PFML3 prompt is built automatically.
+# Built-in llama.cpp engine: no external runtime needed. Models are
+# downloaded from the home screen. `model` is a catalog id:
+#   translation: "plamo-3-translate-2b" (default), "plamo-3-translate-0.8b"
+#   general:     "gemma-4-e4b" (default), "gemma-4-e2b"
+# Set `model_path` (+ `prompt_style = "pfml3"` for PLaMo) to run any
+# other GGUF file instead.
+[providers.configs.llamacpp]
+model = "plamo-3-translate-2b"
+n_ctx = 4096
+temperature = 0.0
+threads = 0
+
+# General model for explain / summarize (PLaMo only translates).
+[providers.configs."llamacpp.assistant"]
+model = "gemma-4-e4b"
+n_ctx = 4096
+temperature = 0.0
+top_p = 0.9
+threads = 0
+
+# Optional: an Ollama server, for anyone who prefers it. Not used by the
+# default chains; add "ollama.gemma4" to a chain to enable it.
+#
+# Model choice for both backends is backed by the benchmark in
+# docs/translation-models.md. With Ollama, `gemma4:e4b` also serves
+# explain / summarize; `hf.co/pfnet/plamo-3-translate-2b-GGUF:Q4_K_M` is the
+# better translator (translation only) and gets its PFML3 prompt
+# automatically.
 [providers.configs."ollama.gemma4"]
 endpoint = "http://127.0.0.1:11434"
 model = "gemma4:e4b"
