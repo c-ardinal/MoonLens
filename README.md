@@ -55,10 +55,10 @@ OS の標準手順で削除する。Windows のインストーラー（setup.exe
 
 - **アプリシェル**: Tauri 2.x (Rust)
 - **UI**: Svelte 5 (runes) + Vite + Tailwind CSS v4
-- **OCR**: PP-OCRv5 mobile（`rten` で実行、日中英）を既定とし、ラテン文字専用の [`ocrs`](https://github.com/robertknight/ocrs) をフォールバックに使う（追加の OCR エンジンはプラグインで差し替え可）
+- **OCR**: [`ocrs`](https://github.com/robertknight/ocrs) crate（追加の OCR エンジンはプラグインで差し替え可）
 - **QR**: `rqrr` crate
 - **翻訳 (local)**: 内蔵 llama.cpp（`llama-cpp-2`、静的リンク）で GGUF を実行。翻訳の既定は PLaMo 3 Translate 2B（0.8B も選択可）、説明・要約は Gemma 4 E4B。モデルはアプリのホーム画面からダウンロード（SHA-256 検証・中断再開）。モデル選定の根拠は [docs/translation-models.md](docs/translation-models.md)
-- **翻訳 (任意)**: Ollama と DeepL / Gemini API のプロバイダーも残っているが、既定チェーンには入っておらず、クラウドは設定で明示的に許可しない限り使われない
+- **翻訳 (cloud / Ollama)**: DeepL / Gemini API、Ollama は任意のオプション（既定チェーンには入っていない）
 - **ASR**: `whisper.cpp` HTTP サーバ（別途起動が必要。未接続時はライブ字幕の開始時に案内）
 - **画面キャプチャ**: `xcap` 0.9、**音声ループバック**: `cpal`
 - **履歴**: `rusqlite`（SQLite、bundled）
