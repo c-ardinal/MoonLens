@@ -19,7 +19,7 @@ use parking_lot::Mutex;
 use tokio::task;
 use wasmtime::component::{Component, Linker, ResourceTable};
 use wasmtime::{Config, Engine, Store};
-use wasmtime_wasi::{WasiCtx, WasiCtxBuilder, WasiView};
+use wasmtime_wasi::{WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
 
 use crate::providers::{
     Capability, OcrLine, Provider, ProviderError, ProviderHandle, TaskInput, TaskOutput,
@@ -31,7 +31,6 @@ use super::manifest::PluginManifest;
 wasmtime::component::bindgen!({
     world: "plugin",
     path: "src/plugins/wit/moonlens.wit",
-    async: false,
 });
 
 use moonlens::plugin::types as wit_types;
@@ -42,11 +41,11 @@ struct State {
 }
 
 impl WasiView for State {
-    fn ctx(&mut self) -> &mut WasiCtx {
-        &mut self.wasi
-    }
-    fn table(&mut self) -> &mut ResourceTable {
-        &mut self.table
+    fn ctx(&mut self) -> WasiCtxView<'_> {
+        WasiCtxView {
+            ctx: &mut self.wasi,
+            table: &mut self.table,
+        }
     }
 }
 
@@ -130,7 +129,7 @@ fn build_instance(bytes: &[u8]) -> Result<LoadedInstance> {
     let component = Component::from_binary(&engine, bytes)?;
 
     let mut linker = Linker::<State>::new(&engine);
-    wasmtime_wasi::add_to_linker_sync(&mut linker).context("link wasi to linker")?;
+    wasmtime_wasi::p2::add_to_linker_sync(&mut linker).context("link wasi to linker")?;
 
     // No filesystem, no env, no inherited stdio. Network capability
     // will be plumbed via WASI p3 sockets when that stabilises — until
