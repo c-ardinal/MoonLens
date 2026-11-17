@@ -19,8 +19,9 @@ use crate::{
     providers::{
         asr_whisper::WhisperCppProvider, ocr_ocrs::OcrsProvider, qr_rqrr::RqrrProvider,
         search_serpapi::BrowserSearchProvider, translate_deepl::DeepLTranslator,
-        translate_gemini::GeminiProvider, translate_ollama::OllamaTranslator, Capability, Intent,
-        OcrLine, ProviderError, ProviderHandle, TaskInput, TaskOutput,
+        translate_gemini::GeminiProvider, translate_llama::LlamaTranslator,
+        translate_ollama::OllamaTranslator, Capability, Intent, OcrLine, ProviderError,
+        ProviderHandle, TaskInput, TaskOutput,
     },
     settings::{
         schema::{FallbackCondition, TaskChain},
@@ -110,8 +111,9 @@ impl Pipeline {
         let mut map: HashMap<String, ProviderHandle> = HashMap::new();
         let empty = serde_json::Value::Object(Default::default());
         let sink = self.chunk_sink.read().clone();
+        let use_gpu = s.performance.use_gpu_if_available;
         for (id, cfg) in &s.providers.configs {
-            if let Some(h) = builtin_provider(id, cfg, sink.as_ref()) {
+            if let Some(h) = builtin_provider(id, cfg, sink.as_ref(), use_gpu) {
                 map.insert(id.clone(), h);
             }
         }
@@ -144,11 +146,36 @@ impl Pipeline {
             if map.contains_key(id) {
                 continue;
             }
-            if let Some(h) = builtin_provider(id, &empty, sink.as_ref()) {
+            if let Some(h) = builtin_provider(id, &empty, sink.as_ref(), use_gpu) {
                 map.insert(id.clone(), h);
             }
         }
         *self.providers.write() = map;
+    }
+
+    /// Load the built-in LLM in the background when a chain uses it and
+    /// its model is installed, so the first capture does not pay the
+    /// multi-second load. Set `preload = false` in its config to skip.
+    pub fn preload_local_llm(&self) {
+        let s = self.settings.snapshot();
+        let used = [
+            Capability::Translate,
+            Capability::Explain,
+            Capability::Summarize,
+        ]
+        .iter()
+        .any(|c| pick_chain(&s, *c).chain.iter().any(|id| id == LOCAL_LLM_ID));
+        if !used {
+            return;
+        }
+        let empty = serde_json::Value::Object(Default::default());
+        let cfg = s.providers.configs.get(LOCAL_LLM_ID).unwrap_or(&empty);
+        if cfg.get("preload").and_then(|v| v.as_bool()) == Some(false) {
+            return;
+        }
+        let use_gpu = s.performance.use_gpu_if_available;
+        let p = LlamaTranslator::new(LOCAL_LLM_ID, cfg, use_gpu);
+        crate::providers::translate_llama::preload(p.model_path().to_path_buf(), use_gpu, cfg);
     }
 
     /// Run a task through the configured chain, respecting privacy gates,
@@ -523,8 +550,16 @@ fn builtin_provider(
     id: &str,
     cfg: &serde_json::Value,
     sink: Option<&ChunkSink>,
+    use_gpu: bool,
 ) -> Option<ProviderHandle> {
     Some(match id {
+        LOCAL_LLM_ID => {
+            let mut p = LlamaTranslator::new(id, cfg, use_gpu);
+            if let Some(sink) = sink {
+                p = p.with_chunk_sink(sink.clone());
+            }
+            Arc::new(p)
+        }
         id if id.starts_with("ollama.") => {
             let mut p = OllamaTranslator::new(id, cfg);
             if let Some(sink) = sink {
@@ -556,13 +591,33 @@ fn upgrade_ocr_chain(mut chain: TaskChain) -> TaskChain {
     chain
 }
 
+/// Id of the built-in llama.cpp provider.
+pub const LOCAL_LLM_ID: &str = "llamacpp";
+
+/// Before the built-in engine existed, LLM chains started with the
+/// Ollama provider and fell back to cloud services. Config files seeded
+/// with those defaults move to the fully local built-in engine (Ollama
+/// and the cloud providers stay usable for anyone who lists them in a
+/// chain of their own).
+const LEGACY_LLM_CHAINS: [&[&str]; 2] = [
+    &["ollama.gemma4", "deepl", "gemini"],
+    &["ollama.gemma4", "gemini"],
+];
+
+fn upgrade_llm_chain(mut chain: TaskChain) -> TaskChain {
+    if LEGACY_LLM_CHAINS.iter().any(|c| chain.chain == *c) {
+        chain.chain = vec![LOCAL_LLM_ID.to_string()];
+    }
+    chain
+}
+
 fn pick_chain(s: &crate::settings::schema::Settings, cap: Capability) -> TaskChain {
     match cap {
-        Capability::Translate => s.providers.translate.clone(),
+        Capability::Translate => upgrade_llm_chain(s.providers.translate.clone()),
         Capability::Ocr => upgrade_ocr_chain(s.providers.ocr.clone()),
         Capability::Asr => s.providers.asr.clone(),
-        Capability::Explain => s.providers.explain.clone(),
-        Capability::Summarize => s.providers.summarize.clone(),
+        Capability::Explain => upgrade_llm_chain(s.providers.explain.clone()),
+        Capability::Summarize => upgrade_llm_chain(s.providers.summarize.clone()),
         Capability::ReverseImageSearch => s.providers.reverse_image_search.clone(),
         Capability::QrHandler => s.providers.qr_handler.clone(),
         Capability::IntentClassifier => s.providers.intent_classifier.clone(),
@@ -572,6 +627,15 @@ fn pick_chain(s: &crate::settings::schema::Settings, cap: Capability) -> TaskCha
 #[cfg(test)]
 pub fn upgrade_ocr_chain_for_test(chain: Vec<String>) -> Vec<String> {
     upgrade_ocr_chain(TaskChain {
+        chain,
+        ..TaskChain::default()
+    })
+    .chain
+}
+
+#[cfg(test)]
+pub fn upgrade_llm_chain_for_test(chain: Vec<String>) -> Vec<String> {
+    upgrade_llm_chain(TaskChain {
         chain,
         ..TaskChain::default()
     })

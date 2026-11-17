@@ -26,6 +26,23 @@ mod tests {
     }
 
     #[test]
+    fn legacy_ollama_chains_move_to_builtin_engine() {
+        use crate::pipeline::upgrade_llm_chain_for_test as up;
+        let v = |xs: &[&str]| xs.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(
+            up(v(&["ollama.gemma4", "deepl", "gemini"])),
+            v(&["llamacpp"])
+        );
+        assert_eq!(up(v(&["ollama.gemma4", "gemini"])), v(&["llamacpp"]));
+        // A chain the user edited keeps Ollama.
+        assert_eq!(
+            up(v(&["ollama.gemma4", "deepl"])),
+            v(&["ollama.gemma4", "deepl"])
+        );
+        assert_eq!(up(v(&["gemini"])), v(&["gemini"]));
+    }
+
+    #[test]
     fn fallback_timeout_matches_condition() {
         let conds = [FallbackCondition::Timeout];
         assert!(should_fallback_for_test(

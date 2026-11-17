@@ -75,12 +75,26 @@ cpal = { version = "0.15", optional = true }
 # storage
 rusqlite = { version = "0.43", features = ["bundled"] }
 
+# local LLM inference (llama.cpp, statically linked). CPU everywhere;
+# Metal on macOS. Vulkan / CUDA builds are opt-in via the `llm-vulkan`
+# / `llm-cuda` features because they need the vendor SDK at build time.
+llama-cpp-2 = { version = "0.1.161", default-features = false, optional = true }
+# Renders the chat template embedded in each GGUF.
+minijinja = { version = "2", optional = true, features = ["loop_controls", "json"] }
+minijinja-contrib = { version = "2", optional = true, default-features = false, features = ["pycompat"] }
+
 # plugin runtime
 wasmtime = { version = "36", features = ["component-model", "runtime"] }
 wasmtime-wasi = "36"
 
+[target.'cfg(target_os = "macos")'.dependencies]
+llama-cpp-2 = { version = "0.1.161", default-features = false, optional = true, features = ["metal"] }
+
 [features]
-default = ["audio", "ocrs-engine"]
+default = ["audio", "ocrs-engine", "local-llm"]
+local-llm = ["dep:llama-cpp-2", "dep:minijinja", "dep:minijinja-contrib"]
+llm-vulkan = ["local-llm", "llama-cpp-2/vulkan"]
+llm-cuda = ["local-llm", "llama-cpp-2/cuda"]
 audio = ["dep:cpal"]
 ocrs-engine = ["dep:ocrs", "dep:rten", "dep:rten-tensor", "dep:flate2", "dep:tar"]
 
@@ -128,4 +142,6 @@ opt-level = 3
 [profile.dev.package.png]
 opt-level = 3
 [profile.dev.package.rqrr]
+opt-level = 3
+[profile.dev.package.llama-cpp-sys-2]
 opt-level = 3

@@ -11,9 +11,9 @@ use crate::{
     clipboard, hotkey, intent,
     lens::{self, geometry::LensInsets, LensDescriptor},
     overlay,
-    pipeline::{CaptureFlowResult, TaskResult},
+    pipeline::{CaptureFlowResult, TaskResult, LOCAL_LLM_ID},
     plugins::PluginDescriptor,
-    providers::{ocr_ocrs, Capability, TaskInput},
+    providers::{llm_models, ocr_ocrs, Capability, TaskInput},
     selector,
     settings::schema::Settings,
 };
@@ -446,6 +446,125 @@ pub async fn install_ocr_models(app: AppHandle) -> Result<String, String> {
         .await
         .map_err(|e| e.to_string())?;
     Ok(dir.display().to_string())
+}
+
+/// Local LLM models the app can download, with install state, plus the
+/// one currently selected for the built-in engine.
+#[derive(serde::Serialize)]
+pub struct LlmModels {
+    pub selected: String,
+    pub dir: String,
+    pub models: Vec<llm_models::ModelStatus>,
+}
+
+fn llm_dir() -> Result<PathBuf, String> {
+    llm_models::default_models_dir().ok_or_else(|| "no data dir".to_string())
+}
+
+fn selected_llm(settings: &Settings) -> String {
+    settings
+        .providers
+        .configs
+        .get(LOCAL_LLM_ID)
+        .and_then(|c| c.get("model"))
+        .and_then(|v| v.as_str())
+        .filter(|id| llm_models::find(id).is_some())
+        .unwrap_or(llm_models::DEFAULT_MODEL_ID)
+        .to_string()
+}
+
+#[tauri::command]
+pub async fn list_llm_models(state: State<'_, AppState>) -> Result<LlmModels, String> {
+    let dir = llm_dir()?;
+    Ok(LlmModels {
+        selected: selected_llm(&state.settings.snapshot()),
+        dir: dir.display().to_string(),
+        models: llm_models::status(&dir),
+    })
+}
+
+#[derive(serde::Serialize, Clone)]
+pub struct LlmProgress {
+    pub id: String,
+    pub downloaded: u64,
+    pub total: u64,
+    pub fraction: f32,
+}
+
+/// Download (or resume) a catalog model. Progress is emitted as
+/// `moonlens://llm-model-progress`. Loads it in the background when it
+/// is the selected model.
+#[tauri::command]
+pub async fn install_llm_model(
+    id: String,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<String, String> {
+    let dir = llm_dir()?;
+    let app_for_cb = app.clone();
+    let cb: Box<llm_models::ProgressCb> = Box::new(move |id, downloaded, total| {
+        let fraction = if total == 0 {
+            0.0
+        } else {
+            (downloaded as f32 / total as f32).clamp(0.0, 1.0)
+        };
+        let _ = app_for_cb.emit(
+            "moonlens://llm-model-progress",
+            LlmProgress {
+                id: id.to_string(),
+                downloaded,
+                total,
+                fraction,
+            },
+        );
+    });
+    let path = llm_models::install(&dir, &id, Some(&*cb))
+        .await
+        .map_err(|e| e.to_string())?;
+    if selected_llm(&state.settings.snapshot()) == id {
+        state.pipeline.preload_local_llm();
+    }
+    Ok(path.display().to_string())
+}
+
+#[tauri::command]
+pub async fn cancel_llm_download(id: String) -> Result<bool, String> {
+    Ok(llm_models::cancel(&id))
+}
+
+#[tauri::command]
+pub async fn delete_llm_model(id: String) -> Result<(), String> {
+    let dir = llm_dir()?;
+    tokio::task::spawn_blocking(move || llm_models::remove(&dir, &id))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())
+}
+
+/// Make `id` the built-in engine's model (persisted to config.toml).
+#[tauri::command]
+pub async fn select_llm_model(id: String, state: State<'_, AppState>) -> Result<(), String> {
+    if llm_models::find(&id).is_none() {
+        return Err(format!("unknown model {id}"));
+    }
+    let mut next = (*state.settings.snapshot()).clone();
+    let cfg = next
+        .providers
+        .configs
+        .entry(LOCAL_LLM_ID.to_string())
+        .or_insert_with(|| serde_json::json!({}));
+    if !cfg.is_object() {
+        *cfg = serde_json::json!({});
+    }
+    cfg["model"] = serde_json::Value::String(id);
+    if let Some(o) = cfg.as_object_mut() {
+        // A catalog choice replaces a hand-set custom file.
+        o.remove("model_path");
+    }
+    state.settings.save(next).map_err(|e| e.to_string())?;
+    state.pipeline.rebuild_providers();
+    state.pipeline.preload_local_llm();
+    Ok(())
 }
 
 /// Pick a `.moonlens-plugin` archive (or a plugin directory) with the

@@ -77,14 +77,17 @@ use_gpu_if_available = true
 # registered providers (built-in or loaded from plugins).
 # ---------------------------------------------------------------------------
 
+# Translation, explanation and summaries run fully on-device with the
+# built-in engine. Cloud providers (deepl, gemini) stay available but are
+# opt-in: add them to a chain and set allow_cloud / allow_network.
 [providers.translate]
-chain = ["ollama.gemma4", "deepl", "gemini"]
+chain = ["llamacpp"]
 parallel_race = false
 fallback_on = ["timeout", "error", "offline"]
 timeout_ms = 3000
-allow_cloud = true
-allow_network = true
-max_cost_per_request = 0.01
+allow_cloud = false
+allow_network = false
+max_cost_per_request = 0.0
 sticky_session_ms = 30000
 
 [providers.ocr]
@@ -110,23 +113,23 @@ max_cost_per_request = 0.0
 sticky_session_ms = 0
 
 [providers.explain]
-chain = ["ollama.gemma4", "gemini"]
+chain = ["llamacpp"]
 parallel_race = false
 fallback_on = ["timeout", "error", "offline"]
 timeout_ms = 10000
-allow_cloud = true
-allow_network = true
-max_cost_per_request = 0.02
+allow_cloud = false
+allow_network = false
+max_cost_per_request = 0.0
 sticky_session_ms = 60000
 
 [providers.summarize]
-chain = ["ollama.gemma4", "gemini"]
+chain = ["llamacpp"]
 parallel_race = false
 fallback_on = ["timeout", "error", "offline"]
 timeout_ms = 10000
-allow_cloud = true
-allow_network = true
-max_cost_per_request = 0.02
+allow_cloud = false
+allow_network = false
+max_cost_per_request = 0.0
 sticky_session_ms = 60000
 
 [providers.reverse_image_search]
@@ -164,6 +167,19 @@ sticky_session_ms = 0
 # can declare their own settings without the core knowing the shape.
 # ---------------------------------------------------------------------------
 
+# Built-in llama.cpp engine: no external runtime needed. `model` is a
+# catalog id (download it from the home screen): "gemma-4-e4b"
+# (default), "gemma-4-e2b", "plamo-3-translate-2b", "plamo-3-translate-8b".
+# Set `model_path` to run any other GGUF file instead.
+[providers.configs.llamacpp]
+model = "gemma-4-e4b"
+n_ctx = 4096
+temperature = 0.0
+top_p = 0.9
+threads = 0
+
+# Optional: an Ollama server, for anyone who prefers it. Not used by the
+# default chains; add "ollama.gemma4" to a chain to enable it.
 [providers.configs."ollama.gemma4"]
 endpoint = "http://127.0.0.1:11434"
 model = "gemma4:7b-instruct-q4_K_M"

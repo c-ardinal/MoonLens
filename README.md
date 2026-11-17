@@ -8,8 +8,8 @@ PC常駐の Google Lens 風ツール。1つのグローバルホットキーで
 - 外国語動画のループバック音声からライブ字幕
 - ローカル LLM による要約・説明・対話
 
-を統合する。ローカル LLM（Ollama + Gemma4）を第一級に扱い、クラウドは明示的な
-フォールバックとして利用する。音楽認識は運用コストの観点から本体には含めず、
+を統合する。翻訳・要約・説明はアプリに内蔵した llama.cpp エンジンで端末内だけで
+完結し（Ollama などの外部ランタイムは不要）、クラウドは明示的に有効化した場合のみ使う。音楽認識は運用コストの観点から本体には含めず、
 プラグインとして実装できる余地を確保している。
 
 ## スタック
@@ -18,8 +18,8 @@ PC常駐の Google Lens 風ツール。1つのグローバルホットキーで
 - **UI**: Svelte 5 (runes) + Vite + Tailwind CSS v4
 - **OCR**: [`ocrs`](https://github.com/robertknight/ocrs) crate（追加の OCR エンジンはプラグインで差し替え可）
 - **QR**: `rqrr` crate
-- **翻訳 (local)**: Ollama HTTP ストリーミング, デフォルトモデル `gemma4:7b-instruct-q4_K_M`
-- **翻訳 (cloud)**: DeepL / Gemini API（オプションフォールバック）
+- **翻訳 (local)**: 内蔵 llama.cpp（`llama-cpp-2`、静的リンク）で GGUF を実行。既定モデル Gemma 4 E4B（Q4_K_M）、PLaMo 3 Translate なども選択可。モデルはアプリのホーム画面からダウンロード（SHA-256 検証・中断再開）
+- **翻訳 (cloud / Ollama)**: DeepL / Gemini API、Ollama は任意のオプション（既定チェーンには入っていない）
 - **ASR**: `whisper.cpp` HTTP サーバ（サイドカー起動）
 - **画面キャプチャ**: `xcap` 0.9、**音声ループバック**: `cpal`
 - **履歴**: `rusqlite`（SQLite、bundled）
@@ -61,12 +61,12 @@ JSON Schema から自動生成されるため、新しい provider や plugin �
 
 ```toml
 [providers.translate]
-chain = ["ollama.gemma4", "deepl", "gemini", "plugin.my_translator"]
+chain = ["llamacpp", "plugin.my_translator"]
 parallel_race = false
 fallback_on = ["timeout", "error", "offline"]
-timeout_ms = 3000
-allow_cloud = true
-allow_network = true
+timeout_ms = 15000
+allow_cloud = false
+allow_network = false
 sticky_session_ms = 30000
 ```
 
@@ -100,12 +100,10 @@ sticky_session_ms = 30000
 - Rust stable (1.80+)
 - Node.js 20+
 - Tauri 2 系列のプラットフォーム依存（`npm run tauri info` で確認）
-- （翻訳用）Ollama + `gemma4` モデル
-
-```bash
-ollama pull gemma4:7b-instruct-q4_K_M
-ollama serve
-```
+- CMake と C/C++ コンパイラ、libclang（内蔵 llama.cpp のビルド用。Windows は
+  Visual Studio Build Tools + LLVM）
+- 翻訳モデルはアプリ起動後、ホーム画面の「翻訳モデル」からダウンロードする
+  （保存先: `<データディレクトリ>/moonlens/models/llm`）
 
 - （字幕用）`whisper.cpp` サーバを `http://127.0.0.1:9002` で待機させる
 
