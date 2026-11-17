@@ -43,11 +43,41 @@ export interface CaptureFlowRect {
   h: number;
 }
 
+/** One recognised paragraph, positioned in the captured image. */
+export interface LensBlock {
+  /** [x, y, w, h] in captured-image pixels. */
+  bbox: [number, number, number, number];
+  /** Median source line height in pixels. */
+  line_height: number;
+  source: string;
+  /** null while translating, or when translation failed for this block. */
+  translation: string | null;
+  colors: { background: [number, number, number]; foreground: [number, number, number] } | null;
+}
+
 export interface CaptureFlowResult {
   intent: Intent;
   source_text: string | null;
   result: TaskResult;
   source_rect: CaptureFlowRect | null;
+  /** Paragraph blocks for the in-place overlay (empty for QR / photos). */
+  blocks?: LensBlock[];
+  /** [width, height] of the captured image (coordinate space of blocks). */
+  image_size?: [number, number] | null;
+}
+
+/** Selection on the selector's frozen frame, in frame pixels. */
+export interface FrameRect {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+export interface FrameReady {
+  width: number;
+  height: number;
+  auto_full: boolean;
 }
 
 export type OverlayEvent =
@@ -101,6 +131,13 @@ export const pickAndInstallPlugin = () =>
 export const installOcrModels = () => safeInvoke<string>('install_ocr_models');
 export const showMain = () => safeInvoke<void>('show_main');
 export const hideOverlay = () => safeInvoke<void>('hide_overlay');
+
+/** PNG bytes of the frame the selector froze when it opened. */
+export const getFrozenFrame = () => safeInvoke<ArrayBuffer>('get_frozen_frame');
+/** OCR + translate a selection of the frozen frame (null = whole frame). */
+export const processFrozenSelection = (rect: FrameRect | null) =>
+  safeInvoke<CaptureFlowResult>('process_frozen_selection', { rect });
+export const closeSelector = () => safeInvoke<void>('close_selector');
 
 export const pinOverlay = (args: CaptureFlowRect) =>
   safeInvoke<void>('pin_overlay', { args });

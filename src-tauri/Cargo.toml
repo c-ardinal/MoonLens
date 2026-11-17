@@ -62,8 +62,8 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # image / capture / ocr / qr
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
 xcap = "0.9"
-ocrs = { version = "0.8", optional = true }
-rten = { version = "0.13", optional = true }
+ocrs = { version = "0.14", optional = true }
+rten = { version = "0.28", optional = true }
 rqrr = "0.7"
 
 # audio
@@ -91,3 +91,38 @@ lto = true
 opt-level = 3
 panic = "abort"
 strip = true
+
+# OCR inference in an unoptimized build takes ~30 s per capture, which
+# makes `tauri dev` (and the debug-mode test suite) feel broken.
+# Optimize the ML / image crates even in dev; our own crate stays fast
+# to rebuild.
+[profile.dev.package.rten]
+opt-level = 3
+[profile.dev.package.rten-base]
+opt-level = 3
+[profile.dev.package.rten-gemm]
+opt-level = 3
+[profile.dev.package.rten-imageproc]
+opt-level = 3
+[profile.dev.package.rten-onnx]
+opt-level = 3
+[profile.dev.package.rten-parallel]
+opt-level = 3
+[profile.dev.package.rten-sequence]
+opt-level = 3
+[profile.dev.package.rten-shape-inference]
+opt-level = 3
+[profile.dev.package.rten-simd]
+opt-level = 3
+[profile.dev.package.rten-tensor]
+opt-level = 3
+[profile.dev.package.rten-vecmath]
+opt-level = 3
+[profile.dev.package.ocrs]
+opt-level = 3
+[profile.dev.package.image]
+opt-level = 3
+[profile.dev.package.png]
+opt-level = 3
+[profile.dev.package.rqrr]
+opt-level = 3

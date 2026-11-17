@@ -1,0 +1,142 @@
+/**
+ * Pure helpers for the frozen-frame selector's in-place translation
+ * overlay. Kept free of DOM / Tauri so they can be unit tested.
+ */
+
+import type { FrameRect, LensBlock } from './ipc';
+
+export interface CssRect {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+}
+
+/** Normalised rect from two drag points (CSS px). */
+export function dragRect(x0: number, y0: number, x1: number, y1: number): CssRect {
+  return {
+    left: Math.min(x0, x1),
+    top: Math.min(y0, y1),
+    width: Math.abs(x1 - x0),
+    height: Math.abs(y1 - y0)
+  };
+}
+
+/**
+ * Convert a CSS-px selection to frame pixels. `scale` is frame px per
+ * CSS px (frame width / viewport width), which also covers HiDPI.
+ */
+export function toFrameRect(r: CssRect, scale: number): FrameRect {
+  const x = Math.max(0, Math.round(r.left * scale));
+  const y = Math.max(0, Math.round(r.top * scale));
+  return {
+    x,
+    y,
+    w: Math.max(0, Math.round((r.left + r.width) * scale) - x),
+    h: Math.max(0, Math.round((r.top + r.height) * scale) - y)
+  };
+}
+
+/** Inverse of {@link toFrameRect}. */
+export function toCssRect(r: FrameRect, scale: number): CssRect {
+  return {
+    left: r.x / scale,
+    top: r.y / scale,
+    width: r.w / scale,
+    height: r.h / scale
+  };
+}
+
+/**
+ * Position of a block (bbox relative to the cropped selection) on screen
+ * in CSS px. The box is padded slightly so the mask fully covers
+ * anti-aliased glyph edges of the original text.
+ */
+export function blockCssRect(block: LensBlock, crop: FrameRect, scale: number, pad = 2): CssRect {
+  const [bx, by, bw, bh] = block.bbox;
+  return {
+    left: (crop.x + bx) / scale - pad,
+    top: (crop.y + by) / scale - pad,
+    width: bw / scale + pad * 2,
+    height: bh / scale + pad * 2
+  };
+}
+
+/**
+ * Distribute a partially streamed translation of `"p1\n\np2\n\n…"` over
+ * `n` blocks. Paragraphs that have not arrived yet stay null. With a
+ * single block everything streamed so far belongs to it.
+ */
+export function splitStreaming(text: string, n: number): (string | null)[] {
+  const out: (string | null)[] = new Array(n).fill(null);
+  if (n === 0) return out;
+  const trimmed = text.replace(/^\s+/, '');
+  if (!trimmed) return out;
+  if (n === 1) {
+    out[0] = trimmed.trim();
+    return out;
+  }
+  const parts = trimmed.split(/\n[ \t]*\n/);
+  for (let i = 0; i < Math.min(n, parts.length); i++) {
+    const p = parts[i].trim();
+    if (p) out[i] = p;
+  }
+  // More paragraphs than blocks means the translator split a paragraph;
+  // fold the overflow into the last block rather than dropping text.
+  if (parts.length > n) {
+    out[n - 1] = parts
+      .slice(n - 1)
+      .map((p) => p.trim())
+      .filter(Boolean)
+      .join(' ');
+  }
+  return out;
+}
+
+/**
+ * Largest font size in [min, max] (0.5 px steps) for which `fits`
+ * returns true, by binary search. Returns `min` if nothing fits.
+ */
+export function fitFontSize(fits: (px: number) => boolean, min: number, max: number): number {
+  let lo = Math.round(min * 2);
+  let hi = Math.round(Math.max(min, max) * 2);
+  if (fits(hi / 2)) return hi / 2;
+  while (hi - lo > 1) {
+    const mid = (lo + hi) >> 1;
+    if (fits(mid / 2)) lo = mid;
+    else hi = mid;
+  }
+  return lo / 2;
+}
+
+export const rgb = (c: [number, number, number] | null | undefined, fallback: string) =>
+  c ? `rgb(${c[0]}, ${c[1]}, ${c[2]})` : fallback;
+
+/**
+ * Where to put the action bar: below the selection if there is room,
+ * otherwise above it, otherwise inside its bottom edge. Horizontally it
+ * is clamped to the viewport.
+ */
+export function toolbarPosition(
+  sel: CssRect,
+  bar: { width: number; height: number },
+  viewport: { width: number; height: number },
+  gap = 10
+): { left: number; top: number } {
+  let top = sel.top + sel.height + gap;
+  if (top + bar.height > viewport.height - gap) {
+    top = sel.top - bar.height - gap;
+    if (top < gap) top = Math.max(gap, sel.top + sel.height - bar.height - gap);
+  }
+  let left = sel.left + sel.width / 2 - bar.width / 2;
+  left = Math.min(Math.max(gap, left), Math.max(gap, viewport.width - bar.width - gap));
+  return { left, top };
+}
+
+/** Text for "copy all": translations (or sources) in reading order. */
+export function joinedText(blocks: LensBlock[], which: 'translation' | 'source'): string {
+  return blocks
+    .map((b) => (which === 'translation' ? (b.translation ?? b.source) : b.source))
+    .filter(Boolean)
+    .join('\n\n');
+}

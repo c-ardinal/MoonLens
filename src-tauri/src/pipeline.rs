@@ -11,8 +11,10 @@ use parking_lot::RwLock;
 use serde::Serialize;
 use tokio::time::timeout;
 
+use futures::StreamExt;
+
 use crate::{
-    intent,
+    intent, layout,
     plugins::PluginRegistry,
     providers::{
         asr_whisper::WhisperCppProvider, ocr_ocrs::OcrsProvider, qr_rqrr::RqrrProvider,
@@ -109,28 +111,7 @@ impl Pipeline {
         let empty = serde_json::Value::Object(Default::default());
         let sink = self.chunk_sink.read().clone();
         for (id, cfg) in &s.providers.configs {
-            let cfg = cfg.clone();
-            let handle: Option<ProviderHandle> = match id.as_str() {
-                id if id.starts_with("ollama.") => {
-                    let mut p = OllamaTranslator::new(id, &cfg);
-                    if let Some(sink) = &sink {
-                        p = p.with_chunk_sink(sink.clone());
-                    }
-                    Some(Arc::new(p))
-                }
-                "deepl" => Some(Arc::new(DeepLTranslator::new(id, &cfg))),
-                "gemini" => Some(Arc::new(GeminiProvider::new(id, &cfg))),
-                id if id.starts_with("whisper_cpp.") => {
-                    Some(Arc::new(WhisperCppProvider::new(id, &cfg)))
-                }
-                "ocrs" => Some(Arc::new(OcrsProvider::new(id, &cfg))),
-                "rqrr" => Some(Arc::new(RqrrProvider::new(id, &cfg))),
-                id if id.starts_with("browser.") => {
-                    Some(Arc::new(BrowserSearchProvider::new(id, &cfg)))
-                }
-                _ => None,
-            };
-            if let Some(h) = handle {
+            if let Some(h) = builtin_provider(id, cfg, sink.as_ref()) {
                 map.insert(id.clone(), h);
             }
         }
@@ -142,21 +123,29 @@ impl Pipeline {
                 map.insert(id, handle);
             }
         }
-        // Ensure any id referenced in a chain without a configs entry still
-        // has a sane default (e.g. `ollama.gemma4` without explicit config).
-        for id in s.providers.translate.chain.iter().chain(
-            s.providers
-                .explain
-                .chain
-                .iter()
-                .chain(s.providers.summarize.chain.iter()),
-        ) {
-            if !map.contains_key(id) && id.starts_with("ollama.") {
-                let mut p = OllamaTranslator::new(id.as_str(), &empty);
-                if let Some(sink) = &sink {
-                    p = p.with_chunk_sink(sink.clone());
-                }
-                map.insert(id.clone(), Arc::new(p));
+        // Any built-in id referenced by a chain without a `configs` entry
+        // still gets a provider with default settings. Without this, a
+        // user config that omits e.g. `[providers.configs.rqrr]` (the
+        // shipped default does) silently disabled QR decoding.
+        let p = &s.providers;
+        for id in [
+            &p.translate,
+            &p.ocr,
+            &p.asr,
+            &p.explain,
+            &p.summarize,
+            &p.reverse_image_search,
+            &p.qr_handler,
+            &p.intent_classifier,
+        ]
+        .iter()
+        .flat_map(|c| c.chain.iter())
+        {
+            if map.contains_key(id) {
+                continue;
+            }
+            if let Some(h) = builtin_provider(id, &empty, sink.as_ref()) {
+                map.insert(id.clone(), h);
             }
         }
         *self.providers.write() = map;
@@ -247,12 +236,27 @@ impl Pipeline {
 
     /// High-level capture flow: given a region-of-interest PNG, classify
     /// content, run the appropriate providers, and return a user-ready
-    /// result bundle. Used by the hotkey handler.
+    /// result bundle. Equivalent to [`Self::analyze_capture`] followed by
+    /// [`Self::translate_capture`].
     pub async fn run_capture_flow(
         &self,
         image_png: Vec<u8>,
     ) -> Result<CaptureFlowResult, ProviderError> {
-        let s = self.settings.snapshot();
+        let mut bundle = self.analyze_capture(image_png).await?;
+        if bundle.needs_translation() {
+            self.translate_capture(&mut bundle).await?;
+        }
+        Ok(bundle)
+    }
+
+    /// First half of the capture flow: QR decode, OCR and layout. For text
+    /// captures the returned bundle has positioned `blocks` without
+    /// translations, so the UI can mask the source text and show progress
+    /// while [`Self::translate_capture`] runs.
+    pub async fn analyze_capture(
+        &self,
+        image_png: Vec<u8>,
+    ) -> Result<CaptureFlowResult, ProviderError> {
         // Cheap heuristic classifier. A plugin-provided classifier can
         // override through the `intent_classifier` chain in future work.
         let img =
@@ -282,11 +286,14 @@ impl Pipeline {
                     source_text: None,
                     result: res,
                     source_rect: None,
+                    blocks: vec![],
+                    image_size: Some([img.width(), img.height()]),
                 });
             }
         }
 
-        // 2) OCR → translate. Always attempted for text-like or unknown regions.
+        // 2) OCR → layout → translate. Always attempted for text-like or
+        //    unknown regions.
         let ocr_res = self
             .run(
                 Capability::Ocr,
@@ -296,17 +303,16 @@ impl Pipeline {
                 },
             )
             .await;
-        let ocr_text = match ocr_res.as_ref() {
-            Ok(r) => match &r.output {
-                TaskOutput::Ocr { lines } => lines
-                    .iter()
-                    .map(|l: &OcrLine| l.text.clone())
-                    .collect::<Vec<_>>()
-                    .join("\n"),
-                _ => String::new(),
-            },
-            Err(_) => String::new(),
+        let lines: Vec<OcrLine> = match ocr_res {
+            Ok(TaskResult {
+                output: TaskOutput::Ocr { lines },
+                ..
+            }) => lines,
+            _ => vec![],
         };
+        let text_blocks = layout::group_lines(&lines);
+        let ocr_text = layout::join_blocks(&text_blocks);
+        let image_size = Some([img.width(), img.height()]);
 
         if ocr_text.trim().is_empty() {
             // Nothing text-like detected. Return the intent so the UI can
@@ -315,6 +321,8 @@ impl Pipeline {
                 intent,
                 source_text: None,
                 source_rect: None,
+                blocks: vec![],
+                image_size,
                 result: TaskResult {
                     task: "capture".into(),
                     output: TaskOutput::Intent(intent),
@@ -326,34 +334,111 @@ impl Pipeline {
             });
         }
 
+        let rgba = img.to_rgba8();
+        let blocks: Vec<LensBlock> = text_blocks
+            .iter()
+            .map(|b| LensBlock {
+                bbox: b.bbox,
+                line_height: b.line_height,
+                source: b.text.clone(),
+                translation: None,
+                colors: (b.bbox[2] > 0.0).then(|| layout::estimate_colors(&rgba, b.bbox)),
+            })
+            .collect();
+
+        Ok(CaptureFlowResult {
+            intent: Intent::Text,
+            source_text: Some(ocr_text),
+            source_rect: None,
+            blocks,
+            image_size,
+            result: TaskResult {
+                task: "ocr".into(),
+                output: TaskOutput::Empty,
+                used_provider: String::new(),
+                via_cloud: false,
+                latency_ms: 0,
+                fallback_reasons: vec![],
+            },
+        })
+    }
+
+    /// Second half of the capture flow: translate the analysed blocks in
+    /// one request (keeping cross-paragraph context), map the result back
+    /// onto each block, and record history.
+    pub async fn translate_capture(
+        &self,
+        bundle: &mut CaptureFlowResult,
+    ) -> Result<(), ProviderError> {
+        let s = self.settings.snapshot();
+        let ocr_text = bundle.source_text.clone().unwrap_or_default();
+        let blocks = &mut bundle.blocks;
+        let target_language = s.subtitle.target_language.clone();
         let translate = self
             .run(
                 Capability::Translate,
                 TaskInput::Translate {
                     text: ocr_text.clone(),
                     source_language: "auto".into(),
-                    target_language: s.subtitle.target_language.clone(),
+                    target_language: target_language.clone(),
                 },
             )
             .await?;
 
+        let whole = match &translate.output {
+            TaskOutput::Text(t) => t.clone(),
+            _ => String::new(),
+        };
+        match layout::split_translation(&whole, blocks.len()) {
+            Some(parts) => {
+                for (b, t) in blocks.iter_mut().zip(parts) {
+                    b.translation = Some(t);
+                }
+            }
+            None => {
+                // The translator merged or split paragraphs, so the
+                // per-block mapping is ambiguous. Translate each block on
+                // its own (concurrently) so the in-place overlay can still
+                // put every translation over its source.
+                let max = s.performance.max_concurrent_tasks.max(1) as usize;
+                let inputs: Vec<TaskInput> = blocks
+                    .iter()
+                    .map(|b| TaskInput::Translate {
+                        text: b.source.clone(),
+                        source_language: "auto".into(),
+                        target_language: target_language.clone(),
+                    })
+                    .collect();
+                let per_block: Vec<Option<String>> = futures::stream::iter(inputs)
+                    .map(|input| self.translate_one(input))
+                    .buffered(max)
+                    .collect()
+                    .await;
+                for (b, t) in blocks.iter_mut().zip(per_block) {
+                    b.translation = t;
+                }
+            }
+        }
+
         self.record_history(
             "translate",
             Some(&ocr_text),
-            match &translate.output {
-                TaskOutput::Text(t) => Some(t.as_str()),
-                _ => None,
-            },
+            Some(whole.as_str()).filter(|t| !t.is_empty()),
             Some(&translate.used_provider),
             translate.via_cloud,
         );
+        bundle.result = translate;
+        Ok(())
+    }
 
-        Ok(CaptureFlowResult {
-            intent: Intent::Text,
-            source_text: Some(ocr_text),
-            result: translate,
-            source_rect: None,
-        })
+    async fn translate_one(&self, input: TaskInput) -> Option<String> {
+        match self.run(Capability::Translate, input).await {
+            Ok(TaskResult {
+                output: TaskOutput::Text(t),
+                ..
+            }) => Some(t.trim().to_string()),
+            _ => None,
+        }
     }
 
     fn record_history(
@@ -388,6 +473,39 @@ pub struct CaptureFlowResult {
     /// coordinates. The overlay uses this to pin the region watcher
     /// onto the same area the user just captured.
     pub source_rect: Option<CaptureFlowRect>,
+    /// Paragraph blocks with their position in the captured image and
+    /// per-block translation. Drives the in-place (Lens-style) overlay.
+    /// Empty for QR / non-text captures.
+    #[serde(default)]
+    pub blocks: Vec<LensBlock>,
+    /// `[width, height]` of the captured image, the coordinate space of
+    /// every `blocks[].bbox`.
+    pub image_size: Option<[u32; 2]>,
+}
+
+/// One paragraph of recognised text, positioned in the captured image.
+#[derive(Debug, Clone, Serialize)]
+pub struct LensBlock {
+    /// `[x, y, w, h]` in captured-image pixels.
+    pub bbox: [f32; 4],
+    /// Median source line height in pixels (initial font-size hint).
+    pub line_height: f32,
+    pub source: String,
+    /// `None` when translation failed for this block.
+    pub translation: Option<String>,
+    /// Background / text colour sampled from the capture, used to erase
+    /// the original text and paint the translation over it.
+    pub colors: Option<layout::BlockColors>,
+}
+
+impl CaptureFlowResult {
+    /// True when [`Pipeline::analyze_capture`] found text that still has
+    /// to go through [`Pipeline::translate_capture`].
+    pub fn needs_translation(&self) -> bool {
+        matches!(self.intent, Intent::Text)
+            && !self.blocks.is_empty()
+            && matches!(self.result.output, TaskOutput::Empty)
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -397,6 +515,31 @@ pub struct CaptureFlowRect {
     pub y: i32,
     pub w: u32,
     pub h: u32,
+}
+
+/// Construct a built-in provider by id. Returns `None` for ids that are
+/// not built in (plugins, typos, `builtin.heuristic`).
+fn builtin_provider(
+    id: &str,
+    cfg: &serde_json::Value,
+    sink: Option<&ChunkSink>,
+) -> Option<ProviderHandle> {
+    Some(match id {
+        id if id.starts_with("ollama.") => {
+            let mut p = OllamaTranslator::new(id, cfg);
+            if let Some(sink) = sink {
+                p = p.with_chunk_sink(sink.clone());
+            }
+            Arc::new(p)
+        }
+        "deepl" => Arc::new(DeepLTranslator::new(id, cfg)),
+        "gemini" => Arc::new(GeminiProvider::new(id, cfg)),
+        id if id.starts_with("whisper_cpp.") => Arc::new(WhisperCppProvider::new(id, cfg)),
+        "ocrs" => Arc::new(OcrsProvider::new(id, cfg)),
+        "rqrr" => Arc::new(RqrrProvider::new(id, cfg)),
+        id if id.starts_with("browser.") => Arc::new(BrowserSearchProvider::new(id, cfg)),
+        _ => return None,
+    })
 }
 
 fn pick_chain(s: &crate::settings::schema::Settings, cap: Capability) -> TaskChain {

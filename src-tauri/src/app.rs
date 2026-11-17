@@ -39,6 +39,9 @@ macro_rules! all_commands {
             ipc::run_reverse_image_search,
             ipc::capture_region_cmd,
             ipc::capture_and_process,
+            ipc::get_frozen_frame,
+            ipc::process_frozen_selection,
+            ipc::close_selector,
             ipc::pin_overlay,
             ipc::unpin_overlay,
             ipc::install_ocr_models,
@@ -195,11 +198,7 @@ fn build_tray(app: &AppHandle) -> Result<()> {
         }))
         .on_menu_event(move |app, event| match event.id.as_ref() {
             "open" => show_main_window(app),
-            "capture" => {
-                if let Err(e) = crate::selector::show(app) {
-                    tracing::warn!("selector show failed: {e:?}");
-                }
-            }
+            "capture" => hotkey::open_selector(app, false),
             "new_lens" => {
                 let state = app.state::<AppState>();
                 if let Err(e) = crate::lens::create(app, &state.lenses) {
