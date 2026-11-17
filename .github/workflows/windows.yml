@@ -52,6 +52,13 @@ jobs:
           key: windows
           save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/release' }}
 
+      # llama-cpp-sys-2 currently comes from git (see [patch.crates-io]
+      # in Cargo.toml); its llama.cpp submodule has paths past Windows'
+      # 260-char limit under ~/.cargo/git/checkouts.
+      - name: Allow long paths for git checkouts
+        shell: bash
+        run: git config --global core.longpaths true
+
       # bindgen (llama-cpp-sys-2) needs libclang; the runner ships LLVM.
       - name: Point bindgen at LLVM
         shell: bash

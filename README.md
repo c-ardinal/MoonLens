@@ -102,6 +102,8 @@ sticky_session_ms = 30000
 - Tauri 2 系列のプラットフォーム依存（`npm run tauri info` で確認）
 - CMake と C/C++ コンパイラ、libclang（内蔵 llama.cpp のビルド用。Windows は
   Visual Studio Build Tools + LLVM）
+- Windows では一度だけ `git config --global core.longpaths true` を実行する
+  （llama.cpp を git から取得しており、パスが 260 文字を超えるため）
 - 翻訳モデルはアプリ起動後、ホーム画面の「翻訳モデル」からダウンロードする
   （保存先: `<データディレクトリ>/moonlens/models/llm`）
 
