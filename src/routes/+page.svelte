@@ -22,6 +22,7 @@
     subtitleState,
     type ModelProgress
   } from '$lib/ipc';
+  import LocalModels from '$lib/components/LocalModels.svelte';
 
   let running = $state(false);
   let lastError = $state<string | null>(null);
@@ -203,6 +204,8 @@
       </div>
     </div>
   </section>
+
+  <LocalModels />
 
   <section
     class="rounded-ml border border-border bg-surface-elevated p-5 shadow-ml"

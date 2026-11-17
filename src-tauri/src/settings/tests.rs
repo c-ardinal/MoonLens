@@ -13,7 +13,7 @@ fn bundled_default_toml_parses() {
     let s: Settings = toml::from_str(DEFAULT_TOML).expect("default.toml parses");
     assert_eq!(s.subtitle.target_language, "ja");
     assert!(!s.providers.translate.chain.is_empty());
-    assert_eq!(s.providers.translate.chain[0], "ollama.gemma4");
+    assert_eq!(s.providers.translate.chain[0], "llamacpp");
 }
 
 #[test]
