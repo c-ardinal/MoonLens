@@ -138,9 +138,7 @@ the project adheres to [SemVer](https://semver.org/).
   updater manifest is no longer generated (no auto-update, no network).
 - The project licence is MIT everywhere (`Cargo.toml` and the README
   said Apache-2.0 while `LICENSE` is MIT).
-- README: install, first launch, shortcuts and uninstall guide; the
-  bundle description no longer mentions cloud fallback or reverse image
-  search.
+- README: install, first launch, shortcuts and uninstall guide.
 
 ### Removed
 
