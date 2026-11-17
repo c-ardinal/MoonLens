@@ -6,6 +6,7 @@
     Eye,
     EyeOff,
     ExternalLink,
+    ImageUp,
     Languages,
     Pin,
     QrCode,
@@ -22,6 +23,7 @@
     pinOverlay,
     processFrozenSelection,
     retranslateSelection,
+    searchSelectionImage,
     runExplain,
     runReverseImageSearch,
     type CaptureFlowResult,
@@ -74,6 +76,7 @@
   let pinned = $state(false);
   let streamed = '';
   let runId = 0;
+  let searchMode = $state(false);
   let toolbarEl = $state<HTMLElement | null>(null);
   let toolbarSize = $state({ width: 360, height: 44 });
   // Target language picked in the toolbar. Remembered per machine so the
@@ -101,6 +104,7 @@
       frameUrl = URL.createObjectURL(new Blob([buf], { type: 'image/png' }));
       frameW = ready.width;
       frameH = ready.height;
+      searchMode = !!ready.search;
       phase = 'select';
       if (ready.auto_full) await run(null);
     } catch (e) {
@@ -130,6 +134,7 @@
   }
 
   async function run(css: CssRect | null) {
+    if (searchMode) return searchRegion(css);
     const id = ++runId;
     const full = { left: 0, top: 0, width: vw, height: vh };
     selection = css ?? full;
@@ -155,7 +160,7 @@
     blocks = r.blocks ?? [];
     phase = 'result';
     if (r.intent !== 'qr' && blocks.length === 0) {
-      notice = 'テキストが見つかりませんでした。範囲を変えてもう一度ドラッグしてください。';
+      notice = 'テキストが見つかりませんでした。画像で検索するか、範囲を変えてください';
     } else if (allSameLanguage(blocks)) {
       flash(`すでに${languageLabel(r.target_language)}です。ツールバーで訳す言語を変えられます`, 4000);
     }
@@ -263,6 +268,29 @@
     const q = joinedText(blocks, 'source') || qrPayload;
     if (!q) return;
     await runReverseImageSearch(`https://www.google.com/search?q=${encodeURIComponent(q.slice(0, 1500))}`);
+  }
+
+  /** Image-search mode: send the dragged region (or whole screen) and close. */
+  async function searchRegion(css: CssRect | null) {
+    selection = css ?? { left: 0, top: 0, width: vw, height: vh };
+    const rect = css ? toFrameRect(css, scale) : { x: 0, y: 0, w: frameW, h: frameH };
+    phase = 'processing';
+    try {
+      await searchSelectionImage(rect);
+      await close();
+    } catch (e) {
+      fail(e);
+    }
+  }
+
+  /** Lens' visual search: send the selected image to Google Lens. */
+  async function searchImage() {
+    try {
+      await searchSelectionImage();
+      flash('ブラウザで Google レンズを開きました');
+    } catch (e) {
+      flash(String(e).replace(/^Error:\s*/, ''), 4000);
+    }
   }
 
   async function explain() {
@@ -459,12 +487,16 @@
   <!-- Hint pill. -->
   {#if phase === 'select' && !drag}
     <div class="pill pointer-events-none absolute inset-x-0 top-6 mx-auto w-fit">
-      ドラッグで範囲を選択 · クリックで画面全体を翻訳 · Esc で閉じる
+      {#if searchMode}
+        ドラッグで画像検索する範囲を選択 · クリックで画面全体 · Esc で閉じる
+      {:else}
+        ドラッグで範囲を選択 · クリックで画面全体を翻訳 · Esc で閉じる
+      {/if}
     </div>
   {:else if phase === 'processing'}
     <div class="pill pointer-events-none absolute inset-x-0 top-6 mx-auto w-fit">
       <Sparkles class="inline h-3.5 w-3.5 animate-pulse" />
-      {translating ? '翻訳中…' : '文字を認識中…'}
+      {searchMode ? 'Google レンズを開いています…' : translating ? '翻訳中…' : '文字を認識中…'}
     </div>
   {/if}
 
@@ -498,7 +530,7 @@
           onclick={() => (showOriginal = !showOriginal)}
           title="原文と翻訳を切り替え"
         >
-          {#if showOriginal}<Eye class="h-4 w-4" />翻訳を表示{:else}<EyeOff class="h-4 w-4" />原文を表示{/if}
+          {#if showOriginal}<Eye class="h-4 w-4" /><span class="lbl">翻訳を表示</span>{:else}<EyeOff class="h-4 w-4" /><span class="lbl">原文を表示</span>{/if}
         </button>
         <label class="tb lang" title="訳す言語">
           <span class="opacity-70">{languageLabel(result?.source_language) || '自動'} →</span>
@@ -515,17 +547,25 @@
             {/each}
           </select>
         </label>
-        <button class="tb" onclick={copyAll} title="コピー (Ctrl+C)"><ClipboardCopy class="h-4 w-4" />コピー</button>
+        <button class="tb" onclick={copyAll} title="コピー (Ctrl+C)"><ClipboardCopy class="h-4 w-4" /><span class="lbl">コピー</span></button>
         <button class="tb" aria-pressed={showPanel} onclick={() => (showPanel = !showPanel)} title="テキストを表示">
-          <TextSelect class="h-4 w-4" />テキスト
+          <TextSelect class="h-4 w-4" /><span class="lbl">テキスト</span>
         </button>
-        <button class="tb" onclick={explain} title="内容を説明"><Languages class="h-4 w-4" />説明</button>
-        <button class="tb" onclick={search} title="Google で検索"><Search class="h-4 w-4" />検索</button>
+        <button class="tb" onclick={explain} title="内容を説明"><Languages class="h-4 w-4" /><span class="lbl">説明</span></button>
+        <button class="tb" onclick={search} title="文字で Google 検索"><Search class="h-4 w-4" /><span class="lbl">検索</span></button>
+        <button class="tb" onclick={searchImage} title="この画像を Google レンズで検索（画像を Google に送信します）">
+          <ImageUp class="h-4 w-4" /><span class="lbl">画像で検索</span>
+        </button>
         <button class="tb" onclick={pin} disabled={pinned} title="ピン留め: 同じ領域を自動再翻訳">
           <Pin class="h-4 w-4" />
         </button>
       {:else}
-        <span class="px-2 text-sm">{notice}</span>
+        <span class="px-2 text-sm">{notice || 'テキストはありません'}</span>
+        {#if result}
+          <button class="tb" onclick={searchImage} title="この画像を Google レンズで検索（画像を Google に送信します）">
+            <ImageUp class="h-4 w-4" />画像で検索
+          </button>
+        {/if}
       {/if}
       <button class="tb" onclick={close} title="閉じる (Esc)"><X class="h-4 w-4" /></button>
     </div>
@@ -687,6 +727,12 @@
   }
   .lang select option {
     color: #111;
+  }
+  /* Narrow screens: icon-only buttons (titles still explain them). */
+  @media (max-width: 1100px) {
+    .lbl {
+      display: none;
+    }
   }
   .tb:disabled {
     opacity: 0.4;

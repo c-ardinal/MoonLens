@@ -42,6 +42,7 @@ macro_rules! all_commands {
             ipc::get_frozen_frame,
             ipc::process_frozen_selection,
             ipc::retranslate_selection,
+            ipc::search_selection_image,
             ipc::close_selector,
             ipc::pin_overlay,
             ipc::unpin_overlay,

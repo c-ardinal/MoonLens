@@ -8,6 +8,16 @@ the project adheres to [SemVer](https://semver.org/).
 
 ### Added
 
+- Visual search ("画像で検索"), Lens' image search mode. The selector
+  toolbar has a button that sends the selected image to Google Lens and
+  opens the results in the default browser (also offered when a
+  selection has no text). The reverse-image-search hotkey
+  (`Ctrl+Shift+G`), which previously did nothing, now opens the frozen
+  selector in image-search mode: drag a region (or click for the whole
+  screen) and it goes straight to Google Lens. Upload happens only on
+  that explicit action and is refused when cloud use is turned off.
+  Narrow screens get an icon-only toolbar.
+
 - Target language in the selector. Text that is already in the target
   language (detected from its script, plus English function words for
   Latin text) and text without letters (prices, times) is no longer sent

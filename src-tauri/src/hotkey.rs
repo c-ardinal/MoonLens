@@ -79,6 +79,15 @@ pub fn register_all(
         }
     })?;
 
+    // Reverse image search: select a region on the frozen frame and send
+    // it to visual search.
+    let app_r = app.clone();
+    shortcut_mgr.on_shortcut(s.hotkeys.reverse_image_search.as_str(), move |_a, _s, e| {
+        if matches!(e.state(), ShortcutState::Pressed) {
+            open_image_search(&app_r);
+        }
+    })?;
+
     // All other hotkeys just surface an intent; the frontend routes them.
     let remaining: Vec<(&str, &str)> = vec![
         (
@@ -86,10 +95,6 @@ pub fn register_all(
             s.hotkeys.open_command_palette.as_str(),
         ),
         ("open_history", s.hotkeys.open_history.as_str()),
-        (
-            "reverse_image_search",
-            s.hotkeys.reverse_image_search.as_str(),
-        ),
     ];
     for (action, accel) in remaining {
         let app_x = app.clone();
@@ -127,6 +132,16 @@ pub fn open_selector(app: &AppHandle, auto_full: bool) {
                 },
             )
             .ok();
+        }
+    });
+}
+
+/// Open the selector in image-search mode (see [`selector::show_for_search`]).
+pub fn open_image_search(app: &AppHandle) {
+    let app = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        if let Err(e) = selector::show_for_search(&app) {
+            tracing::error!("selector show failed: {e:?}");
         }
     });
 }

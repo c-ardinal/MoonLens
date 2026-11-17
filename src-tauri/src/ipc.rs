@@ -437,6 +437,50 @@ pub async fn retranslate_selection(
     Ok(bundle)
 }
 
+/// Search the web with a selection's image (Lens' visual search): `rect`
+/// on the frozen frame, or the selection currently shown. Opens Google Lens in the default browser with the image
+/// uploaded. Only runs on an explicit user action, and is refused when
+/// cloud use is turned off.
+#[tauri::command]
+pub async fn search_selection_image(
+    rect: Option<selector::FrameRect>,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let s = state.settings.snapshot();
+    if !s.privacy.allow_cloud_globally || !s.providers.reverse_image_search.allow_cloud {
+        return Err("クラウドの利用がオフのため、画像検索は使えません".into());
+    }
+    // With a rect (image-search mode) cut a fresh crop; otherwise reuse
+    // the selection that is currently shown.
+    let png = match rect {
+        Some(r) => std::sync::Arc::new(
+            tokio::task::spawn_blocking(move || selector::take_crop(Some(r)))
+                .await
+                .map_err(|e| e.to_string())?
+                .map_err(|e| e.to_string())?
+                .0,
+        ),
+        None => selector::last_crop().ok_or("select a region first")?,
+    };
+    let dir = app.path().app_cache_dir().map_err(|e| e.to_string())?;
+    let path = tokio::task::spawn_blocking(move || -> anyhow::Result<std::path::PathBuf> {
+        let jpeg = crate::visual_search::prepare_image(&png)?;
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or(0);
+        let html = crate::visual_search::upload_page_html(&jpeg, now_ms);
+        crate::visual_search::write_upload_page(&dir, &html)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())?;
+    tauri_plugin_opener::OpenerExt::opener(&app)
+        .open_path(path.to_string_lossy(), None::<&str>)
+        .map_err(|e| e.to_string())
+}
+
 /// Close the selector and drop the frozen frame.
 #[tauri::command]
 pub async fn close_selector(app: AppHandle) -> Result<(), String> {

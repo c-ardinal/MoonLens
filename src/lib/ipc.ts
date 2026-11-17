@@ -84,6 +84,8 @@ export interface FrameReady {
   width: number;
   height: number;
   auto_full: boolean;
+  /** Image-search mode: send the selection to visual search, no OCR. */
+  search?: boolean;
 }
 
 export type OverlayEvent =
@@ -146,6 +148,9 @@ export const processFrozenSelection = (rect: FrameRect | null, targetLanguage?: 
     rect,
     targetLanguage: targetLanguage ?? null
   });
+/** Open Google Lens in the browser with the current selection's image. */
+export const searchSelectionImage = (rect: FrameRect | null = null) =>
+  safeInvoke<void>('search_selection_image', { rect });
 export const retranslateSelection = (targetLanguage: string) =>
   safeInvoke<CaptureFlowResult>('retranslate_selection', { targetLanguage });
 export const closeSelector = () => safeInvoke<void>('close_selector');

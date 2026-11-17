@@ -37,6 +37,9 @@ static FROZEN: Mutex<Option<Arc<FrozenFrame>>> = Mutex::new(None);
 /// into another language without running OCR again.
 static LAST_ANALYSIS: Mutex<Option<CaptureFlowResult>> = Mutex::new(None);
 
+/// PNG of the last selection, for "search with this image".
+static LAST_CROP: Mutex<Option<Arc<Vec<u8>>>> = Mutex::new(None);
+
 /// Payload of the `moonlens://selector-frame` event.
 #[derive(Debug, Clone, Serialize)]
 pub struct FrameReady {
@@ -45,6 +48,10 @@ pub struct FrameReady {
     /// When true the selector should immediately process the whole frame
     /// (the "capture window" hotkey) instead of waiting for a drag.
     pub auto_full: bool,
+    /// Image-search mode (the reverse image search hotkey): the selection
+    /// is sent to visual search instead of being OCR'd and translated.
+    #[serde(default)]
+    pub search: bool,
 }
 
 /// Selection rect in frozen-frame pixels.
@@ -87,6 +94,16 @@ pub fn show(app: &AppHandle) -> Result<()> {
 /// Like [`show`]; `auto_full` asks the selector to process the whole
 /// frame right away.
 pub fn show_with(app: &AppHandle, auto_full: bool) -> Result<()> {
+    show_inner(app, auto_full, false)
+}
+
+/// Open the selector in image-search mode: the user drags a region and it
+/// goes to visual search (Google Lens) instead of OCR.
+pub fn show_for_search(app: &AppHandle) -> Result<()> {
+    show_inner(app, false, true)
+}
+
+fn show_inner(app: &AppHandle, auto_full: bool, search: bool) -> Result<()> {
     let win = app
         .get_webview_window("selector")
         .ok_or_else(|| anyhow!("selector window missing"))?;
@@ -112,8 +129,10 @@ pub fn show_with(app: &AppHandle, auto_full: bool) -> Result<()> {
         width: image.width(),
         height: image.height(),
         auto_full,
+        search,
     };
     *LAST_ANALYSIS.lock() = None;
+    *LAST_CROP.lock() = None;
     *FROZEN.lock() = Some(Arc::new(FrozenFrame {
         monitor_index: index,
         image,
@@ -148,6 +167,7 @@ pub fn take_crop(r: Option<FrameRect>) -> Result<(Vec<u8>, FrameRect, usize)> {
     let r = clamp_rect(wanted, fw, fh).ok_or_else(|| anyhow!("selection is empty"))?;
     let crop = image::imageops::crop_imm(&frame.image, r.x, r.y, r.w, r.h).to_image();
     let png = capture::png_bytes(&image::DynamicImage::ImageRgba8(crop))?;
+    *LAST_CROP.lock() = Some(Arc::new(png.clone()));
     Ok((png, r, frame.monitor_index))
 }
 
@@ -163,10 +183,17 @@ pub fn last_analysis() -> Option<CaptureFlowResult> {
     LAST_ANALYSIS.lock().clone()
 }
 
+/// PNG of the selection last cut by [`take_crop`], while the selector is
+/// still showing it.
+pub fn last_crop() -> Option<Arc<Vec<u8>>> {
+    LAST_CROP.lock().clone()
+}
+
 /// Hide the selector and release the frozen frame.
 pub fn hide(app: &AppHandle) -> Result<()> {
     *FROZEN.lock() = None;
     *LAST_ANALYSIS.lock() = None;
+    *LAST_CROP.lock() = None;
     if let Some(win) = app.get_webview_window("selector") {
         win.hide()?;
     }
