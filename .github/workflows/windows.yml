@@ -19,6 +19,7 @@ on:
       - 'src-tauri/.cargo/**'
       - 'src-tauri/src/providers/translate_llama.rs'
       - 'src-tauri/src/providers/llm_models.rs'
+      - 'src-tauri/src/gpu.rs'
       - '.github/workflows/windows.yml'
   workflow_dispatch:
 
@@ -41,6 +42,24 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v5
+
+      # llama.cpp's Vulkan backend builds against the Vulkan SDK. Only the
+      # SDK, no runtime: with no vulkan-1.dll on the runner, the tests
+      # check that the delay-loaded app still starts and falls back to
+      # the CPU (src/gpu.rs).
+      - name: Vulkan SDK
+        uses: jakoch/install-vulkan-sdk-action@v1.8.1
+        with:
+          cache: true
+
+      - name: Report Vulkan loader on the runner
+        shell: bash
+        run: |
+          if [ -f /c/Windows/System32/vulkan-1.dll ]; then
+            echo "vulkan-1.dll present: the GPU path is exercised"
+          else
+            echo "vulkan-1.dll absent: the CPU fallback path is exercised"
+          fi
 
       - uses: dtolnay/rust-toolchain@stable
         with:

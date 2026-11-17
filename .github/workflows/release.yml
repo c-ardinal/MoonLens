@@ -101,7 +101,16 @@ jobs:
             libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev \
             patchelf libxdo-dev libasound2-dev libsoup-3.0-dev \
             libpipewire-0.3-dev libspa-0.2-dev libgbm-dev \
-            libwayland-dev libegl1-mesa-dev libdrm-dev libxkbcommon-dev
+            libwayland-dev libegl1-mesa-dev libdrm-dev libxkbcommon-dev \
+            libvulkan-dev glslc spirv-headers
+
+      # llama.cpp's Vulkan backend needs the SDK to build (GPU inference
+      # on Windows; see src-tauri/Cargo.toml).
+      - name: Vulkan SDK (windows)
+        if: matrix.name == 'windows'
+        uses: jakoch/install-vulkan-sdk-action@v1.8.1
+        with:
+          cache: true
 
       - uses: actions/setup-node@v5
         with: { node-version: 22, cache: npm }

@@ -18,7 +18,7 @@ PC常駐の Google Lens 風ツール。1つのグローバルホットキーで
 - **UI**: Svelte 5 (runes) + Vite + Tailwind CSS v4
 - **OCR**: [`ocrs`](https://github.com/robertknight/ocrs) crate（追加の OCR エンジンはプラグインで差し替え可）
 - **QR**: `rqrr` crate
-- **翻訳 (local)**: 内蔵 llama.cpp（`llama-cpp-2`、静的リンク）で GGUF を実行。翻訳の既定は PLaMo 3 Translate 2B（0.8B も選択可）、説明・要約は Gemma 4 E4B。モデルはアプリのホーム画面からダウンロード（SHA-256 検証・中断再開）。モデル選定の根拠は [docs/translation-models.md](docs/translation-models.md)
+- **翻訳 (local)**: 内蔵 llama.cpp（`llama-cpp-2`、静的リンク）で GGUF を実行。GPU は Windows / Linux が Vulkan（NVIDIA・AMD・Intel）、macOS が Metal。GPU がない環境では CPU で動く。翻訳の既定は PLaMo 3 Translate 2B（0.8B も選択可）、説明・要約は Gemma 4 E4B。モデルはアプリのホーム画面からダウンロード（SHA-256 検証・中断再開）。モデル選定の根拠は [docs/translation-models.md](docs/translation-models.md)
 - **翻訳 (cloud / Ollama)**: DeepL / Gemini API、Ollama は任意のオプション（既定チェーンには入っていない）
 - **ASR**: `whisper.cpp` HTTP サーバ（サイドカー起動）
 - **画面キャプチャ**: `xcap` 0.9、**音声ループバック**: `cpal`
@@ -102,6 +102,9 @@ sticky_session_ms = 30000
 - Tauri 2 系列のプラットフォーム依存（`npm run tauri info` で確認）
 - CMake と C/C++ コンパイラ、libclang（内蔵 llama.cpp のビルド用。Windows は
   Visual Studio Build Tools + LLVM）
+- Vulkan SDK（内蔵 llama.cpp を GPU で動かすため。Windows は LunarG の
+  Vulkan SDK を入れて環境変数 `VULKAN_SDK` を通す。Linux は `libvulkan-dev`、
+  `glslc`、`spirv-headers`。macOS は Metal を使うので不要）
 - Windows では一度だけ `git config --global core.longpaths true` を実行する
   （llama.cpp を git から取得しており、パスが 260 文字を超えるため）
 - 翻訳モデルはアプリ起動後、ホーム画面の「翻訳モデル」からダウンロードする

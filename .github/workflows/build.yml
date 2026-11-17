@@ -132,7 +132,19 @@ jobs:
             libwayland-dev \
             libegl1-mesa-dev \
             libdrm-dev \
-            libxkbcommon-dev
+            libxkbcommon-dev \
+            libvulkan-dev \
+            glslc \
+            spirv-headers
+
+      # llama.cpp's Vulkan backend (Windows / Linux) builds against the
+      # Vulkan SDK. Only the SDK: the runner has no GPU driver, so the
+      # tests also cover starting without vulkan-1.dll.
+      - name: Vulkan SDK (windows)
+        if: matrix.platform.name == 'windows'
+        uses: jakoch/install-vulkan-sdk-action@v1.8.1
+        with:
+          cache: true
 
       - uses: dtolnay/rust-toolchain@stable
         with:
