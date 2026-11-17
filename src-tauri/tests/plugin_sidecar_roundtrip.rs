@@ -38,6 +38,23 @@ for line in sys.stdin:
     sys.stdout.flush()
 "#;
 
+/// Serialises "write the script, then exec it" across the tests in this
+/// file. Tests run on parallel threads; if one thread forks while another
+/// still holds its freshly written script open for writing, the child
+/// inherits that fd until it execs, and the other test's exec of the
+/// script fails with ETXTBSY ("Text file busy").
+static SPAWN_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Build the plugin dir and spawn its sidecar under [`SPAWN_LOCK`].
+fn spawn_echo_plugin() -> (tempfile::TempDir, PluginManifest, SidecarPlugin) {
+    let _lock = SPAWN_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let (guard, dir) = build_plugin_dir();
+    let manifest_text = fs::read_to_string(dir.join("plugin.toml")).unwrap();
+    let manifest: PluginManifest = toml::from_str(&manifest_text).unwrap();
+    let plugin = SidecarPlugin::spawn(&manifest, &dir).expect("spawn sidecar");
+    (guard, manifest, plugin)
+}
+
 fn build_plugin_dir() -> (tempfile::TempDir, PathBuf) {
     let dir = tempfile::tempdir().expect("tempdir");
     let bin_dir = dir.path().join("bin");
@@ -71,11 +88,7 @@ fn build_plugin_dir() -> (tempfile::TempDir, PathBuf) {
 
 #[tokio::test]
 async fn sidecar_round_trip_translate() {
-    let (_guard, dir) = build_plugin_dir();
-    let manifest_text = fs::read_to_string(dir.join("plugin.toml")).unwrap();
-    let manifest: PluginManifest = toml::from_str(&manifest_text).unwrap();
-
-    let plugin = SidecarPlugin::spawn(&manifest, &dir).expect("spawn sidecar");
+    let (_guard, manifest, plugin) = spawn_echo_plugin();
     let handles = plugin.provider_handles(&manifest.plugin.id);
     // Plugin advertises translator + summarize but "summarize" is not a
     // recognized capability string; only "translator" creates a provider.
@@ -101,10 +114,7 @@ async fn sidecar_round_trip_translate() {
 
 #[tokio::test]
 async fn sidecar_handles_unicode_payload() {
-    let (_guard, dir) = build_plugin_dir();
-    let manifest_text = fs::read_to_string(dir.join("plugin.toml")).unwrap();
-    let manifest: PluginManifest = toml::from_str(&manifest_text).unwrap();
-    let plugin = SidecarPlugin::spawn(&manifest, &dir).expect("spawn");
+    let (_guard, manifest, plugin) = spawn_echo_plugin();
     let (_id, handle) = plugin
         .provider_handles(&manifest.plugin.id)
         .into_iter()
