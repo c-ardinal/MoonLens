@@ -111,6 +111,14 @@ jobs:
         uses: jakoch/install-vulkan-sdk-action@v1.8.1
         with:
           cache: true
+      - uses: ilammy/msvc-dev-cmd@v1
+        if: matrix.name == 'windows'
+      - name: Use Ninja for CMake (windows)
+        if: matrix.name == 'windows'
+        shell: bash
+        run: |
+          pip install ninja
+          echo "CMAKE_GENERATOR=Ninja" >> "$GITHUB_ENV"
 
       - uses: actions/setup-node@v5
         with: { node-version: 22, cache: npm }

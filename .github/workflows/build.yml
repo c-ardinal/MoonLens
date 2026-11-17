@@ -146,6 +146,16 @@ jobs:
         with:
           cache: true
 
+      # See windows.yml: VS generator breaks the vulkan-shaders-gen install.
+      - uses: ilammy/msvc-dev-cmd@v1
+        if: matrix.platform.name == 'windows'
+      - name: Use Ninja for CMake (windows)
+        if: matrix.platform.name == 'windows'
+        shell: bash
+        run: |
+          pip install ninja
+          echo "CMAKE_GENERATOR=Ninja" >> "$GITHUB_ENV"
+
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
