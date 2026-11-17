@@ -16,6 +16,7 @@ pub mod translate_deepl;
 pub mod translate_gemini;
 pub mod translate_llama;
 pub mod translate_ollama;
+pub mod translate_opts;
 
 use std::sync::Arc;
 

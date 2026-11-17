@@ -50,6 +50,15 @@ auto_copy_source = false
 auto_copy_qr = true
 auto_copy_transcript = false
 
+[translation]
+# Japanese output style: "auto" (model decides), "polite" (desu/masu),
+# "plain" (da/dearu). Ignored for other target languages.
+style = "auto"
+# Fixed term renderings, e.g.
+#   glossary = [{ source = "Dashboard", target = "管理画面", lang = "ja" }]
+# `lang` is the target language of the rendering ("" = any).
+glossary = []
+
 [privacy]
 # Cloud providers (deepl, gemini) are refused unless this is turned on.
 allow_cloud_globally = false

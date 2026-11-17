@@ -19,6 +19,7 @@ pub struct Settings {
     pub overlay: OverlaySettings,
     pub subtitle: SubtitleSettings,
     pub clipboard: ClipboardSettings,
+    pub translation: TranslationSettings,
     pub privacy: PrivacySettings,
     pub storage: StorageSettings,
     pub performance: PerformanceSettings,
@@ -208,6 +209,44 @@ impl Default for ClipboardSettings {
             auto_copy_transcript: false,
         }
     }
+}
+
+/* ------------------------------- translation ----------------------------- */
+
+/// User preferences applied to every translation, whichever local model
+/// runs it (see `providers::translate_opts`).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(default, deny_unknown_fields)]
+pub struct TranslationSettings {
+    /// Register of Japanese output. Other target languages ignore it.
+    pub style: JaStyle,
+    /// Fixed renderings for terms. An entry is used only when its source
+    /// term occurs in the text and its `lang` matches the target.
+    pub glossary: Vec<GlossaryEntry>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, Default, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum JaStyle {
+    /// Leave the register to the model (follows the source).
+    #[default]
+    Auto,
+    /// です・ます調
+    Polite,
+    /// だ・である調
+    Plain,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(default, deny_unknown_fields)]
+pub struct GlossaryEntry {
+    /// Term as it appears in the source text.
+    pub source: String,
+    /// Rendering to use in the translation.
+    pub target: String,
+    /// Target language the rendering is written in (e.g. "ja");
+    /// empty = any target language.
+    pub lang: String,
 }
 
 /* -------------------------------- privacy -------------------------------- */
