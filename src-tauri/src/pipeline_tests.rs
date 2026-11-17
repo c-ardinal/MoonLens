@@ -30,16 +30,19 @@ mod tests {
         use crate::pipeline::upgrade_llm_chain_for_test as up;
         let v = |xs: &[&str]| xs.iter().map(|s| s.to_string()).collect::<Vec<_>>();
         assert_eq!(
-            up(v(&["ollama.gemma4", "deepl", "gemini"])),
+            up(v(&["ollama.gemma4", "deepl", "gemini"]), "llamacpp"),
             v(&["llamacpp"])
         );
-        assert_eq!(up(v(&["ollama.gemma4", "gemini"])), v(&["llamacpp"]));
+        assert_eq!(
+            up(v(&["ollama.gemma4", "gemini"]), "llamacpp.assistant"),
+            v(&["llamacpp.assistant"])
+        );
         // A chain the user edited keeps Ollama.
         assert_eq!(
-            up(v(&["ollama.gemma4", "deepl"])),
+            up(v(&["ollama.gemma4", "deepl"]), "llamacpp"),
             v(&["ollama.gemma4", "deepl"])
         );
-        assert_eq!(up(v(&["gemini"])), v(&["gemini"]));
+        assert_eq!(up(v(&["gemini"]), "llamacpp"), v(&["gemini"]));
     }
 
     #[test]

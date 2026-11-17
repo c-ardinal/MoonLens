@@ -45,16 +45,46 @@ pub struct CatalogModel {
     pub style: PromptStyle,
 }
 
-/// Model used when the config names none (or an unknown id).
-pub const DEFAULT_MODEL_ID: &str = "gemma-4-e4b";
+/// Translation model used when the config names none (or an unknown
+/// id). PLaMo 3 Translate 2B won the in-house benchmark: same chrF as
+/// Gemma 4 E4B on WMT22 ja-en / en-ja at ~2.5x the speed, the most
+/// natural output on game / UI / signage text, and it cannot be talked
+/// out of translating by the text it is given.
+pub const DEFAULT_TRANSLATE_MODEL_ID: &str = "plamo-3-translate-2b";
+/// General model for explain / summarize (PLaMo only translates).
+pub const DEFAULT_ASSIST_MODEL_ID: &str = "gemma-4-e4b";
 
 /// Every model the app can download. Sizes and hashes are the LFS
 /// metadata Hugging Face publishes for that exact file.
 pub const CATALOG: &[CatalogModel] = &[
     CatalogModel {
+        id: "plamo-3-translate-2b",
+        label: "PLaMo 3 Translate 2B",
+        note: "翻訳の推奨モデル。高品質で高速。翻訳専用",
+        file: "plamo-3-translate-2b-Q4_K_M.gguf",
+        url: "https://huggingface.co/pfnet/plamo-3-translate-2b-GGUF/resolve/main/plamo-3-translate-2b-Q4_K_M.gguf",
+        size: 1_807_203_040,
+        sha256: "1ffd9073afcc70e35ccc942428aa2b73d7aa2b9ea779bf504b775369e0276c13",
+        license: "PLaMo Community License",
+        license_url: "https://plamo.preferredai.jp/info/plamo-community-license-en",
+        style: PromptStyle::Pfml3,
+    },
+    CatalogModel {
+        id: "plamo-3-translate-0.8b",
+        label: "PLaMo 3 Translate 0.8B",
+        note: "最速・省メモリ。低スペック PC 向け。翻訳専用",
+        file: "plamo-3-translate-0.8b-Q4_K_M.gguf",
+        url: "https://huggingface.co/pfnet/plamo-3-translate-0.8b-GGUF/resolve/main/plamo-3-translate-0.8b-Q4_K_M.gguf",
+        size: 573_126_848,
+        sha256: "70891ec70dc7ab4205745a38307867c2881b99239f20327927633abfe4bc9ec6",
+        license: "PLaMo Community License",
+        license_url: "https://plamo.preferredai.jp/info/plamo-community-license-en",
+        style: PromptStyle::Pfml3,
+    },
+    CatalogModel {
         id: "gemma-4-e4b",
-        label: "Gemma 4 E4B (Q4_K_M)",
-        note: "推奨。翻訳品質が最も高く、説明・要約にも使えます",
+        label: "Gemma 4 E4B",
+        note: "説明・要約用の汎用モデル（翻訳にも使えます）",
         file: "gemma-4-E4B-it-Q4_K_M.gguf",
         url: "https://huggingface.co/unsloth/gemma-4-E4B-it-GGUF/resolve/main/gemma-4-E4B-it-Q4_K_M.gguf",
         size: 4_977_171_584,
@@ -65,8 +95,8 @@ pub const CATALOG: &[CatalogModel] = &[
     },
     CatalogModel {
         id: "gemma-4-e2b",
-        label: "Gemma 4 E2B (Q4_K_M)",
-        note: "軽量・高速。E4B より品質は下がります",
+        label: "Gemma 4 E2B",
+        note: "軽量な汎用モデル。説明・要約を速く、品質は E4B より下がります",
         file: "gemma-4-E2B-it-Q4_K_M.gguf",
         url: "https://huggingface.co/unsloth/gemma-4-E2B-it-GGUF/resolve/main/gemma-4-E2B-it-Q4_K_M.gguf",
         size: 3_106_738_272,
@@ -74,30 +104,6 @@ pub const CATALOG: &[CatalogModel] = &[
         license: "Apache-2.0",
         license_url: "https://ai.google.dev/gemma/apache_2",
         style: PromptStyle::ChatTemplate,
-    },
-    CatalogModel {
-        id: "plamo-3-translate-2b",
-        label: "PLaMo 3 Translate 2B (Q4_K_M)",
-        note: "翻訳専用。説明・要約には使えません。非商用利用は無料",
-        file: "plamo-3-translate-2b-Q4_K_M.gguf",
-        url: "https://huggingface.co/pfnet/plamo-3-translate-2b-GGUF/resolve/main/plamo-3-translate-2b-Q4_K_M.gguf",
-        size: 1_807_203_040,
-        sha256: "1ffd9073afcc70e35ccc942428aa2b73d7aa2b9ea779bf504b775369e0276c13",
-        license: "PLaMo Community License",
-        license_url: "https://plamo.preferredai.jp/info/plamo-community-license-en",
-        style: PromptStyle::Pfml3,
-    },
-    CatalogModel {
-        id: "plamo-3-translate-8b",
-        label: "PLaMo 3 Translate 8B (Q4_K_M)",
-        note: "翻訳専用・高品質。メモリ 8 GB 以上推奨。非商用利用は無料",
-        file: "plamo-3-translate-8b-Q4_K_M.gguf",
-        url: "https://huggingface.co/pfnet/plamo-3-translate-8b-GGUF/resolve/main/plamo-3-translate-8b-Q4_K_M.gguf",
-        size: 5_280_445_728,
-        sha256: "94e5d3f91b421f7c8900ddaac27b11a19f7441426c954bbb25a2fd60a1640187",
-        license: "PLaMo Community License",
-        license_url: "https://plamo.preferredai.jp/info/plamo-community-license-en",
-        style: PromptStyle::Pfml3,
     },
 ];
 
@@ -334,7 +340,15 @@ mod tests {
 
     #[test]
     fn catalog_is_well_formed() {
-        assert!(find(DEFAULT_MODEL_ID).is_some());
+        assert_eq!(
+            find(DEFAULT_TRANSLATE_MODEL_ID).map(|m| m.style),
+            Some(PromptStyle::Pfml3)
+        );
+        // explain / summarize need a general chat model.
+        assert_eq!(
+            find(DEFAULT_ASSIST_MODEL_ID).map(|m| m.style),
+            Some(PromptStyle::ChatTemplate)
+        );
         let mut ids = std::collections::HashSet::new();
         for m in CATALOG {
             assert!(ids.insert(m.id), "duplicate id {}", m.id);
@@ -343,13 +357,14 @@ mod tests {
             assert!(m.url.starts_with("https://huggingface.co/"), "{}", m.id);
             assert!(m.url.ends_with(m.file), "{}", m.id);
             assert!(m.size > 100 << 20, "{}", m.id);
+            assert!(m.url.contains(".gguf") && m.file.ends_with(".gguf"));
         }
     }
 
     #[test]
     fn installed_requires_exact_size() {
         let dir = tempfile::tempdir().unwrap();
-        let m = find(DEFAULT_MODEL_ID).unwrap();
+        let m = find(DEFAULT_TRANSLATE_MODEL_ID).unwrap();
         assert!(!is_installed(dir.path(), m));
         std::fs::write(model_path(dir.path(), m), b"short").unwrap();
         assert!(!is_installed(dir.path(), m));

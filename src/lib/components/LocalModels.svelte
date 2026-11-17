@@ -9,10 +9,11 @@
     onLlmProgress,
     selectLlmModel,
     type LlmModels,
-    type LlmProgress
+    type LlmProgress,
+    type LlmRole
   } from '$lib/ipc';
 
-  let data = $state<LlmModels>({ selected: '', dir: '', models: [] });
+  let data = $state<LlmModels>({ selected: '', assistant: '', dir: '', models: [] });
   let progress = $state<Record<string, LlmProgress>>({});
   let busy = $state<Record<string, boolean>>({});
   let error = $state<string | null>(null);
@@ -41,9 +42,15 @@
     busy = { ...busy, [id]: true };
     try {
       await installLlmModel(id);
-      // First model downloaded: use it right away.
-      const chosen = data.models.find((m) => m.id === data.selected);
-      if (!chosen?.installed) await selectLlmModel(id);
+      // Put a freshly downloaded model to work when its role has no
+      // usable model yet.
+      const m = data.models.find((x) => x.id === id);
+      const installed = (sel: string) => data.models.find((x) => x.id === sel)?.installed;
+      if (m?.style === 'pfml3') {
+        if (!installed(data.selected)) await selectLlmModel(id, 'translate');
+      } else if (!installed(data.assistant)) {
+        await selectLlmModel(id, 'assistant');
+      }
     } catch (e) {
       if (!String(e).includes('cancelled')) error = String(e);
     } finally {
@@ -68,10 +75,10 @@
     await refresh();
   }
 
-  async function choose(id: string) {
+  async function choose(id: string, role: LlmRole) {
     error = null;
     try {
-      await selectLlmModel(id);
+      await selectLlmModel(id, role);
     } catch (e) {
       error = String(e);
     }
@@ -82,14 +89,16 @@
 <section class="rounded-ml border border-border bg-surface-elevated p-5 shadow-ml">
   <h2 class="text-base font-semibold">翻訳モデル</h2>
   <p class="text-sm text-ink-muted">
-    翻訳はアプリに内蔵したエンジンで端末内で動きます（Ollama などのインストールは不要）。
-    使うモデルを 1 つダウンロードしてください。
+    翻訳・説明・要約はアプリ内蔵のエンジンで端末内だけで動きます（Ollama などは不要）。
+    翻訳には PLaMo 3 Translate、説明・要約には Gemma 4 をダウンロードしてください。
   </p>
 
   <ul class="mt-3 flex flex-col gap-2">
     {#each data.models as m (m.id)}
       {@const p = progress[m.id]}
-      {@const selected = m.id === data.selected}
+      {@const forTranslate = m.id === data.selected}
+      {@const forAssist = m.id === data.assistant}
+      {@const selected = forTranslate || forAssist}
       <li
         class="rounded-ml-sm border p-3 {selected
           ? 'border-accent/60 bg-accent/5'
@@ -99,8 +108,13 @@
           <div class="min-w-0">
             <div class="flex items-center gap-2">
               <span class="font-medium">{m.label}</span>
-              {#if selected}
-                <span class="rounded-full bg-accent/15 px-2 py-0.5 text-xs text-accent">使用中</span>
+              {#if forTranslate}
+                <span class="rounded-full bg-accent/15 px-2 py-0.5 text-xs text-accent">翻訳</span>
+              {/if}
+              {#if forAssist}
+                <span class="rounded-full bg-accent/15 px-2 py-0.5 text-xs text-accent"
+                  >説明・要約</span
+                >
               {/if}
             </div>
             <p class="text-xs text-ink-muted">
@@ -112,12 +126,20 @@
           </div>
           <div class="flex shrink-0 items-center gap-2">
             {#if m.installed}
-              {#if !selected}
+              {#if !forTranslate}
                 <button
                   class="inline-flex items-center gap-1 rounded-ml-sm border border-border px-3 py-1.5 text-sm text-ink-muted hover:border-accent/50 hover:text-ink"
-                  onclick={() => choose(m.id)}
+                  onclick={() => choose(m.id, 'translate')}
                 >
-                  <Check class="h-4 w-4" /> 使う
+                  <Check class="h-4 w-4" /> 翻訳に使う
+                </button>
+              {/if}
+              {#if m.style === 'chat_template' && !forAssist}
+                <button
+                  class="inline-flex items-center gap-1 rounded-ml-sm border border-border px-3 py-1.5 text-sm text-ink-muted hover:border-accent/50 hover:text-ink"
+                  onclick={() => choose(m.id, 'assistant')}
+                >
+                  <Check class="h-4 w-4" /> 説明・要約に使う
                 </button>
               {/if}
               <button

@@ -113,7 +113,7 @@ max_cost_per_request = 0.0
 sticky_session_ms = 0
 
 [providers.explain]
-chain = ["llamacpp"]
+chain = ["llamacpp.assistant"]
 parallel_race = false
 fallback_on = ["timeout", "error", "offline"]
 timeout_ms = 10000
@@ -123,7 +123,7 @@ max_cost_per_request = 0.0
 sticky_session_ms = 60000
 
 [providers.summarize]
-chain = ["llamacpp"]
+chain = ["llamacpp.assistant"]
 parallel_race = false
 fallback_on = ["timeout", "error", "offline"]
 timeout_ms = 10000
@@ -167,11 +167,20 @@ sticky_session_ms = 0
 # can declare their own settings without the core knowing the shape.
 # ---------------------------------------------------------------------------
 
-# Built-in llama.cpp engine: no external runtime needed. `model` is a
-# catalog id (download it from the home screen): "gemma-4-e4b"
-# (default), "gemma-4-e2b", "plamo-3-translate-2b", "plamo-3-translate-8b".
-# Set `model_path` to run any other GGUF file instead.
+# Built-in llama.cpp engine: no external runtime needed. Models are
+# downloaded from the home screen. `model` is a catalog id:
+#   translation: "plamo-3-translate-2b" (default), "plamo-3-translate-0.8b"
+#   general:     "gemma-4-e4b" (default), "gemma-4-e2b"
+# Set `model_path` (+ `prompt_style = "pfml3"` for PLaMo) to run any
+# other GGUF file instead.
 [providers.configs.llamacpp]
+model = "plamo-3-translate-2b"
+n_ctx = 4096
+temperature = 0.0
+threads = 0
+
+# General model for explain / summarize (PLaMo only translates).
+[providers.configs."llamacpp.assistant"]
 model = "gemma-4-e4b"
 n_ctx = 4096
 temperature = 0.0

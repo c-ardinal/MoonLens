@@ -153,19 +153,16 @@ impl Pipeline {
         *self.providers.write() = map;
     }
 
-    /// Load the built-in LLM in the background when a chain uses it and
-    /// its model is installed, so the first capture does not pay the
+    /// Load the built-in translation model in the background when the
+    /// translate chain uses it and it is installed, so the first capture does not pay the
     /// multi-second load. Set `preload = false` in its config to skip.
     pub fn preload_local_llm(&self) {
         let s = self.settings.snapshot();
-        let used = [
-            Capability::Translate,
-            Capability::Explain,
-            Capability::Summarize,
-        ]
-        .iter()
-        .any(|c| pick_chain(&s, *c).chain.iter().any(|id| id == LOCAL_LLM_ID));
-        if !used {
+        if !pick_chain(&s, Capability::Translate)
+            .chain
+            .iter()
+            .any(|id| id == LOCAL_LLM_ID)
+        {
             return;
         }
         let empty = serde_json::Value::Object(Default::default());
@@ -616,7 +613,7 @@ fn builtin_provider(
     use_gpu: bool,
 ) -> Option<ProviderHandle> {
     Some(match id {
-        LOCAL_LLM_ID => {
+        LOCAL_LLM_ID | LOCAL_ASSIST_ID => {
             let mut p = LlamaTranslator::new(id, cfg, use_gpu);
             if let Some(sink) = sink {
                 p = p.with_chunk_sink(sink.clone());
@@ -654,8 +651,12 @@ fn upgrade_ocr_chain(mut chain: TaskChain) -> TaskChain {
     chain
 }
 
-/// Id of the built-in llama.cpp provider.
+/// Built-in llama.cpp provider running the translation model
+/// (PLaMo 3 Translate by default).
 pub const LOCAL_LLM_ID: &str = "llamacpp";
+/// Built-in llama.cpp provider running the general model used for
+/// explain / summarize (Gemma 4 by default).
+pub const LOCAL_ASSIST_ID: &str = "llamacpp.assistant";
 
 /// Before the built-in engine existed, LLM chains started with the
 /// Ollama provider and fell back to cloud services. Config files seeded
@@ -667,20 +668,20 @@ const LEGACY_LLM_CHAINS: [&[&str]; 2] = [
     &["ollama.gemma4", "gemini"],
 ];
 
-fn upgrade_llm_chain(mut chain: TaskChain) -> TaskChain {
+fn upgrade_llm_chain(mut chain: TaskChain, local_id: &str) -> TaskChain {
     if LEGACY_LLM_CHAINS.iter().any(|c| chain.chain == *c) {
-        chain.chain = vec![LOCAL_LLM_ID.to_string()];
+        chain.chain = vec![local_id.to_string()];
     }
     chain
 }
 
 fn pick_chain(s: &crate::settings::schema::Settings, cap: Capability) -> TaskChain {
     match cap {
-        Capability::Translate => upgrade_llm_chain(s.providers.translate.clone()),
+        Capability::Translate => upgrade_llm_chain(s.providers.translate.clone(), LOCAL_LLM_ID),
         Capability::Ocr => upgrade_ocr_chain(s.providers.ocr.clone()),
         Capability::Asr => s.providers.asr.clone(),
-        Capability::Explain => upgrade_llm_chain(s.providers.explain.clone()),
-        Capability::Summarize => upgrade_llm_chain(s.providers.summarize.clone()),
+        Capability::Explain => upgrade_llm_chain(s.providers.explain.clone(), LOCAL_ASSIST_ID),
+        Capability::Summarize => upgrade_llm_chain(s.providers.summarize.clone(), LOCAL_ASSIST_ID),
         Capability::ReverseImageSearch => s.providers.reverse_image_search.clone(),
         Capability::QrHandler => s.providers.qr_handler.clone(),
         Capability::IntentClassifier => s.providers.intent_classifier.clone(),
@@ -697,11 +698,14 @@ pub fn upgrade_ocr_chain_for_test(chain: Vec<String>) -> Vec<String> {
 }
 
 #[cfg(test)]
-pub fn upgrade_llm_chain_for_test(chain: Vec<String>) -> Vec<String> {
-    upgrade_llm_chain(TaskChain {
-        chain,
-        ..TaskChain::default()
-    })
+pub fn upgrade_llm_chain_for_test(chain: Vec<String>, local_id: &str) -> Vec<String> {
+    upgrade_llm_chain(
+        TaskChain {
+            chain,
+            ..TaskChain::default()
+        },
+        local_id,
+    )
     .chain
 }
 

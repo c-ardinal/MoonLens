@@ -153,8 +153,13 @@ export interface LlmModel {
   downloading: boolean;
 }
 
+export type LlmRole = 'translate' | 'assistant';
+
 export interface LlmModels {
+  /** Model used for translation. */
   selected: string;
+  /** Model used for explain / summarize. */
+  assistant: string;
   dir: string;
   models: LlmModel[];
 }
@@ -167,11 +172,17 @@ export interface LlmProgress {
 }
 
 export const listLlmModels = () =>
-  safeInvoke<LlmModels>('list_llm_models', undefined, { selected: '', dir: '', models: [] });
+  safeInvoke<LlmModels>('list_llm_models', undefined, {
+    selected: '',
+    assistant: '',
+    dir: '',
+    models: []
+  });
 export const installLlmModel = (id: string) => safeInvoke<string>('install_llm_model', { id });
 export const cancelLlmDownload = (id: string) => safeInvoke<boolean>('cancel_llm_download', { id });
 export const deleteLlmModel = (id: string) => safeInvoke<void>('delete_llm_model', { id });
-export const selectLlmModel = (id: string) => safeInvoke<void>('select_llm_model', { id });
+export const selectLlmModel = (id: string, role: LlmRole = 'translate') =>
+  safeInvoke<void>('select_llm_model', { id, role });
 export const onLlmProgress = (handler: (p: LlmProgress) => void): Promise<UnlistenFn> =>
   listen<LlmProgress>('moonlens://llm-model-progress', (e) => handler(e.payload));
 export const showMain = () => safeInvoke<void>('show_main');

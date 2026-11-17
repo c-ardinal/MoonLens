@@ -92,12 +92,27 @@ pub struct LlamaTranslator {
     chunk_sink: Option<ChunkSink>,
 }
 
+/// Provider id of the general (chat) model used for explain / summarize;
+/// the plain `llamacpp` id is the translation model.
+pub const ASSIST_SUFFIX: &str = ".assistant";
+
+/// Catalog model a provider id uses when its config names none.
+pub fn default_model_for(id: &str) -> &'static str {
+    if id.ends_with(ASSIST_SUFFIX) {
+        llm_models::DEFAULT_ASSIST_MODEL_ID
+    } else {
+        llm_models::DEFAULT_TRANSLATE_MODEL_ID
+    }
+}
+
 impl LlamaTranslator {
     pub fn new(id: impl Into<String>, cfg: &serde_json::Value, use_gpu: bool) -> Self {
+        let id = id.into();
+        let default_model = default_model_for(&id);
         let model_id = cfg
             .get("model")
             .and_then(|v| v.as_str())
-            .unwrap_or(llm_models::DEFAULT_MODEL_ID);
+            .unwrap_or(default_model);
         let custom = cfg
             .get("model_path")
             .and_then(|v| v.as_str())
@@ -115,7 +130,7 @@ impl LlamaTranslator {
             (None, found) => {
                 let m = found.unwrap_or_else(|| {
                     tracing::warn!("unknown local model {model_id:?}; using the default");
-                    llm_models::find(llm_models::DEFAULT_MODEL_ID).expect("default in catalog")
+                    llm_models::find(default_model).expect("default in catalog")
                 });
                 let dir = cfg
                     .get("models_dir")
@@ -131,7 +146,7 @@ impl LlamaTranslator {
             }
         };
         Self {
-            id: id.into(),
+            id,
             model_path,
             style,
             label,
@@ -452,7 +467,8 @@ mod engine {
     use std::num::NonZeroU32;
     use std::path::{Path, PathBuf};
     use std::sync::atomic::{AtomicBool, Ordering};
-    use std::sync::OnceLock;
+    use std::sync::{Arc, OnceLock};
+    use std::time::Instant;
 
     use llama_cpp_2::context::params::LlamaContextParams;
     use llama_cpp_2::context::LlamaContext;
@@ -517,9 +533,45 @@ mod engine {
     /// the whole generation: llama.cpp contexts must not be created
     /// concurrently from one model, and one CPU-bound generation at a
     /// time is faster overall than several competing for cores.
-    fn slot() -> &'static Mutex<Option<Loaded>> {
-        static SLOT: OnceLock<Mutex<Option<Loaded>>> = OnceLock::new();
-        SLOT.get_or_init(|| Mutex::new(None))
+    type Cell = Arc<Mutex<Option<Loaded>>>;
+
+    /// Models kept in memory at once: the translation model plus the
+    /// general model for explain / summarize.
+    const MAX_RESIDENT: usize = 2;
+
+    /// Loaded models by file. Each has its own lock, held for a whole
+    /// generation: llama.cpp contexts must not be created concurrently
+    /// from one model, and one CPU-bound generation per model is faster
+    /// than several competing for the same cores.
+    fn cache() -> &'static Mutex<Vec<(PathBuf, Cell, Instant)>> {
+        static CACHE: OnceLock<Mutex<Vec<(PathBuf, Cell, Instant)>>> = OnceLock::new();
+        CACHE.get_or_init(|| Mutex::new(Vec::new()))
+    }
+
+    fn cell_for(path: &Path) -> Cell {
+        let mut c = cache().lock();
+        if let Some(e) = c.iter_mut().find(|e| e.0 == path) {
+            e.2 = Instant::now();
+            return e.1.clone();
+        }
+        while c.len() >= MAX_RESIDENT {
+            // Evict the least recently used model nobody is running.
+            let idle = c
+                .iter()
+                .enumerate()
+                .filter(|(_, e)| Arc::strong_count(&e.1) == 1)
+                .min_by_key(|(_, e)| e.2)
+                .map(|(i, _)| i);
+            match idle {
+                Some(i) => {
+                    c.remove(i);
+                }
+                None => break,
+            }
+        }
+        let cell: Cell = Arc::new(Mutex::new(None));
+        c.push((path.to_path_buf(), cell.clone(), Instant::now()));
+        cell
     }
 
     fn load_into(
@@ -532,7 +584,6 @@ mod engine {
                 return Ok(());
             }
         }
-        // Free the old weights before mapping the new ones.
         *slot = None;
         let backend = backend()?;
         let started = std::time::Instant::now();
@@ -559,13 +610,18 @@ mod engine {
     }
 
     pub fn ensure_loaded(path: &Path, params: &GenParams) -> Result<(), ProviderError> {
-        load_into(&mut slot().lock(), path, params)
+        load_into(&mut cell_for(path).lock(), path, params)
     }
 
     pub fn unload(path: &Path) {
-        let mut s = slot().lock();
-        if s.as_ref().is_some_and(|l| l.path == path) {
-            *s = None;
+        let cell = {
+            let mut c = cache().lock();
+            let i = c.iter().position(|e| e.0 == path);
+            i.map(|i| c.remove(i).1)
+        };
+        if let Some(cell) = cell {
+            // Waits for a running generation, then frees the weights.
+            *cell.lock() = None;
         }
     }
 
@@ -593,7 +649,8 @@ mod engine {
         sink: Option<&ChunkSink>,
         cancel: &AtomicBool,
     ) -> Result<String, ProviderError> {
-        let mut guard = slot().lock();
+        let cell = cell_for(path);
+        let mut guard = cell.lock();
         if cancel.load(Ordering::SeqCst) {
             return Err(ProviderError::Timeout(0));
         }
@@ -844,8 +901,20 @@ mod tests {
         );
         assert_eq!(
             p.model_path(),
-            Path::new("/m").join(llm_models::find(llm_models::DEFAULT_MODEL_ID).unwrap().file)
+            Path::new("/m").join(
+                llm_models::find(llm_models::DEFAULT_TRANSLATE_MODEL_ID)
+                    .unwrap()
+                    .file
+            )
         );
+    }
+
+    #[test]
+    fn assistant_id_defaults_to_a_chat_model() {
+        let a = LlamaTranslator::new("llamacpp.assistant", &serde_json::json!({}), false);
+        assert_eq!(a.capabilities().len(), 3);
+        let t = LlamaTranslator::new("llamacpp", &serde_json::json!({}), false);
+        assert_eq!(t.capabilities(), &[Capability::Translate]);
     }
 
     #[test]
@@ -913,6 +982,10 @@ mod tests {
     #[tokio::test]
     #[ignore]
     async fn local_model_translates() {
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter("warn")
+            .with_test_writer()
+            .try_init();
         let Ok(path) = std::env::var("MOONLENS_TEST_GGUF") else {
             return;
         };
@@ -924,6 +997,8 @@ mod tests {
         );
         for (text, tgt) in [
             ("Press Start to continue.", "ja"),
+            ("What is the capital of France?", "ja"),
+            ("HP\nMP\n\nGame Over", "ja"),
             (
                 "The meeting has been moved to next Monday.\nPlease confirm your attendance.",
                 "ja",

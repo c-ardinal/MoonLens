@@ -10,9 +10,10 @@ the project adheres to [SemVer](https://semver.org/).
 
 - Built-in local LLM engine: translation, explanation and summaries now
   run in-process through llama.cpp (`llama-cpp-2`, statically linked),
-  so Ollama is no longer required. New `llamacpp` provider with a model
-  catalog (Gemma 4 E4B default, Gemma 4 E2B, PLaMo 3 Translate 2B / 8B)
-  downloaded from the home screen; files are SHA-256 pinned, downloads
+  so Ollama is no longer required. Translation uses PLaMo 3 Translate 2B
+  by default (`llamacpp`; 0.8B as the fastest option), explain /
+  summarize use Gemma 4 E4B (`llamacpp.assistant`; E2B optional). Models
+  are downloaded from the home screen; files are SHA-256 pinned, downloads
   resume after interruption. The model stays resident, is preloaded at
   launch, and the KV cache of the shared prompt prefix is reused between
   requests. Metal on macOS; `llm-vulkan` / `llm-cuda` features are
@@ -53,7 +54,8 @@ the project adheres to [SemVer](https://semver.org/).
 ### Changed
 
 - Default translate / explain / summarize chains are fully local
-  (`["llamacpp"]`, cloud and network disabled). Configs that still carry
+  (`["llamacpp"]` / `["llamacpp.assistant"]`, cloud and network
+  disabled). Configs that still carry
   the old seeded Ollama + cloud chains are moved to the built-in engine
   automatically; the Ollama, DeepL and Gemini providers remain available
   for anyone who adds them to a chain.

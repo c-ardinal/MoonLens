@@ -31,31 +31,41 @@ vi.mock('$lib/ipc', () => ipc);
 import LocalModels from './LocalModels.svelte';
 
 describe('<LocalModels>', () => {
-  it('lists models with size and marks the selected one', async () => {
+  it('lists models and marks which role each one serves', async () => {
     ipc.listLlmModels.mockResolvedValue({
       selected: 'a',
+      assistant: 'c',
       dir: '/data/llm',
-      models: [model('a', { installed: true }), model('b', { partial_bytes: 5 })]
+      models: [
+        model('a', { installed: true, style: 'pfml3' }),
+        model('b', { partial_bytes: 5 }),
+        model('c', { installed: true })
+      ]
     });
-    const { findByText, getByText } = render(LocalModels);
+    const { findByText, getByText, queryByText } = render(LocalModels);
     expect(await findByText('Model a')).toBeInTheDocument();
-    expect(getByText('使用中')).toBeInTheDocument();
+    expect(getByText('翻訳')).toBeInTheDocument();
+    expect(getByText('説明・要約')).toBeInTheDocument();
+    // The chat model can also take over translation; PLaMo cannot assist.
+    expect(getByText('翻訳に使う')).toBeInTheDocument();
+    expect(queryByText('説明・要約に使う')).not.toBeInTheDocument();
     // Interrupted download offers to resume.
     expect(getByText('再開')).toBeInTheDocument();
     expect(getByText('/data/llm')).toBeInTheDocument();
   });
 
-  it('downloads a model and selects it when nothing usable is selected', async () => {
+  it('puts a downloaded translation model to work when none is installed', async () => {
     ipc.listLlmModels.mockResolvedValue({
-      selected: 'a',
+      selected: 'x',
+      assistant: 'y',
       dir: '',
-      models: [model('a')]
+      models: [model('a', { style: 'pfml3' })]
     });
     ipc.installLlmModel.mockResolvedValue('/data/llm/a.gguf');
     ipc.selectLlmModel.mockResolvedValue(undefined);
     const { findByText } = render(LocalModels);
     await fireEvent.click(await findByText('ダウンロード'));
     await waitFor(() => expect(ipc.installLlmModel).toHaveBeenCalledWith('a'));
-    await waitFor(() => expect(ipc.selectLlmModel).toHaveBeenCalledWith('a'));
+    await waitFor(() => expect(ipc.selectLlmModel).toHaveBeenCalledWith('a', 'translate'));
   });
 });

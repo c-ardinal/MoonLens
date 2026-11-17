@@ -18,7 +18,7 @@ PC常駐の Google Lens 風ツール。1つのグローバルホットキーで
 - **UI**: Svelte 5 (runes) + Vite + Tailwind CSS v4
 - **OCR**: [`ocrs`](https://github.com/robertknight/ocrs) crate（追加の OCR エンジンはプラグインで差し替え可）
 - **QR**: `rqrr` crate
-- **翻訳 (local)**: 内蔵 llama.cpp（`llama-cpp-2`、静的リンク）で GGUF を実行。既定モデル Gemma 4 E4B（Q4_K_M）、PLaMo 3 Translate なども選択可。モデルはアプリのホーム画面からダウンロード（SHA-256 検証・中断再開）
+- **翻訳 (local)**: 内蔵 llama.cpp（`llama-cpp-2`、静的リンク）で GGUF を実行。翻訳の既定は PLaMo 3 Translate 2B（0.8B も選択可）、説明・要約は Gemma 4 E4B。モデルはアプリのホーム画面からダウンロード（SHA-256 検証・中断再開）
 - **翻訳 (cloud / Ollama)**: DeepL / Gemini API、Ollama は任意のオプション（既定チェーンには入っていない）
 - **ASR**: `whisper.cpp` HTTP サーバ（サイドカー起動）
 - **画面キャプチャ**: `xcap` 0.9、**音声ループバック**: `cpal`

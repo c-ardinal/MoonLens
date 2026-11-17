@@ -11,7 +11,7 @@ use crate::{
     clipboard, hotkey, intent,
     lens::{self, geometry::LensInsets, LensDescriptor},
     overlay,
-    pipeline::{CaptureFlowResult, TaskResult, LOCAL_LLM_ID},
+    pipeline::{CaptureFlowResult, TaskResult, LOCAL_ASSIST_ID, LOCAL_LLM_ID},
     plugins::PluginDescriptor,
     providers::{llm_models, ocr_ocrs, Capability, TaskInput},
     selector,
@@ -490,7 +490,10 @@ pub async fn install_ocr_models(app: AppHandle) -> Result<String, String> {
 /// one currently selected for the built-in engine.
 #[derive(serde::Serialize)]
 pub struct LlmModels {
+    /// Model used for translation.
     pub selected: String,
+    /// Model used for explain / summarize.
+    pub assistant: String,
     pub dir: String,
     pub models: Vec<llm_models::ModelStatus>,
 }
@@ -499,23 +502,27 @@ fn llm_dir() -> Result<PathBuf, String> {
     llm_models::default_models_dir().ok_or_else(|| "no data dir".to_string())
 }
 
-fn selected_llm(settings: &Settings) -> String {
+fn selected_llm(settings: &Settings, provider_id: &str) -> String {
     settings
         .providers
         .configs
-        .get(LOCAL_LLM_ID)
+        .get(provider_id)
         .and_then(|c| c.get("model"))
         .and_then(|v| v.as_str())
         .filter(|id| llm_models::find(id).is_some())
-        .unwrap_or(llm_models::DEFAULT_MODEL_ID)
+        .unwrap_or(crate::providers::translate_llama::default_model_for(
+            provider_id,
+        ))
         .to_string()
 }
 
 #[tauri::command]
 pub async fn list_llm_models(state: State<'_, AppState>) -> Result<LlmModels, String> {
     let dir = llm_dir()?;
+    let s = state.settings.snapshot();
     Ok(LlmModels {
-        selected: selected_llm(&state.settings.snapshot()),
+        selected: selected_llm(&s, LOCAL_LLM_ID),
+        assistant: selected_llm(&s, LOCAL_ASSIST_ID),
         dir: dir.display().to_string(),
         models: llm_models::status(&dir),
     })
@@ -559,7 +566,7 @@ pub async fn install_llm_model(
     let path = llm_models::install(&dir, &id, Some(&*cb))
         .await
         .map_err(|e| e.to_string())?;
-    if selected_llm(&state.settings.snapshot()) == id {
+    if selected_llm(&state.settings.snapshot(), LOCAL_LLM_ID) == id {
         state.pipeline.preload_local_llm();
     }
     Ok(path.display().to_string())
@@ -579,17 +586,30 @@ pub async fn delete_llm_model(id: String) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
-/// Make `id` the built-in engine's model (persisted to config.toml).
+/// Use catalog model `id` for `role` ("translate", the default, or
+/// "assistant" for explain / summarize). Persisted to config.toml.
 #[tauri::command]
-pub async fn select_llm_model(id: String, state: State<'_, AppState>) -> Result<(), String> {
-    if llm_models::find(&id).is_none() {
-        return Err(format!("unknown model {id}"));
-    }
+pub async fn select_llm_model(
+    id: String,
+    role: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let m = llm_models::find(&id).ok_or_else(|| format!("unknown model {id}"))?;
+    let provider_id = match role.as_deref() {
+        None | Some("translate") => LOCAL_LLM_ID,
+        Some("assistant") => {
+            if m.style != llm_models::PromptStyle::ChatTemplate {
+                return Err(format!("{} can only translate", m.label));
+            }
+            LOCAL_ASSIST_ID
+        }
+        Some(other) => return Err(format!("unknown role {other}")),
+    };
     let mut next = (*state.settings.snapshot()).clone();
     let cfg = next
         .providers
         .configs
-        .entry(LOCAL_LLM_ID.to_string())
+        .entry(provider_id.to_string())
         .or_insert_with(|| serde_json::json!({}));
     if !cfg.is_object() {
         *cfg = serde_json::json!({});
