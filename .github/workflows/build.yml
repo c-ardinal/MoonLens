@@ -72,6 +72,12 @@ jobs:
       - name: Install JS deps
         run: npm ci
 
+      # Same check the release workflow runs on a tag: app versions agree
+      # and every @tauri-apps npm package matches its crate's major.minor
+      # (`tauri build` refuses to bundle otherwise).
+      - name: Release preflight
+        run: node scripts/check-release.mjs
+
       - name: Typecheck (svelte-check)
         run: npm run check
 

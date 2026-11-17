@@ -7,18 +7,58 @@ PC常駐の Google Lens 風ツール。1つのグローバルホットキーで
 - 外国語動画のループバック音声からライブ字幕
 - ローカル LLM による要約・説明・対話
 
-を統合する。翻訳・要約・説明はアプリに内蔵した llama.cpp エンジンで端末内だけで
-完結し（Ollama などの外部ランタイムは不要）、クラウドは明示的に有効化した場合のみ使う。音楽認識は運用コストの観点から本体には含めず、
+を統合する。OCR・翻訳・要約・説明はアプリに内蔵したエンジンで端末内だけで
+完結し（Ollama などの外部ランタイムは不要）、画像やテキストを外部へ送信しない。
+通信はユーザーが開始したモデル取得時のみ。音楽認識は運用コストの観点から本体には含めず、
 プラグインとして実装できる余地を確保している。
+
+## 導入
+
+[Releases](https://github.com/c-ardinal/MoonLens/releases) から OS に合うファイルを取得する。
+
+| OS | ファイル | 備考 |
+| --- | --- | --- |
+| Windows 10/11 (x64) | `MoonLens_<版>_x64-setup.exe` または `.msi` | 未署名のため SmartScreen が表示される。「詳細情報 → 実行」で起動 |
+| Linux (x64) | `.AppImage` / `.deb` / `.rpm` | AppImage は `chmod +x` 後に実行。Wayland ではポータル経由で画面取得 |
+| macOS | 未提供 | 次版以降で対応予定 |
+
+### 初回起動
+
+1. 起動するとホーム画面が開く（タスクトレイにも常駐。`--hidden` 付きで起動するとトレイのみ）。
+2. ホーム画面の「OCR モデル」と「翻訳モデル」でモデルを取得する。既定の翻訳モデルは
+   PLaMo 3 Translate 2B（約 1.8 GB）。低速な PC では 0.8B 版を選ぶ。取得は中断・再開でき、
+   SHA-256 で検証される。
+3. `Ctrl+Shift+Space`（macOS は `⌘⇧Space`）で範囲を選択すると、その場に訳文が重なって表示される。
+
+主な既定ショートカット（設定画面で変更可）:
+
+| 操作 | キー |
+| --- | --- |
+| 範囲を翻訳 | `Ctrl+Shift+Space` |
+| ウィンドウを翻訳 | `Ctrl+Shift+W` |
+| 結果を固定表示 | `Ctrl+Shift+P` |
+| 履歴 | `Ctrl+Shift+H` |
+| コマンドパレット | `Ctrl+K` |
+| ライブ字幕 | `Ctrl+Shift+S`（別途 whisper.cpp サーバーが必要） |
+
+### アンインストール
+
+OS の標準手順で削除する。Windows のインストーラー（setup.exe）で「アプリデータ削除」を選ぶと
+設定・履歴・モデルもまとめて削除される。それ以外（.msi、deb／rpm／AppImage）では次のフォルダーが残るので、
+不要なら手動で削除する。実際のパスと使用容量は設定画面の「データ」に表示される
+（詳細は [docs/lifecycle.md](docs/lifecycle.md)）。
+
+- Linux: `~/.config/io.moonlens.app/`、`~/.local/share/io.moonlens.app/`
+- Windows: `%APPDATA%\io.moonlens.app\`、`%LOCALAPPDATA%\io.moonlens.app\`
 
 ## スタック
 
 - **アプリシェル**: Tauri 2.x (Rust)
 - **UI**: Svelte 5 (runes) + Vite + Tailwind CSS v4
-- **OCR**: [`ocrs`](https://github.com/robertknight/ocrs) crate（追加の OCR エンジンはプラグインで差し替え可）
+- **OCR**: PP-OCRv5 mobile（`rten` で実行、日中英）を既定とし、ラテン文字専用の [`ocrs`](https://github.com/robertknight/ocrs) をフォールバックに使う（追加の OCR エンジンはプラグインで差し替え可）
 - **QR**: `rqrr` crate
 - **翻訳 (local)**: 内蔵 llama.cpp（`llama-cpp-2`、静的リンク）で GGUF を実行。翻訳の既定は PLaMo 3 Translate 2B（0.8B も選択可）、説明・要約は Gemma 4 E4B。モデルはアプリのホーム画面からダウンロード（SHA-256 検証・中断再開）。モデル選定の根拠は [docs/translation-models.md](docs/translation-models.md)
-- **翻訳 (cloud / Ollama)**: DeepL / Gemini API、Ollama は任意のオプション（既定チェーンには入っていない）
+- **翻訳 (任意)**: Ollama と DeepL / Gemini API のプロバイダーも残っているが、既定チェーンには入っておらず、クラウドは設定で明示的に許可しない限り使われない
 - **ASR**: `whisper.cpp` HTTP サーバ（別途起動が必要。未接続時はライブ字幕の開始時に案内）
 - **画面キャプチャ**: `xcap` 0.9、**音声ループバック**: `cpal`
 - **履歴**: `rusqlite`（SQLite、bundled）
@@ -42,7 +82,7 @@ MoonLens/
 │     ├─ design/       # デザイントークン、モーション
 │     └─ components/   # SchemaForm, CommandPalette, PrivacyBadge, ActionRibbon
 ├─ plugin-sdk/         # プラグイン開発キット（WIT + Rust + 例）
-└─ .github/workflows/  # Win/Mac/Linux 3系列ビルド
+└─ .github/workflows/  # CI（Linux 既定）とリリースビルド
 ```
 
 ## カスタマイズ思想
@@ -104,7 +144,7 @@ sticky_session_ms = 30000
 - Windows では一度だけ `git config --global core.longpaths true` を実行する
   （llama.cpp を git から取得しており、パスが 260 文字を超えるため）
 - 翻訳モデルはアプリ起動後、ホーム画面の「翻訳モデル」からダウンロードする
-  （保存先: `<データディレクトリ>/moonlens/models/llm`）
+  （保存先: `<ローカルデータ>/io.moonlens.app/models/llm`）
 
 - （字幕用）`whisper.cpp` サーバを `http://127.0.0.1:9002` で待機させる
 
@@ -123,8 +163,11 @@ npm run tauri:build
 
 ### CI
 
-`.github/workflows/build.yml` で Win / macOS / Linux の 3 系列ビルド、
-`cargo fmt` / `cargo test` / `cargo clippy` / Tauri installer 生成を実行。
+`.github/workflows/build.yml` が PR ごとに Linux で svelte-check / vitest / vite build と
+`cargo fmt` / `clippy` / `cargo test` を実行する。ネイティブコードを触る PR は `windows.yml` で
+Windows でも検証する。インストーラーはタグ push 時に `release.yml` が作る。
+方針は [docs/ci-and-release-policy.md](docs/ci-and-release-policy.md)、
+リリース手順は [docs/RELEASING.md](docs/RELEASING.md)。
 
 ## 設計ドキュメント
 
@@ -133,4 +176,18 @@ npm run tauri:build
 
 ## ライセンス
 
-Apache License 2.0
+MoonLens 本体は [MIT License](LICENSE)。
+
+同梱するライブラリ（Rust crate、npm パッケージ、llama.cpp）のライセンス全文は、リリースごとに
+`THIRD_PARTY_LICENSES.html` としてインストーラーに同梱し、Releases にも添付する
+（生成: `node scripts/third-party-licenses.mjs`、`cargo install cargo-about` が必要）。
+
+アプリが取得するモデルはそれぞれのライセンスに従う。
+
+| モデル | ライセンス |
+| --- | --- |
+| PLaMo 3 Translate 2B / 0.8B | [PLaMo Community License](https://plamo.preferredai.jp/info/plamo-community-license-en) |
+| Gemma 4 E4B / E2B | [Apache-2.0](https://ai.google.dev/gemma/apache_2) |
+| PP-OCRv5 mobile | [Apache-2.0](https://github.com/PaddlePaddle/PaddleOCR/blob/main/LICENSE) |
+
+Built with PLaMo.

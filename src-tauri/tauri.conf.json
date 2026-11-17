@@ -84,8 +84,10 @@
       "icons/icon.icns"
     ],
     "category": "Productivity",
-    "shortDescription": "Lens-style OCR, translate, QR and live subtitles",
-    "longDescription": "A resident, privacy-first tool that captures any screen region or window audio to deliver OCR translation, QR decoding, reverse image search and live subtitles. Powered by local LLMs with cloud fallback, and a plugin system for user-authored extensions."
+    "license": "MIT",
+    "copyright": "Copyright (c) 2026 Guren",
+    "shortDescription": "On-device screen OCR and translation",
+    "longDescription": "A resident tool that reads text in any screen region and paints the translation in place, fully on-device: OCR and translation run on local models, nothing is sent to the network. Also decodes QR codes, explains and summarizes text, and supports plugins."
   },
   "plugins": {}
 }

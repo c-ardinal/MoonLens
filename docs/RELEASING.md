@@ -17,6 +17,30 @@ latest published binary, while `release` can accumulate work that
 produces rc builds for dog-fooding without disturbing the official
 line.
 
+## First release (v0.1.0-rc.1) checklist
+
+No tag has been pushed yet; `v0.1.0-rc.1` is the first one.
+
+1. Merge the open PRs that should ship into `release` and wait for a
+   green `build` run on `release`.
+2. `node scripts/check-release.mjs v0.1.0-rc.1` — versions, tag shape
+   and Tauri npm/crate pairing (CI runs the same check).
+3. In `CHANGELOG.md`, move everything under `## Unreleased` into the
+   `## v0.1.0-rc.1` section, leaving an empty `## Unreleased`.
+4. Tag and push (see below). `release.yml` builds the Linux bundles
+   (~25 billing minutes) and creates a **draft** release.
+5. Windows installers: build locally (`npm run tauri:build`, after
+   `node scripts/third-party-licenses.mjs`, with
+   `--config src-tauri/tauri.release.conf.json`) and
+   `gh release upload v0.1.0-rc.1 <setup.exe> <.msi>`.
+6. Install from the draft's assets on a clean machine and walk the QA
+   list below (model download, capture → translate, pin, uninstall).
+7. Press **Publish release** on the draft.
+
+The repository is private, so a published release is only visible to
+collaborators. Making the repository public (or mirroring the binaries
+elsewhere) is the step that actually makes the release public.
+
 ## Version scheme
 
 [Semantic Versioning](https://semver.org):
@@ -70,10 +94,13 @@ git push origin v0.2.0-rc.1
 Pushing the tag fires `release.yml`:
 
 1. The `guard` job checks the tag sits on `release` (warns otherwise).
-2. The `build` matrix runs `tauri-action` on macOS, Linux and Windows
-   and attaches `.dmg` / `.app.tar.gz` / `.AppImage` / `.deb` / `.rpm`
-   / `.msi` / `.nsis` artefacts.
-3. The GitHub Release is created with the pre-release flag set.
+1b. The same job runs `scripts/check-release.mjs <tag>` and stops the
+   release when the tag does not match the app version.
+2. The `build` matrix runs `tauri-action` (Linux only this cycle, see
+   `docs/ci-and-release-policy.md`) and attaches `.AppImage` / `.deb` /
+   `.rpm`, plus `THIRD_PARTY_LICENSES.html`.
+3. The GitHub Release is created as a **draft**, with the pre-release
+   flag set for `-` tags. Check the assets, then publish it.
 
 Watch progress at
 <https://github.com/c-ardinal/MoonLens/actions/workflows/release.yml>.
@@ -145,9 +172,9 @@ Then tag `v0.2.1` on `main`.
 optional: missing secrets produce unsigned bundles that still run
 locally with the OS's untrusted-developer warning.
 
-- **Tauri updater**: `TAURI_SIGNING_PRIVATE_KEY`,
-  `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` (generate with
-  `tauri signer generate`).
+- **Tauri updater**: not used. MoonLens has no auto-updater (it makes
+  no network calls besides user-started model downloads), so
+  `TAURI_SIGNING_PRIVATE_KEY*` are not needed.
 - **macOS notarisation**: `APPLE_CERTIFICATE` (base64 .p12),
   `APPLE_CERTIFICATE_PASSWORD`, `APPLE_SIGNING_IDENTITY`,
   `APPLE_ID`, `APPLE_PASSWORD` (app-specific password),
@@ -158,6 +185,21 @@ locally with the OS's untrusted-developer warning.
 
 Populate in *Settings ▸ Secrets and variables ▸ Actions*. No code
 changes required.
+
+## Licences
+
+Every release bundles `THIRD_PARTY_LICENSES.html` (Rust crates via
+`cargo-about`, npm runtime packages, llama.cpp, and the downloadable
+models' licences) through `src-tauri/tauri.release.conf.json`.
+Generate it locally with:
+
+```bash
+cargo install cargo-about --locked --features cli
+node scripts/third-party-licenses.mjs
+```
+
+`src-tauri/about.toml` lists the accepted crate licences; a dependency
+under any other licence fails the release job so it is noticed.
 
 ## Rolling back
 
