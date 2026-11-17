@@ -67,3 +67,12 @@ body {
   background: var(--ml-border);
   border-radius: 999px;
 }
+
+/* Settings → 外観 → 動きを減らす (or the OS preference). */
+[data-reduced-motion='true'] *,
+[data-reduced-motion='true'] *::before,
+[data-reduced-motion='true'] *::after {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+}
