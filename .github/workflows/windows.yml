@@ -1,0 +1,70 @@
+name: windows
+
+# Windows check for changes to native code: the bundled llama.cpp
+# (built with CMake + MSVC, bindings via libclang), its build flags and
+# the Rust dependency graph. Those are the changes most likely to build
+# on Linux but break on Windows, the primary user platform.
+#
+# Runs automatically on PRs that touch those paths, so it needs no
+# manual trigger (the "Run workflow" button only appears for workflows
+# on the default branch `main`, which holds no code). Everything else
+# stays Linux-only to keep Windows' x2 billing minutes rare.
+
+on:
+  pull_request:
+    paths:
+      - 'src-tauri/Cargo.toml'
+      - 'src-tauri/Cargo.lock'
+      - 'src-tauri/build.rs'
+      - 'src-tauri/.cargo/**'
+      - 'src-tauri/src/providers/translate_llama.rs'
+      - 'src-tauri/src/providers/llm_models.rs'
+      - '.github/workflows/windows.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
+
+jobs:
+  rust:
+    name: rust (windows)
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          key: windows
+          save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/release' }}
+
+      # bindgen (llama-cpp-sys-2) needs libclang; the runner ships LLVM.
+      - name: Point bindgen at LLVM
+        shell: bash
+        run: echo "LIBCLANG_PATH=C:\\Program Files\\LLVM\\bin" >> "$GITHUB_ENV"
+
+      - name: Stub frontend dist
+        shell: bash
+        run: mkdir -p build
+
+      - name: Clippy (src-tauri)
+        working-directory: src-tauri
+        run: cargo clippy --all-targets --no-deps --locked -- -D warnings
+
+      - name: Tests (src-tauri)
+        working-directory: src-tauri
+        run: cargo test --locked --no-fail-fast

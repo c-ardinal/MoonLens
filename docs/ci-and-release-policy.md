@@ -85,6 +85,15 @@ set true the `rust` job fans out to Linux + Windows + macOS. Use cases:
 - Investigation: a Linux-green PR suspected of platform-specific
   regression.
 
+### Windows on native-code PRs (`.github/workflows/windows.yml`)
+
+The "Run workflow" button only shows for workflows on the default
+branch (`main`), which carries no code, so `workflow_dispatch` above is
+not reachable from the UI in practice. PRs that touch the bundled
+llama.cpp or the Rust dependency graph (`Cargo.toml` / `Cargo.lock`,
+`build.rs`, `src-tauri/.cargo/**`, the local LLM provider files) run a
+Windows clippy + test job automatically. Other PRs stay Linux-only.
+
 ### Concurrency
 
 `cancel-in-progress: true` on every ref **except** `main` / `release`.
