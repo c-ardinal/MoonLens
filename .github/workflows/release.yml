@@ -28,11 +28,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-        with: { fetch-depth: 0 }
+        with:
+          fetch-depth: 0
+          # On workflow_dispatch github.ref is the branch the run was
+          # started from (usually the default branch), not the tag.
+          ref: ${{ github.event.inputs.tag || github.ref }}
       - name: Check tag branch hygiene
         shell: bash
+        env:
+          # Passed via env, not interpolated into the script, so a
+          # dispatch input can't inject shell.
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
         run: |
-          tag="${{ github.event.inputs.tag || github.ref_name }}"
+          tag="$TAG"
           echo "Releasing tag: $tag"
           case "$tag" in
             *-*)
@@ -70,7 +78,12 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 90
     steps:
+      # Build the tag itself, also when re-run via workflow_dispatch
+      # (otherwise the dispatching branch, e.g. `main`, would be built
+      # and uploaded under the tag's release).
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
 
       - name: Free disk space (linux)
         if: matrix.name == 'linux'

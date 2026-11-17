@@ -1,0 +1,72 @@
+name: audit
+
+# Dependency vulnerability scan (RustSec + npm advisories).
+#
+# Runs weekly, on demand, and on PRs that touch a lockfile. Advisories
+# are published continuously, so a lockfile that was clean when it was
+# merged can turn red later; the weekly run (and its failure e-mail) is
+# what surfaces that. ~2 billing minutes per run, no Rust compile.
+#
+# Policy: fail on *vulnerabilities*. "unmaintained" / "unsound" /
+# "yanked" notices are printed as warnings only, because most of them
+# come from deep transitive deps (gtk-rs, wasmtime) that we can't swap.
+# To accept a specific advisory, add `--ignore RUSTSEC-XXXX-YYYY` with
+# a comment saying why.
+
+on:
+  schedule:
+    - cron: '17 3 * * 1' # Mondays 03:17 UTC
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '**/Cargo.lock'
+      - '**/Cargo.toml'
+      - 'package-lock.json'
+      - 'package.json'
+      - '.github/workflows/audit.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: audit-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  cargo:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
+      - name: cargo audit (all crates)
+        shell: bash
+        run: |
+          rc=0
+          for d in src-tauri plugin-sdk/rust plugin-sdk/examples/hello-translator plugin-sdk/examples/music-recognizer; do
+            echo "::group::cargo audit $d"
+            if ! (cd "$d" && cargo audit); then
+              echo "::error title=cargo audit::vulnerable dependencies in $d"
+              rc=1
+            fi
+            echo "::endgroup::"
+          done
+          exit $rc
+
+  npm:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      # Runtime deps ship in the app bundle → fail on moderate+.
+      - name: npm audit (runtime deps)
+        run: npm audit --omit=dev --audit-level=moderate
+      # Build/test tooling never ships; report high+ but only as a
+      # warning so a dev-server advisory doesn't block a release.
+      - name: npm audit (dev deps, informational)
+        run: npm audit --audit-level=high || echo "::warning title=npm audit::high-severity advisories in dev dependencies"
