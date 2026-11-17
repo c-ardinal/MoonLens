@@ -38,8 +38,17 @@ fn main() -> anyhow::Result<()> {
                     l.text
                 );
             }
+            let rgba = img.to_rgba8();
             for b in layout::group_lines(&lines) {
-                println!("BLOCK {:?}\n  {}", b.bbox.map(|v| v.round()), b.text);
+                let colors = layout::estimate_colors(&rgba, b.bbox);
+                let stroke = layout::stroke_ratio(&rgba, b.bbox, colors, b.line_height);
+                println!(
+                    "BLOCK {:?} {:?} stroke={:?}\n  {}",
+                    b.bbox.map(|v| v.round()),
+                    b.align,
+                    stroke,
+                    b.text
+                );
             }
         }
     }

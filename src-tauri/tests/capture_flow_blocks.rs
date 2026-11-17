@@ -264,3 +264,64 @@ async fn nothing_to_translate_skips_the_translator() {
     assert!(!r.needs_translation());
     assert_eq!(calls.load(Ordering::Relaxed), 0);
 }
+
+#[tokio::test]
+async fn repeated_selection_is_served_from_the_cache() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let pipe = pipeline(false, calls.clone());
+    let first = pipe.run_capture_flow(white_png(300, 140)).await.unwrap();
+    assert!(first.blocks.iter().all(|b| !b.from_cache));
+    assert_eq!(calls.load(Ordering::Relaxed), 1);
+
+    let again = pipe.run_capture_flow(white_png(300, 140)).await.unwrap();
+    assert_eq!(calls.load(Ordering::Relaxed), 1, "no second round-trip");
+    assert!(again.blocks.iter().all(|b| b.from_cache));
+    assert_eq!(
+        again.blocks[1].translation.as_deref(),
+        Some("[Second paragraph.]")
+    );
+    assert_eq!(again.result.used_provider, "stub_tr");
+}
+
+#[tokio::test]
+async fn only_uncached_paragraphs_are_requested() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let pipe = pipeline(false, calls.clone());
+    pipe.run_capture_flow(white_png(300, 140)).await.unwrap();
+
+    // Same page scrolled: first paragraph unchanged, second one new.
+    let mut r = pipe.analyze_capture(white_png(300, 140)).await.unwrap();
+    assert!(
+        r.blocks.iter().all(|b| b.from_cache),
+        "prefilled at analysis"
+    );
+    r.blocks[1].source = "Brand new paragraph.".into();
+    pipe.translate_capture(&mut r).await.unwrap();
+
+    assert_eq!(calls.load(Ordering::Relaxed), 2);
+    assert!(r.blocks[0].from_cache);
+    assert!(!r.blocks[1].from_cache);
+    assert_eq!(
+        r.blocks[1].translation.as_deref(),
+        Some("[Brand new paragraph.]")
+    );
+    assert!(matches!(&r.result.output, TaskOutput::Text(t) if t == "[Brand new paragraph.]"));
+}
+
+#[tokio::test]
+async fn cache_is_per_target_language() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let pipe = pipeline(false, calls.clone());
+    let mut r = pipe.analyze_capture(white_png(300, 140)).await.unwrap();
+    pipe.translate_capture_to(&mut r, "fr").await.unwrap();
+    pipe.translate_capture_to(&mut r, "de").await.unwrap();
+    assert_eq!(calls.load(Ordering::Relaxed), 2);
+    pipe.translate_capture_to(&mut r, "fr").await.unwrap();
+    assert_eq!(calls.load(Ordering::Relaxed), 2);
+    assert!(r.blocks.iter().all(|b| b.from_cache));
+
+    // Settings / provider changes drop the cache.
+    pipe.clear_translation_cache();
+    pipe.translate_capture_to(&mut r, "fr").await.unwrap();
+    assert_eq!(calls.load(Ordering::Relaxed), 3);
+}

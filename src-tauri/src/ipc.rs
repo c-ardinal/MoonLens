@@ -395,7 +395,7 @@ pub async fn process_frozen_selection(
             .map(|t| t.trim().to_string())
             .filter(|t| !t.is_empty())
             .unwrap_or_else(|| state.settings.snapshot().subtitle.target_language.clone());
-        crate::pipeline::Pipeline::mark_same_language(&mut bundle, &target);
+        state.pipeline.prepare_translation(&mut bundle, &target);
         selector::remember_analysis(&bundle);
         app.emit_to("selector", "moonlens://selector-analysis", &bundle)
             .ok();
@@ -425,7 +425,7 @@ pub async fn retranslate_selection(
     }
     let mut bundle =
         selector::last_analysis().ok_or("nothing to translate; select a region first")?;
-    crate::pipeline::Pipeline::mark_same_language(&mut bundle, target);
+    state.pipeline.prepare_translation(&mut bundle, target);
     app.emit_to("selector", "moonlens://selector-analysis", &bundle)
         .ok();
     state
