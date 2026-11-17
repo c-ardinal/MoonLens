@@ -12,6 +12,8 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
 #[serde(default, deny_unknown_fields)]
 pub struct Settings {
+    /// Format version of the user file (see `settings::migrate`).
+    pub config_version: u32,
     pub appearance: Appearance,
     pub hotkeys: Hotkeys,
     pub overlay: OverlaySettings,
@@ -225,7 +227,7 @@ pub struct PrivacySettings {
 impl Default for PrivacySettings {
     fn default() -> Self {
         Self {
-            allow_cloud_globally: true,
+            allow_cloud_globally: false,
             show_privacy_indicator: true,
             notify_on_fallback_to_cloud: true,
             log_level: LogLevel::Info,

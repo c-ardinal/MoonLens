@@ -24,7 +24,9 @@ const ipc = vi.hoisted(() => ({
   cancelLlmDownload: vi.fn(),
   deleteLlmModel: vi.fn(),
   selectLlmModel: vi.fn(),
-  onLlmProgress: vi.fn(async () => () => {})
+  onLlmProgress: vi.fn(async () => () => {}),
+  listOrphanLlmFiles: vi.fn(async () => [] as { name: string; size: number }[]),
+  deleteOrphanLlmFile: vi.fn()
 }));
 vi.mock('$lib/ipc', () => ipc);
 
@@ -67,5 +69,46 @@ describe('<LocalModels>', () => {
     await fireEvent.click(await findByText('ダウンロード'));
     await waitFor(() => expect(ipc.installLlmModel).toHaveBeenCalledWith('a'));
     await waitFor(() => expect(ipc.selectLlmModel).toHaveBeenCalledWith('a', 'translate'));
+  });
+});
+
+describe('<LocalModels> housekeeping', () => {
+  it('asks once more before deleting a model', async () => {
+    ipc.listLlmModels.mockResolvedValue({
+      selected: 'a',
+      assistant: 'c',
+      dir: '/data/llm',
+      models: [model('a', { installed: true, style: 'pfml3' })]
+    });
+    ipc.deleteLlmModel.mockResolvedValue(undefined);
+    const { findByLabelText, findByText } = render(LocalModels);
+    await fireEvent.click(await findByLabelText('Model a を削除'));
+    expect(ipc.deleteLlmModel).not.toHaveBeenCalled();
+    // The model is in use, and the confirmation says so.
+    await fireEvent.click(await findByText('使用中。削除確定'));
+    await waitFor(() => expect(ipc.deleteLlmModel).toHaveBeenCalledWith('a'));
+  });
+
+  it('lists files left by older versions and deletes them', async () => {
+    ipc.listLlmModels.mockResolvedValue({ selected: 'a', assistant: 'c', dir: '/d', models: [] });
+    ipc.listOrphanLlmFiles.mockResolvedValue([{ name: 'old-Q4.gguf', size: 1_073_741_824 }]);
+    ipc.deleteOrphanLlmFile.mockResolvedValue(undefined);
+    const { findByLabelText } = render(LocalModels);
+    await fireEvent.click(await findByLabelText('old-Q4.gguf を削除'));
+    await waitFor(() => expect(ipc.deleteOrphanLlmFile).toHaveBeenCalledWith('old-Q4.gguf'));
+  });
+
+  it('shows coded backend errors as plain text', async () => {
+    ipc.listOrphanLlmFiles.mockResolvedValue([]);
+    ipc.listLlmModels.mockResolvedValue({
+      selected: 'x',
+      assistant: 'y',
+      dir: '/d',
+      models: [model('x', { style: 'pfml3' })]
+    });
+    ipc.installLlmModel.mockRejectedValue('disk_full|空き容量不足：必要 2.3 GB／空き 1.0 GB');
+    const { findByText, getByText } = render(LocalModels);
+    await fireEvent.click(await findByText('ダウンロード'));
+    await waitFor(() => expect(getByText('空き容量不足：必要 2.3 GB／空き 1.0 GB')).toBeInTheDocument());
   });
 });

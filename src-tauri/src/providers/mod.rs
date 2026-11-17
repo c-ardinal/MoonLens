@@ -49,6 +49,11 @@ pub enum ProviderError {
     UnsupportedLanguage(String, String),
     #[error("low confidence result")]
     LowConfidence,
+    /// The provider needs a model (or engine) that is not on disk yet.
+    /// The payload names it for the user (e.g. "PLaMo 3 Translate 2B").
+    /// A chain always moves on to its next provider after this.
+    #[error("not installed: {0}")]
+    NotInstalled(String),
     #[error("provider error: {0}")]
     Other(String),
 }

@@ -7,9 +7,11 @@
     field: Field;
     value: any;
     defaultValue?: any;
+    /** The value clashes with another field (e.g. a duplicate shortcut). */
+    invalid?: boolean;
     onChange: (v: any) => void;
   }
-  let { field, value, defaultValue, onChange }: Props = $props();
+  let { field, value, defaultValue, invalid = false, onChange }: Props = $props();
 
   const id = $derived(`f-${field.path.replace(/\./g, '-')}`);
   // f32 defaults arrive as 0.9200000166893005; null and missing are the same.
@@ -35,7 +37,9 @@
 
 <div class="flex flex-col gap-2 py-3 sm:flex-row sm:items-center sm:justify-between sm:gap-6">
   <div class="min-w-0 flex-1">
-    <label for={id} class="text-sm font-medium text-ink">{field.label}</label>
+    <label for={id} class="text-sm font-medium {invalid ? 'text-red-500' : 'text-ink'}">
+      {field.label}{#if invalid}<span class="ml-2 text-xs font-normal">重複</span>{/if}
+    </label>
     {#if field.help}
       <p class="mt-0.5 text-xs leading-relaxed text-ink-muted">{field.help}</p>
     {/if}

@@ -229,6 +229,8 @@ impl Pipeline {
         let allow_cloud_global = s.privacy.allow_cloud_globally;
         let providers = self.providers.read().clone();
         let mut reasons = Vec::new();
+        // Providers that could not run because their model is missing.
+        let mut not_installed: Vec<String> = Vec::new();
         let started = Instant::now();
 
         let ordered = apply_stickiness(&self.sticky, capability, &chain.chain);
@@ -262,6 +264,10 @@ impl Pipeline {
                         fallback_reasons: reasons,
                     });
                 }
+                Ok(Err(ProviderError::NotInstalled(what))) => {
+                    reasons.push(format!("{id}: not installed ({what})"));
+                    not_installed.push(what);
+                }
                 Ok(Err(e)) => {
                     if !should_fallback(&chain.fallback_on, &e) {
                         return Err(e);
@@ -279,6 +285,16 @@ impl Pipeline {
                     reasons.push(format!("{id}: timeout"));
                 }
             }
+        }
+        // Nothing ran because nothing is installed: say so, so the UI can
+        // point at the download instead of showing a generic failure.
+        if !not_installed.is_empty() && not_installed.len() == reasons.len() {
+            return Err(ProviderError::NotInstalled(not_installed.join(", ")));
+        }
+        if chain.chain.is_empty() {
+            return Err(ProviderError::Other(format!(
+                "no provider configured for {capability:?}"
+            )));
         }
         Err(ProviderError::Other(format!(
             "all providers failed: {}",
@@ -376,6 +392,8 @@ impl Pipeline {
                 output: TaskOutput::Ocr { lines },
                 ..
             }) => lines,
+            // No OCR engine at all: "no text found" would be a lie.
+            Err(e @ ProviderError::NotInstalled(_)) => return Err(e),
             _ => vec![],
         };
         let text_blocks = layout::group_lines(&lines);

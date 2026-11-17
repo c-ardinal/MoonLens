@@ -16,6 +16,7 @@ use crate::{
     providers::{llm_models, ocr_ocrs, Capability, TaskInput},
     selector,
     settings::schema::Settings,
+    user_error,
 };
 
 // Individual Tauri commands. App wiring registers them via
@@ -40,6 +41,12 @@ pub async fn set_settings(
     // Windows learn about the change from the settings subscriber in app.rs
     // (moonlens://settings-changed).
     Ok(())
+}
+
+/// The bundled defaults (what "初期値に戻す" restores).
+#[tauri::command]
+pub async fn get_default_settings() -> Result<Settings, String> {
+    Ok(crate::settings::store::defaults())
 }
 
 #[tauri::command]
@@ -89,7 +96,7 @@ pub async fn run_translate(
             },
         )
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| user_error::provider(&e, Capability::Translate))
 }
 
 #[tauri::command]
@@ -108,7 +115,7 @@ pub async fn run_ocr(
             },
         )
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| user_error::provider(&e, Capability::Ocr))
 }
 
 #[tauri::command]
@@ -150,7 +157,7 @@ pub async fn run_explain(
             },
         )
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| user_error::provider(&e, Capability::Explain))
 }
 
 #[tauri::command]
@@ -235,15 +242,20 @@ pub async fn pin_overlay(
             h: args.h,
         },
     };
-    state
-        .region_watcher
-        .start(app, state.pipeline.clone(), state.settings.clone(), target);
+    state.region_watcher.start(
+        app.clone(),
+        state.pipeline.clone(),
+        state.settings.clone(),
+        target,
+    );
+    let _ = app.emit("moonlens://pin-state", true);
     Ok(())
 }
 
 #[tauri::command]
-pub async fn unpin_overlay(state: State<'_, AppState>) -> Result<(), String> {
+pub async fn unpin_overlay(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
     state.region_watcher.stop();
+    let _ = app.emit("moonlens://pin-state", false);
     Ok(())
 }
 
@@ -279,11 +291,7 @@ pub async fn capture_and_process(
     .map_err(|e| e.to_string())?
     .map_err(|e| e.to_string())?;
 
-    let mut bundle = state
-        .pipeline
-        .run_capture_flow(png)
-        .await
-        .map_err(|e| e.to_string())?;
+    let mut bundle = capture_flow(&state.pipeline, png).await?;
     // Record the rect we actually captured so the overlay can pin the
     // region watcher onto it. Full-monitor captures resolve to the
     // primary monitor's bounds.
@@ -382,7 +390,7 @@ pub async fn process_frozen_selection(
         .pipeline
         .analyze_capture(png)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| user_error::provider(&e, Capability::Ocr))?;
     bundle.source_rect = Some(crate::pipeline::CaptureFlowRect {
         monitor_index,
         x: r.x as i32,
@@ -416,9 +424,28 @@ pub async fn process_frozen_selection(
             .pipeline
             .translate_capture_to(&mut bundle, &target)
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| user_error::provider(&e, Capability::Translate))?;
     }
     apply_clipboard_policy(&app, &state, &bundle);
+    Ok(bundle)
+}
+
+/// [`crate::pipeline::Pipeline::run_capture_flow`] with errors worded for
+/// the step that failed (OCR vs translation).
+async fn capture_flow(
+    pipeline: &crate::pipeline::Pipeline,
+    png: Vec<u8>,
+) -> Result<CaptureFlowResult, String> {
+    let mut bundle = pipeline
+        .analyze_capture(png)
+        .await
+        .map_err(|e| user_error::provider(&e, Capability::Ocr))?;
+    if bundle.needs_translation() {
+        pipeline
+            .translate_capture(&mut bundle)
+            .await
+            .map_err(|e| user_error::provider(&e, Capability::Translate))?;
+    }
     Ok(bundle)
 }
 
@@ -445,7 +472,7 @@ pub async fn retranslate_selection(
         .pipeline
         .translate_capture_to(&mut bundle, target)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| user_error::provider(&e, Capability::Translate))?;
     apply_clipboard_policy(&app, &state, &bundle);
     Ok(bundle)
 }
@@ -453,7 +480,21 @@ pub async fn retranslate_selection(
 /// Close the selector and drop the frozen frame.
 #[tauri::command]
 pub async fn close_selector(app: AppHandle) -> Result<(), String> {
-    selector::hide(&app).map_err(|e| e.to_string())
+    selector::hide(&app).map_err(|e| e.to_string())?;
+    restore_main_after_selection(&app);
+    Ok(())
+}
+
+/// Set when a selection was started from a button in the main window,
+/// which hides itself so it is not frozen into the frame. Closing the
+/// selector brings it back; a selection started by hotkey leaves the
+/// main window as it was.
+static RESTORE_MAIN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+fn restore_main_after_selection(app: &AppHandle) {
+    if RESTORE_MAIN.swap(false, std::sync::atomic::Ordering::SeqCst) {
+        crate::app::show_main_window(app);
+    }
 }
 
 #[derive(serde::Serialize, Clone)]
@@ -492,10 +533,10 @@ pub async fn install_ocr_models(app: AppHandle) -> Result<String, String> {
     #[cfg(feature = "ocrs-engine")]
     crate::providers::ocr_ppocr::install_models_with_progress(&dir, Some(&*cb))
         .await
-        .map_err(|e| format!("PP-OCR models: {e}"))?;
+        .map_err(|e| user_error::download(&e))?;
     ocr_ocrs::install_models_with_progress(&dir, Some(&*cb))
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| user_error::download(&e))?;
     Ok(dir.display().to_string())
 }
 
@@ -596,9 +637,32 @@ pub async fn install_llm_model(
             },
         );
     });
+    if let Some(m) = llm_models::find(&id) {
+        let need = llm_models::bytes_still_needed(&dir, m);
+        if let Some(free) = llm_models::free_space(&dir) {
+            // Keep a margin so the download does not fill the disk to
+            // the last byte.
+            if free < need + llm_models::FREE_SPACE_MARGIN {
+                return Err(user_error::coded(
+                    "disk_full",
+                    format!(
+                        "空き容量不足：必要 {:.1} GB／空き {:.1} GB",
+                        (need + llm_models::FREE_SPACE_MARGIN) as f64 / 1e9,
+                        free as f64 / 1e9
+                    ),
+                ));
+            }
+        }
+    }
     let path = llm_models::install(&dir, &id, Some(&*cb))
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| {
+            if e.to_string() == "cancelled" {
+                "cancelled".to_string()
+            } else {
+                user_error::download(&e)
+            }
+        })?;
     if selected_llm(&state.settings.snapshot(), LOCAL_LLM_ID) == id {
         state.pipeline.preload_local_llm();
     }
@@ -784,34 +848,12 @@ pub async fn list_history(
     state: State<'_, AppState>,
 ) -> Result<Vec<crate::storage::HistoryEntry>, String> {
     let cap = limit.unwrap_or(200);
-    let all = state.storage.recent(cap).map_err(|e| e.to_string())?;
-    let needle = query
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(str::to_lowercase);
-    let filtered = match needle {
-        None => all,
-        Some(q) => all
-            .into_iter()
-            .filter(|e| {
-                e.source_text
-                    .as_deref()
-                    .map(|s| s.to_lowercase().contains(&q))
-                    .unwrap_or(false)
-                    || e.result_text
-                        .as_deref()
-                        .map(|s| s.to_lowercase().contains(&q))
-                        .unwrap_or(false)
-                    || e.provider
-                        .as_deref()
-                        .map(|s| s.to_lowercase().contains(&q))
-                        .unwrap_or(false)
-                    || e.kind.to_lowercase().contains(&q)
-            })
-            .collect(),
-    };
-    Ok(filtered)
+    // Search the whole history, not just the newest `cap` rows.
+    match query.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        None => state.storage.recent(cap),
+        Some(q) => state.storage.search(q, cap),
+    }
+    .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -833,6 +875,7 @@ pub async fn start_region_selection(app: AppHandle, full: Option<bool>) -> Resul
     if let Some(main) = app.get_webview_window("main") {
         if main.is_visible().unwrap_or(false) {
             main.hide().ok();
+            RESTORE_MAIN.store(true, std::sync::atomic::Ordering::SeqCst);
             tokio::time::sleep(std::time::Duration::from_millis(250)).await;
         }
     }
@@ -845,12 +888,18 @@ pub async fn start_region_selection(app: AppHandle, full: Option<bool>) -> Resul
 
 #[tauri::command]
 pub async fn cancel_region_selection(app: AppHandle) -> Result<(), String> {
-    selector::hide(&app).map_err(|e| e.to_string())
+    selector::hide(&app).map_err(|e| e.to_string())?;
+    restore_main_after_selection(&app);
+    Ok(())
 }
 
 #[tauri::command]
 pub async fn toggle_subtitle(app: AppHandle, state: State<'_, AppState>) -> Result<bool, String> {
-    state.subtitle.toggle(&app).map_err(|e| e.to_string())
+    if state.subtitle.is_running() {
+        state.subtitle.stop(&app).map_err(|e| e.to_string())?;
+        return Ok(false);
+    }
+    start_subtitle(app, state).await.map(|_| true)
 }
 
 #[tauri::command]
@@ -865,7 +914,13 @@ pub async fn stop_subtitle(app: AppHandle, state: State<'_, AppState>) -> Result
 
 #[tauri::command]
 pub async fn start_subtitle(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
-    state.subtitle.start(app).map_err(|e| e.to_string())
+    // Check the speech recognition engine before opening the subtitle
+    // window, instead of failing every few seconds once it is open.
+    state.subtitle.preflight().await?;
+    state
+        .subtitle
+        .start(app)
+        .map_err(|e| user_error::coded("error", format!("音声取得の開始失敗：{e:#}")))
 }
 
 /// Describes which first-run guidance the UI should show. Exposed as a
@@ -1029,10 +1084,7 @@ pub async fn capture_lens_now(
             .await
             .map_err(|e| e.to_string())?
             .map_err(|e| e.to_string())?;
-    let bundle = pipeline
-        .run_capture_flow(png)
-        .await
-        .map_err(|e| e.to_string())?;
+    let bundle = capture_flow(&pipeline, png).await?;
     // Lens captures must obey the same clipboard policy as the
     // regular ⌘⇧Space flow. Without this the user's auto_copy settings
     // would apply to ad-hoc captures but silently drop lens results.
@@ -1066,4 +1118,124 @@ pub async fn capture_lens_now(
     )
     .ok();
     Ok(bundle)
+}
+
+/* --------------------------- lifecycle / housekeeping --------------------------- */
+
+#[tauri::command]
+pub async fn list_notices() -> Result<Vec<crate::notices::Notice>, String> {
+    Ok(crate::notices::list())
+}
+
+#[tauri::command]
+pub async fn dismiss_notice(id: String) -> Result<(), String> {
+    crate::notices::clear(&id);
+    Ok(())
+}
+
+/// Open an `http(s)` link (a decoded QR code) in the default browser. Only
+/// ever called from a user click; nothing else is sent anywhere.
+#[tauri::command]
+pub async fn open_external_url(url: String, app: AppHandle) -> Result<(), String> {
+    let url = url.trim();
+    let lower = url.to_ascii_lowercase();
+    if !(lower.starts_with("https://") || lower.starts_with("http://")) {
+        return Err(user_error::coded(
+            "error",
+            "http／https 以外のリンクは非対応",
+        ));
+    }
+    tauri_plugin_opener::OpenerExt::opener(&app)
+        .open_url(url, None::<&str>)
+        .map_err(|e| e.to_string())
+}
+
+/// Show the main window on an in-app page, e.g. the model downloads from
+/// the selector's "モデル準備" button.
+#[tauri::command]
+pub async fn open_main_route(path: String, app: AppHandle) -> Result<(), String> {
+    if !path.starts_with('/') || path.contains("//") {
+        return Err("invalid route".into());
+    }
+    crate::app::route_main(&app, &path);
+    Ok(())
+}
+
+/// The main window's close button: hide to the tray, keep running.
+#[tauri::command]
+pub async fn hide_main(app: AppHandle) -> Result<(), String> {
+    if let Some(w) = app.get_webview_window("main") {
+        w.hide().map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn quit_app(app: AppHandle) -> Result<(), String> {
+    app.exit(0);
+    Ok(())
+}
+
+/// Where MoonLens keeps its files, for the settings screen and the
+/// uninstall notes. Sizes are in bytes.
+#[derive(Serialize)]
+pub struct DataLocations {
+    pub config_dir: String,
+    pub data_dir: String,
+    pub models_dir: String,
+    pub models_bytes: u64,
+    pub data_bytes: u64,
+}
+
+#[tauri::command]
+pub async fn data_locations(app: AppHandle) -> Result<DataLocations, String> {
+    let config_dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
+    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let models_dir = ocr_ocrs::default_models_dir().ok_or("no data dir")?;
+    let (m, d) = (models_dir.clone(), data_dir.clone());
+    let (models_bytes, data_bytes) =
+        tokio::task::spawn_blocking(move || (dir_size(&m), dir_size(&d)))
+            .await
+            .map_err(|e| e.to_string())?;
+    Ok(DataLocations {
+        config_dir: config_dir.display().to_string(),
+        data_dir: data_dir.display().to_string(),
+        models_dir: models_dir.display().to_string(),
+        models_bytes,
+        // The models folder may live inside the data folder.
+        data_bytes: if models_dir.starts_with(&data_dir) {
+            data_bytes.saturating_sub(models_bytes)
+        } else {
+            data_bytes
+        },
+    })
+}
+
+fn dir_size(p: &std::path::Path) -> u64 {
+    let Ok(rd) = std::fs::read_dir(p) else {
+        return 0;
+    };
+    rd.filter_map(|e| e.ok())
+        .map(|e| match e.file_type() {
+            Ok(t) if t.is_dir() => dir_size(&e.path()),
+            Ok(t) if t.is_file() => e.metadata().map(|m| m.len()).unwrap_or(0),
+            _ => 0,
+        })
+        .sum()
+}
+
+/// Model files left behind by earlier versions (no longer in the catalog)
+/// or by an abandoned download of one.
+#[tauri::command]
+pub async fn list_orphan_llm_files() -> Result<Vec<llm_models::OrphanFile>, String> {
+    Ok(llm_models::orphans(&llm_dir()?))
+}
+
+#[tauri::command]
+pub async fn delete_orphan_llm_file(name: String) -> Result<(), String> {
+    let dir = llm_dir()?;
+    tokio::task::spawn_blocking(move || llm_models::remove_orphan(&dir, &name))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())
 }

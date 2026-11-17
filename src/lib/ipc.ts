@@ -132,6 +132,8 @@ async function safeInvoke<T>(cmd: string, args?: Record<string, unknown>, fallba
 export const getSettings = () => safeInvoke<Settings>('get_settings', undefined, {});
 export const setSettings = (next: Settings) => safeInvoke<void>('set_settings', { new: next });
 export const getSettingsSchema = () => safeInvoke<any>('get_settings_schema', undefined, null);
+/** The bundled defaults, for per-field "初期値に戻す". */
+export const getDefaultSettings = () => safeInvoke<Settings>('get_default_settings', undefined, {});
 export const listPlugins = () =>
   safeInvoke<PluginDescriptor[]>('list_plugins', undefined, []);
 export const setPluginEnabled = (id: string, enabled: boolean) =>
@@ -240,8 +242,8 @@ export const runTranslate = (args: {
 export const runIntent = (imagePng: Uint8Array) =>
   safeInvoke<string>('run_intent', { imagePng: Array.from(imagePng) });
 
-export const runReverseImageSearch = (imageUrl: string) =>
-  safeInvoke<TaskResult>('run_reverse_image_search', { imageUrl });
+/** Open an http(s) link (e.g. a decoded QR code) in the default browser. */
+export const openExternalUrl = (url: string) => safeInvoke<void>('open_external_url', { url });
 
 export const runExplain = (prompt: string, imagePng?: Uint8Array) =>
   safeInvoke<TaskResult>('run_explain', {
@@ -376,3 +378,46 @@ export const deleteHistoryEntry = (id: number) =>
   safeInvoke<number>('delete_history_entry', { id }, 0);
 
 export const clearHistory = () => safeInvoke<number>('clear_history', undefined, 0);
+
+/* ------------------------------ lifecycle ------------------------------ */
+
+/** A problem found outside a user action (start-up, config file, hotkeys). */
+export interface Notice {
+  id: string;
+  message: string;
+  /** In-app page that fixes it, e.g. "/settings/#section-hotkeys". */
+  action: string | null;
+}
+
+export const listNotices = () => safeInvoke<Notice[]>('list_notices', undefined, []);
+export const dismissNotice = (id: string) => safeInvoke<void>('dismiss_notice', { id });
+export const onNotices = (handler: (n: Notice[]) => void): Promise<UnlistenFn> =>
+  listen<Notice[]>('moonlens://notices', (e) => handler(e.payload));
+
+/** Show the main window on an in-app page (from the selector or a lens). */
+export const openMainRoute = (path: string) => safeInvoke<void>('open_main_route', { path });
+/** The backend asks the main window to navigate (tray, hotkeys). */
+export const onNavigate = (handler: (path: string) => void): Promise<UnlistenFn> =>
+  listen<string>('moonlens://navigate', (e) => handler(e.payload));
+/** Hide the main window to the tray (its close button). */
+export const hideMain = () => safeInvoke<void>('hide_main');
+export const quitApp = () => safeInvoke<void>('quit_app');
+
+export interface DataLocations {
+  config_dir: string;
+  data_dir: string;
+  models_dir: string;
+  models_bytes: number;
+  data_bytes: number;
+}
+export const dataLocations = () => safeInvoke<DataLocations>('data_locations');
+
+/** A model file no catalog entry owns (left by an earlier version). */
+export interface OrphanFile {
+  name: string;
+  size: number;
+}
+export const listOrphanLlmFiles = () =>
+  safeInvoke<OrphanFile[]>('list_orphan_llm_files', undefined, []);
+export const deleteOrphanLlmFile = (name: string) =>
+  safeInvoke<void>('delete_orphan_llm_file', { name });

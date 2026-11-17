@@ -8,6 +8,7 @@
     type ModelProgress,
     type OcrModelsStatus
   } from '$lib/ipc';
+  import { errorText } from '$lib/errors';
 
   let status = $state<OcrModelsStatus | null>(null);
   let installing = $state(false);
@@ -21,7 +22,7 @@
     try {
       status = await ocrModelsStatus();
     } catch (e) {
-      error = String(e);
+      error = errorText(e);
     }
   }
 
@@ -37,7 +38,7 @@
     try {
       await installOcrModels();
     } catch (e) {
-      error = String(e);
+      error = errorText(e);
     } finally {
       installing = false;
       progress = null;

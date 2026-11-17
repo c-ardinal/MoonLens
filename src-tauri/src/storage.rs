@@ -36,6 +36,41 @@ impl Storage {
         Self::open_at(data_dir.join("moonlens.db"), data_dir)
     }
 
+    /// [`Self::open`], but a history database that cannot be opened
+    /// (corrupted, written by a newer MoonLens, …) is moved aside and a
+    /// fresh one is created, so a broken history never stops the app from
+    /// starting. The user is told through a notice.
+    pub fn open_or_recover(app: &AppHandle) -> Result<Self> {
+        let data_dir = app.path().app_data_dir().context("no data dir")?;
+        std::fs::create_dir_all(&data_dir)?;
+        Self::open_at_or_recover(data_dir.join("moonlens.db"), data_dir)
+    }
+
+    pub fn open_at_or_recover(db_path: PathBuf, data_dir: PathBuf) -> Result<Self> {
+        match Self::open_at(&db_path, &data_dir) {
+            Ok(s) => Ok(s),
+            Err(e) => {
+                tracing::warn!("history database unusable: {e:#}");
+                let secs = now_seconds();
+                let aside = db_path.with_extension(format!("db.broken-{secs}"));
+                std::fs::rename(&db_path, &aside)
+                    .with_context(|| format!("moving {} aside", db_path.display()))?;
+                for ext in ["db-wal", "db-shm", "db-journal"] {
+                    let _ = std::fs::remove_file(db_path.with_extension(ext));
+                }
+                crate::notices::push(
+                    "history-db",
+                    format!(
+                        "履歴データベースを読込不可のため再作成。旧ファイル：{}",
+                        aside.file_name().unwrap_or_default().to_string_lossy()
+                    ),
+                    None,
+                );
+                Self::open_at(&db_path, &data_dir)
+            }
+        }
+    }
+
     /// Open a storage at an explicit path; used by tests and callers that
     /// want custom locations.
     pub fn open_at(db_path: impl AsRef<Path>, data_dir: impl AsRef<Path>) -> Result<Self> {
@@ -59,7 +94,18 @@ impl Storage {
         })
     }
 
+    /// Schema version this build writes (`PRAGMA user_version`).
+    pub const SCHEMA_VERSION: i64 = 1;
+
     fn migrate(db: &Connection) -> Result<()> {
+        // Fails fast on a file that is not a SQLite database.
+        let version: i64 = db.query_row("PRAGMA user_version", [], |r| r.get(0))?;
+        if version > Self::SCHEMA_VERSION {
+            anyhow::bail!(
+                "history database schema {version} is newer than this build ({})",
+                Self::SCHEMA_VERSION
+            );
+        }
         db.execute_batch(
             "CREATE TABLE IF NOT EXISTS history (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -74,6 +120,8 @@ impl Storage {
              CREATE INDEX IF NOT EXISTS history_created_at
                 ON history(created_at DESC);",
         )?;
+        // Future schema changes go here, keyed on `version`.
+        db.pragma_update(None, "user_version", Self::SCHEMA_VERSION)?;
         Ok(())
     }
 
@@ -130,6 +178,41 @@ impl Storage {
             out.push(r?);
         }
         Ok(out)
+    }
+
+    /// Newest-first entries whose text, provider or kind contains
+    /// `needle` (case-insensitive for ASCII), searched over the whole
+    /// history rather than only the most recent rows.
+    pub fn search(&self, needle: &str, limit: usize) -> Result<Vec<HistoryEntry>> {
+        let escaped = needle
+            .replace('\\', "\\\\")
+            .replace('%', "\\%")
+            .replace('_', "\\_");
+        let pattern = format!("%{escaped}%");
+        let db = self.db.lock();
+        let mut stmt = db.prepare(
+            "SELECT id, created_at, kind, source_text, result_text, provider, via_cloud, image_path
+             FROM history
+             WHERE source_text LIKE ?1 ESCAPE '\\'
+                OR result_text LIKE ?1 ESCAPE '\\'
+                OR provider LIKE ?1 ESCAPE '\\'
+                OR kind LIKE ?1 ESCAPE '\\'
+             ORDER BY created_at DESC, id DESC LIMIT ?2",
+        )?;
+        let rows = stmt.query_map(rusqlite::params![pattern, limit as i64], |row| {
+            Ok(HistoryEntry {
+                id: row.get(0)?,
+                created_at: row.get(1)?,
+                kind: row.get(2)?,
+                source_text: row.get(3)?,
+                result_text: row.get(4)?,
+                provider: row.get(5)?,
+                via_cloud: row.get::<_, i32>(6)? != 0,
+                image_path: row.get(7)?,
+            })
+        })?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(Into::into)
     }
 
     pub fn prune_older_than(&self, epoch_seconds: i64) -> Result<usize> {
@@ -407,6 +490,57 @@ mod tests {
     fn clear_all_on_empty_db_returns_zero() {
         let s = Storage::open_in_memory().unwrap();
         assert_eq!(s.clear_all().unwrap(), 0);
+    }
+
+    #[test]
+    fn search_reaches_beyond_the_recent_window() {
+        let s = Storage::open_in_memory().unwrap();
+        s.append("translate", Some("needle 100%"), None, None, false, None)
+            .unwrap();
+        for i in 0..50 {
+            s.append(
+                "translate",
+                Some(&format!("hay {i}")),
+                None,
+                None,
+                false,
+                None,
+            )
+            .unwrap();
+        }
+        let hits = s.search("NEEDLE", 10).unwrap();
+        assert_eq!(hits.len(), 1);
+        // LIKE wildcards in the query are literal.
+        assert_eq!(s.search("100%", 10).unwrap().len(), 1);
+        assert_eq!(s.search("1_0", 10).unwrap().len(), 0);
+    }
+
+    #[test]
+    fn garbage_file_is_moved_aside_and_recreated() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("moonlens.db");
+        std::fs::write(&db, b"this is not a sqlite database at all, just text....").unwrap();
+        assert!(Storage::open_at(&db, dir.path()).is_err());
+        let s = Storage::open_at_or_recover(db.clone(), dir.path().to_path_buf()).unwrap();
+        s.append("translate", Some("x"), None, None, false, None)
+            .unwrap();
+        let aside = std::fs::read_dir(dir.path())
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .any(|e| e.file_name().to_string_lossy().contains(".db.broken-"));
+        assert!(aside);
+    }
+
+    #[test]
+    fn newer_schema_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("moonlens.db");
+        {
+            let c = Connection::open(&db).unwrap();
+            c.pragma_update(None, "user_version", Storage::SCHEMA_VERSION + 1)
+                .unwrap();
+        }
+        assert!(Storage::open_at(&db, dir.path()).is_err());
     }
 
     #[test]

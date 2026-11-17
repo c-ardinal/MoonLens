@@ -15,6 +15,7 @@ pub mod lang;
 pub mod layout;
 pub mod lens;
 pub mod macos_permissions;
+pub mod notices;
 pub mod overlay;
 pub mod pipeline;
 #[cfg(test)]
@@ -27,6 +28,7 @@ pub mod settings;
 pub mod storage;
 pub mod subtitle;
 pub mod translation_cache;
+pub mod user_error;
 
 use std::sync::OnceLock;
 

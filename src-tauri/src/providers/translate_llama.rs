@@ -331,10 +331,7 @@ impl Provider for LlamaTranslator {
         if !self.model_path.is_file() {
             // Not downloaded yet: let the chain fall through.
             tracing::debug!("local model {} not installed", self.label);
-            return Err(ProviderError::Other(format!(
-                "translation model {} is not downloaded yet",
-                self.label
-            )));
+            return Err(ProviderError::NotInstalled(self.label.clone()));
         }
         if !cpu_supported() {
             return Err(ProviderError::Other(
@@ -913,7 +910,7 @@ mod tests {
             false,
         );
         let err = p.run(tr("hi", "auto", "ja")).await.unwrap_err();
-        assert!(err.to_string().contains("not downloaded"), "{err}");
+        assert!(matches!(err, ProviderError::NotInstalled(_)), "{err}");
     }
 
     #[test]
