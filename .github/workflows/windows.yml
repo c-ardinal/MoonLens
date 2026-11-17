@@ -32,6 +32,10 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  # Fetch git dependencies (llama-cpp-rs and its llama.cpp submodule)
+  # with the git CLI: cargo's built-in libgit2 fetch of the submodule
+  # stalled for the whole job timeout on a Windows runner.
+  CARGO_NET_GIT_FETCH_WITH_CLI: 'true'
   CARGO_INCREMENTAL: 0
   CARGO_PROFILE_DEV_DEBUG: line-tables-only
 
