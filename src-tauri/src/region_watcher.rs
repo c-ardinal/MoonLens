@@ -38,6 +38,9 @@ pub struct WatchTarget {
 #[derive(Default)]
 pub struct RegionWatcher {
     inner: Mutex<Option<Running>>,
+    /// Region of the most recent capture (or pin), so the pin hotkey can
+    /// pin "what I just translated" without the overlay being open.
+    last: Mutex<Option<WatchTarget>>,
 }
 
 struct Running {
@@ -62,12 +65,36 @@ impl RegionWatcher {
         target: WatchTarget,
     ) {
         self.stop();
+        self.remember(target);
         let stop = Arc::new(tokio::sync::Notify::new());
         let stop_t = stop.clone();
         let handle = tauri::async_runtime::spawn(async move {
             run_watch(app, pipeline, settings, target, stop_t).await;
         });
         *self.inner.lock() = Some(Running { handle, stop });
+    }
+
+    /// Record the region of the latest capture as the next pin target.
+    pub fn remember(&self, target: WatchTarget) {
+        *self.last.lock() = Some(target);
+    }
+
+    /// Pin hotkey: stop when running, otherwise pin the last captured
+    /// region. Returns the new pinned state, or `None` when there is
+    /// nothing to pin yet.
+    pub fn toggle(
+        &self,
+        app: AppHandle,
+        pipeline: Arc<Pipeline>,
+        settings: Arc<SettingsStore>,
+    ) -> Option<bool> {
+        if self.is_running() {
+            self.stop();
+            return Some(false);
+        }
+        let target = (*self.last.lock())?;
+        self.start(app, pipeline, settings, target);
+        Some(true)
     }
 
     pub fn stop(&self) {

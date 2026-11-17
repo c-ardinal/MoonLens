@@ -46,6 +46,7 @@ macro_rules! all_commands {
             ipc::pin_overlay,
             ipc::unpin_overlay,
             ipc::install_ocr_models,
+            ipc::ocr_models_status,
             ipc::list_llm_models,
             ipc::install_llm_model,
             ipc::cancel_llm_download,
@@ -153,12 +154,16 @@ pub fn build() -> Result<()> {
             let lenses: LensRegistryHandle = Arc::new(LensRegistry::new());
             let region_watcher = Arc::new(RegionWatcher::new());
 
-            hotkey::register_all(
+            // A hotkey another app already owns must not stop MoonLens
+            // from starting; the others still register.
+            if let Err(e) = hotkey::register_all(
                 &handle,
                 settings.clone(),
                 pipeline.clone(),
                 subtitle.clone(),
-            )?;
+            ) {
+                tracing::warn!("{e}");
+            }
             build_tray(&handle)?;
 
             app.manage(AppState {
@@ -242,14 +247,14 @@ fn build_tray(app: &AppHandle) -> Result<()> {
     Ok(())
 }
 
-fn show_main_window(app: &AppHandle) {
+pub(crate) fn show_main_window(app: &AppHandle) {
     if let Some(w) = app.get_webview_window("main") {
         let _ = w.show();
         let _ = w.set_focus();
     }
 }
 
-fn route_main(app: &AppHandle, path: &str) {
+pub(crate) fn route_main(app: &AppHandle, path: &str) {
     if let Some(w) = app.get_webview_window("main") {
         let _ = w.eval(format!(
             "location.hash = '#{path}'; location.pathname = '{path}';"

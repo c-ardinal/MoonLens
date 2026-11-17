@@ -79,13 +79,8 @@ fn monitor_bounds(monitors: &[xcap::Monitor]) -> Result<Vec<rect::MonitorBounds>
         .collect()
 }
 
-/// Freeze the monitor under the cursor and show the selector on it.
-pub fn show(app: &AppHandle) -> Result<()> {
-    show_with(app, false)
-}
-
-/// Like [`show`]; `auto_full` asks the selector to process the whole
-/// frame right away.
+/// Freeze the monitor under the cursor and show the selector on it;
+/// `auto_full` asks the selector to process the whole frame right away.
 pub fn show_with(app: &AppHandle, auto_full: bool) -> Result<()> {
     let win = app
         .get_webview_window("selector")
