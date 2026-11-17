@@ -291,6 +291,7 @@ impl Provider for OllamaTranslator {
                 text,
                 source_language,
                 target_language,
+                ..
             } => translation_prompt(&text, &source_language, &target_language),
             TaskInput::Explain { prompt, .. } => (String::new(), prompt),
             TaskInput::Summarize { text } => {
@@ -512,6 +513,7 @@ mod tests {
             text: "こんにちは".into(),
             source_language: "auto".into(),
             target_language: "en".into(),
+            context: Default::default(),
         }
     }
 

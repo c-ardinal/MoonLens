@@ -75,6 +75,7 @@ async fn wasm_component_plugin_runs_translate_end_to_end() {
             text: "good morning".into(),
             source_language: "en".into(),
             target_language: "ja".into(),
+            context: Default::default(),
         })
         .await
         .expect("wasm plugin run succeeds");
@@ -105,6 +106,7 @@ async fn wasm_component_plugin_handles_unicode_inputs() {
             text: "猫が 🐱 鳴く".into(),
             source_language: "ja".into(),
             target_language: "en".into(),
+            context: Default::default(),
         })
         .await
         .unwrap();

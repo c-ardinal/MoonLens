@@ -19,7 +19,7 @@ use async_trait::async_trait;
 
 use super::lang::translation_prompt;
 use super::llm_models::{self, PromptStyle};
-use super::{Capability, Provider, ProviderError, TaskInput, TaskOutput};
+use super::{Capability, Provider, ProviderError, TaskInput, TaskOutput, TranslateContext};
 
 /// Per-chunk streaming callback `(delta, done)`, same contract as the
 /// Ollama provider's sink.
@@ -169,8 +169,15 @@ impl LlamaTranslator {
 /// What the model should do, already reduced to prompt pieces.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Job {
-    Chat { system: String, user: String },
-    Pfml3 { text: String, target: String },
+    Chat {
+        system: String,
+        user: String,
+    },
+    Pfml3 {
+        text: String,
+        target: String,
+        context: TranslateContext,
+    },
 }
 
 pub fn build_job(style: PromptStyle, input: TaskInput) -> Result<Job, ProviderError> {
@@ -181,6 +188,7 @@ pub fn build_job(style: PromptStyle, input: TaskInput) -> Result<Job, ProviderEr
                 text,
                 source_language,
                 target_language,
+                ..
             },
         ) => {
             let (system, user) = translation_prompt(&text, &source_language, &target_language);
@@ -201,11 +209,13 @@ pub fn build_job(style: PromptStyle, input: TaskInput) -> Result<Job, ProviderEr
             TaskInput::Translate {
                 text,
                 target_language,
+                context,
                 ..
             },
         ) => Ok(Job::Pfml3 {
             text,
             target: pfml3_lang(&target_language),
+            context,
         }),
         (PromptStyle::Pfml3, _) => Err(ProviderError::Other(
             "this local model only translates".into(),
@@ -227,9 +237,33 @@ fn pfml3_lang(code: &str) -> String {
 }
 
 /// PFML3 prompt (BOS is added by the tokenizer).
-pub fn pfml3_prompt(text: &str, target: &str) -> String {
+///
+/// `context.reference` becomes the `context` element and
+/// `context.history` the earlier `input`/`output` pairs, in the order
+/// the model card prescribes. Each call for the same capture then
+/// starts with the previous call's prompt and output, so the engine's
+/// prefix cache only has to evaluate the new part.
+pub fn pfml3_prompt(text: &str, target: &str, context: &TranslateContext) -> String {
+    let mut p = String::from("<|plamo:tag|>dataset<|plamo:msg|>translation");
+    if let Some(r) = context
+        .reference
+        .as_deref()
+        .filter(|r| !r.trim().is_empty())
+    {
+        p.push_str("<|plamo:tag|>context<|plamo:msg|>");
+        p.push_str(r);
+    }
+    for (src, out) in &context.history {
+        p.push_str(&pfml3_pair(src, target));
+        p.push_str(out);
+    }
+    p.push_str(&pfml3_pair(text, target));
+    p
+}
+
+fn pfml3_pair(src: &str, target: &str) -> String {
     format!(
-        "<|plamo:tag|>dataset<|plamo:msg|>translation<|plamo:tag|>input<|plamo:msg|>{text}\
+        "<|plamo:tag|>input<|plamo:msg|>{src}\
          <|plamo:tag|>output<|plamo:key|>lang<|plamo:val|>{target}<|plamo:msg|>"
     )
 }
@@ -324,6 +358,12 @@ impl Provider for LlamaTranslator {
     }
     fn is_local(&self) -> bool {
         true
+    }
+    fn takes_translation_context(&self) -> Option<bool> {
+        if !self.model_path.is_file() || !cpu_supported() {
+            return None;
+        }
+        Some(self.style == PromptStyle::Pfml3)
     }
 
     async fn run(&self, input: TaskInput) -> Result<TaskOutput, ProviderError> {
@@ -624,7 +664,11 @@ mod engine {
             .map(|c| c.to_string_lossy().into_owned())
             .unwrap_or_default();
         let (prompt, add_bos) = match job {
-            Job::Pfml3 { text, target } => (pfml3_prompt(text, target), true),
+            Job::Pfml3 {
+                text,
+                target,
+                context,
+            } => (pfml3_prompt(text, target, context), true),
             Job::Chat { system, user } => {
                 let tmpl = loaded
                     .template
@@ -790,6 +834,7 @@ mod tests {
             text: text.into(),
             source_language: src.into(),
             target_language: tgt.into(),
+            context: Default::default(),
         }
     }
 
@@ -819,13 +864,41 @@ mod tests {
     #[test]
     fn pfml3_prompt_matches_reference_format() {
         let job = build_job(PromptStyle::Pfml3, tr("会議は来週です。", "auto", "en")).unwrap();
-        let Job::Pfml3 { text, target } = job else {
+        let Job::Pfml3 {
+            text,
+            target,
+            context,
+        } = job
+        else {
             panic!("expected pfml3 job")
         };
         assert_eq!(
-            pfml3_prompt(&text, &target),
+            pfml3_prompt(&text, &target, &context),
             "<|plamo:tag|>dataset<|plamo:msg|>translation<|plamo:tag|>input<|plamo:msg|>会議は来週です。<|plamo:tag|>output<|plamo:key|>lang<|plamo:val|>en<|plamo:msg|>"
         );
+    }
+
+    #[test]
+    fn pfml3_prompt_carries_context_and_history() {
+        let ctx = TranslateContext {
+            history: vec![("Theme".into(), "テーマ".into())],
+            reference: Some("Light\n\nDark".into()),
+        };
+        let p = pfml3_prompt("System", "ja", &ctx);
+        assert_eq!(
+            p,
+            "<|plamo:tag|>dataset<|plamo:msg|>translation\
+             <|plamo:tag|>context<|plamo:msg|>Light\n\nDark\
+             <|plamo:tag|>input<|plamo:msg|>Theme\
+             <|plamo:tag|>output<|plamo:key|>lang<|plamo:val|>ja<|plamo:msg|>テーマ\
+             <|plamo:tag|>input<|plamo:msg|>System\
+             <|plamo:tag|>output<|plamo:key|>lang<|plamo:val|>ja<|plamo:msg|>"
+        );
+        // The next part's prompt extends this one, so the KV cache of the
+        // previous call is reused.
+        let mut next = ctx.clone();
+        next.history.push(("System".into(), "システム".into()));
+        assert!(pfml3_prompt("Reset", "ja", &next).starts_with(&(p + "システム")));
     }
 
     #[test]

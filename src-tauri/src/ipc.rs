@@ -93,6 +93,7 @@ pub async fn run_translate(
                 text: args.text,
                 source_language: args.source_language,
                 target_language: args.target_language,
+                context: Default::default(),
             },
         )
         .await
@@ -420,11 +421,7 @@ pub async fn process_frozen_selection(
         selector::remember_analysis(&bundle);
         app.emit_to("selector", "moonlens://selector-analysis", &bundle)
             .ok();
-        state
-            .pipeline
-            .translate_capture_to(&mut bundle, &target)
-            .await
-            .map_err(|e| user_error::provider(&e, Capability::Translate))?;
+        translate_for_selector(&app, &state, &mut bundle, &target).await?;
     }
     apply_clipboard_policy(&app, &state, &bundle);
     Ok(bundle)
@@ -468,13 +465,31 @@ pub async fn retranslate_selection(
     state.pipeline.prepare_translation(&mut bundle, target);
     app.emit_to("selector", "moonlens://selector-analysis", &bundle)
         .ok();
-    state
-        .pipeline
-        .translate_capture_to(&mut bundle, target)
-        .await
-        .map_err(|e| user_error::provider(&e, Capability::Translate))?;
+    translate_for_selector(&app, &state, &mut bundle, target).await?;
     apply_clipboard_policy(&app, &state, &bundle);
     Ok(bundle)
+}
+
+/// Translate the selector's blocks, telling the selector before each
+/// request which blocks are done and which ones the next request streams
+/// into (`moonlens://selector-progress`).
+async fn translate_for_selector(
+    app: &AppHandle,
+    state: &State<'_, AppState>,
+    bundle: &mut CaptureFlowResult,
+    target: &str,
+) -> Result<(), String> {
+    let emitter = app.clone();
+    let progress = move |p: &crate::pipeline::TranslationProgress| {
+        emitter
+            .emit_to("selector", "moonlens://selector-progress", p)
+            .ok();
+    };
+    state
+        .pipeline
+        .translate_capture_with_progress(bundle, target, Some(&progress))
+        .await
+        .map_err(|e| user_error::provider(&e, Capability::Translate))
 }
 
 /// Close the selector and drop the frozen frame.

@@ -21,13 +21,14 @@ use crate::{
         search_serpapi::BrowserSearchProvider, translate_deepl::DeepLTranslator,
         translate_gemini::GeminiProvider, translate_llama::LlamaTranslator,
         translate_ollama::OllamaTranslator, Capability, Intent, OcrLine, ProviderError,
-        ProviderHandle, TaskInput, TaskOutput,
+        ProviderHandle, TaskInput, TaskOutput, TranslateContext,
     },
     settings::{
         schema::{FallbackCondition, TaskChain},
         SettingsStore,
     },
     storage::Storage,
+    translate_plan,
     translation_cache::{CachedTranslation, TranslationCache},
 };
 
@@ -47,6 +48,30 @@ pub struct TaskResult {
 /// token delta. Kept behind a type alias so `Pipeline` does not trip
 /// the `clippy::type_complexity` lint every time it appears.
 pub type ChunkSink = Arc<dyn Fn(String, bool) + Send + Sync>;
+
+/// Callback fired before each translation request of a capture; see
+/// [`Pipeline::translate_capture_with_progress`].
+pub type ProgressSink = dyn Fn(&TranslationProgress) + Send + Sync;
+
+/// Where a capture's translation stands, sent to the selector before
+/// each request so it can show finished blocks and stream the next ones
+/// into the right places.
+#[derive(Debug, Clone, Serialize)]
+pub struct TranslationProgress {
+    pub blocks: Vec<LensBlock>,
+    /// Indices into `blocks` that the next request streams into, in
+    /// order.
+    pub streaming: Vec<usize>,
+}
+
+fn notify(progress: Option<&ProgressSink>, bundle: &CaptureFlowResult, streaming: &[usize]) {
+    if let Some(p) = progress {
+        p(&TranslationProgress {
+            blocks: bundle.blocks.clone(),
+            streaming: streaming.to_vec(),
+        });
+    }
+}
 
 pub struct Pipeline {
     settings: Arc<SettingsStore>,
@@ -518,6 +543,27 @@ impl Pipeline {
         bundle: &mut CaptureFlowResult,
         target_language: &str,
     ) -> Result<(), ProviderError> {
+        self.translate_capture_with_progress(bundle, target_language, None)
+            .await
+    }
+
+    /// [`Self::translate_capture_to`], calling `progress` before every
+    /// translation request with the blocks translated so far and the
+    /// blocks the request will stream into.
+    ///
+    /// With a translator that reads [`TranslateContext`] (the built-in
+    /// PLaMo engine), a long capture is translated in parts: a small
+    /// first part so the first translation appears quickly, then larger
+    /// parts, each with the earlier parts and their translations as
+    /// history, so nothing is translated with less context than in one
+    /// request. Other translators get the whole capture in one request
+    /// as before.
+    pub async fn translate_capture_with_progress(
+        &self,
+        bundle: &mut CaptureFlowResult,
+        target_language: &str,
+        progress: Option<&ProgressSink>,
+    ) -> Result<(), ProviderError> {
         let s = self.settings.snapshot();
         self.prepare_translation(bundle, target_language);
         let pending: Vec<usize> = (0..bundle.blocks.len())
@@ -557,70 +603,190 @@ impl Pipeline {
             .iter()
             .map(|&i| bundle.blocks[i].source.clone())
             .collect();
-        let request_text = sources.join(layout::BLOCK_SEPARATOR);
-        let translate = self
-            .run(
-                Capability::Translate,
-                TaskInput::Translate {
-                    text: request_text.clone(),
-                    source_language: "auto".into(),
-                    target_language: target_language.clone(),
-                },
+        let in_parts = self.translator_takes_context();
+        let parts = if in_parts {
+            let costs: Vec<usize> = sources.iter().map(|t| translate_plan::cost(t)).collect();
+            translate_plan::plan(
+                &costs,
+                translate_plan::FIRST_PART,
+                translate_plan::LATER_PART,
             )
-            .await?;
-
-        let whole = match &translate.output {
-            TaskOutput::Text(t) => t.clone(),
-            _ => String::new(),
+        } else {
+            std::iter::once(0..sources.len()).collect()
         };
-        let translations: Vec<Option<String>> =
-            match layout::split_translation(&whole, pending.len()) {
-                Some(parts) => parts.into_iter().map(Some).collect(),
-                None => {
-                    // The translator merged or split paragraphs, so the
-                    // per-block mapping is ambiguous. Translate each block
-                    // on its own (concurrently) so the in-place overlay can
-                    // still put every translation over its source.
-                    let max = s.performance.max_concurrent_tasks.max(1) as usize;
-                    let inputs: Vec<TaskInput> = sources
-                        .iter()
-                        .map(|text| TaskInput::Translate {
-                            text: text.clone(),
-                            source_language: "auto".into(),
-                            target_language: target_language.clone(),
-                        })
-                        .collect();
-                    futures::stream::iter(inputs)
-                        .map(|input| self.translate_one(input))
-                        .buffered(max)
-                        .collect()
-                        .await
+        // The first part is read with the text after it as reference, so
+        // a heading or a row of short labels is not translated blind. The
+        // same reference stays in every later prompt so the prefix cache
+        // still matches.
+        let reference = if parts.len() > 1 {
+            translate_plan::take_reference(
+                sources[parts[1].start..].iter().map(String::as_str),
+                layout::BLOCK_SEPARATOR,
+                translate_plan::REFERENCE,
+            )
+        } else {
+            None
+        };
+
+        let started = Instant::now();
+        let mut history: Vec<(String, String)> = Vec::new();
+        let mut first: Option<TaskResult> = None;
+        let mut reasons: Vec<String> = Vec::new();
+        let mut outputs: Vec<String> = Vec::new();
+        for range in parts {
+            let idx = &pending[range.clone()];
+            notify(progress, bundle, idx);
+            let request_text = sources[range.clone()].join(layout::BLOCK_SEPARATOR);
+            let context = TranslateContext {
+                history: history.clone(),
+                reference: reference.clone(),
+            };
+            let translate = match self
+                .run(
+                    Capability::Translate,
+                    TaskInput::Translate {
+                        text: request_text.clone(),
+                        source_language: "auto".into(),
+                        target_language: target_language.clone(),
+                        context: context.clone(),
+                    },
+                )
+                .await
+            {
+                Ok(t) => t,
+                Err(e) if first.is_none() => return Err(e),
+                Err(e) => {
+                    // Earlier parts are already on screen; keep them and
+                    // leave the rest untranslated.
+                    tracing::warn!("translating the rest of the capture failed: {e}");
+                    reasons.push(e.to_string());
+                    break;
                 }
             };
-        for (&i, t) in pending.iter().zip(translations) {
-            if let Some(text) = &t {
-                self.cache.put(
-                    &target_language,
-                    &bundle.blocks[i].source,
-                    CachedTranslation {
-                        text: text.clone(),
-                        provider: translate.used_provider.clone(),
-                        via_cloud: translate.via_cloud,
-                    },
-                );
-            }
-            bundle.blocks[i].translation = t;
-        }
 
+            let whole = match &translate.output {
+                TaskOutput::Text(t) => t.clone(),
+                _ => String::new(),
+            };
+            let (translations, joined): (Vec<Option<String>>, String) =
+                match layout::split_translation(&whole, idx.len()) {
+                    Some(parts) => (parts.into_iter().map(Some).collect(), whole.clone()),
+                    None if in_parts => {
+                        // The translator merged or split paragraphs, so
+                        // the per-block mapping is ambiguous. Translate
+                        // each block on its own, still with the capture's
+                        // context, so short labels keep their meaning.
+                        let mut ctx = context;
+                        let mut out = Vec::with_capacity(idx.len());
+                        for (k, &bi) in idx.iter().enumerate() {
+                            notify(progress, bundle, &[bi]);
+                            let src = &sources[range.start + k];
+                            let t = self
+                                .translate_one(TaskInput::Translate {
+                                    text: src.clone(),
+                                    source_language: "auto".into(),
+                                    target_language: target_language.clone(),
+                                    context: ctx.clone(),
+                                })
+                                .await;
+                            if let Some(t) = &t {
+                                ctx.history.push((src.clone(), t.clone()));
+                                bundle.blocks[bi].translation = Some(t.clone());
+                            }
+                            out.push(t);
+                        }
+                        let joined = out
+                            .iter()
+                            .flatten()
+                            .cloned()
+                            .collect::<Vec<_>>()
+                            .join(layout::BLOCK_SEPARATOR);
+                        (out, joined)
+                    }
+                    None => {
+                        // Same, for translators without context: one
+                        // request per block, concurrently.
+                        let max = s.performance.max_concurrent_tasks.max(1) as usize;
+                        let inputs: Vec<TaskInput> = sources[range.clone()]
+                            .iter()
+                            .map(|text| TaskInput::Translate {
+                                text: text.clone(),
+                                source_language: "auto".into(),
+                                target_language: target_language.clone(),
+                                context: TranslateContext::default(),
+                            })
+                            .collect();
+                        let out: Vec<Option<String>> = futures::stream::iter(inputs)
+                            .map(|input| self.translate_one(input))
+                            .buffered(max)
+                            .collect()
+                            .await;
+                        (out, whole.clone())
+                    }
+                };
+            for (&i, t) in idx.iter().zip(translations) {
+                if let Some(text) = &t {
+                    self.cache.put(
+                        &target_language,
+                        &bundle.blocks[i].source,
+                        CachedTranslation {
+                            text: text.clone(),
+                            provider: translate.used_provider.clone(),
+                            via_cloud: translate.via_cloud,
+                        },
+                    );
+                }
+                bundle.blocks[i].translation = t;
+            }
+            if !joined.trim().is_empty() {
+                outputs.push(joined.clone());
+                history.push((request_text, joined));
+                translate_plan::trim_history(&mut history, translate_plan::HISTORY);
+            }
+            reasons.extend(translate.fallback_reasons.iter().cloned());
+            first.get_or_insert(translate);
+        }
+        let Some(first) = first else {
+            return Ok(());
+        };
+        let whole = outputs.join(layout::BLOCK_SEPARATOR);
         self.record_history(
             "translate",
-            Some(&request_text),
+            Some(&sources.join(layout::BLOCK_SEPARATOR)),
             Some(whole.as_str()).filter(|t| !t.is_empty()),
-            Some(&translate.used_provider),
-            translate.via_cloud,
+            Some(&first.used_provider),
+            first.via_cloud,
         );
-        bundle.result = translate;
+        bundle.result = TaskResult {
+            output: TaskOutput::Text(whole),
+            latency_ms: started.elapsed().as_millis() as u64,
+            fallback_reasons: reasons,
+            ..first
+        };
         Ok(())
+    }
+
+    /// Whether the translator that will most likely take the next request
+    /// reads [`TranslateContext`]: the first provider in the (sticky)
+    /// translate chain that is registered, allowed and installed.
+    fn translator_takes_context(&self) -> bool {
+        let s = self.settings.snapshot();
+        let chain = pick_chain(&s, Capability::Translate);
+        let providers = self.providers.read();
+        for id in apply_stickiness(&self.sticky, Capability::Translate, &chain.chain) {
+            let Some(p) = providers.get(&id) else {
+                continue;
+            };
+            if !p.is_local()
+                && (!chain.allow_cloud || !s.privacy.allow_cloud_globally || !chain.allow_network)
+            {
+                continue;
+            }
+            if let Some(takes) = p.takes_translation_context() {
+                return takes;
+            }
+        }
+        false
     }
 
     async fn translate_one(&self, input: TaskInput) -> Option<String> {

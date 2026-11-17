@@ -98,6 +98,7 @@ impl Provider for GeminiProvider {
                 text,
                 source_language,
                 target_language,
+                ..
             } => format!("Translate from {source_language} to {target_language}:\n{text}"),
             TaskInput::Explain { prompt, .. } => prompt,
             TaskInput::Summarize { text } => format!("Summarize concisely:\n{text}"),

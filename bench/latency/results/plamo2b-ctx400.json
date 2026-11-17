@@ -1,0 +1,106 @@
+{
+ "first": 160,
+ "rest": 600,
+ "ctx": 400,
+ "results": [
+  {
+   "screen": "news-article-en",
+   "strategy": "chunked_ctx",
+   "first_token": 0.86,
+   "first_block": 1.84,
+   "total": 20.47,
+   "calls": 3,
+   "fallback": false,
+   "chrf": 60.3,
+   "out": [
+    "市議会、新たな自転車専用レーンの設置を承認",
+    "サラ・ミッチェル 著 · 読了目安 4分",
+    "市議会は火曜日、中心街で最も交通量の多い3本の道路沿いに保護型自転車レーン網を整備することを7対2で可決し、2年以上にわたって続いていた議論に終止符を打った。",
+    "推進派は、こうしたレーンの整備によりサイクリングの安全性が高まり、交通渋滞が緩和されると主張する一方、一部の事業主は、駐車スペースの減少によって客足が遠のくことを懸念している。",
+    "工事は来春に開始される見通しで、道路の通行を確保しながら段階的に実施される。最初の区間となるマーケット通りは、6月末までに完成する予定だ。",
+    "「車を使わずに市内を移動したいすべての人にとって、これは大きな一歩です」と、この計画を最初に提案したデビッド・チェン市議は述べた。",
+    "住民は12月15日まで、市議会のウェブサイトで計画の全文を確認し、意見を投稿することができる。",
+    "関連記事",
+    "市予算：税金の使途",
+    "バス運賃が1月に値上げへ"
+   ]
+  },
+  {
+   "screen": "settings-en",
+   "strategy": "chunked_ctx",
+   "first_token": 1.02,
+   "first_block": 1.17,
+   "total": 8.58,
+   "calls": 2,
+   "fallback": false,
+   "chrf": 83.7,
+   "out": [
+    "設定",
+    "全般",
+    "外観",
+    "プライバシー",
+    "通知",
+    "テーマ",
+    "アプリの外観を選択します。システムはOSのライトモードまたはダークモードに従います。",
+    "ライト",
+    "ダーク",
+    "システム",
+    "フォントサイズ",
+    "メニュー、リスト、ドキュメント内のテキストサイズを変更します。",
+    "リセット",
+    "起動時",
+    "アプリ起動時に前回のワークスペースを開く",
+    "アップデートを自動的に確認",
+    "アップデートはバックグラウンドでダウンロードされ、次回の再起動時にインストールされます。",
+    "キャンセル",
+    "変更を保存"
+   ]
+  },
+  {
+   "screen": "game-en",
+   "strategy": "chunked_ctx",
+   "first_token": 0.95,
+   "first_block": 1.2,
+   "total": 10.18,
+   "calls": 2,
+   "fallback": false,
+   "chrf": 47.2,
+   "out": [
+    "クエストログ",
+    "失われた灯台",
+    "老マルタによれば、灯台守は3日前の夜に姿を消し、それ以来、湾に入ろうとする船は一隻もないという。彼に何が起きたのか突き止めよ。",
+    "桟橋の漁師に話しかける",
+    "灯台守の小屋を調べる",
+    "灯台の頂上まで登る",
+    "報酬",
+    "250ゴールド",
+    "錆びた鍵",
+    "マルタ：「上では気をつけてね。階段は私よりも古いし、剣を携えた者のためのものじゃないわ」",
+    "追跡",
+    "放棄"
+   ]
+  },
+  {
+   "screen": "docs-ja",
+   "strategy": "chunked_ctx",
+   "first_token": 0.8,
+   "first_block": 1.07,
+   "total": 12.34,
+   "calls": 3,
+   "fallback": false,
+   "chrf": 78.5,
+   "out": [
+    "Installation Instructions",
+    "To use this software, please prepare the following environment in advance.",
+    "Supported OS: Windows 10 or later, macOS 13 or later, Ubuntu 22.04 or later",
+    "Memory: 8 GB or more (16 GB recommended)",
+    "Run the downloaded installer and follow the on-screen instructions. If prompted for administrator privileges, enter your password.",
+    "Once installation is complete, launch the app to perform the initial setup. The first launch may take several minutes as the translation model begins downloading.",
+    "Note",
+    "If an older version is installed, please uninstall it first before installing the new version. Settings will be preserved.",
+    "Next",
+    "Back"
+   ]
+  }
+ ]
+}

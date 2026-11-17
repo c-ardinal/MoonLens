@@ -238,6 +238,7 @@ async fn run_loop(
                             text: original.clone(),
                             source_language: source_lang.clone(),
                             target_language: target_lang.clone(),
+                            context: Default::default(),
                         },
                     )
                     .await

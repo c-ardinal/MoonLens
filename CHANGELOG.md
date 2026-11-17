@@ -71,6 +71,19 @@ the project adheres to [SemVer](https://semver.org/).
 
 ### Changed
 
+- Long captures show their first translation much sooner. With the
+  built-in translation model the selection is translated in parts: a
+  small first part (so the first lines appear after about 0.5 s instead
+  of after the whole screen has been read), then larger parts. Every part
+  is translated with the earlier parts and their translations as history,
+  and the first part with the text that follows it as context, so
+  headings and short labels keep their meaning (translation quality was
+  measured to be unchanged; see docs/translation-latency.md). Parts are
+  also short enough that large captures no longer hit the 15 s time
+  limit. When a part comes back with a different paragraph count, only
+  that part is retried block by block, and those retries keep the
+  context too. Other translators still get one request.
+
 - `config.toml` now stores only the values that differ from the bundled
   defaults (plus `config_version`), so improved defaults reach existing
   installs; `config.default.toml` next to it lists every default. Files
