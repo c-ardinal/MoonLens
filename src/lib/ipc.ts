@@ -229,8 +229,10 @@ export const closeSelector = () => safeInvoke<void>('close_selector');
 export const startRegionSelection = (full = false) =>
   safeInvoke<void>('start_region_selection', { full });
 
-export const pinOverlay = (args: CaptureFlowRect) =>
-  safeInvoke<void>('pin_overlay', { args });
+/** Live translation of `args` (translations painted in place on the live
+ * screen); `targetLanguage` defaults to the configured target. */
+export const pinOverlay = (args: CaptureFlowRect, targetLanguage?: string | null) =>
+  safeInvoke<void>('pin_overlay', { args, targetLanguage: targetLanguage ?? null });
 export const unpinOverlay = () => safeInvoke<void>('unpin_overlay');
 
 export const runTranslate = (args: {

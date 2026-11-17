@@ -79,7 +79,7 @@ export const SECTIONS: Section[] = [
       {
         kind: 'hotkey',
         path: 'hotkeys.toggle_pin_overlay',
-        label: 'ピン留め切替',
+        label: 'ライブ翻訳切替',
         help: '直前の翻訳範囲を監視し、変化時に自動再翻訳。'
       },
       { kind: 'hotkey', path: 'hotkeys.toggle_subtitle', label: 'ライブ字幕 開始／停止' },
@@ -140,20 +140,20 @@ export const SECTIONS: Section[] = [
   },
   {
     id: 'pin',
-    title: 'ピン留め',
-    description: 'ピン留め範囲の変化を検出し、自動再翻訳。',
+    title: 'ライブ翻訳',
+    description: '選択範囲の上に訳文を重ね、画面の変化に追従して再翻訳。',
     fields: [
       {
         kind: 'toggle',
         path: 'overlay.follow_source',
-        label: '自動再翻訳',
-        help: 'オフ時はピン留め中も再翻訳なし。'
+        label: 'ライブ翻訳',
+        help: 'オフ時はライブ翻訳を停止。'
       },
       {
         kind: 'number',
         path: 'performance.region_watcher_poll_ms',
         label: '監視間隔',
-        help: '短いほど高応答・高 CPU 負荷。',
+        help: '画面変化の検出間隔。短いほど高応答・高 CPU 負荷。',
         min: 100,
         max: 2000,
         step: 50,

@@ -7,8 +7,8 @@
     EyeOff,
     ExternalLink,
     Languages,
-    Pin,
     QrCode,
+    Radio,
     Sparkles,
     TextSelect,
     X
@@ -30,6 +30,7 @@
     type LensBlock
   } from '$lib/ipc';
   import { extractText } from '$lib/result';
+  import { fit } from '$lib/fit';
   import { errorText, parseError, type UiError } from '$lib/errors';
   import {
     LANGUAGES,
@@ -37,7 +38,6 @@
     applyStreaming,
     blockCssRect,
     dragRect,
-    fitFontSize,
     joinedText,
     languageLabel,
     rgb,
@@ -279,12 +279,12 @@
     }
   }
 
-  /** Pin the selection and get out of the way: pinned results show in
-   * the floating overlay next to the region, over the live screen. */
+  /** Live translation: keep translating the selection in place on the
+   * live screen as it changes, and get out of the way. */
   async function pin() {
     if (!result?.source_rect) return;
     try {
-      await pinOverlay(result.source_rect);
+      await pinOverlay(result.source_rect, targetLang);
       pinned = true;
       await close();
     } catch (e) {
@@ -306,31 +306,6 @@
     result?.intent === 'qr' && result ? extractText(result.result) : ''
   );
   const translating = $derived(phase === 'processing' && blocks.length > 0);
-
-  // ---- text fitting -----------------------------------------------------
-
-  /** Shrink the font until the translation fits its box (Lens behaviour). */
-  function fit(node: HTMLElement, params: { text: string | null; max: number }) {
-    const apply = (p: { text: string | null; max: number }) => {
-      const min = 7;
-      const size = fitFontSize(
-        (px) => {
-          node.style.fontSize = `${px}px`;
-          // The text lives in an inline-block child so it can be centred
-          // vertically; measure that child against the box.
-          const inner = node.firstElementChild as HTMLElement | null;
-          const h = inner ? inner.offsetHeight : node.scrollHeight;
-          const w = inner ? inner.scrollWidth : node.scrollWidth;
-          return h <= node.clientHeight + 1 && w <= node.clientWidth + 1;
-        },
-        min,
-        Math.max(min, p.max)
-      );
-      node.style.fontSize = `${size}px`;
-    };
-    apply(params);
-    return { update: apply };
-  }
 
   // ---- lifecycle --------------------------------------------------------
 
@@ -540,8 +515,8 @@
           <TextSelect class="h-4 w-4" />テキスト
         </button>
         <button class="tb" onclick={explain} title="内容説明"><Languages class="h-4 w-4" />説明</button>
-        <button class="tb" onclick={pin} disabled={pinned} title="ピン留め（変化時に自動再翻訳）">
-          <Pin class="h-4 w-4" />
+        <button class="tb" onclick={pin} disabled={pinned} title="ライブ翻訳：画面の変化に追従して訳し続ける（停止はピン留めのショートカット）">
+          <Radio class="h-4 w-4" />ライブ
         </button>
       {:else}
         <span class="px-2 text-sm">{notice}</span>

@@ -55,6 +55,22 @@
         "url": "/subtitle"
       },
       {
+        "label": "live",
+        "title": "MoonLens Live",
+        "width": 400,
+        "height": 120,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "resizable": false,
+        "shadow": false,
+        "focus": false,
+        "focusable": false,
+        "visible": false,
+        "url": "/live"
+      },
+      {
         "label": "selector",
         "title": "MoonLens Selector",
         "decorations": false,

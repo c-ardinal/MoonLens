@@ -239,7 +239,7 @@
         aria-pressed={pinned}
         disabled={!sourceRect && !pinned}
         onclick={togglePin}
-        title={pinned ? 'ピン留め解除' : 'ピン留め（変化時に自動再翻訳）'}
+        title={pinned ? 'ライブ翻訳を停止' : 'ライブ翻訳（範囲の上に訳文を重ね、変化に追従）'}
       >
         <Pin class="h-4 w-4 {pinned ? 'text-accent' : 'text-ink-faint'}" />
       </button>
