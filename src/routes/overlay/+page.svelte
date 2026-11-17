@@ -12,7 +12,7 @@
     pinOverlay,
     unpinOverlay,
     runExplain,
-    runReverseImageSearch,
+    openExternalUrl,
     runTranslate,
     type CaptureFlowRect,
     type Intent,
@@ -20,6 +20,7 @@
     type TaskResult
   } from '$lib/ipc';
   import { extractText } from '$lib/result';
+  import { errorText } from '$lib/errors';
 
   let source = $state<string | null>(null);
   let translation = $state('');
@@ -159,7 +160,12 @@
       if (url) {
         // Route through the backend opener so it opens in the user's
         // default browser on every platform.
-        await runReverseImageSearch(url);
+        try {
+          await openExternalUrl(url);
+        } catch (e) {
+          status = 'error';
+          statusMessage = errorText(e);
+        }
       }
       return;
     }
@@ -182,7 +188,7 @@
           status = 'result';
         } catch (e) {
           status = 'error';
-          statusMessage = String(e);
+          statusMessage = errorText(e);
         }
       }
       return;
@@ -201,7 +207,7 @@
         status = 'result';
       } catch (e) {
         status = 'error';
-        statusMessage = String(e);
+        statusMessage = errorText(e);
       }
       return;
     }

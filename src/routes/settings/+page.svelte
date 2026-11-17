@@ -2,23 +2,26 @@
   import { onDestroy, onMount, tick } from 'svelte';
   import { beforeNavigate } from '$app/navigation';
   import { Search } from 'lucide-svelte';
-  import { getSettings, getSettingsSchema, setSettings, type Settings } from '$lib/ipc';
   import {
-    SECTIONS,
-    changedPaths,
-    fieldMatches,
-    getPath,
-    schemaDefault,
-    setPath
-  } from '$lib/settings-meta';
+    getDefaultSettings,
+    getSettings,
+    onSettingsChanged,
+    setSettings,
+    type Settings
+  } from '$lib/ipc';
+  import { SECTIONS, changedPaths, duplicateHotkeys, fieldMatches, getPath, setPath } from '$lib/settings-meta';
+  import { errorText } from '$lib/errors';
   import SettingField from '$lib/components/SettingField.svelte';
   import LocalModels from '$lib/components/LocalModels.svelte';
   import OcrModels from '$lib/components/OcrModels.svelte';
+  import DataLocations from '$lib/components/DataLocations.svelte';
 
   /** The selector remembers the language last picked in its toolbar. */
   const SELECTOR_LANG_KEY = 'moonlens.selector.targetLanguage';
 
-  let schema = $state<any>(null);
+  /** Bundled defaults, for each field's reset button. */
+  let defaults = $state<Settings | null>(null);
+  let unlisten: (() => void) | undefined;
   let saved = $state<Settings | null>(null);
   let draft = $state<Settings | null>(null);
   let query = $state('');
@@ -28,6 +31,8 @@
   let current = $state(SECTIONS[0].id);
 
   const changed = $derived(saved && draft ? changedPaths(saved, draft) : []);
+  /** Shortcuts bound twice: only one of each pair could be registered. */
+  const clashes = $derived(draft ? duplicateHotkeys(draft) : []);
   const visible = $derived(
     SECTIONS.map((s) => ({
       section: s,
@@ -53,8 +58,18 @@
   onMount(async () => {
     window.addEventListener('scroll', onScroll, { passive: true });
     try {
-      [schema, saved] = await Promise.all([getSettingsSchema(), getSettings()]);
+      [defaults, saved] = await Promise.all([getDefaultSettings(), getSettings()]);
       draft = structuredClone($state.snapshot(saved));
+      // Settings can change while this screen is open (a model picked
+      // below, config.toml edited by hand). Take the new values and keep
+      // the user's unsaved edits on top, so saving never reverts them.
+      unlisten = await onSettingsChanged((next) => {
+        const edits = changed.map((p) => [p, getPath(draft, p)] as const);
+        saved = next;
+        let d = structuredClone(next);
+        for (const [p, v] of edits) d = setPath(d, p, v);
+        draft = d;
+      });
       // Links such as /settings/#section-models land on that section.
       const target = location.hash.replace(/^#section-/, '');
       if (target) {
@@ -68,7 +83,10 @@
 
   // Leaving would silently drop the edits; ask for a decision in the save
   // bar instead (WebView dialogs are not reliable inside Tauri).
-  onDestroy(() => window.removeEventListener('scroll', onScroll));
+  onDestroy(() => {
+    window.removeEventListener('scroll', onScroll);
+    unlisten?.();
+  });
 
   beforeNavigate((nav) => {
     if (changed.length > 0 && nav.type !== 'leave') {
@@ -83,7 +101,7 @@
   }
 
   async function save() {
-    if (!draft || saving) return;
+    if (!draft || saving || clashes.length > 0) return;
     saving = true;
     message = null;
     const next = $state.snapshot(draft);
@@ -103,7 +121,7 @@
       message = { kind: 'ok', text: '保存完了' };
     } catch (e) {
       // Saved, but e.g. a shortcut could not be registered.
-      message = { kind: 'error', text: String(e).replace(/^Error:\s*/, '') };
+      message = { kind: 'error', text: errorText(e) };
       try {
         saved = await getSettings();
       } catch {
@@ -147,7 +165,7 @@
     <p class="rounded-ml border border-red-500/50 bg-red-500/10 p-3 text-sm break-words text-red-500">
       設定の読込に失敗：{loadError}
     </p>
-  {:else if !draft || !schema}
+  {:else if !draft || !defaults}
     <p class="text-ink-faint">読み込み中…</p>
   {:else}
     <div class="flex flex-col gap-4 md:flex-row md:items-start md:gap-8">
@@ -175,7 +193,9 @@
             {#if section.description}
               <p class="mt-0.5 text-sm text-ink-muted">{section.description}</p>
             {/if}
-            {#if 'component' in section}
+            {#if 'component' in section && section.component === 'data'}
+              <div class="mt-3"><DataLocations /></div>
+            {:else if 'component' in section}
               <div class="mt-3 flex flex-col gap-3">
                 <LocalModels />
                 <OcrModels />
@@ -188,7 +208,8 @@
                   <SettingField
                     {field}
                     value={getPath(draft, field.path)}
-                    defaultValue={schemaDefault(schema, field.path)}
+                    defaultValue={getPath(defaults, field.path) ?? null}
+                    invalid={clashes.includes(field.path)}
                     onChange={(v) => update(field.path, v)}
                   />
                 {/each}
@@ -218,6 +239,7 @@
           {message.text}
         {:else}
           未保存の変更：{changed.length} 件
+          {#if clashes.length > 0}<br /><span class="text-red-500">ショートカット重複あり。重複を解消してください</span>{/if}
           {#if message?.kind === 'error'}<br />{message.text}{/if}
         {/if}
       </p>
@@ -232,7 +254,7 @@
           <button
             class="rounded-ml-sm bg-accent px-4 py-1.5 text-sm font-medium text-white disabled:opacity-40"
             onclick={save}
-            disabled={saving}
+            disabled={saving || clashes.length > 0}
           >
             {saving ? '保存中…' : '保存'}
           </button>

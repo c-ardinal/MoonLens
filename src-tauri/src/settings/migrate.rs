@@ -20,6 +20,11 @@ pub const LEGACY_OLLAMA_SYSTEM_PROMPT: &str =
     "You are a careful translator. Preserve meaning, tone, and formatting. Output only the translation.";
 pub const LEGACY_TRANSLATE_TIMEOUT_MS: u32 = 3000;
 pub const TRANSLATE_TIMEOUT_MS: u32 = 15000;
+/// Reverse image search chain shipped up to v0.1.0: every entry opens a
+/// web search engine (Google first). MoonLens stays fully local, so the
+/// chain is emptied; plugins can still provide the capability.
+pub const LEGACY_REVERSE_IMAGE_SEARCH_CHAIN: [&str; 3] =
+    ["browser.google_images", "browser.bing", "browser.yandex"];
 
 /// Apply every rule; returns true when anything changed.
 pub fn migrate_legacy_defaults(s: &mut Settings) -> bool {
@@ -45,6 +50,40 @@ pub fn migrate_legacy_defaults(s: &mut Settings) -> bool {
         s.providers.translate.timeout_ms = TRANSLATE_TIMEOUT_MS;
         changed = true;
     }
+    if s.providers.reverse_image_search.chain == LEGACY_REVERSE_IMAGE_SEARCH_CHAIN {
+        s.providers.reverse_image_search.chain.clear();
+        s.providers.reverse_image_search.allow_cloud = false;
+        s.providers.reverse_image_search.allow_network = false;
+        changed = true;
+    }
+    for id in LEGACY_REVERSE_IMAGE_SEARCH_CHAIN {
+        changed |= s.providers.configs.remove(id).is_some();
+    }
+    changed
+}
+
+/// Format version of `config.toml`. Files written before versioning
+/// count as 0. Bump it when a rule below must run exactly once.
+pub const CONFIG_VERSION: u32 = 1;
+
+/// One-shot upgrades for files older than [`CONFIG_VERSION`]. Unlike
+/// [`migrate_legacy_defaults`] these may change a value the user could
+/// also have chosen, so they run only once per file.
+pub fn migrate_versioned(s: &mut Settings, from: u32) -> bool {
+    let mut changed = false;
+    if from < 1 {
+        // Up to v0.1.0 every install got a full copy of the defaults, with
+        // the global cloud switch on and no screen offering it. MoonLens
+        // is fully local: turn it off once. Users may turn it back on.
+        if s.privacy.allow_cloud_globally {
+            s.privacy.allow_cloud_globally = false;
+            changed = true;
+        }
+    }
+    if s.config_version != CONFIG_VERSION {
+        s.config_version = CONFIG_VERSION;
+        changed = true;
+    }
     changed
 }
 
@@ -64,6 +103,11 @@ mod tests {
         cfg.insert("model".into(), LEGACY_OLLAMA_MODEL.into());
         cfg.insert("system_prompt".into(), LEGACY_OLLAMA_SYSTEM_PROMPT.into());
         s.providers.translate.timeout_ms = LEGACY_TRANSLATE_TIMEOUT_MS;
+        s.providers.reverse_image_search.chain = LEGACY_REVERSE_IMAGE_SEARCH_CHAIN
+            .iter()
+            .map(|x| x.to_string())
+            .collect();
+        s.privacy.allow_cloud_globally = true;
         s
     }
 
@@ -75,7 +119,12 @@ mod tests {
         assert_eq!(o["model"], translate_ollama::DEFAULT_MODEL);
         assert!(o.get("system_prompt").is_none());
         assert_eq!(s.providers.translate.timeout_ms, TRANSLATE_TIMEOUT_MS);
+        assert!(s.providers.reverse_image_search.chain.is_empty());
+        assert!(migrate_versioned(&mut s, 0));
+        assert!(!s.privacy.allow_cloud_globally);
+        assert_eq!(s.config_version, CONFIG_VERSION);
         // Idempotent.
+        assert!(!migrate_versioned(&mut s, CONFIG_VERSION));
         assert!(!migrate_legacy_defaults(&mut s));
     }
 
@@ -92,6 +141,7 @@ mod tests {
         cfg.insert("model".into(), "qwen3.5:9b".into());
         cfg.insert("system_prompt".into(), "my own prompt".into());
         s.providers.translate.timeout_ms = 4000;
+        s.providers.reverse_image_search.chain = vec!["plugin.my_search".into()];
         assert!(!migrate_legacy_defaults(&mut s));
         assert_eq!(s.providers.configs["ollama.gemma4"]["model"], "qwen3.5:9b");
         assert_eq!(
@@ -104,5 +154,14 @@ mod tests {
     fn bundled_defaults_need_no_migration() {
         let mut s: Settings = toml::from_str(include_str!("default.toml")).unwrap();
         assert!(!migrate_legacy_defaults(&mut s));
+        assert!(!migrate_versioned(&mut s, CONFIG_VERSION));
+    }
+
+    #[test]
+    fn current_files_keep_a_deliberate_cloud_switch() {
+        let mut s: Settings = toml::from_str(include_str!("default.toml")).unwrap();
+        s.privacy.allow_cloud_globally = true;
+        migrate_versioned(&mut s, CONFIG_VERSION);
+        assert!(s.privacy.allow_cloud_globally);
     }
 }

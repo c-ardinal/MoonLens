@@ -10,18 +10,21 @@
     Maximize,
     Settings as SettingsIcon,
     Mic,
-    MicOff
+    MicOff,
+    Power
   } from 'lucide-svelte';
   import {
     getSettings,
     newLensWindow,
     onHotkey,
+    quitApp,
     startRegionSelection,
     startSubtitle,
     stopSubtitle,
     subtitleState
   } from '$lib/ipc';
   import { displayAccelerator } from '$lib/hotkey';
+  import { errorText } from '$lib/errors';
 
   type Command = {
     id: string;
@@ -87,7 +90,8 @@
     { id: 'home', label: 'ホーム', icon: Home, run: go('/') },
     { id: 'settings', label: '設定', icon: SettingsIcon, run: go('/settings/') },
     { id: 'history', label: '履歴', hint: hint('open_history'), icon: History, run: go('/history/') },
-    { id: 'plugins', label: 'プラグイン管理', icon: Puzzle, run: go('/plugins/') }
+    { id: 'plugins', label: 'プラグイン管理', icon: Puzzle, run: go('/plugins/') },
+    { id: 'quit', label: 'MoonLens 終了', icon: Power, run: () => quitApp() }
   ]);
 
   const filtered = $derived(
@@ -101,7 +105,7 @@
     try {
       await cmd.run();
     } catch (e) {
-      error = String(e);
+      error = errorText(e);
       open = true;
     } finally {
       running = false;

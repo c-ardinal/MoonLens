@@ -1,11 +1,14 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
   import { onDestroy, onMount } from 'svelte';
-  import { AlertCircle, Camera, Focus, Maximize, Mic, Square } from 'lucide-svelte';
+  import { AlertCircle, AlertTriangle, Camera, Focus, Maximize, Mic, Square, X } from 'lucide-svelte';
   import {
+    dismissNotice,
     getSettings,
     listLlmModels,
+    listNotices,
     newLensWindow,
+    onNotices,
     ocrModelsStatus,
     onHotkey,
     onSettingsChanged,
@@ -17,6 +20,8 @@
   } from '$lib/ipc';
   import { displayAccelerator } from '$lib/hotkey';
   import { languageLabel } from '$lib/lens-overlay';
+  import { errorText } from '$lib/errors';
+  import type { Notice } from '$lib/ipc';
 
   let lastError = $state<string | null>(null);
   let subtitleRunning = $state(false);
@@ -25,6 +30,8 @@
   let targetLanguage = $state('ja');
   /** What still has to be downloaded before translation works. */
   let missing = $state<string[]>([]);
+  /** Problems found at start-up or in the background (config, hotkeys). */
+  let notices = $state<Notice[]>([]);
   const unlisteners: (() => void)[] = [];
 
   async function checkSetup() {
@@ -47,7 +54,11 @@
   onMount(async () => {
     getSettings().then(applySettings).catch(() => {});
     checkSetup();
+    listNotices()
+      .then((n) => (notices = n))
+      .catch(() => {});
     try {
+      unlisteners.push(await onNotices((n) => (notices = n)));
       unlisteners.push(await onSettingsChanged(applySettings));
       unlisteners.push(
         await onHotkey((action) => {
@@ -62,7 +73,7 @@
           if (event.kind === 'started') subtitleRunning = true;
           else if (event.kind === 'stopped') subtitleRunning = false;
           else if (event.kind === 'chunk') subtitlePreview = event.translated || event.original;
-          else if (event.kind === 'error') lastError = `字幕エラー: ${event.message}`;
+          else if (event.kind === 'error') lastError = `ライブ字幕：${event.message}`;
         })
       );
       subtitleRunning = await subtitleState();
@@ -77,7 +88,7 @@
     try {
       await fn();
     } catch (e) {
-      lastError = String(e).replace(/^Error:\s*/, '');
+      lastError = errorText(e);
     }
   }
 
@@ -92,6 +103,29 @@
       <a href="/settings/" class="ml-1 text-accent underline-offset-2 hover:underline">変更</a>
     </p>
   </header>
+
+  {#each notices as n (n.id)}
+    <section
+      class="flex items-start gap-2 rounded-ml border border-amber-500/50 bg-amber-500/10 p-3 text-sm"
+      role="alert"
+    >
+      <AlertTriangle class="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+      <p class="min-w-0 flex-1 break-words">
+        {n.message}
+        {#if n.action}
+          <a href={n.action} class="ml-1 text-accent underline-offset-2 hover:underline">設定を開く</a>
+        {/if}
+      </p>
+      <button
+        class="shrink-0 rounded-ml-sm p-0.5 text-ink-faint hover:text-ink"
+        title="閉じる"
+        aria-label="通知を閉じる"
+        onclick={() => dismissNotice(n.id).catch(() => {})}
+      >
+        <X class="h-4 w-4" />
+      </button>
+    </section>
+  {/each}
 
   {#if missing.length > 0}
     <section

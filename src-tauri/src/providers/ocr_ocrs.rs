@@ -32,15 +32,66 @@ pub const RECOGNITION_MODEL_FILE: &str = "text-recognition.onnx";
 const LEGACY_DETECTION_FILE: &str = "text-detection.rten";
 const LEGACY_RECOGNITION_FILE: &str = "text-recognition.rten";
 
+/// Bundle identifier from `tauri.conf.json`. Tauri names the app's data
+/// folders after it, and installers (the Windows uninstaller's "delete
+/// app data" option) clean up exactly those folders.
+pub const APP_IDENTIFIER: &str = "io.moonlens.app";
+
+/// Where every model lives: `<local app data>/io.moonlens.app/models`
+/// (`%LOCALAPPDATA%` on Windows, so multi-GB files never roam with the
+/// profile). Up to v0.1.0 models went to `<data dir>/moonlens/models`,
+/// outside the app's folders, so uninstalling left them behind; the first
+/// call moves such a folder over.
 pub fn default_models_dir() -> Option<PathBuf> {
-    dirs_like("moonlens/models")
+    static DIR: std::sync::OnceLock<Option<PathBuf>> = std::sync::OnceLock::new();
+    DIR.get_or_init(|| {
+        let new = local_data_base()?.join(APP_IDENTIFIER).join("models");
+        Some(match legacy_models_dir() {
+            Some(old) => adopt_legacy_dir(&old, &new),
+            None => new,
+        })
+    })
+    .clone()
 }
 
-/// Minimal, dependency-free XDG-ish data dir lookup. Good enough for the
-/// places we want to drop ML models (not user configuration).
-fn dirs_like(suffix: &str) -> Option<PathBuf> {
+/// Move `old` to `new` when only `old` exists. Returns the folder to use:
+/// `old` if it could not be moved (e.g. another volume), else `new`.
+pub fn adopt_legacy_dir(old: &Path, new: &Path) -> PathBuf {
+    if new.exists() || !old.is_dir() {
+        return new.to_path_buf();
+    }
+    if let Some(parent) = new.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    match std::fs::rename(old, new) {
+        Ok(()) => {
+            tracing::info!("moved models from {} to {}", old.display(), new.display());
+            // Drop the now empty `moonlens` folder too.
+            if let Some(p) = old.parent() {
+                let _ = std::fs::remove_dir(p);
+            }
+            new.to_path_buf()
+        }
+        Err(e) => {
+            tracing::warn!("keeping models in {}: {e}", old.display());
+            old.to_path_buf()
+        }
+    }
+}
+
+fn legacy_models_dir() -> Option<PathBuf> {
     let base = if cfg!(target_os = "windows") {
         std::env::var_os("APPDATA").map(PathBuf::from)
+    } else {
+        local_data_base()
+    };
+    base.map(|b| b.join("moonlens").join("models"))
+}
+
+/// Tauri's `app_local_data_dir` base, without needing an `AppHandle`.
+fn local_data_base() -> Option<PathBuf> {
+    if cfg!(target_os = "windows") {
+        std::env::var_os("LOCALAPPDATA").map(PathBuf::from)
     } else if cfg!(target_os = "macos") {
         std::env::var_os("HOME")
             .map(PathBuf::from)
@@ -48,9 +99,9 @@ fn dirs_like(suffix: &str) -> Option<PathBuf> {
     } else {
         std::env::var_os("XDG_DATA_HOME")
             .map(PathBuf::from)
+            .filter(|p| p.is_absolute())
             .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share")))
-    };
-    base.map(|b| b.join(suffix))
+    }
 }
 
 /// Resolve the detection / recognition model paths in `dir`, preferring
@@ -234,6 +285,9 @@ impl Provider for OcrsProvider {
 
         #[cfg(feature = "ocrs-engine")]
         {
+            if model_paths(&self.models_dir).is_none() {
+                return Err(ProviderError::NotInstalled("ocrs".into()));
+            }
             let models_dir = self.models_dir.clone();
             let upscale = self.upscale;
             // Model loading and inference are CPU-bound; keep both off
@@ -332,6 +386,31 @@ pub async fn install_models(models_dir: &Path) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn legacy_models_folder_is_moved_once() {
+        let tmp = tempfile::tempdir().unwrap();
+        let old = tmp.path().join("moonlens/models");
+        let new = tmp.path().join("io.moonlens.app/models");
+        std::fs::create_dir_all(old.join("llm")).unwrap();
+        std::fs::write(old.join("llm/a.gguf"), b"x").unwrap();
+        assert_eq!(adopt_legacy_dir(&old, &new), new);
+        assert!(new.join("llm/a.gguf").exists());
+        assert!(!tmp.path().join("moonlens").exists());
+        // Second run: nothing left to move.
+        assert_eq!(adopt_legacy_dir(&old, &new), new);
+    }
+
+    #[test]
+    fn existing_new_folder_wins() {
+        let tmp = tempfile::tempdir().unwrap();
+        let old = tmp.path().join("old");
+        let new = tmp.path().join("new");
+        std::fs::create_dir_all(&old).unwrap();
+        std::fs::create_dir_all(&new).unwrap();
+        assert_eq!(adopt_legacy_dir(&old, &new), new);
+        assert!(old.exists());
+    }
 
     #[test]
     fn upscale_is_opt_in_and_clamped() {

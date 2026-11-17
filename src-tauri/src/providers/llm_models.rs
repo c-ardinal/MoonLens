@@ -175,6 +175,80 @@ pub fn cancel(id: &str) -> bool {
     }
 }
 
+/// Headroom left free after a download, so the disk is never filled to
+/// the last byte.
+pub const FREE_SPACE_MARGIN: u64 = 512 << 20;
+
+/// Bytes a download of `m` still has to fetch (resuming any `.part`).
+pub fn bytes_still_needed(dir: &Path, m: &CatalogModel) -> u64 {
+    if is_installed(dir, m) {
+        return 0;
+    }
+    let have = std::fs::metadata(part_path(dir, m))
+        .map(|md| md.len())
+        .unwrap_or(0);
+    m.size.saturating_sub(have)
+}
+
+/// Free space on the volume that holds `dir` (or its nearest existing
+/// parent). `None` when it cannot be determined.
+pub fn free_space(dir: &Path) -> Option<u64> {
+    let mut p = dir;
+    loop {
+        if p.exists() {
+            return fs4::available_space(p).ok();
+        }
+        p = p.parent()?;
+    }
+}
+
+/// A file in the models folder that no catalog entry owns: a model an
+/// earlier version shipped, or a leftover download of one.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct OrphanFile {
+    pub name: String,
+    pub size: u64,
+}
+
+fn is_model_file(name: &str) -> bool {
+    name.ends_with(".gguf") || name.ends_with(".gguf.part")
+}
+
+pub fn orphans(dir: &Path) -> Vec<OrphanFile> {
+    let owned: std::collections::HashSet<String> = CATALOG
+        .iter()
+        .flat_map(|m| [m.file.to_string(), format!("{}.part", m.file)])
+        .collect();
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return vec![];
+    };
+    let mut out: Vec<OrphanFile> = rd
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_type().map(|t| t.is_file()).unwrap_or(false))
+        .filter_map(|e| {
+            let name = e.file_name().to_string_lossy().to_string();
+            (is_model_file(&name) && !owned.contains(&name)).then(|| OrphanFile {
+                size: e.metadata().map(|m| m.len()).unwrap_or(0),
+                name,
+            })
+        })
+        .collect();
+    out.sort_by(|a, b| a.name.cmp(&b.name));
+    out
+}
+
+/// Delete one file listed by [`orphans`]. Anything else (catalog models,
+/// other files, paths) is refused.
+pub fn remove_orphan(dir: &Path, name: &str) -> anyhow::Result<()> {
+    if !orphans(dir).iter().any(|o| o.name == name) {
+        anyhow::bail!("not a leftover model file: {name}");
+    }
+    let p = dir.join(name);
+    super::translate_llama::unload(&p);
+    std::fs::remove_file(p)?;
+    Ok(())
+}
+
 /// Remove an installed model and any partial download.
 pub fn remove(dir: &Path, id: &str) -> anyhow::Result<()> {
     let m = find(id).ok_or_else(|| anyhow::anyhow!("unknown model {id}"))?;
@@ -396,6 +470,38 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let (_, n) = hash_existing(&dir.path().join("nope.part"), 4).unwrap();
         assert_eq!(n, 0);
+    }
+
+    #[test]
+    fn orphans_are_model_files_the_catalog_does_not_own() {
+        let dir = tempfile::tempdir().unwrap();
+        let m = find(DEFAULT_TRANSLATE_MODEL_ID).unwrap();
+        std::fs::write(model_path(dir.path(), m), b"x").unwrap();
+        std::fs::write(part_path(dir.path(), m), b"x").unwrap();
+        std::fs::write(dir.path().join("old-model-Q4_K_M.gguf"), b"xyz").unwrap();
+        std::fs::write(dir.path().join("old-model-Q4_K_M.gguf.part"), b"x").unwrap();
+        std::fs::write(dir.path().join("notes.txt"), b"x").unwrap();
+        let names: Vec<_> = orphans(dir.path()).into_iter().map(|o| o.name).collect();
+        assert_eq!(
+            names,
+            vec!["old-model-Q4_K_M.gguf", "old-model-Q4_K_M.gguf.part"]
+        );
+        // Only listed files can be removed.
+        assert!(remove_orphan(dir.path(), m.file).is_err());
+        assert!(remove_orphan(dir.path(), "notes.txt").is_err());
+        assert!(remove_orphan(dir.path(), "../x.gguf").is_err());
+        remove_orphan(dir.path(), "old-model-Q4_K_M.gguf").unwrap();
+        assert_eq!(orphans(dir.path()).len(), 1);
+    }
+
+    #[test]
+    fn still_needed_accounts_for_partial_downloads() {
+        let dir = tempfile::tempdir().unwrap();
+        let m = find(DEFAULT_TRANSLATE_MODEL_ID).unwrap();
+        assert_eq!(bytes_still_needed(dir.path(), m), m.size);
+        std::fs::write(part_path(dir.path(), m), vec![0u8; 1000]).unwrap();
+        assert_eq!(bytes_still_needed(dir.path(), m), m.size - 1000);
+        assert!(free_space(&dir.path().join("does/not/exist")).is_some());
     }
 
     #[test]

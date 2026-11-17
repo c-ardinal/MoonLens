@@ -26,6 +26,7 @@ macro_rules! all_commands {
             ipc::get_settings,
             ipc::set_settings,
             ipc::get_settings_schema,
+            ipc::get_default_settings,
             ipc::list_plugins,
             ipc::set_plugin_enabled,
             ipc::install_plugin_from_path,
@@ -74,6 +75,15 @@ macro_rules! all_commands {
             ipc::list_history,
             ipc::delete_history_entry,
             ipc::clear_history,
+            ipc::list_notices,
+            ipc::dismiss_notice,
+            ipc::open_external_url,
+            ipc::open_main_route,
+            ipc::hide_main,
+            ipc::quit_app,
+            ipc::data_locations,
+            ipc::list_orphan_llm_files,
+            ipc::delete_orphan_llm_file,
         ]
     };
 }
@@ -96,8 +106,18 @@ pub struct AppState {
     pub _settings_watcher: Watcher,
 }
 
+/// Command-line flag for launching straight to the tray (e.g. from a
+/// login item). Without it every launch shows the main window, so a user
+/// who starts the app always sees it start.
+pub const START_HIDDEN_FLAG: &str = "--hidden";
+
 pub fn build() -> Result<()> {
     tauri::Builder::default()
+        // Must be the first plugin: a second launch hands over to the
+        // running instance and exits before anything else starts.
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            show_main_window(app);
+        }))
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
@@ -107,6 +127,7 @@ pub fn build() -> Result<()> {
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             let handle = app.handle().clone();
+            crate::notices::attach(&handle);
             let settings = Arc::new(SettingsStore::load_or_default(&handle)?);
             crate::apply_log_level(settings.snapshot().privacy.log_level);
             let settings_watcher = Watcher::spawn(settings.clone())?;
@@ -137,7 +158,7 @@ pub fn build() -> Result<()> {
                     }
                 }
             });
-            let storage = Arc::new(Storage::open(&handle)?);
+            let storage = Arc::new(Storage::open_or_recover(&handle)?);
             {
                 // History written before the retention settings changed.
                 let st = settings.snapshot();
@@ -184,7 +205,11 @@ pub fn build() -> Result<()> {
             ) {
                 tracing::warn!("{e}");
             }
-            build_tray(&handle)?;
+            if let Err(e) = build_tray(&handle) {
+                // Some Linux desktops have no tray; the main window and
+                // the hotkeys still work.
+                tracing::warn!("tray unavailable: {e}");
+            }
 
             app.manage(AppState {
                 settings,
@@ -196,7 +221,22 @@ pub fn build() -> Result<()> {
                 region_watcher,
                 _settings_watcher: settings_watcher,
             });
+            if !std::env::args().any(|a| a == START_HIDDEN_FLAG) {
+                show_main_window(&handle);
+            }
             Ok(())
+        })
+        .on_window_event(|window, event| {
+            // The main window has no title bar of its own; closing it
+            // (Alt+F4, Cmd+W, the close button) hides it to the tray
+            // instead of destroying it, so the tray and hotkeys can bring
+            // it back. Quit is in the tray menu and the command palette.
+            if window.label() == "main" {
+                if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
+            }
         })
         .invoke_handler(all_commands!())
         .run(tauri::generate_context!())?;
@@ -269,17 +309,16 @@ fn build_tray(app: &AppHandle) -> Result<()> {
 
 pub(crate) fn show_main_window(app: &AppHandle) {
     if let Some(w) = app.get_webview_window("main") {
+        let _ = w.unminimize();
         let _ = w.show();
         let _ = w.set_focus();
     }
 }
 
+/// Show the main window on `path` (e.g. `/history/` or
+/// `/settings/#section-models`). The layout navigates client-side, so the
+/// settings screen can still keep unsaved edits.
 pub(crate) fn route_main(app: &AppHandle, path: &str) {
-    if let Some(w) = app.get_webview_window("main") {
-        let _ = w.eval(format!(
-            "location.hash = '#{path}'; location.pathname = '{path}';"
-        ));
-        let _ = w.show();
-        let _ = w.set_focus();
-    }
+    let _ = app.emit_to("main", "moonlens://navigate", path);
+    show_main_window(app);
 }

@@ -4,28 +4,36 @@
   import {
     cancelLlmDownload,
     deleteLlmModel,
+    deleteOrphanLlmFile,
     installLlmModel,
     listLlmModels,
+    listOrphanLlmFiles,
     onLlmProgress,
     selectLlmModel,
     type LlmModels,
     type LlmProgress,
-    type LlmRole
+    type LlmRole,
+    type OrphanFile
   } from '$lib/ipc';
+  import { errorText } from '$lib/errors';
 
   let data = $state<LlmModels>({ selected: '', assistant: '', dir: '', models: [] });
   let progress = $state<Record<string, LlmProgress>>({});
   let busy = $state<Record<string, boolean>>({});
   let error = $state<string | null>(null);
+  /** Model whose delete button was pressed once (asks to confirm). */
+  let confirmDelete = $state<string | null>(null);
+  /** Model files no current catalog entry owns (older versions). */
+  let orphans = $state<OrphanFile[]>([]);
   let unlisten: (() => void) | undefined;
 
   const gb = (n: number) => (n / 1_073_741_824).toFixed(1);
 
   async function refresh() {
     try {
-      data = await listLlmModels();
+      [data, orphans] = await Promise.all([listLlmModels(), listOrphanLlmFiles()]);
     } catch (e) {
-      error = String(e);
+      error = errorText(e);
     }
   }
 
@@ -52,7 +60,7 @@
         await selectLlmModel(id, 'assistant');
       }
     } catch (e) {
-      if (!String(e).includes('cancelled')) error = String(e);
+      if (!String(e).includes('cancelled')) error = errorText(e);
     } finally {
       busy = { ...busy, [id]: false };
       const { [id]: _done, ...rest } = progress;
@@ -66,11 +74,27 @@
   }
 
   async function remove(id: string) {
+    // Gigabytes to download again: ask once more before deleting.
+    if (confirmDelete !== id) {
+      confirmDelete = id;
+      return;
+    }
+    confirmDelete = null;
     error = null;
     try {
       await deleteLlmModel(id);
     } catch (e) {
-      error = String(e);
+      error = errorText(e);
+    }
+    await refresh();
+  }
+
+  async function removeOrphan(name: string) {
+    error = null;
+    try {
+      await deleteOrphanLlmFile(name);
+    } catch (e) {
+      error = errorText(e);
     }
     await refresh();
   }
@@ -80,7 +104,7 @@
     try {
       await selectLlmModel(id, role);
     } catch (e) {
-      error = String(e);
+      error = errorText(e);
     }
     await refresh();
   }
@@ -142,14 +166,25 @@
                   <Check class="h-4 w-4" /> 説明用に設定
                 </button>
               {/if}
-              <button
-                class="rounded-ml-sm border border-border p-1.5 text-ink-faint hover:border-red-500/60 hover:text-red-500"
-                title="削除"
-                aria-label="{m.label} を削除"
-                onclick={() => remove(m.id)}
-              >
-                <Trash2 class="h-4 w-4" />
-              </button>
+              {#if confirmDelete === m.id}
+                <button
+                  class="inline-flex items-center gap-1 rounded-ml-sm border border-red-500/60 bg-red-500/10 px-3 py-1.5 text-sm text-red-500"
+                  onclick={() => remove(m.id)}
+                  onblur={() => (confirmDelete = null)}
+                >
+                  <Trash2 class="h-4 w-4" />
+                  {selected ? '使用中。削除確定' : '削除確定'}
+                </button>
+              {:else}
+                <button
+                  class="rounded-ml-sm border border-border p-1.5 text-ink-faint hover:border-red-500/60 hover:text-red-500"
+                  title="削除"
+                  aria-label="{m.label} を削除"
+                  onclick={() => remove(m.id)}
+                >
+                  <Trash2 class="h-4 w-4" />
+                </button>
+              {/if}
             {:else if busy[m.id] || m.downloading}
               <button
                 class="inline-flex items-center gap-1 rounded-ml-sm border border-border px-3 py-1.5 text-sm text-ink-muted hover:text-ink"
@@ -184,6 +219,31 @@
       </li>
     {/each}
   </ul>
+
+  {#if orphans.length > 0}
+    <div class="mt-3 rounded-ml-sm border border-dashed border-border p-3">
+      <p class="text-sm font-medium">旧モデル・不要ファイル</p>
+      <p class="text-xs text-ink-muted">現行版で未使用。削除で容量を解放。</p>
+      <ul class="mt-2 flex flex-col gap-1">
+        {#each orphans as o (o.name)}
+          <li class="flex items-center justify-between gap-2 text-xs">
+            <code class="min-w-0 truncate font-mono text-ink-muted" title={o.name}>{o.name}</code>
+            <span class="flex shrink-0 items-center gap-2">
+              <span class="text-ink-faint">{gb(o.size)} GB</span>
+              <button
+                class="rounded-ml-sm border border-border p-1 text-ink-faint hover:border-red-500/60 hover:text-red-500"
+                title="削除"
+                aria-label="{o.name} を削除"
+                onclick={() => removeOrphan(o.name)}
+              >
+                <Trash2 class="h-3.5 w-3.5" />
+              </button>
+            </span>
+          </li>
+        {/each}
+      </ul>
+    </div>
+  {/if}
 
   {#if error}
     <p class="mt-3 text-xs break-words text-red-500">{error}</p>

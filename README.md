@@ -4,7 +4,6 @@ PC常駐の Google Lens 風ツール。1つのグローバルホットキーで
 
 - 画面領域の OCR + ローカル LLM 翻訳 + オーバーレイ表示
 - QR コード認識
-- リバース画像検索
 - 外国語動画のループバック音声からライブ字幕
 - ローカル LLM による要約・説明・対話
 
@@ -20,7 +19,7 @@ PC常駐の Google Lens 風ツール。1つのグローバルホットキーで
 - **QR**: `rqrr` crate
 - **翻訳 (local)**: 内蔵 llama.cpp（`llama-cpp-2`、静的リンク）で GGUF を実行。翻訳の既定は PLaMo 3 Translate 2B（0.8B も選択可）、説明・要約は Gemma 4 E4B。モデルはアプリのホーム画面からダウンロード（SHA-256 検証・中断再開）。モデル選定の根拠は [docs/translation-models.md](docs/translation-models.md)
 - **翻訳 (cloud / Ollama)**: DeepL / Gemini API、Ollama は任意のオプション（既定チェーンには入っていない）
-- **ASR**: `whisper.cpp` HTTP サーバ（サイドカー起動）
+- **ASR**: `whisper.cpp` HTTP サーバ（別途起動が必要。未接続時はライブ字幕の開始時に案内）
 - **画面キャプチャ**: `xcap` 0.9、**音声ループバック**: `cpal`
 - **履歴**: `rusqlite`（SQLite、bundled）
 - **プラグイン**: WebAssembly Component Model (`wasmtime`) と JSON-RPC サイドカー
@@ -49,10 +48,10 @@ MoonLens/
 ## カスタマイズ思想
 
 MoonLens はハードコードされた挙動を極力持たない。UI/挙動/プロバイダに関わる
-すべての定数は `$XDG_CONFIG_HOME/moonlens/config.toml`（およびプロファイル）
-から制御可能で、変更は保存で即時反映される。設定画面は `schemars` が吐く
-JSON Schema から自動生成されるため、新しい provider や plugin を追加して
-もフォームの手書き更新は不要。
+すべての定数は `config.toml`（Linux: `~/.config/io.moonlens.app/`、macOS: `~/Library/Application Support/io.moonlens.app/`、Windows: `%APPDATA%\io.moonlens.app\`）
+から制御可能で、変更は保存で即時反映される。`config.toml` には既定値と異なる値だけが
+保存され、既定値の一覧は同じフォルダーの `config.default.toml`（参照用）にある。
+各段階（導入〜削除）の挙動は [docs/lifecycle.md](docs/lifecycle.md) を参照。
 
 ### プロバイダチェーン
 

@@ -61,6 +61,51 @@ impl SubtitleService {
         self.inner.lock().is_some()
     }
 
+    /// Make sure speech recognition can run before opening the subtitle
+    /// window. The built-in chain talks to a whisper.cpp server; when
+    /// none answers, starting would only produce an error every few
+    /// seconds. Returns a coded, user-facing message (see `user_error`).
+    pub async fn preflight(&self) -> Result<(), String> {
+        let s = self.settings.snapshot();
+        let chain = &s.providers.asr.chain;
+        if chain.is_empty() {
+            return Err(crate::user_error::coded(
+                "asr_unavailable",
+                "音声認識プロバイダー未設定",
+            ));
+        }
+        // Plugins and other providers are trusted to report their own
+        // errors; only whisper.cpp servers can be probed up front.
+        if !chain.iter().all(|id| id.starts_with("whisper_cpp.")) {
+            return Ok(());
+        }
+        let http = reqwest::Client::builder()
+            .timeout(Duration::from_millis(1500))
+            .build()
+            .map_err(|e| e.to_string())?;
+        let mut tried = Vec::new();
+        for id in chain {
+            let endpoint = s
+                .providers
+                .configs
+                .get(id)
+                .and_then(|c| c.get("endpoint"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("http://127.0.0.1:9002")
+                .trim_end_matches('/')
+                .to_string();
+            // Any HTTP answer means a server is listening.
+            if http.get(&endpoint).send().await.is_ok() {
+                return Ok(());
+            }
+            tried.push(endpoint);
+        }
+        Err(crate::user_error::coded(
+            "asr_unavailable",
+            format!("音声認識サーバー未接続：{}", tried.join("、")),
+        ))
+    }
+
     pub fn start(&self, app: AppHandle) -> Result<()> {
         if self.is_running() {
             return Ok(());
@@ -77,7 +122,12 @@ impl SubtitleService {
         let app_emit = app.clone();
         let handle = tauri::async_runtime::spawn(async move {
             let _ = app_emit.emit("moonlens://subtitle", SubtitleEvent::Started);
-            run_loop(app_emit.clone(), settings, pipeline, rx, stop_in).await;
+            let gave_up = run_loop(app_emit.clone(), settings, pipeline, rx, stop_in).await;
+            if gave_up {
+                // Close the window and release the audio stream too.
+                let state = app_emit.state::<crate::app::AppState>();
+                let _ = state.subtitle.stop(&app_emit);
+            }
             let _ = app_emit.emit("moonlens://subtitle", SubtitleEvent::Stopped);
         });
         *self.inner.lock() = Some(Inner {
@@ -118,7 +168,8 @@ async fn run_loop(
     pipeline: Arc<Pipeline>,
     mut rx: mpsc::Receiver<AudioFrame>,
     stop: Arc<tokio::sync::Notify>,
-) {
+) -> bool {
+    let mut failures = 0u32;
     let mut buffer: Vec<i16> = Vec::with_capacity(16_000 * 4);
     let mut overlap: Vec<i16> = Vec::new();
     loop {
@@ -167,6 +218,7 @@ async fn run_loop(
             .await
         {
             Ok(res) => {
+                failures = 0;
                 let original = match &res.output {
                     TaskOutput::Transcript { segments } => segments
                         .iter()
@@ -214,16 +266,28 @@ async fn run_loop(
                 tokio::time::sleep(Duration::from_millis(20)).await;
             }
             Err(e) => {
-                let _ = app.emit(
-                    "moonlens://subtitle",
-                    SubtitleEvent::Error {
-                        message: e.to_string(),
-                    },
-                );
+                failures += 1;
+                let gave_up = failures >= MAX_CONSECUTIVE_FAILURES;
+                let detail = crate::user_error::provider(&e, Capability::Asr);
+                let detail = detail.split_once('|').map_or(detail.as_str(), |(_, m)| m);
+                let message = if gave_up {
+                    format!("音声認識の連続失敗により停止：{detail}")
+                } else {
+                    format!("音声認識失敗：{detail}")
+                };
+                let _ = app.emit("moonlens://subtitle", SubtitleEvent::Error { message });
+                if gave_up {
+                    return true;
+                }
             }
         }
     }
+    false
 }
+
+/// Stop after this many chunks in a row fail, instead of repeating the
+/// same error every few seconds.
+const MAX_CONSECUTIVE_FAILURES: u32 = 3;
 
 fn pcm16_to_bytes(samples: &[i16]) -> Vec<u8> {
     let mut out = Vec::with_capacity(samples.len() * 2);

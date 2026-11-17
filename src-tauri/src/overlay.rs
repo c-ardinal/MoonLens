@@ -64,6 +64,52 @@ pub fn show_centered(app: &AppHandle) -> Result<()> {
     Ok(())
 }
 
+/// Show the overlay next to a watched (pinned) region without covering
+/// it: below when there is room, else above, else to the right. Covering
+/// the region would put the overlay into its own captures and make the
+/// watcher retranslate forever. No-op when the overlay is already shown,
+/// so a user who moved it keeps their position.
+pub fn show_beside(app: &AppHandle, rect: &crate::capture::CaptureRect) -> Result<()> {
+    let win = overlay(app)?;
+    if win.is_visible().unwrap_or(false) {
+        return Ok(());
+    }
+    let monitors = xcap::Monitor::all()?;
+    let m = monitors
+        .get(rect.monitor_index)
+        .ok_or_else(|| anyhow::anyhow!("monitor {} missing", rect.monitor_index))?;
+    let (mx, my, mw, mh) = (m.x()?, m.y()?, m.width()? as i32, m.height()? as i32);
+    let size = win.outer_size()?;
+    let (w, h) = (size.width as i32, size.height as i32);
+    let pos = beside(
+        (rect.x, rect.y, rect.w as i32, rect.h as i32),
+        (w, h),
+        (mw, mh),
+    );
+    win.set_position(PhysicalPosition::new(mx + pos.0, my + pos.1))?;
+    win.show()?;
+    Ok(())
+}
+
+/// Monitor-local position for a `win`-sized box next to `r` on a
+/// `screen`-sized monitor. Pure so it can be tested.
+pub fn beside(r: (i32, i32, i32, i32), win: (i32, i32), screen: (i32, i32)) -> (i32, i32) {
+    const GAP: i32 = 8;
+    let (x, y, w, h) = r;
+    let clamp_x = |v: i32| v.clamp(0, (screen.0 - win.0).max(0));
+    let clamp_y = |v: i32| v.clamp(0, (screen.1 - win.1).max(0));
+    if y + h + GAP + win.1 <= screen.1 {
+        (clamp_x(x), y + h + GAP)
+    } else if y - GAP - win.1 >= 0 {
+        (clamp_x(x), y - GAP - win.1)
+    } else if x + w + GAP + win.0 <= screen.0 {
+        (x + w + GAP, clamp_y(y))
+    } else {
+        // No free side: the left edge, as far from the region as possible.
+        (0, clamp_y(y))
+    }
+}
+
 pub fn hide(app: &AppHandle) -> Result<()> {
     let win = overlay(app)?;
     win.hide()?;
@@ -74,4 +120,20 @@ pub fn hide(app: &AppHandle) -> Result<()> {
 fn overlay(app: &AppHandle) -> Result<WebviewWindow> {
     app.get_webview_window("overlay")
         .ok_or_else(|| anyhow::anyhow!("overlay window missing"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::beside;
+
+    #[test]
+    fn prefers_below_then_above_then_right() {
+        let screen = (1920, 1080);
+        let win = (480, 320);
+        assert_eq!(beside((100, 100, 400, 200), win, screen), (100, 308));
+        assert_eq!(beside((100, 700, 400, 300), win, screen), (100, 372));
+        assert_eq!(beside((100, 50, 400, 1000), win, screen), (508, 50));
+        // Clamped inside the screen horizontally.
+        assert_eq!(beside((1800, 100, 100, 100), win, screen), (1440, 208));
+    }
 }

@@ -18,17 +18,19 @@
     closeSelector,
     getFrozenFrame,
     onOverlay,
+    openExternalUrl,
+    openMainRoute,
     pinOverlay,
     processFrozenSelection,
     retranslateSelection,
     runExplain,
-    runReverseImageSearch,
     type CaptureFlowResult,
     type FrameReady,
     type FrameRect,
     type LensBlock
   } from '$lib/ipc';
   import { extractText } from '$lib/result';
+  import { errorText, parseError, type UiError } from '$lib/errors';
   import {
     LANGUAGES,
     allSameLanguage,
@@ -67,7 +69,7 @@
   let result = $state<CaptureFlowResult | null>(null);
   let showOriginal = $state(false);
   let showPanel = $state(false);
-  let errorMessage = $state('');
+  let failure = $state<UiError | null>(null);
   let notice = $state('');
   let explanation = $state<string | null>(null);
   let pinned = $state(false);
@@ -116,7 +118,7 @@
     result = null;
     showOriginal = false;
     showPanel = false;
-    errorMessage = '';
+    failure = null;
     notice = '';
     explanation = null;
     pinned = false;
@@ -125,7 +127,13 @@
 
   function fail(e: unknown) {
     phase = 'error';
-    errorMessage = String(e).replace(/^Error:\s*/, '');
+    failure = parseError(e);
+  }
+
+  /** Close the selector and show the page that fixes the error. */
+  async function applyFix(route: string) {
+    await close();
+    await openMainRoute(route).catch(() => {});
   }
 
   async function run(css: CssRect | null) {
@@ -267,19 +275,31 @@
       const r = await runExplain(`次のテキストの内容を${languageLabel(targetLang) || '日本語'}で簡潔に説明してください:\n\n${src}`);
       explanation = extractText(r);
     } catch (e) {
-      explanation = `説明の生成に失敗：${String(e)}`;
+      explanation = `説明の生成に失敗：${errorText(e)}`;
     }
   }
 
+  /** Pin the selection and get out of the way: pinned results show in
+   * the floating overlay next to the region, over the live screen. */
   async function pin() {
     if (!result?.source_rect) return;
-    await pinOverlay(result.source_rect);
-    pinned = true;
-    flash('ピン留め完了。変化時に自動再翻訳');
+    try {
+      await pinOverlay(result.source_rect);
+      pinned = true;
+      await close();
+    } catch (e) {
+      flash(errorText(e), 3000);
+    }
   }
 
   async function openQr() {
-    if (/^https?:\/\//i.test(qrPayload)) await runReverseImageSearch(qrPayload);
+    if (!/^https?:\/\//i.test(qrPayload)) return;
+    try {
+      await openExternalUrl(qrPayload);
+      await close();
+    } catch (e) {
+      flash(errorText(e), 3000);
+    }
   }
 
   const qrPayload = $derived(
@@ -476,7 +496,11 @@
       tabindex="-1"
     >
       {#if phase === 'error'}
-        <span class="px-2 text-sm text-red-400">{errorMessage}</span>
+        <span class="px-2 text-sm text-red-400">{failure?.message}</span>
+        {#if failure?.fix}
+          {@const fix = failure.fix}
+          <button class="tb" onclick={() => applyFix(fix.route)}>{fix.label}</button>
+        {/if}
       {:else if result?.intent === 'qr'}
         <QrCode class="ml-1 h-4 w-4 opacity-80" />
         <span class="max-w-[420px] truncate px-1 text-sm" title={qrPayload}>{qrPayload}</span>
@@ -523,6 +547,23 @@
         <span class="px-2 text-sm">{notice}</span>
       {/if}
       <button class="tb" onclick={close} title="閉じる (Esc)"><X class="h-4 w-4" /></button>
+    </div>
+  {/if}
+
+  {#if phase === 'error' && !toolbarPos && failure}
+    <!-- Failed before anything was selected (e.g. the frame could not be loaded). -->
+    <div
+      class="pill absolute inset-x-0 top-6 mx-auto flex w-fit items-center gap-2"
+      role="toolbar"
+      tabindex="-1"
+      onpointerdown={(e) => e.stopPropagation()}
+      onpointerup={(e) => e.stopPropagation()}
+    >
+      <span class="text-red-300" role="alert">{failure.message}</span>
+      {#if failure.fix}
+        {@const fix = failure.fix}
+        <button class="underline" onclick={() => applyFix(fix.route)}>{fix.label}</button>
+      {/if}
     </div>
   {/if}
 

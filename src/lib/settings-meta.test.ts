@@ -1,6 +1,15 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { allFields, changedPaths, fieldMatches, getPath, schemaDefault, SECTIONS, setPath } from './settings-meta';
+import {
+  allFields,
+  changedPaths,
+  duplicateHotkeys,
+  fieldMatches,
+  getPath,
+  schemaDefault,
+  SECTIONS,
+  setPath
+} from './settings-meta';
 
 /** `section.key` pairs declared in the embedded default config. */
 function defaultTomlPaths(): Set<string> {
@@ -51,6 +60,22 @@ describe('settings-meta', () => {
     const a = { appearance: { theme: 'system' }, clipboard: { auto_copy_qr: true } };
     const b = setPath(a, 'appearance.theme', 'dark');
     expect(changedPaths(a, b)).toEqual(['appearance.theme']);
+  });
+
+  it('finds hotkeys bound to the same shortcut', () => {
+    const base = {
+      hotkeys: {
+        capture_region: 'CommandOrControl+Shift+Space',
+        capture_window: 'CommandOrControl+Shift+W',
+        toggle_pin_overlay: '',
+        toggle_subtitle: 'Shift+CommandOrControl+W',
+        open_command_palette: 'CommandOrControl+K',
+        open_history: ''
+      }
+    };
+    expect(duplicateHotkeys(base).sort()).toEqual(['hotkeys.capture_window', 'hotkeys.toggle_subtitle']);
+    // Empty (disabled) bindings never clash.
+    expect(duplicateHotkeys(setPath(base, 'hotkeys.toggle_subtitle', ''))).toEqual([]);
   });
 
   it('reads defaults from the schema section defaults', () => {

@@ -143,6 +143,11 @@ async fn run_watch(
         last_hash = Some(hash);
         if let Ok(png) = capture::png_bytes(&image) {
             if let Ok(bundle) = pipeline.run_capture_flow(png).await {
+                // The overlay is where pinned results appear; it may be
+                // hidden (pinned from the selector or by hotkey).
+                if let Err(e) = crate::overlay::show_beside(&app, &target.rect) {
+                    tracing::warn!("showing the pinned overlay: {e}");
+                }
                 let _ = app.emit(
                     "moonlens://overlay",
                     OverlayEvent::Result {
