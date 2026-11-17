@@ -8,6 +8,15 @@ the project adheres to [SemVer](https://semver.org/).
 
 ### Added
 
+- Japanese / Chinese OCR: new `ppocr` provider runs PP-OCRv5 mobile
+  models (detection + recognition) on rten. It reads kana, kanji,
+  simplified/traditional Chinese and English, and is now first in the
+  default OCR chain (`["ppocr", "ocrs"]`), falling through to ocrs until
+  its models are installed. Configs still carrying the old seeded chain
+  `["ocrs", "paddle"]` are upgraded automatically. "モデル取得" installs
+  both engines; the PP-OCR bundle is verified against a pinned SHA-512.
+- `cargo run --example ppocr_bench -- <image>` benchmark.
+
 - Lens-style in-place translation. The capture hotkey now freezes the
   monitor under the cursor, you select on the still image (or click to
   translate the whole screen), and each paragraph's translation is
@@ -24,6 +33,12 @@ the project adheres to [SemVer](https://semver.org/).
 
 ### Fixed
 
+- Legacy `.rten` ocrs models could not load after the rten 0.28 upgrade
+  (the `rten_format` feature was off).
+- Paragraph grouping: a wide paragraph no longer swallows a column to
+  its right, and paragraph breaks are detected from the block's own line
+  spacing and from short last lines (CJK line spacing no longer splits
+  wrapped lines).
 - OCR model download: upstream removed the `.rten` model files (403),
   so fresh installs could not OCR at all. Models are now the `.onnx`
   files (ocrs 0.14 / rten 0.28); existing `.rten` installs keep working.

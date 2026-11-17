@@ -436,6 +436,12 @@ pub async fn install_ocr_models(app: AppHandle) -> Result<String, String> {
         };
         let _ = app_for_cb.emit("moonlens://ocr-model-progress", payload);
     });
+    // PP-OCRv5 (Japanese / Chinese / English) first: it is the default
+    // OCR engine; ocrs stays as the Latin-only fallback.
+    #[cfg(feature = "ocrs-engine")]
+    crate::providers::ocr_ppocr::install_models_with_progress(&dir, Some(&*cb))
+        .await
+        .map_err(|e| format!("PP-OCR models: {e}"))?;
     ocr_ocrs::install_models_with_progress(&dir, Some(&*cb))
         .await
         .map_err(|e| e.to_string())?;

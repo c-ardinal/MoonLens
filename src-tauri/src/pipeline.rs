@@ -536,16 +536,30 @@ fn builtin_provider(
         "gemini" => Arc::new(GeminiProvider::new(id, cfg)),
         id if id.starts_with("whisper_cpp.") => Arc::new(WhisperCppProvider::new(id, cfg)),
         "ocrs" => Arc::new(OcrsProvider::new(id, cfg)),
+        "ppocr" => Arc::new(crate::providers::ocr_ppocr::PpOcrProvider::new(id, cfg)),
         "rqrr" => Arc::new(RqrrProvider::new(id, cfg)),
         id if id.starts_with("browser.") => Arc::new(BrowserSearchProvider::new(id, cfg)),
         _ => return None,
     })
 }
 
+/// OCR chain shipped before PP-OCR existed. Config files are seeded with
+/// the defaults on first run, so existing users still carry it; treat it
+/// as the current default so they get multilingual OCR too.
+const LEGACY_DEFAULT_OCR_CHAIN: [&str; 2] = ["ocrs", "paddle"];
+const DEFAULT_OCR_CHAIN: [&str; 2] = ["ppocr", "ocrs"];
+
+fn upgrade_ocr_chain(mut chain: TaskChain) -> TaskChain {
+    if chain.chain == LEGACY_DEFAULT_OCR_CHAIN {
+        chain.chain = DEFAULT_OCR_CHAIN.iter().map(|s| s.to_string()).collect();
+    }
+    chain
+}
+
 fn pick_chain(s: &crate::settings::schema::Settings, cap: Capability) -> TaskChain {
     match cap {
         Capability::Translate => s.providers.translate.clone(),
-        Capability::Ocr => s.providers.ocr.clone(),
+        Capability::Ocr => upgrade_ocr_chain(s.providers.ocr.clone()),
         Capability::Asr => s.providers.asr.clone(),
         Capability::Explain => s.providers.explain.clone(),
         Capability::Summarize => s.providers.summarize.clone(),
@@ -553,6 +567,15 @@ fn pick_chain(s: &crate::settings::schema::Settings, cap: Capability) -> TaskCha
         Capability::QrHandler => s.providers.qr_handler.clone(),
         Capability::IntentClassifier => s.providers.intent_classifier.clone(),
     }
+}
+
+#[cfg(test)]
+pub fn upgrade_ocr_chain_for_test(chain: Vec<String>) -> Vec<String> {
+    upgrade_ocr_chain(TaskChain {
+        chain,
+        ..TaskChain::default()
+    })
+    .chain
 }
 
 /// Test-friendly alias for [`should_fallback`]. Kept minimal on purpose.

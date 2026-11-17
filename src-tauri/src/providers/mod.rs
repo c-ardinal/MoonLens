@@ -7,6 +7,7 @@
 
 pub mod asr_whisper;
 pub mod ocr_ocrs;
+pub mod ocr_ppocr;
 pub mod qr_rqrr;
 pub mod search_serpapi;
 pub mod translate_deepl;

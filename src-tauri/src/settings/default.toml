@@ -88,7 +88,9 @@ max_cost_per_request = 0.01
 sticky_session_ms = 30000
 
 [providers.ocr]
-chain = ["ocrs", "paddle"]
+# ppocr: PP-OCRv5 (Japanese / Chinese / English). Falls through to the
+# Latin-only ocrs engine until its models are installed.
+chain = ["ppocr", "ocrs"]
 parallel_race = false
 fallback_on = ["low_confidence", "error"]
 timeout_ms = 5000
@@ -191,8 +193,12 @@ compute_type = "int8"
 detection_threshold = 0.4
 recognition_threshold = 0.5
 
-[providers.configs.paddle]
-endpoint = "http://127.0.0.1:9003"
+[providers.configs.ppocr]
+det_max_side = 1600
+det_threshold = 0.3
+box_threshold = 0.6
+unclip_ratio = 1.6
+min_confidence = 0.5
 
 [providers.configs."browser.google_images"]
 url_template = "https://www.google.com/searchbyimage?image_url={image_url}"

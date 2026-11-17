@@ -66,15 +66,19 @@ fn median(values: &mut [f32]) -> f32 {
 struct Building {
     bbox: BBox,
     last: BBox,
+    /// Gap between the first two lines, once known.
+    spacing: Option<f32>,
     lines: Vec<OcrLine>,
 }
 
 /// Group OCR lines into paragraph blocks.
 ///
 /// A line joins the most recent compatible block when
-/// - its top is no further than ~0.6 line heights below the block's last line
-///   (wrapped lines sit ~0.1–0.3 apart, paragraphs ~0.7+),
-/// - its height is within 1.3× of the block's last line (headings vs body
+/// - its top is close enough below the block's last line (≤ 0.9 line
+///   heights, tightened once the block's own line spacing is known, and
+///   when the previous line stopped short of the right edge),
+/// - it starts at the block's left edge (or shares the centre),
+/// - its height is within 1.2× of the block's last line (headings vs body
 ///   text become separate blocks), and
 /// - it horizontally overlaps the block (keeps columns apart).
 ///
@@ -123,12 +127,37 @@ pub fn group_lines(lines: &[OcrLine]) -> Vec<TextBlock> {
             let prev_h = b.last[3].max(1.0);
             let gap = lb[1] - bottom(&b.last);
             let size_ratio = (lh / prev_h).max(prev_h / lh);
-            let overlap = right(&lb).min(right(&b.bbox)) - lb[0].max(b.bbox[0]);
-            let max_gap = prev_h.max(lh) * 0.6;
+            // Overlap with the previous *line*, not the block: a wide
+            // paragraph above two columns must not swallow the right one.
+            let overlap = right(&lb).min(right(&b.last)) - lb[0].max(b.last[0]);
+            let h = prev_h.max(lh);
+            // CJK text is often set with 1.6–1.8 line height, so allow up
+            // to ~0.9 line heights between wrapped lines...
+            let mut max_gap = h * 0.9;
+            // ...but once a block has a line spacing, a clearly larger gap
+            // is a paragraph break,
+            if let Some(spacing) = b.spacing {
+                max_gap = max_gap.min(spacing + h * 0.3);
+            }
+            // and a previous line that stops well short of the block's
+            // right edge ended its paragraph (wrapped lines fill the width).
+            if right(&b.last) < right(&b.bbox) - h * 1.5 {
+                max_gap = max_gap.min(h * 0.25);
+            }
+            // Wrapped lines share the left edge (or the centre, for
+            // centred text); a line starting elsewhere is another column.
+            let center = |r: &BBox| r[0] + r[2] / 2.0;
+            let aligned = (lb[0] - b.bbox[0]).abs() <= h * 1.5
+                || (center(&lb) - center(&b.last)).abs() <= h * 1.5;
             // Lines on the same row (gap negative) belong together only
             // when they also overlap horizontally; otherwise they are
             // separate columns / UI labels.
-            if gap <= max_gap && gap >= -prev_h * 0.5 && size_ratio <= 1.3 && overlap > 0.0 {
+            if gap <= max_gap
+                && gap >= -prev_h * 0.5
+                && size_ratio <= 1.2
+                && overlap > 0.0
+                && aligned
+            {
                 target = Some(i);
                 break;
             }
@@ -136,6 +165,9 @@ pub fn group_lines(lines: &[OcrLine]) -> Vec<TextBlock> {
         match target {
             Some(i) => {
                 let b = &mut blocks[i];
+                if b.spacing.is_none() {
+                    b.spacing = Some((lb[1] - bottom(&b.last)).max(0.0));
+                }
                 b.bbox = union(&b.bbox, &lb);
                 b.last = lb;
                 b.lines.push(line);
@@ -143,6 +175,7 @@ pub fn group_lines(lines: &[OcrLine]) -> Vec<TextBlock> {
             None => blocks.push(Building {
                 bbox: lb,
                 last: lb,
+                spacing: None,
                 lines: vec![line],
             }),
         }
@@ -423,6 +456,32 @@ mod tests {
         assert_eq!(blocks.len(), 2);
         assert_eq!(blocks[0].text, "First paragraph.");
         assert_eq!(blocks[1].text, "Second paragraph.");
+    }
+
+    #[test]
+    fn paragraph_break_is_detected_from_line_spacing() {
+        // Tall boxes (PP-OCR style) make the absolute gap rule too loose;
+        // the jump from ~0 px line spacing to 11 px must still split.
+        let lines = vec![
+            line("first line of para one", 20.0, 63.0, 730.0, 21.0),
+            line("second line of para one", 20.0, 83.0, 460.0, 24.0),
+            line("para two", 22.0, 118.0, 738.0, 21.0),
+        ];
+        let blocks = group_lines(&lines);
+        assert_eq!(blocks.len(), 2);
+        assert_eq!(blocks[1].text, "para two");
+    }
+
+    #[test]
+    fn wide_paragraph_does_not_swallow_a_right_column() {
+        let lines = vec![
+            line("wide paragraph spanning the page", 20.0, 100.0, 740.0, 20.0),
+            line("left column", 30.0, 125.0, 340.0, 18.0),
+            line("right column", 420.0, 120.0, 340.0, 18.0),
+        ];
+        let blocks = group_lines(&lines);
+        let right = blocks.iter().find(|b| b.text.contains("right")).unwrap();
+        assert_eq!(right.text, "right column");
     }
 
     #[test]
