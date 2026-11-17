@@ -25,6 +25,8 @@ export type Field =
       unit?: string;
       /** Render as a slider with the value next to it. */
       slider?: boolean;
+      /** Shown instead of the number when the value is 0 (e.g. 無期限). */
+      zeroLabel?: string;
     }
   | { kind: 'color'; path: string; label: string; help?: string }
   | { kind: 'hotkey'; path: string; label: string; help?: string };
@@ -161,6 +163,75 @@ export const SECTIONS: Section[] = [
     ]
   },
   {
+    id: 'popup',
+    title: '訳文ポップアップ',
+    description: 'ピン留めした範囲の訳文などを表示する小さな窓の見た目です。',
+    fields: [
+      {
+        kind: 'number',
+        path: 'overlay.font_size_px',
+        label: '文字の大きさ',
+        min: 10,
+        max: 28,
+        step: 1,
+        unit: 'px',
+        slider: true
+      },
+      {
+        kind: 'number',
+        path: 'overlay.line_height',
+        label: '行間',
+        min: 1.1,
+        max: 2,
+        step: 0.05,
+        unit: '倍',
+        slider: true
+      },
+      {
+        kind: 'number',
+        path: 'overlay.max_width_px',
+        label: '最大の幅',
+        min: 240,
+        max: 480,
+        step: 10,
+        unit: 'px',
+        slider: true
+      },
+      {
+        kind: 'number',
+        path: 'overlay.opacity',
+        label: '背景の不透明度',
+        help: '下げると後ろの画面が透けて見えます。',
+        min: 0.5,
+        max: 1,
+        step: 0.02,
+        slider: true
+      },
+      {
+        kind: 'number',
+        path: 'overlay.blur_px',
+        label: '背景のぼかし',
+        min: 0,
+        max: 40,
+        step: 1,
+        unit: 'px',
+        slider: true
+      },
+      {
+        kind: 'number',
+        path: 'overlay.auto_hide_ms',
+        label: '自動で閉じるまでの時間',
+        help: '訳文を表示してからこの時間で閉じます。ピン留め中とマウスを乗せている間は閉じません。0 で閉じない。',
+        min: 0,
+        max: 30000,
+        step: 500,
+        unit: 'ミリ秒',
+        slider: true,
+        zeroLabel: '閉じない'
+      }
+    ]
+  },
+  {
     id: 'clipboard',
     title: 'クリップボード',
     description: '結果を自動でクリップボードにコピーします。',
@@ -179,12 +250,30 @@ export const SECTIONS: Section[] = [
   {
     id: 'history',
     title: '履歴',
+    description: '履歴はこの端末にだけ保存されます。',
     fields: [
+      { kind: 'toggle', path: 'storage.keep_history', label: '翻訳の履歴を残す' },
       {
-        kind: 'toggle',
-        path: 'storage.keep_history',
-        label: '翻訳の履歴を残す',
-        help: '履歴はこの端末にだけ保存されます。'
+        kind: 'number',
+        path: 'storage.retention_days',
+        label: '残す期間',
+        help: 'これより古い履歴は自動で消えます。0 で無期限。',
+        min: 0,
+        max: 3650,
+        step: 1,
+        unit: '日',
+        zeroLabel: '無期限'
+      },
+      {
+        kind: 'number',
+        path: 'storage.max_entries',
+        label: '残す件数の上限',
+        help: '超えた分は古いものから消えます。0 で上限なし。',
+        min: 0,
+        max: 1000000,
+        step: 100,
+        unit: '件',
+        zeroLabel: '上限なし'
       }
     ]
   },
@@ -240,6 +329,36 @@ export const SECTIONS: Section[] = [
         max: 8,
         step: 1,
         slider: true
+      },
+      {
+        kind: 'number',
+        path: 'performance.cache_ttl_seconds',
+        label: '訳文を使い回す期間',
+        help: '同じ文章をもう一度選んだとき、この期間内なら前の訳文をすぐ表示します。0 で無期限（アプリを閉じるまで）。',
+        min: 0,
+        max: 604800,
+        step: 60,
+        unit: '秒',
+        zeroLabel: '無期限'
+      }
+    ]
+  },
+  {
+    id: 'advanced',
+    title: '詳細',
+    fields: [
+      {
+        kind: 'select',
+        path: 'privacy.log_level',
+        label: 'ログの詳しさ',
+        help: '不具合を調べるときだけ上げてください。ログはこの端末の中にだけ出力されます。',
+        options: [
+          { value: 'error', label: 'エラーのみ' },
+          { value: 'warn', label: '警告以上' },
+          { value: 'info', label: '標準' },
+          { value: 'debug', label: '詳細' },
+          { value: 'trace', label: 'すべて' }
+        ]
       }
     ]
   }
@@ -278,7 +397,7 @@ export function fieldMatches(field: Field, section: Section, query: string): boo
 export function changedPaths(a: any, b: any): string[] {
   return allFields()
     .map((f) => f.path)
-    .filter((p) => JSON.stringify(getPath(a, p)) !== JSON.stringify(getPath(b, p)));
+    .filter((p) => JSON.stringify(getPath(a, p) ?? null) !== JSON.stringify(getPath(b, p) ?? null));
 }
 
 /** The schema's default for a field (from the section's `default` block). */

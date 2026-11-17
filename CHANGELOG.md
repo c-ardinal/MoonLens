@@ -34,6 +34,13 @@ the project adheres to [SemVer](https://semver.org/).
 
 ### Changed
 
+- Settings that were stored but ignored now work and are on the settings
+  screen: history retention (`storage.retention_days`, `max_entries`;
+  applied on every save, at startup and when settings change), log level
+  (`privacy.log_level`, unless `RUST_LOG` is set), translation-cache
+  lifetime (`performance.cache_ttl_seconds`), and the popup's look
+  (`overlay.font_size_px`, `line_height`, `max_width_px`, `opacity`,
+  `blur_px`, `saturation`, `auto_hide_ms`).
 - Settings screen rebuilt. It showed raw JSON for every section (the
   generated schema form never followed `$ref`), overflowing the window by
   2,000+ px. Settings are now grouped (翻訳 / モデル / ショートカット /

@@ -19,7 +19,12 @@ function defaultTomlPaths(): Set<string> {
 describe('settings-meta', () => {
   it('only offers fields that exist in the settings struct', () => {
     const known = defaultTomlPaths();
-    for (const f of allFields()) expect(known, f.path).toContain(f.path);
+    // Optional fields (Option<T>) have no line in default.toml.
+    const schemaRs = readFileSync('src-tauri/src/settings/schema.rs', 'utf8');
+    for (const f of allFields()) {
+      const key = f.path.split('.').pop()!;
+      expect(known.has(f.path) || schemaRs.includes(`pub ${key}: Option<`), f.path).toBe(true);
+    }
   });
 
   it('never surfaces cloud / network switches', () => {

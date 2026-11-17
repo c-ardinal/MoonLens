@@ -37,9 +37,8 @@ pub async fn set_settings(
     state.pipeline.rebuild_providers();
     // Hotkey bindings might have changed; re-register atomically.
     hotkey::reapply(&app).map_err(|e| e.to_string())?;
-    // Let every window (overlay, subtitle, lens) apply theme / font size
-    // changes without a restart.
-    let _ = app.emit("moonlens://settings-changed", &*state.settings.snapshot());
+    // Windows learn about the change from the settings subscriber in app.rs
+    // (moonlens://settings-changed).
     Ok(())
 }
 

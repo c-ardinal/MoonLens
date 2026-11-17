@@ -12,9 +12,12 @@
   let { field, value, defaultValue, onChange }: Props = $props();
 
   const id = $derived(`f-${field.path.replace(/\./g, '-')}`);
-  const isDefault = $derived(
-    defaultValue === undefined || JSON.stringify(value) === JSON.stringify(defaultValue)
-  );
+  // f32 defaults arrive as 0.9200000166893005; null and missing are the same.
+  const same = (a: any, b: any) =>
+    typeof a === 'number' && typeof b === 'number'
+      ? Math.abs(a - b) < 1e-6
+      : JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+  const isDefault = $derived(defaultValue === undefined || same(value, defaultValue));
 
   function fmt(n: number) {
     if (field.kind !== 'number') return String(n);
@@ -24,7 +27,9 @@
 
   function clamp(n: number) {
     if (field.kind !== 'number' || Number.isNaN(n)) return value;
-    return Math.min(field.max, Math.max(field.min, n));
+    const v = Math.min(field.max, Math.max(field.min, n));
+    // Integer settings (u32 on the Rust side) must not receive 2.5.
+    return Number.isInteger(field.step) ? Math.round(v) : v;
   }
 </script>
 
@@ -76,21 +81,27 @@
           value={value ?? field.min}
           oninput={(e) => onChange(Number((e.currentTarget as HTMLInputElement).value))}
         />
-        <span class="w-20 text-right text-sm tabular-nums text-ink-muted">
-          {fmt(value ?? field.min)}{field.unit ? ` ${field.unit}` : ''}
+        <span class="w-24 text-right text-sm tabular-nums text-ink-muted">
+          {#if field.zeroLabel && !value}
+            {field.zeroLabel}
+          {:else}
+            {fmt(value ?? field.min)}{field.unit ? ` ${field.unit}` : ''}
+          {/if}
         </span>
       {:else}
         <input
           {id}
           type="number"
-          class="w-24 rounded-ml-sm border border-border bg-surface px-2 py-1 text-sm"
+          class="w-28 rounded-ml-sm border border-border bg-surface px-2 py-1 text-right text-sm tabular-nums"
           min={field.min}
           max={field.max}
           step={field.step}
-          value={value ?? ''}
+          value={value ?? 0}
           onchange={(e) => onChange(clamp(Number((e.currentTarget as HTMLInputElement).value)))}
         />
-        {#if field.unit}<span class="text-sm text-ink-muted">{field.unit}</span>{/if}
+        <span class="w-16 text-sm text-ink-muted">
+          {field.zeroLabel && !value ? field.zeroLabel : (field.unit ?? '')}
+        </span>
       {/if}
     {:else if field.kind === 'color'}
       <input

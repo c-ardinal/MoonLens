@@ -120,6 +120,8 @@ impl Pipeline {
         // A different model or prompt must not be masked by old output.
         self.clear_translation_cache();
         let s = self.settings.snapshot();
+        self.cache
+            .set_ttl_secs(u64::from(s.performance.cache_ttl_seconds));
         let mut map: HashMap<String, ProviderHandle> = HashMap::new();
         let empty = serde_json::Value::Object(Default::default());
         let sink = self.chunk_sink.read().clone();
@@ -630,6 +632,13 @@ impl Pipeline {
                 .append(kind, source_text, result_text, provider, via_cloud, None)
         {
             tracing::warn!("history append failed: {e}");
+        }
+        // Settings → 履歴: retention period and entry cap.
+        if let Err(e) = self
+            .storage
+            .apply_retention(s.storage.retention_days, s.storage.max_entries)
+        {
+            tracing::warn!("history retention failed: {e}");
         }
     }
 }

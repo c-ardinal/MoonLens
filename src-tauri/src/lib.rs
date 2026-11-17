@@ -27,10 +27,38 @@ pub mod storage;
 pub mod subtitle;
 pub mod translation_cache;
 
-use tracing_subscriber::{fmt, EnvFilter};
+use std::sync::OnceLock;
+
+use tracing_subscriber::{fmt, prelude::*, reload, EnvFilter, Registry};
+
+/// Swaps the log filter when Settings → privacy.log_level changes.
+static LOG_FILTER: OnceLock<reload::Handle<EnvFilter, Registry>> = OnceLock::new();
 
 pub fn run() {
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
-    fmt().with_env_filter(filter).init();
+    let (filter, handle) = reload::Layer::new(filter);
+    tracing_subscriber::registry()
+        .with(filter)
+        .with(fmt::layer())
+        .init();
+    let _ = LOG_FILTER.set(handle);
     app::build().expect("failed to build Tauri app");
+}
+
+/// Apply the configured log level. `RUST_LOG`, when set, still wins so
+/// developers keep their own filter.
+pub fn apply_log_level(level: settings::schema::LogLevel) {
+    if std::env::var_os("RUST_LOG").is_some() {
+        return;
+    }
+    let directive = match level {
+        settings::schema::LogLevel::Trace => "trace",
+        settings::schema::LogLevel::Debug => "debug",
+        settings::schema::LogLevel::Info => "info",
+        settings::schema::LogLevel::Warn => "warn",
+        settings::schema::LogLevel::Error => "error",
+    };
+    if let Some(handle) = LOG_FILTER.get() {
+        let _ = handle.modify(|f| *f = EnvFilter::new(directive));
+    }
 }
