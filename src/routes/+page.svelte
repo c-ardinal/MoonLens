@@ -62,8 +62,6 @@
       unlisteners.push(await onSettingsChanged(applySettings));
       unlisteners.push(
         await onHotkey((action) => {
-          if (action === 'toggle_subtitle_failed')
-            lastError = 'ライブ字幕の開始に失敗。';
           if (action === 'toggle_pin_overlay_empty')
             lastError = 'ピン留め対象なし。先に範囲翻訳を実行してください。';
         })

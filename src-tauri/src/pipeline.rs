@@ -770,6 +770,9 @@ fn builtin_provider(
         }
         "deepl" => Arc::new(DeepLTranslator::new(id, cfg)),
         "gemini" => Arc::new(GeminiProvider::new(id, cfg)),
+        crate::providers::asr_local::LOCAL_ASR_ID => Arc::new(
+            crate::providers::asr_local::LocalWhisperProvider::new(id, cfg, use_gpu),
+        ),
         id if id.starts_with("whisper_cpp.") => Arc::new(WhisperCppProvider::new(id, cfg)),
         "ocrs" => Arc::new(OcrsProvider::new(id, cfg)),
         "ppocr" => Arc::new(crate::providers::ocr_ppocr::PpOcrProvider::new(id, cfg)),

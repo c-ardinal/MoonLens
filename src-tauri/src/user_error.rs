@@ -7,8 +7,8 @@
 //!
 //! | code              | meaning                                    |
 //! | ----------------- | ------------------------------------------ |
-//! | `model_missing`   | a translation / OCR / assistant model is not downloaded |
-//! | `asr_unavailable` | the speech recognition engine cannot be reached |
+//! | `model_missing`   | a translation / OCR / assistant / speech model is not downloaded |
+//! | `asr_unavailable` | no speech recognition provider, or its server cannot be reached |
 //! | `cpu_unsupported` | the CPU cannot run the bundled engine      |
 //! | `timeout`         | a step took longer than its time limit     |
 //! | `network`         | a download could not reach the server      |
@@ -30,7 +30,7 @@ pub fn provider(e: &ProviderError, cap: Capability) -> String {
             Capability::Explain | Capability::Summarize => {
                 coded("model_missing", format!("説明用モデル未導入：{what}"))
             }
-            Capability::Asr => coded("asr_unavailable", "音声認識エンジン未導入"),
+            Capability::Asr => coded("model_missing", format!("音声認識モデル未導入：{what}")),
             _ => coded("model_missing", format!("翻訳モデル未導入：{what}")),
         },
         ProviderError::Timeout(ms) if *ms > 0 => coded(

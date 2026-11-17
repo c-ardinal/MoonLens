@@ -15,7 +15,7 @@ MoonLens が導入から削除までの各段階で遭遇するケースと、�
 | --- | --- | --- |
 | 設定 `config.toml`（変更値のみ）・`config.default.toml`（既定値の参照用） | `~/.config/io.moonlens.app`／`~/Library/Application Support/io.moonlens.app`／`%APPDATA%\io.moonlens.app` | Windows（NSIS）：「アプリデータ削除」選択時に削除。deb／rpm／AppImage／dmg：残る |
 | 履歴 DB・プラグイン | `~/.local/share/io.moonlens.app`／同上／`%APPDATA%\io.moonlens.app` | 同上 |
-| モデル（GGUF・OCR） | `~/.local/share/io.moonlens.app/models`／`~/Library/Application Support/io.moonlens.app/models`／`%LOCALAPPDATA%\io.moonlens.app\models` | 同上 |
+| モデル（GGUF・OCR・音声認識） | `~/.local/share/io.moonlens.app/models`／`~/Library/Application Support/io.moonlens.app/models`／`%LOCALAPPDATA%\io.moonlens.app\models` | 同上 |
 
 設定画面「データ」に実際のパスと使用容量を表示する。
 
@@ -44,6 +44,8 @@ MoonLens が導入から削除までの各段階で遭遇するケースと、�
 | S-9 | ダウンロード中に設定画面を離れる | ダウンロード継続。戻ると「中止」ボタンと進捗が再表示 | OK | `downloading` 状態を一覧に含む |
 | S-10 | macOS：画面収録・アクセシビリティ権限未許可 | 初回のみ権限案内を表示 | 要実機 | `MacOnboarding` |
 | S-11 | ショートカットが他アプリと重複 | 登録できたものは有効。失敗分はホームに通知（設定へのリンク付き）。起動時も表示 | 修正 | 二重起動テストで通知生成を確認（以前はログのみ） |
+| S-12 | 音声認識モデル未導入でライブ字幕を開始（ボタン・コマンドパレット） | 「音声認識モデル未導入：Whisper large-v3-turbo」＋「モデル準備」。字幕ウィンドウは開かない | 修正 | `SubtitleService::preflight`、`user_error` |
+| S-13 | 同上をショートカット・トレイから開始 | ホームに同じ通知を残し、メインウィンドウで設定のモデル欄を表示 | 修正 | `SubtitleService::toggle_checked`（以前はウィンドウが開き、3 回失敗するまでエラー表示） |
 
 ## 3. 日常利用
 
@@ -58,8 +60,8 @@ MoonLens が導入から削除までの各段階で遭遇するケースと、�
 | D-7 | 翻訳が制限時間を超過 | 「制限時間（15 秒）超過。範囲を縮小して再試行」 | 修正 | `user_error` |
 | D-8 | 選択画面からピン留め | 選択画面を閉じ、範囲に重ならない位置に訳文ポップアップを表示し、変化時に再翻訳 | 修正 | 以前はポップアップが非表示のままで結果が見えなかった。`overlay::tests::prefers_below_then_above_then_right` |
 | D-9 | ピン留め中のポップアップが監視範囲に重なる | 発生させない（重なると自己キャプチャで再翻訳が止まらない） | 修正 | 同上（下→上→右の順に配置） |
-| D-10 | ライブ字幕：音声認識サーバー（whisper.cpp）未起動 | 開始時に「音声認識サーバー未接続：http://127.0.0.1:9002」で中止。字幕ウィンドウを開かない | 修正 | 以前は字幕ウィンドウが開き、数秒ごとに英語エラーを表示し続けた |
-| D-11 | ライブ字幕：途中で音声認識が連続失敗 | 3 回連続で失敗したら停止しウィンドウを閉じる | 修正 | `subtitle.rs` |
+| D-10 | ライブ字幕：音声認識 | アプリ内蔵の whisper.cpp で実行（外部サーバー不要）。開始時にモデルを先読みし、停止時に解放（約 1 GB） | 修正 | `asr_local.rs`。以前は whisper.cpp の HTTP サーバーを別途起動する必要があった。外部サーバーは任意のプロバイダーとして残し、チェーンに入れた場合は未起動時に「音声認識サーバー未接続：…」で中止 |
+| D-11 | ライブ字幕：途中で音声認識が連続失敗 | 3 回連続で失敗したら停止しウィンドウを閉じる | OK | `subtitle.rs` |
 | D-12 | ライブ字幕：ループバック音声デバイスなし（macOS で BlackHole 等未導入） | 「音声取得の開始失敗：…」 | OK | `audio.rs` |
 | D-13 | 履歴検索 | 全履歴を対象に検索（以前は最新 500 件内のみ） | 修正 | `storage::tests::search_reaches_beyond_the_recent_window` |
 | D-14 | メインウィンドウを閉じる（×・Alt+F4・Cmd+W） | トレイに常駐継続。トレイ・ショートカットで再表示可能 | 修正 | 以前はウィンドウが破棄され、トレイの「表示」が無反応になった |
@@ -67,6 +69,10 @@ MoonLens が導入から削除までの各段階で遭遇するケースと、�
 | D-16 | アプリ終了 | トレイ「終了」、コマンドパレット「MoonLens 終了」 | 修正 | パレットに追加（トレイ非対応環境向け） |
 | D-17 | スリープ復帰・ディスプレイ構成変更 | 次回選択時にカーソル位置のモニターを再取得 | 要実機 | `selector::show_with` は毎回モニター一覧を取得 |
 | D-18 | 外部への送信 | モデルのダウンロードとユーザーが開いたリンク以外なし | 修正 | リバース画像検索の既定チェーン（Google／Bing／Yandex）を削除、クラウド全体スイッチ既定をオフ |
+| D-19 | ライブ字幕：認識が音声の速度に追いつかない（GPU なしの低速 PC など） | 音声を取りこぼさない。溜まった分を次回まとめて認識（最大 28 秒）し、遅延は増えても欠落しない | 修正 | 以前は認識中の音声を 0.3〜1 秒分しか保持できず、残りを破棄していた。`FRAME_QUEUE`、`MAX_WINDOW_SAMPLES` |
+| D-20 | ライブ字幕：無音・ごく小さな音 | 認識しない（Whisper が無音から「ご視聴ありがとうございました」等を生成するのを防ぐ） | 修正 | `subtitle::tests::silence_gate` |
+| D-21 | ライブ字幕：GPU 初期化失敗 | CPU で読み込み直して継続 | 修正 | `asr_local::engine::open`。GPU 実機は未確認（要実機） |
+| D-22 | ライブ字幕：音声の言語「自動判定」 | 言語判定は数チャンクごとに実施し、間は直前の判定結果を使用（判定のたびに処理時間が倍になるため） | 修正 | `REDETECT_EVERY` |
 
 ## 4. カスタマイズ
 
@@ -83,13 +89,14 @@ MoonLens が導入から削除までの各段階で遭遇するケースと、�
 | C-9 | `config.toml` から一部セクションを削除 | 削除部分は同梱の既定値（以前は空のチェーン等になり OCR が動かなくなった） | 修正 | `missing_sections_and_keys_come_from_default_toml` |
 | C-10 | 保存中のクラッシュ・電源断 | 一時ファイル経由の置換で、半端な `config.toml` を残さない | 修正 | `write_atomic` |
 | C-11 | 使用中モデルを削除 | 2 段階確認（「使用中。削除確定」）。削除後はホームの初回セットアップ案内が再表示 | 修正 | `LocalModels.svelte.test.ts` |
+| C-12 | 音声認識モデルの切替・削除 | 設定のモデル欄で切替（次のチャンクから反映）。削除は 2 段階確認、読み込み中のモデルは解放してから削除 | 修正 | `AsrModels.svelte.test.ts`、`whisper_models::remove` |
 
 ## 5. アップデート
 
 | # | ケース | 期待動作 | 状態 | 確認 |
 | --- | --- | --- | --- | --- |
 | U-1 | 新版で既定値が変わる | 未変更の項目は新しい既定値に自動追従（変更値のみ保存のため） | 修正 | `overrides_toml` |
-| U-2 | 旧版の誤った既定値（Ollama モデル名・3 秒タイムアウト・OCR チェーン・LLM チェーン・リバース画像検索） | 旧既定値のままの項目だけ更新、ユーザー変更値は維持 | 修正 | `migrate` テスト |
+| U-2 | 旧版の誤った既定値（Ollama モデル名・3 秒タイムアウト・OCR チェーン・LLM チェーン・リバース画像検索・外部 whisper.cpp サーバーの音声認識チェーン） | 旧既定値のままの項目だけ更新、ユーザー変更値は維持 | 修正 | `migrate` テスト |
 | U-3 | 一度だけ適用すべき移行（クラウド全体スイッチをオフ） | `config_version` で一度だけ適用。適用後にユーザーがオンにした値は維持 | 修正 | `current_files_keep_a_deliberate_cloud_switch` |
 | U-4 | 旧版のモデル保存先（`<データ>/moonlens/models`、Windows は移動プロファイルの `%APPDATA%`） | 初回起動時に新保存先へ移動（再ダウンロード不要）。別ボリュームで移動不可なら旧保存先を継続使用 | 修正 | `ocr_ocrs::tests::legacy_models_folder_is_moved_once` |
 | U-5 | カタログから外れた旧モデルファイル | モデル欄に「旧モデル・不要ファイル」として容量付きで表示、個別削除可 | 修正 | `llm_models::tests::orphans_are_model_files_the_catalog_does_not_own` |
@@ -108,5 +115,5 @@ MoonLens が導入から削除までの各段階で遭遇するケースと、�
 
 ## 既知の課題（本表作成時点）
 
-- **ライブ字幕の音声認識が外部サーバー依存**：whisper.cpp の HTTP サーバーを別途起動する必要がある。翻訳（llama.cpp 内蔵）と同様にアプリ内蔵化するのが前提に沿う。現状は D-10／D-11 で失敗時の挙動を明確化。
+- **ライブ字幕の遅延（GPU なし）**：既定の Whisper large-v3-turbo は 30 秒の窓を毎回処理するため、CPU のみでは 1 チャンクの認識に数秒〜十数秒かかる（4 コアのクラウド VM で約 14 秒）。音声は欠落しないが字幕は遅れる。GPU（Metal／Vulkan／CUDA）では大幅に短縮される見込み（未計測）。低速 PC 向けに Whisper small（約 3 倍速、日本語の精度は低下）を用意。詳細は [asr-models.md](asr-models.md)。
 - **ocrs モデルの整合性検証なし**：PP-OCRv5 と LLM はハッシュ固定だが、ocrs（英語のみの予備エンジン）は配布元がハッシュを公開していない。

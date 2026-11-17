@@ -13,7 +13,10 @@ use crate::{
     overlay,
     pipeline::{CaptureFlowResult, TaskResult, LOCAL_ASSIST_ID, LOCAL_LLM_ID},
     plugins::PluginDescriptor,
-    providers::{llm_models, ocr_ocrs, Capability, TaskInput},
+    providers::{
+        asr_local::LOCAL_ASR_ID, llm_models, model_store, ocr_ocrs, whisper_models, Capability,
+        TaskInput,
+    },
     selector,
     settings::schema::Settings,
     user_error,
@@ -722,6 +725,120 @@ pub async fn select_llm_model(
     Ok(())
 }
 
+/// Speech recognition models for live subtitles, with install state,
+/// plus the one the built-in engine uses.
+#[derive(serde::Serialize)]
+pub struct AsrModels {
+    pub selected: String,
+    pub dir: String,
+    pub models: Vec<whisper_models::AsrModelStatus>,
+}
+
+fn asr_dir() -> Result<PathBuf, String> {
+    whisper_models::default_models_dir().ok_or_else(|| "no data dir".to_string())
+}
+
+fn asr_config(settings: &Settings) -> serde_json::Value {
+    settings
+        .providers
+        .configs
+        .get(LOCAL_ASR_ID)
+        .cloned()
+        .unwrap_or_else(|| serde_json::json!({}))
+}
+
+#[tauri::command]
+pub async fn list_asr_models(state: State<'_, AppState>) -> Result<AsrModels, String> {
+    let dir = asr_dir()?;
+    let s = state.settings.snapshot();
+    Ok(AsrModels {
+        selected: whisper_models::selected(&asr_config(&s)).id.to_string(),
+        dir: dir.display().to_string(),
+        models: whisper_models::status(&dir),
+    })
+}
+
+/// Download (or resume) a speech model. Progress is emitted as
+/// `moonlens://asr-model-progress`.
+#[tauri::command]
+pub async fn install_asr_model(id: String, app: AppHandle) -> Result<String, String> {
+    let dir = asr_dir()?;
+    let m = whisper_models::find(&id).ok_or_else(|| format!("unknown model {id}"))?;
+    let need = model_store::bytes_still_needed(&dir, &m.pinned());
+    if let Some(free) = model_store::free_space(&dir) {
+        if free < need + model_store::FREE_SPACE_MARGIN {
+            return Err(user_error::coded(
+                "disk_full",
+                format!(
+                    "空き容量不足：必要 {:.1} GB／空き {:.1} GB",
+                    (need + model_store::FREE_SPACE_MARGIN) as f64 / 1e9,
+                    free as f64 / 1e9
+                ),
+            ));
+        }
+    }
+    let cb: Box<model_store::ProgressCb> = Box::new(move |id, downloaded, total| {
+        let fraction = if total == 0 {
+            0.0
+        } else {
+            (downloaded as f32 / total as f32).clamp(0.0, 1.0)
+        };
+        let _ = app.emit(
+            "moonlens://asr-model-progress",
+            LlmProgress {
+                id: id.to_string(),
+                downloaded,
+                total,
+                fraction,
+            },
+        );
+    });
+    let path = whisper_models::install(&dir, &id, Some(&*cb))
+        .await
+        .map_err(|e| {
+            if e.to_string() == "cancelled" {
+                "cancelled".to_string()
+            } else {
+                user_error::download(&e)
+            }
+        })?;
+    Ok(path.display().to_string())
+}
+
+#[tauri::command]
+pub async fn cancel_asr_download(id: String) -> Result<bool, String> {
+    Ok(model_store::cancel(&id))
+}
+
+#[tauri::command]
+pub async fn delete_asr_model(id: String) -> Result<(), String> {
+    let dir = asr_dir()?;
+    tokio::task::spawn_blocking(move || whisper_models::remove(&dir, &id))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())
+}
+
+/// Use speech model `id` for live subtitles. Persisted to config.toml;
+/// takes effect from the next chunk.
+#[tauri::command]
+pub async fn select_asr_model(id: String, state: State<'_, AppState>) -> Result<(), String> {
+    whisper_models::find(&id).ok_or_else(|| format!("unknown model {id}"))?;
+    let mut next = (*state.settings.snapshot()).clone();
+    let cfg = next
+        .providers
+        .configs
+        .entry(LOCAL_ASR_ID.to_string())
+        .or_insert_with(|| serde_json::json!({}));
+    if !cfg.is_object() {
+        *cfg = serde_json::json!({});
+    }
+    cfg["model"] = serde_json::Value::String(id);
+    state.settings.save(next).map_err(|e| e.to_string())?;
+    state.pipeline.rebuild_providers();
+    Ok(())
+}
+
 /// Pick a `.moonlens-plugin` archive (or a plugin directory) with the
 /// platform's native file picker and install it. Returns the new plugin
 /// root on success; returns Ok(None) when the user cancels the dialog.
@@ -920,7 +1037,9 @@ pub async fn start_subtitle(app: AppHandle, state: State<'_, AppState>) -> Resul
     state
         .subtitle
         .start(app)
-        .map_err(|e| user_error::coded("error", format!("音声取得の開始失敗：{e:#}")))
+        .map_err(|e| user_error::coded("error", format!("音声取得の開始失敗：{e:#}")))?;
+    crate::notices::clear("subtitle_unavailable");
+    Ok(())
 }
 
 /// Describes which first-run guidance the UI should show. Exposed as a

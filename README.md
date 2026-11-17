@@ -19,7 +19,7 @@ PC常駐の Google Lens 風ツール。1つのグローバルホットキーで
 - **QR**: `rqrr` crate
 - **翻訳 (local)**: 内蔵 llama.cpp（`llama-cpp-2`、静的リンク）で GGUF を実行。翻訳の既定は PLaMo 3 Translate 2B（0.8B も選択可）、説明・要約は Gemma 4 E4B。モデルはアプリのホーム画面からダウンロード（SHA-256 検証・中断再開）。モデル選定の根拠は [docs/translation-models.md](docs/translation-models.md)
 - **翻訳 (cloud / Ollama)**: DeepL / Gemini API、Ollama は任意のオプション（既定チェーンには入っていない）
-- **ASR**: `whisper.cpp` HTTP サーバ（別途起動が必要。未接続時はライブ字幕の開始時に案内）
+- **ASR**: 内蔵 whisper.cpp（`src-tauri/vendor/whisper.cpp`、llama.cpp と ggml・GPU バックエンドを共有して静的リンク）。既定モデルは Whisper large-v3-turbo（small も選択可）。モデルは設定の「モデル」からダウンロード（SHA-256 検証・中断再開）。選定の根拠は [docs/asr-models.md](docs/asr-models.md)。外部の whisper.cpp サーバーも任意のプロバイダーとして利用可
 - **画面キャプチャ**: `xcap` 0.9、**音声ループバック**: `cpal`
 - **履歴**: `rusqlite`（SQLite、bundled）
 - **プラグイン**: WebAssembly Component Model (`wasmtime`) と JSON-RPC サイドカー
@@ -105,8 +105,8 @@ sticky_session_ms = 30000
   （llama.cpp を git から取得しており、パスが 260 文字を超えるため）
 - 翻訳モデルはアプリ起動後、ホーム画面の「翻訳モデル」からダウンロードする
   （保存先: `<データディレクトリ>/moonlens/models/llm`）
-
-- （字幕用）`whisper.cpp` サーバを `http://127.0.0.1:9002` で待機させる
+- （字幕用）音声認識モデルも設定の「モデル」からダウンロードする
+  （保存先: `<データディレクトリ>/io.moonlens.app/models/whisper`）
 
 ### 初回
 

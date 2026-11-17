@@ -30,6 +30,11 @@ the project adheres to [SemVer](https://semver.org/).
   it.
 - Pinning from the selector showed nothing (the floating overlay stayed
   hidden). Pinned results now appear beside the region, never over it.
+- Live subtitles dropped audio while a chunk was being recognized (the
+  capture queue held under a second), and decoded silence into stock
+  phrases. The queue now holds ~40 s, a backlog is recognized in one
+  window, and silent chunks are skipped. Starting from a shortcut or the
+  tray now runs the same model check as the start button.
 - Live subtitles without a whisper.cpp server opened the subtitle window
   and repeated an English error every few seconds. Starting now checks the
   server first, and three failures in a row stop the subtitles.
@@ -129,6 +134,14 @@ the project adheres to [SemVer](https://semver.org/).
   fully local and does not hand text to web services.
 
 ### Added
+
+- Live subtitles recognize speech with a built-in whisper.cpp; no
+  external server has to be started. Whisper large-v3-turbo (default)
+  and small are downloaded from the settings model list (SHA-256 pinned,
+  resumable). whisper.cpp shares ggml with the built-in llama.cpp, so
+  the GPU backends of the translation engine serve it too, with a CPU
+  fallback. An external whisper.cpp server stays available as an
+  optional provider.
 
 - Overlay typography closer to the source: centred headings stay
   centred (alignment inferred from the OCR line edges), bold source text
