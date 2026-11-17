@@ -32,7 +32,7 @@
       const [ocr, llm] = await Promise.all([ocrModelsStatus(), listLlmModels()]);
       const out: string[] = [];
       if (!llm.models.find((m) => m.id === llm.selected)?.installed) out.push('翻訳モデル');
-      if (!ocr.ppocr) out.push('文字認識（OCR）モデル');
+      if (!ocr.ppocr) out.push('OCR モデル');
       missing = out;
     } catch {
       missing = [];
@@ -52,9 +52,9 @@
       unlisteners.push(
         await onHotkey((action) => {
           if (action === 'toggle_subtitle_failed')
-            lastError = 'ライブ字幕を開始できませんでした。';
+            lastError = 'ライブ字幕の開始に失敗。';
           if (action === 'toggle_pin_overlay_empty')
-            lastError = 'ピン留めする範囲がありません。先に範囲を選んで翻訳してください。';
+            lastError = 'ピン留め対象なし。先に範囲翻訳を実行してください。';
         })
       );
       unlisteners.push(
@@ -86,9 +86,9 @@
 
 <main class="mx-auto flex max-w-3xl flex-col gap-4 px-4 py-6 sm:gap-5 sm:px-6">
   <header>
-    <h1 class="text-xl font-semibold tracking-tight">画面をその場で翻訳</h1>
+    <h1 class="text-xl font-semibold tracking-tight">ホーム</h1>
     <p class="text-sm text-ink-muted">
-      すべてこの端末の中で処理します。翻訳先: {languageLabel(targetLanguage) || targetLanguage}
+      全処理ローカル実行／翻訳先：{languageLabel(targetLanguage) || targetLanguage}
       <a href="/settings/" class="ml-1 text-accent underline-offset-2 hover:underline">変更</a>
     </p>
   </header>
@@ -100,49 +100,49 @@
       <div class="flex min-w-0 gap-2">
         <AlertCircle class="mt-0.5 h-4 w-4 shrink-0 text-accent" />
         <p class="text-sm">
-          はじめに{missing.join('と')}のダウンロードが必要です。
+          初回セットアップ：{missing.join('・')}のダウンロードが必要。
         </p>
       </div>
       <button
         class="shrink-0 self-start rounded-ml-sm bg-accent px-3 py-1.5 text-sm font-medium text-white sm:self-auto"
         onclick={() => goto('/settings/#section-models')}
       >
-        モデルを準備する
+        モデル準備
       </button>
     </section>
   {/if}
 
   <section class="rounded-ml border border-border bg-surface-elevated p-4 shadow-ml sm:p-5">
-    <h2 class="text-base font-semibold">画面を翻訳</h2>
+    <h2 class="text-base font-semibold">画面翻訳</h2>
     <p class="text-sm text-ink-muted">
-      画面を止めて、文字の上に訳文を重ねて表示します。どのアプリからでもショートカットで呼び出せます。
+      画面を静止し、原文の位置に訳文を重ねて表示。全アプリからショートカットで起動可能。
     </p>
     <div class="mt-4 grid gap-2 sm:grid-cols-2">
       <button
         class="flex items-center justify-between gap-3 rounded-ml-sm bg-accent px-4 py-2.5 text-left text-sm font-medium text-white shadow-ml transition hover:opacity-90"
         onclick={() => attempt(() => startRegionSelection(false))}
       >
-        <span class="flex items-center gap-2"><Camera class="h-4 w-4 shrink-0" />範囲を選んで翻訳</span>
+        <span class="flex items-center gap-2"><Camera class="h-4 w-4 shrink-0" />範囲翻訳</span>
         {#if key('capture_region')}<kbd class="font-mono text-xs opacity-80">{key('capture_region')}</kbd>{/if}
       </button>
       <button
         class="flex items-center justify-between gap-3 rounded-ml-sm border border-border bg-surface px-4 py-2.5 text-left text-sm font-medium transition hover:border-accent/60"
         onclick={() => attempt(() => startRegionSelection(true))}
       >
-        <span class="flex items-center gap-2"><Maximize class="h-4 w-4 shrink-0" />画面全体を翻訳</span>
+        <span class="flex items-center gap-2"><Maximize class="h-4 w-4 shrink-0" />全画面翻訳</span>
         {#if key('capture_window')}<kbd class="font-mono text-xs text-ink-faint">{key('capture_window')}</kbd>{/if}
       </button>
     </div>
     <div class="mt-3 flex flex-col gap-2 border-t border-border pt-3 sm:flex-row sm:items-center sm:justify-between">
       <p class="text-xs text-ink-muted">
-        Lens ウィンドウ: 動画の字幕やゲーム画面など、同じ場所を続けて翻訳したいときに。
+        Lens ウィンドウ：動画字幕・ゲーム画面など定位置の継続翻訳用。
       </p>
       <button
         class="inline-flex shrink-0 items-center gap-2 self-start rounded-ml-sm border border-border bg-surface px-3 py-1.5 text-sm text-ink-muted transition hover:border-accent/60 hover:text-ink sm:self-auto"
         onclick={() => attempt(newLensWindow)}
       >
         <Focus class="h-4 w-4" />
-        Lens ウィンドウを開く
+        Lens ウィンドウ
       </button>
     </div>
   </section>
@@ -161,7 +161,7 @@
             </span>
           {/if}
         </h2>
-        <p class="text-sm text-ink-muted">パソコンで再生中の音声を文字起こしして、翻訳を字幕で表示します。</p>
+        <p class="text-sm text-ink-muted">システム音声を文字起こし・翻訳して字幕表示。</p>
         {#if subtitlePreview}
           <p class="mt-2 line-clamp-2 text-xs break-words text-ink-faint">{subtitlePreview}</p>
         {/if}
@@ -201,7 +201,6 @@
   {/if}
 
   <p class="text-xs text-ink-faint">
-    {#if key('open_command_palette')}<kbd class="font-mono">{key('open_command_palette')}</kbd> でコマンドパレット。{/if}
-    ショートカットは<a href="/settings/#section-hotkeys" class="underline-offset-2 hover:underline">設定</a>で変更できます。
+    {#if key('open_command_palette')}<kbd class="font-mono">{key('open_command_palette')}</kbd>：コマンドパレット　{/if}ショートカット変更：<a href="/settings/#section-hotkeys" class="underline-offset-2 hover:underline">設定</a>
   </p>
 </main>

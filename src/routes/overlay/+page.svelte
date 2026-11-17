@@ -233,7 +233,7 @@
         aria-pressed={pinned}
         disabled={!sourceRect && !pinned}
         onclick={togglePin}
-        title={pinned ? 'ピン解除' : 'ピン留め: 同じ領域を自動再翻訳'}
+        title={pinned ? 'ピン留め解除' : 'ピン留め（変化時に自動再翻訳）'}
       >
         <Pin class="h-4 w-4 {pinned ? 'text-accent' : 'text-ink-faint'}" />
       </button>
@@ -262,6 +262,6 @@
     >{translation}</p>
     <ActionRibbon {intent} onAction={onRibbonAction} />
   {:else}
-    <p class="text-sm text-ink-faint">ショートカットで範囲を選ぶと、ここに訳文が出ます。</p>
+    <p class="text-sm text-ink-faint">範囲翻訳の結果を表示。</p>
   {/if}
 </section>

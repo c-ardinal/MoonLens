@@ -42,13 +42,13 @@ export const SECTIONS: Section[] = [
   {
     id: 'translation',
     title: '翻訳',
-    description: '画面翻訳とライブ字幕の訳し方。',
+    description: '画面翻訳・ライブ字幕の共通設定。',
     fields: [
       {
         kind: 'select',
         path: 'subtitle.target_language',
-        label: '翻訳先の言語',
-        help: '画面の翻訳とライブ字幕の両方に使います。範囲選択のツールバーでもその場で切り替えられます。',
+        label: '翻訳先言語',
+        help: '画面翻訳・ライブ字幕に共通。範囲選択ツールバーでも一時変更可能。',
         options: LANGUAGE_OPTIONS
       }
     ]
@@ -56,58 +56,58 @@ export const SECTIONS: Section[] = [
   {
     id: 'models',
     title: 'モデル',
-    description: '翻訳・説明・文字認識のモデルは端末に保存され、すべて端末内で動きます。',
+    description: '全モデルをローカル保存・ローカル実行。',
     component: 'models'
   },
   {
     id: 'hotkeys',
     title: 'ショートカット',
-    description: 'どのアプリを使っていても効くキー操作です。欄をクリックして新しいキーを押すと変更できます。',
+    description: '全アプリ共通のグローバルショートカット。欄をクリック後、キー入力で変更。',
     fields: [
       {
         kind: 'hotkey',
         path: 'hotkeys.capture_region',
-        label: '範囲を選んで翻訳',
-        help: '画面を止めて、ドラッグした範囲をその場で翻訳します。'
+        label: '範囲翻訳',
+        help: '画面を静止し、ドラッグ範囲を翻訳。'
       },
       {
         kind: 'hotkey',
         path: 'hotkeys.capture_window',
-        label: '画面全体を翻訳',
-        help: 'カーソルのある画面をそのまま全部翻訳します。'
+        label: '全画面翻訳',
+        help: 'カーソル位置のディスプレイ全体を翻訳。'
       },
       {
         kind: 'hotkey',
         path: 'hotkeys.toggle_pin_overlay',
-        label: 'ピン留めの切り替え',
-        help: '直前に翻訳した範囲を見張り、内容が変わったら自動で訳し直します。'
+        label: 'ピン留め切替',
+        help: '直前の翻訳範囲を監視し、変化時に自動再翻訳。'
       },
-      { kind: 'hotkey', path: 'hotkeys.toggle_subtitle', label: 'ライブ字幕の開始・停止' },
+      { kind: 'hotkey', path: 'hotkeys.toggle_subtitle', label: 'ライブ字幕 開始／停止' },
       { kind: 'hotkey', path: 'hotkeys.open_command_palette', label: 'コマンドパレット' },
-      { kind: 'hotkey', path: 'hotkeys.open_history', label: '履歴を開く' }
+      { kind: 'hotkey', path: 'hotkeys.open_history', label: '履歴表示' }
     ]
   },
   {
     id: 'subtitle',
     title: 'ライブ字幕',
-    description: 'パソコンで再生中の音声を文字起こしして翻訳します。',
+    description: 'システム音声を文字起こし・翻訳して字幕表示。',
     fields: [
       {
         kind: 'select',
         path: 'subtitle.source_language',
-        label: '話されている言語',
+        label: '音声の言語',
         options: [{ value: 'auto', label: '自動判定' }, ...LANGUAGE_OPTIONS]
       },
       {
         kind: 'toggle',
         path: 'subtitle.show_original',
-        label: '原文も表示する',
-        help: '訳文の上に、聞き取った原文を小さく表示します。'
+        label: '原文表示',
+        help: '訳文の上に原文を併記。'
       },
       {
         kind: 'number',
         path: 'subtitle.font_size_px',
-        label: '文字の大きさ',
+        label: '文字サイズ',
         min: 14,
         max: 48,
         step: 1,
@@ -117,8 +117,8 @@ export const SECTIONS: Section[] = [
       {
         kind: 'number',
         path: 'subtitle.chunk_seconds',
-        label: '区切りの長さ',
-        help: '短いほど早く表示され、長いほど文脈がつながって訳が安定します。',
+        label: '分割長',
+        help: '短い：低遅延。長い：文脈保持・訳質安定。',
         min: 1,
         max: 10,
         step: 0.5,
@@ -128,8 +128,8 @@ export const SECTIONS: Section[] = [
       {
         kind: 'number',
         path: 'subtitle.overlap_seconds',
-        label: '区切りの重なり',
-        help: '区切りの境目で言葉が切れないよう、前の区切りと重ねて聞き取る長さです。',
+        label: '重複区間',
+        help: '分割境界での語の欠落防止用。',
         min: 0,
         max: 2,
         step: 0.1,
@@ -141,19 +141,19 @@ export const SECTIONS: Section[] = [
   {
     id: 'pin',
     title: 'ピン留め',
-    description: '翻訳した範囲をピン留めすると、内容の変化を見張って自動で訳し直します。',
+    description: 'ピン留め範囲の変化を検出し、自動再翻訳。',
     fields: [
       {
         kind: 'toggle',
         path: 'overlay.follow_source',
-        label: '変化を見張って自動で再翻訳',
-        help: 'オフにすると、ピン留めしても自動では訳し直しません。'
+        label: '自動再翻訳',
+        help: 'オフ時はピン留め中も再翻訳なし。'
       },
       {
         kind: 'number',
         path: 'performance.region_watcher_poll_ms',
-        label: '見張る間隔',
-        help: '短いほど早く反応し、CPU の負荷が上がります。',
+        label: '監視間隔',
+        help: '短いほど高応答・高 CPU 負荷。',
         min: 100,
         max: 2000,
         step: 50,
@@ -165,12 +165,12 @@ export const SECTIONS: Section[] = [
   {
     id: 'popup',
     title: '訳文ポップアップ',
-    description: 'ピン留めした範囲の訳文などを表示する小さな窓の見た目です。',
+    description: 'ピン留め結果などを表示する小型ウィンドウの外観。',
     fields: [
       {
         kind: 'number',
         path: 'overlay.font_size_px',
-        label: '文字の大きさ',
+        label: '文字サイズ',
         min: 10,
         max: 28,
         step: 1,
@@ -190,7 +190,7 @@ export const SECTIONS: Section[] = [
       {
         kind: 'number',
         path: 'overlay.max_width_px',
-        label: '最大の幅',
+        label: '最大幅',
         min: 240,
         max: 480,
         step: 10,
@@ -200,8 +200,7 @@ export const SECTIONS: Section[] = [
       {
         kind: 'number',
         path: 'overlay.opacity',
-        label: '背景の不透明度',
-        help: '下げると後ろの画面が透けて見えます。',
+        label: '背景不透明度',
         min: 0.5,
         max: 1,
         step: 0.02,
@@ -210,7 +209,7 @@ export const SECTIONS: Section[] = [
       {
         kind: 'number',
         path: 'overlay.blur_px',
-        label: '背景のぼかし',
+        label: '背景ぼかし',
         min: 0,
         max: 40,
         step: 1,
@@ -220,44 +219,44 @@ export const SECTIONS: Section[] = [
       {
         kind: 'number',
         path: 'overlay.auto_hide_ms',
-        label: '自動で閉じるまでの時間',
-        help: '訳文を表示してからこの時間で閉じます。ピン留め中とマウスを乗せている間は閉じません。0 で閉じない。',
+        label: '自動非表示',
+        help: '表示後、指定時間で非表示。ピン留め中・ホバー中は無効。0：無効。',
         min: 0,
         max: 30000,
         step: 500,
         unit: 'ミリ秒',
         slider: true,
-        zeroLabel: '閉じない'
+        zeroLabel: '無効'
       }
     ]
   },
   {
     id: 'clipboard',
     title: 'クリップボード',
-    description: '結果を自動でクリップボードにコピーします。',
+    description: '結果の自動コピー。',
     fields: [
-      { kind: 'toggle', path: 'clipboard.auto_copy_translation', label: '訳文をコピー' },
+      { kind: 'toggle', path: 'clipboard.auto_copy_translation', label: '訳文' },
       {
         kind: 'toggle',
         path: 'clipboard.auto_copy_source',
-        label: '原文をコピー',
-        help: '訳文のコピーもオンのときは、訳文がクリップボードに残ります。'
+        label: '原文',
+        help: '訳文と併用時は訳文を優先。'
       },
-      { kind: 'toggle', path: 'clipboard.auto_copy_qr', label: 'QR コードの中身をコピー' },
-      { kind: 'toggle', path: 'clipboard.auto_copy_transcript', label: 'ライブ字幕の文字起こしをコピー' }
+      { kind: 'toggle', path: 'clipboard.auto_copy_qr', label: 'QR コード内容' },
+      { kind: 'toggle', path: 'clipboard.auto_copy_transcript', label: 'ライブ字幕の文字起こし' }
     ]
   },
   {
     id: 'history',
     title: '履歴',
-    description: '履歴はこの端末にだけ保存されます。',
+    description: '履歴はローカルにのみ保存。',
     fields: [
-      { kind: 'toggle', path: 'storage.keep_history', label: '翻訳の履歴を残す' },
+      { kind: 'toggle', path: 'storage.keep_history', label: '履歴保存' },
       {
         kind: 'number',
         path: 'storage.retention_days',
-        label: '残す期間',
-        help: 'これより古い履歴は自動で消えます。0 で無期限。',
+        label: '保持期間',
+        help: '期間超過分を自動削除。0：無期限。',
         min: 0,
         max: 3650,
         step: 1,
@@ -267,13 +266,13 @@ export const SECTIONS: Section[] = [
       {
         kind: 'number',
         path: 'storage.max_entries',
-        label: '残す件数の上限',
-        help: '超えた分は古いものから消えます。0 で上限なし。',
+        label: '最大件数',
+        help: '超過分を古い順に自動削除。0：無制限。',
         min: 0,
         max: 1000000,
         step: 100,
         unit: '件',
-        zeroLabel: '上限なし'
+        zeroLabel: '無制限'
       }
     ]
   },
@@ -286,7 +285,7 @@ export const SECTIONS: Section[] = [
         path: 'appearance.theme',
         label: 'テーマ',
         options: [
-          { value: 'system', label: 'システムに合わせる' },
+          { value: 'system', label: 'システム設定' },
           { value: 'light', label: 'ライト' },
           { value: 'dark', label: 'ダーク' }
         ]
@@ -294,19 +293,19 @@ export const SECTIONS: Section[] = [
       {
         kind: 'select',
         path: 'appearance.density',
-        label: '表示の密度',
+        label: '表示密度',
         options: [
           { value: 'compact', label: 'コンパクト' },
           { value: 'normal', label: '標準' },
-          { value: 'comfortable', label: 'ゆったり' }
+          { value: 'comfortable', label: 'ワイド' }
         ]
       },
       { kind: 'color', path: 'appearance.accent', label: 'アクセントカラー' },
       {
         kind: 'toggle',
         path: 'appearance.reduced_motion',
-        label: '動きを減らす',
-        help: 'アニメーションを止めます。'
+        label: 'モーション軽減',
+        help: 'アニメーション無効化。'
       }
     ]
   },
@@ -317,14 +316,14 @@ export const SECTIONS: Section[] = [
       {
         kind: 'toggle',
         path: 'performance.use_gpu_if_available',
-        label: 'GPU を使う',
-        help: '使える GPU があれば翻訳に使います。変更は次の翻訳から反映されます。'
+        label: 'GPU 使用',
+        help: '利用可能な GPU で翻訳を高速化。次回翻訳時から適用。'
       },
       {
         kind: 'number',
         path: 'performance.max_concurrent_tasks',
-        label: '同時に翻訳する数',
-        help: '段落を一つずつ訳し直すときに、いくつ並行して処理するか。メモリが少ない PC では減らしてください。',
+        label: '並列翻訳数',
+        help: '段落単位の再翻訳時の同時処理数。低メモリ環境では減少推奨。',
         min: 1,
         max: 8,
         step: 1,
@@ -333,8 +332,8 @@ export const SECTIONS: Section[] = [
       {
         kind: 'number',
         path: 'performance.cache_ttl_seconds',
-        label: '訳文を使い回す期間',
-        help: '同じ文章をもう一度選んだとき、この期間内なら前の訳文をすぐ表示します。0 で無期限（アプリを閉じるまで）。',
+        label: '翻訳キャッシュ保持期間',
+        help: '同一文の再選択時、期間内なら前回の訳文を即時表示。0：アプリ終了まで。',
         min: 0,
         max: 604800,
         step: 60,
@@ -350,14 +349,14 @@ export const SECTIONS: Section[] = [
       {
         kind: 'select',
         path: 'privacy.log_level',
-        label: 'ログの詳しさ',
-        help: '不具合を調べるときだけ上げてください。ログはこの端末の中にだけ出力されます。',
+        label: 'ログレベル',
+        help: '不具合調査時のみ変更推奨。出力先はローカルのみ。',
         options: [
-          { value: 'error', label: 'エラーのみ' },
-          { value: 'warn', label: '警告以上' },
+          { value: 'error', label: 'エラー' },
+          { value: 'warn', label: '警告' },
           { value: 'info', label: '標準' },
           { value: 'debug', label: '詳細' },
-          { value: 'trace', label: 'すべて' }
+          { value: 'trace', label: 'トレース' }
         ]
       }
     ]

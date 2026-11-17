@@ -55,11 +55,11 @@
     {/if}
     <p class="mt-1 font-semibold leading-snug break-words" style="font-size: {fontSize}px">
       {#if status === 'idle'}
-        音声ループバック待機中…
+        音声入力待機中…
       {:else if status === 'error'}
-        エラー: {translated}
+        エラー：{translated}
       {:else}
-        {translated || '音声を聴き取り中…'}
+        {translated || '音声認識中…'}
       {/if}
     </p>
   </div>

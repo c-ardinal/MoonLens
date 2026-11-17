@@ -204,16 +204,16 @@ pub fn build() -> Result<()> {
 }
 
 fn build_tray(app: &AppHandle) -> Result<()> {
-    let open = MenuItem::with_id(app, "open", "MoonLens を開く", true, None::<&str>)?;
-    let capture = MenuItem::with_id(app, "capture", "キャプチャ (⌘⇧Space)", true, None::<&str>)?;
+    let open = MenuItem::with_id(app, "open", "MoonLens 表示", true, None::<&str>)?;
+    let capture = MenuItem::with_id(app, "capture", "範囲翻訳", true, None::<&str>)?;
     let lens = MenuItem::with_id(
         app,
         "new_lens",
-        "Lens ウィンドウを新規作成",
+        "Lens ウィンドウ新規作成",
         true,
         None::<&str>,
     )?;
-    let subtitle = MenuItem::with_id(app, "subtitle", "字幕オーバーレイ", true, None::<&str>)?;
+    let subtitle = MenuItem::with_id(app, "subtitle", "ライブ字幕 開始／停止", true, None::<&str>)?;
     let plugins = MenuItem::with_id(app, "plugins", "プラグイン", true, None::<&str>)?;
     let history = MenuItem::with_id(app, "history", "履歴", true, None::<&str>)?;
     let sep = tauri::menu::PredefinedMenuItem::separator(app)?;

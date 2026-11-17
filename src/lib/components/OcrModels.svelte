@@ -50,7 +50,7 @@
   <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
     <div class="min-w-0">
       <h3 class="flex flex-wrap items-center gap-2 text-base font-semibold">
-        文字認識（OCR）モデル
+        OCR モデル
         {#if status}
           {#if ready}
             <span class="inline-flex items-center gap-1 rounded-full bg-accent/15 px-2 py-0.5 text-xs font-normal text-accent">
@@ -62,7 +62,7 @@
         {/if}
       </h3>
       <p class="text-sm text-ink-muted">
-        画面の文字を読み取るモデルです。日本語・中国語・英語用の PP-OCRv5（約 26 MB）と、英語用の ocrs（約 12 MB）を使います。
+        画面上の文字認識用。PP-OCRv5（日中英、約 26 MB）／ocrs（英語、約 12 MB）
       </p>
       {#if status && !ready}
         <ul class="mt-1 text-xs text-ink-muted">

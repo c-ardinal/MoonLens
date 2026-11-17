@@ -161,7 +161,7 @@ pub fn register_all(
         Ok(())
     } else {
         Err(anyhow::anyhow!(
-            "次のショートカットを登録できませんでした（他のアプリと重複しているか、形式が正しくありません）: {}",
+            "ショートカット登録失敗（他アプリとの重複、または形式不正）：{}",
             failed.join(", ")
         ))
     }
@@ -203,7 +203,7 @@ pub fn open_selector(app: &AppHandle, auto_full: bool) {
             overlay::emit(
                 &app,
                 OverlayEvent::Error {
-                    message: format!("画面キャプチャに失敗しました: {e}"),
+                    message: format!("画面キャプチャ失敗：{e}"),
                 },
             )
             .ok();

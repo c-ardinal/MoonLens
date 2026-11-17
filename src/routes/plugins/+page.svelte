@@ -34,7 +34,7 @@
       updates = await checkPluginUpdates();
       updatesChecked = true;
     } catch (e) {
-      installError = `更新チェック失敗: ${e}`;
+      installError = `更新確認に失敗：${e}`;
     } finally {
       checkingUpdates = false;
     }
@@ -63,10 +63,10 @@
     try {
       const result = await pickAndInstallPlugin();
       if (result) {
-        installMsg = `インストール完了: ${result}`;
+        installMsg = `インストール完了：${result}`;
         await refresh();
       } else {
-        installMsg = 'キャンセルされました。';
+        installMsg = 'キャンセル済み。';
       }
     } catch (e) {
       installError = String(e);
@@ -80,7 +80,7 @@
   <header class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
     <div>
       <h1 class="text-xl font-semibold tracking-tight">プラグイン</h1>
-      <p class="text-sm text-ink-muted">追加した拡張機能の有効・無効と、使う権限を確認できます。</p>
+      <p class="text-sm text-ink-muted">拡張機能の有効化・権限確認。</p>
     </div>
     <div class="flex items-center gap-2">
       {#if plugins.length > 0}
@@ -90,7 +90,7 @@
           disabled={checkingUpdates}
         >
           <RefreshCw class="h-4 w-4 {checkingUpdates ? 'animate-spin' : ''}" />
-          更新を確認
+          更新確認
         </button>
       {/if}
       <button
@@ -98,7 +98,7 @@
         onclick={install}
         disabled={installing}
       >
-        {installing ? 'インストール中…' : 'ファイルから追加'}
+        {installing ? 'インストール中…' : 'ファイル追加'}
       </button>
     </div>
   </header>
@@ -114,12 +114,12 @@
       <p
         class="rounded-ml border border-border bg-surface-elevated p-2 text-xs text-ink-muted"
       >
-        全てのプラグインが最新です。
+        全プラグイン最新。
       </p>
     {:else}
       <section class="rounded-ml border border-accent/40 bg-accent-soft p-3">
         <h3 class="text-sm font-semibold text-accent">
-          {updates.length} 件の更新が利用可能
+          更新あり：{updates.length} 件
         </h3>
         <ul class="mt-2 space-y-2">
           {#each updates as u (u.plugin_id)}
@@ -162,11 +162,11 @@
     <div
       class="rounded-ml border border-dashed border-border bg-surface-elevated p-8 text-center text-ink-muted"
     >
-      まだプラグインがありません。
+      プラグインなし。
       <br />
-      「ファイルから追加」で .moonlens-plugin ファイルを読み込むか、
+      「ファイル追加」で .moonlens-plugin を読込、または
       <code class="font-mono text-xs break-all">$APPDATA/plugins/&lt;id&gt;/plugin.toml</code>
-      に配置してください。
+      に配置。
     </div>
   {:else}
     <ul class="flex flex-col gap-3">
@@ -189,7 +189,7 @@
               </p>
               {#if p.provides.length}
                 <p class="mt-1 text-xs text-ink-muted">
-                  提供: {p.provides.join(', ')}
+                  提供機能：{p.provides.join(', ')}
                 </p>
               {/if}
               {#if p.permissions_summary.length}
@@ -203,7 +203,7 @@
           <label class="relative inline-flex shrink-0 cursor-pointer items-center">
             <input
               type="checkbox"
-              aria-label="{p.name} を有効にする"
+              aria-label="{p.name}：有効化"
               class="peer sr-only"
               checked={p.enabled}
               onchange={(e) => toggle(p, (e.target as HTMLInputElement).checked)}

@@ -32,28 +32,28 @@
     {
       id: 'screen_capture',
       title: '画面収録',
-      description: 'OCR とライブ字幕のスクリーン取得に必要です。',
+      description: 'OCR・ライブ字幕の画面取得に必須。',
       icon: Monitor,
       detectable: true
     },
     {
       id: 'accessibility',
       title: 'アクセシビリティ',
-      description: 'グローバルホットキーで他アプリ前面からキャプチャを開始するために必要です。',
+      description: '他アプリ使用中のショートカット起動に必須。',
       icon: MousePointer,
       detectable: true
     },
     {
       id: 'microphone',
       title: 'マイク',
-      description: '音声ループバック以外のマイク入力(自分の声の書き起こしなど)に必要です。',
+      description: 'マイク入力の文字起こしに必須。',
       icon: Mic,
       detectable: false
     },
     {
       id: 'input_monitoring',
       title: '入力モニタリング',
-      description: 'ホットキーが他アプリ中でも安定して動作するために必要です。',
+      description: 'ショートカットの安定動作に必須。',
       icon: Keyboard,
       detectable: false
     }
@@ -111,15 +111,15 @@
     >
       <header class="flex items-start justify-between gap-3">
         <div>
-          <h2 class="text-base font-semibold">macOS の権限を許可してください</h2>
+          <h2 class="text-base font-semibold">macOS の権限設定</h2>
           <p class="mt-1 text-sm text-ink-muted">
-            MoonLens の中核機能は OS 権限に依存します。各項目からシステム設定を開き、MoonLens にチェックを入れてください。
+            主要機能に OS 権限が必要。各項目からシステム設定を開き、MoonLens を許可。
           </p>
         </div>
         <button
           class="inline-flex items-center gap-1.5 rounded-ml-sm border border-border bg-surface px-2 py-1 text-xs text-ink-muted hover:border-accent/60 hover:text-ink"
           onclick={refreshNow}
-          title="権限状態を再確認"
+          title="権限状態の再確認"
         >
           <RefreshCw class="h-3.5 w-3.5" />
           再確認
@@ -169,7 +169,7 @@
                   class="rounded-ml-sm bg-accent px-3 py-1 text-xs font-medium text-white hover:opacity-90"
                   onclick={requestScreenCapture}
                 >
-                  許可をリクエスト
+                  許可要求
                 </button>
               {/if}
               <button
@@ -188,7 +188,7 @@
           class="rounded-ml-sm bg-accent px-3 py-1.5 text-sm font-medium text-white"
           onclick={dismiss}
         >
-          完了 / 後で
+          完了／後で設定
         </button>
       </footer>
     </div>

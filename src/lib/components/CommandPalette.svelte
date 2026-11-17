@@ -64,30 +64,30 @@
   const commands: Command[] = $derived([
     {
       id: 'capture',
-      label: '範囲を選んで翻訳',
+      label: '範囲翻訳',
       hint: hint('capture_region'),
       icon: Camera,
       run: () => runCapture(false)
     },
     {
       id: 'capture-full',
-      label: '画面全体を翻訳',
+      label: '全画面翻訳',
       hint: hint('capture_window'),
       icon: Maximize,
       run: () => runCapture(true)
     },
-    { id: 'lens', label: 'Lens ウィンドウを開く', icon: Focus, run: runOpenLens },
+    { id: 'lens', label: 'Lens ウィンドウ', icon: Focus, run: runOpenLens },
     {
       id: 'subtitle',
-      label: subtitleRunning ? 'ライブ字幕を停止' : 'ライブ字幕を開始',
+      label: subtitleRunning ? 'ライブ字幕 停止' : 'ライブ字幕 開始',
       hint: hint('toggle_subtitle'),
       icon: subtitleRunning ? MicOff : Mic,
       run: toggleSub
     },
-    { id: 'home', label: 'ホームを開く', icon: Home, run: go('/') },
-    { id: 'settings', label: '設定を開く', icon: SettingsIcon, run: go('/settings/') },
-    { id: 'history', label: '履歴を開く', hint: hint('open_history'), icon: History, run: go('/history/') },
-    { id: 'plugins', label: 'プラグインを管理', icon: Puzzle, run: go('/plugins/') }
+    { id: 'home', label: 'ホーム', icon: Home, run: go('/') },
+    { id: 'settings', label: '設定', icon: SettingsIcon, run: go('/settings/') },
+    { id: 'history', label: '履歴', hint: hint('open_history'), icon: History, run: go('/history/') },
+    { id: 'plugins', label: 'プラグイン管理', icon: Puzzle, run: go('/plugins/') }
   ]);
 
   const filtered = $derived(
@@ -169,7 +169,7 @@
       <input
         autofocus
         bind:value={q}
-        placeholder="コマンドを検索…"
+        placeholder="コマンド検索"
         class="w-full rounded-t-ml border-b border-border bg-transparent px-4 py-3 text-sm focus:outline-none"
       />
       <ul class="scrollbar-minimal max-h-80 overflow-auto">
@@ -190,7 +190,7 @@
             </button>
           </li>
         {:else}
-          <li class="px-4 py-6 text-center text-sm text-ink-faint">該当するコマンドなし</li>
+          <li class="px-4 py-6 text-center text-sm text-ink-faint">該当なし</li>
         {/each}
       </ul>
       {#if error}
