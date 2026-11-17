@@ -130,13 +130,6 @@ the project adheres to [SemVer](https://semver.org/).
 
 ### Added
 
-- Glossary and Japanese style (設定 → 翻訳). Glossary entries fix how a
-  term is translated, per target language; only terms found in the text
-  are sent with a request. The style picks 敬体 (です・ます) or 常体
-  (だ・である) for Japanese output. PLaMo 3 Translate receives both through
-  its native PFML3 `glossary` element and `form` attribute; chat models
-  (Gemma, Ollama) get them as one extra system-prompt paragraph. With an
-  empty glossary and the default style, prompts are unchanged.
 - Overlay typography closer to the source: centred headings stay
   centred (alignment inferred from the OCR line edges), bold source text
   (headings, buttons) is drawn bold (stroke-width estimate, separate
@@ -192,6 +185,13 @@ the project adheres to [SemVer](https://semver.org/).
   their context.
 - `cargo run --example ocr_bench -- <image>` prints OCR timings, lines
   and paragraph blocks for a screenshot.
+- Glossary and Japanese style (設定 → 翻訳). Glossary entries fix how a
+  term is translated, per target language; only terms found in the text
+  are sent with a request. The style picks 敬体 (です・ます) or 常体
+  (だ・である) for Japanese output. PLaMo 3 Translate receives both through
+  its native PFML3 `glossary` element and `form` attribute; chat models
+  (Gemma, Ollama) get them as one extra system-prompt paragraph. With an
+  empty glossary and the default style, prompts are unchanged.
 
 
 ### Changed

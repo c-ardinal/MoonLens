@@ -17,10 +17,10 @@ use crate::{
     intent, lang, layout,
     plugins::PluginRegistry,
     providers::{
-        asr_whisper::WhisperCppProvider, ocr_ocrs::OcrsProvider, qr_rqrr::RqrrProvider,
-        search_serpapi::BrowserSearchProvider, translate_deepl::DeepLTranslator,
-        translate_gemini::GeminiProvider, translate_llama::LlamaTranslator,
-        translate_ollama::OllamaTranslator, translate_opts::TranslateOptions, Capability, Intent,
+        asr_whisper::WhisperCppProvider, glossary::TranslateOptions, ocr_ocrs::OcrsProvider,
+        qr_rqrr::RqrrProvider, search_serpapi::BrowserSearchProvider,
+        translate_deepl::DeepLTranslator, translate_gemini::GeminiProvider,
+        translate_llama::LlamaTranslator, translate_ollama::OllamaTranslator, Capability, Intent,
         OcrLine, ProviderError, ProviderHandle, TaskInput, TaskOutput,
     },
     settings::{

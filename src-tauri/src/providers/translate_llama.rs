@@ -17,9 +17,9 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 
+use super::glossary::{pfml3_form, pfml3_glossary, TranslateOptions};
 use super::lang::translation_prompt_with;
 use super::llm_models::{self, PromptStyle};
-use super::translate_opts::{pfml3_form, pfml3_glossary, TranslateOptions};
 use super::{Capability, Provider, ProviderError, TaskInput, TaskOutput};
 
 /// Per-chunk streaming callback `(delta, done)`, same contract as the

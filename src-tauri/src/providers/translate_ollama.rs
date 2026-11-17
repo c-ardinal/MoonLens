@@ -17,8 +17,8 @@ use async_trait::async_trait;
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 
+use super::glossary::{pfml3_form, pfml3_glossary, TranslateOptions};
 use super::lang::translation_prompt_with;
-use super::translate_opts::{pfml3_form, pfml3_glossary, TranslateOptions};
 use super::{Capability, Provider, ProviderError, TaskInput, TaskOutput};
 
 /// Default local model. Chosen by the benchmark in

@@ -214,7 +214,7 @@ impl Default for ClipboardSettings {
 /* ------------------------------- translation ----------------------------- */
 
 /// User preferences applied to every translation, whichever local model
-/// runs it (see `providers::translate_opts`).
+/// runs it (see `providers::glossary`).
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(default, deny_unknown_fields)]
 pub struct TranslationSettings {

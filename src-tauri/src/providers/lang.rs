@@ -5,7 +5,7 @@
 //! "from ja to en", and a literal "from auto" confuses small models, so
 //! every LLM provider renders its prompt through [`translation_prompt`].
 
-use super::translate_opts::TranslateOptions;
+use super::glossary::TranslateOptions;
 
 /// English display name for a language code, or `None` when unknown.
 /// Region / script suffixes (`zh-Hant`, `pt-BR`) are honoured where they
