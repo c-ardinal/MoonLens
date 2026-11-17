@@ -140,3 +140,51 @@ export function joinedText(blocks: LensBlock[], which: 'translation' | 'source')
     .filter(Boolean)
     .join('\n\n');
 }
+
+/**
+ * Apply a partially streamed translation to the blocks that were sent
+ * to the translator. Blocks already in the target language were left out
+ * of the request, so paragraphs map onto the remaining blocks in order.
+ */
+export function applyStreaming(blocks: LensBlock[], text: string): LensBlock[] {
+  const pending = blocks.map((b, i) => (b.same_language ? -1 : i)).filter((i) => i >= 0);
+  const parts = splitStreaming(text, pending.length);
+  const out = blocks.slice();
+  pending.forEach((bi, k) => {
+    if (parts[k] != null) out[bi] = { ...out[bi], translation: parts[k] };
+  });
+  return out;
+}
+
+/** Target languages offered in the selector's toolbar. */
+export const LANGUAGES: { code: string; label: string }[] = [
+  { code: 'ja', label: '日本語' },
+  { code: 'en', label: '英語' },
+  { code: 'zh-Hans', label: '中国語（簡体）' },
+  { code: 'zh-Hant', label: '中国語（繁体）' },
+  { code: 'ko', label: '韓国語' },
+  { code: 'fr', label: 'フランス語' },
+  { code: 'de', label: 'ドイツ語' },
+  { code: 'es', label: 'スペイン語' },
+  { code: 'pt', label: 'ポルトガル語' },
+  { code: 'it', label: 'イタリア語' },
+  { code: 'ru', label: 'ロシア語' },
+  { code: 'vi', label: 'ベトナム語' },
+  { code: 'th', label: 'タイ語' },
+  { code: 'id', label: 'インドネシア語' }
+];
+
+/** Display name for a language tag, falling back to the tag itself. */
+export function languageLabel(code: string | null | undefined): string {
+  if (!code) return '';
+  const exact = LANGUAGES.find((l) => l.code.toLowerCase() === code.toLowerCase());
+  if (exact) return exact.label;
+  const primary = code.split(/[-_]/)[0].toLowerCase();
+  if (primary === 'zh') return '中国語';
+  return LANGUAGES.find((l) => l.code === primary)?.label ?? code;
+}
+
+/** True when every block was already in the target language. */
+export function allSameLanguage(blocks: LensBlock[]): boolean {
+  return blocks.length > 0 && blocks.every((b) => b.same_language);
+}

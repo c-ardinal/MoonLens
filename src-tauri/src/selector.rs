@@ -21,6 +21,7 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize};
 
 use crate::capture::{self, rect};
+use crate::pipeline::CaptureFlowResult;
 
 /// A full-monitor screenshot taken when the selector opened.
 pub struct FrozenFrame {
@@ -31,6 +32,10 @@ pub struct FrozenFrame {
 }
 
 static FROZEN: Mutex<Option<Arc<FrozenFrame>>> = Mutex::new(None);
+
+/// The last analysed selection, kept so the selector can re-translate it
+/// into another language without running OCR again.
+static LAST_ANALYSIS: Mutex<Option<CaptureFlowResult>> = Mutex::new(None);
 
 /// Payload of the `moonlens://selector-frame` event.
 #[derive(Debug, Clone, Serialize)]
@@ -108,6 +113,7 @@ pub fn show_with(app: &AppHandle, auto_full: bool) -> Result<()> {
         height: image.height(),
         auto_full,
     };
+    *LAST_ANALYSIS.lock() = None;
     *FROZEN.lock() = Some(Arc::new(FrozenFrame {
         monitor_index: index,
         image,
@@ -145,9 +151,22 @@ pub fn take_crop(r: Option<FrameRect>) -> Result<(Vec<u8>, FrameRect, usize)> {
     Ok((png, r, frame.monitor_index))
 }
 
+/// Remember an analysed (not yet translated) selection for
+/// [`last_analysis`].
+pub fn remember_analysis(bundle: &CaptureFlowResult) {
+    *LAST_ANALYSIS.lock() = Some(bundle.clone());
+}
+
+/// The selection last passed to [`remember_analysis`], if the selector is
+/// still showing it.
+pub fn last_analysis() -> Option<CaptureFlowResult> {
+    LAST_ANALYSIS.lock().clone()
+}
+
 /// Hide the selector and release the frozen frame.
 pub fn hide(app: &AppHandle) -> Result<()> {
     *FROZEN.lock() = None;
+    *LAST_ANALYSIS.lock() = None;
     if let Some(win) = app.get_webview_window("selector") {
         win.hide()?;
     }

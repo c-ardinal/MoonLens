@@ -21,6 +21,7 @@
     onOverlay,
     pinOverlay,
     processFrozenSelection,
+    retranslateSelection,
     runExplain,
     runReverseImageSearch,
     type CaptureFlowResult,
@@ -30,12 +31,15 @@
   } from '$lib/ipc';
   import { extractText } from '$lib/result';
   import {
+    LANGUAGES,
+    allSameLanguage,
+    applyStreaming,
     blockCssRect,
     dragRect,
     fitFontSize,
     joinedText,
+    languageLabel,
     rgb,
-    splitStreaming,
     toCssRect,
     toFrameRect,
     toolbarPosition,
@@ -72,6 +76,19 @@
   let runId = 0;
   let toolbarEl = $state<HTMLElement | null>(null);
   let toolbarSize = $state({ width: 360, height: 44 });
+  // Target language picked in the toolbar. Remembered per machine so the
+  // next selection uses it too; null = the configured default.
+  const LANG_KEY = 'moonlens.selector.targetLanguage';
+  let chosenLang = $state<string | null>(readChosenLang());
+  const targetLang = $derived(result?.target_language ?? chosenLang ?? 'ja');
+
+  function readChosenLang(): string | null {
+    try {
+      return localStorage.getItem(LANG_KEY);
+    } catch {
+      return null;
+    }
+  }
 
   const unlisteners: UnlistenFn[] = [];
 
@@ -124,15 +141,45 @@
     notice = '';
     phase = 'processing';
     try {
-      const r = await processFrozenSelection(css ? crop : null);
+      const r = await processFrozenSelection(css ? crop : null, chosenLang);
       if (id !== runId) return;
-      result = r;
-      if (r.source_rect) crop = { x: r.source_rect.x, y: r.source_rect.y, w: r.source_rect.w, h: r.source_rect.h };
-      blocks = r.blocks ?? [];
-      phase = 'result';
-      if (r.intent !== 'qr' && blocks.length === 0) {
-        notice = 'テキストが見つかりませんでした。範囲を変えてもう一度ドラッグしてください。';
-      }
+      showResult(r);
+    } catch (e) {
+      if (id === runId) fail(e);
+    }
+  }
+
+  function showResult(r: CaptureFlowResult) {
+    result = r;
+    if (r.source_rect) crop = { x: r.source_rect.x, y: r.source_rect.y, w: r.source_rect.w, h: r.source_rect.h };
+    blocks = r.blocks ?? [];
+    phase = 'result';
+    if (r.intent !== 'qr' && blocks.length === 0) {
+      notice = 'テキストが見つかりませんでした。範囲を変えてもう一度ドラッグしてください。';
+    } else if (allSameLanguage(blocks)) {
+      flash(`すでに${languageLabel(r.target_language)}です。ツールバーで訳す言語を変えられます`, 4000);
+    }
+  }
+
+  /** Toolbar language switch: re-translate the same OCR result. */
+  async function changeLanguage(code: string) {
+    if (!result || code === targetLang) return;
+    chosenLang = code;
+    try {
+      localStorage.setItem(LANG_KEY, code);
+    } catch {
+      /* storage unavailable: keep the choice for this session only */
+    }
+    const id = ++runId;
+    streamed = '';
+    explanation = null;
+    notice = '';
+    showOriginal = false;
+    phase = 'processing';
+    try {
+      const r = await retranslateSelection(code);
+      if (id !== runId) return;
+      showResult(r);
     } catch (e) {
       if (id === runId) fail(e);
     }
@@ -191,11 +238,11 @@
 
   // ---- actions ----------------------------------------------------------
 
-  function flash(msg: string) {
+  function flash(msg: string, ms = 1800) {
     notice = msg;
     setTimeout(() => {
       if (notice === msg) notice = '';
-    }, 1800);
+    }, ms);
   }
 
   async function copyAll() {
@@ -224,7 +271,7 @@
     explanation = '説明を生成中…';
     showPanel = true;
     try {
-      const r = await runExplain(`次のテキストの内容を日本語で簡潔に説明してください:\n\n${src}`);
+      const r = await runExplain(`次のテキストの内容を${languageLabel(targetLang) || '日本語'}で簡潔に説明してください:\n\n${src}`);
       explanation = extractText(r);
     } catch (e) {
       explanation = `説明に失敗しました: ${String(e)}`;
@@ -298,8 +345,7 @@
         await onOverlay((ev) => {
           if (ev.kind !== 'chunk' || phase !== 'processing' || blocks.length === 0) return;
           streamed += ev.delta;
-          const parts = splitStreaming(streamed, blocks.length);
-          blocks = blocks.map((b, i) => ({ ...b, translation: parts[i] ?? b.translation }));
+          blocks = applyStreaming(blocks, streamed);
         })
       );
     } catch {
@@ -383,7 +429,7 @@
       style="left: {cropCss.left}px; top: {cropCss.top}px; width: {cropCss.width}px; height: {cropCss.height}px"
     >
     {#each blocks as b, i (i)}
-      {#if b.bbox[2] > 0 && crop}
+      {#if b.bbox[2] > 0 && crop && !b.same_language}
         {@const r = blockCssRect(b, crop, scale)}
         <div
           role="presentation"
@@ -454,6 +500,21 @@
         >
           {#if showOriginal}<Eye class="h-4 w-4" />翻訳を表示{:else}<EyeOff class="h-4 w-4" />原文を表示{/if}
         </button>
+        <label class="tb lang" title="訳す言語">
+          <span class="opacity-70">{languageLabel(result?.source_language) || '自動'} →</span>
+          <select
+            style="width: calc({languageLabel(targetLang).length}em + 22px)"
+            value={targetLang}
+            onchange={(e) => changeLanguage((e.currentTarget as HTMLSelectElement).value)}
+          >
+            {#if !LANGUAGES.some((l) => l.code === targetLang)}
+              <option value={targetLang}>{languageLabel(targetLang)}</option>
+            {/if}
+            {#each LANGUAGES as l (l.code)}
+              <option value={l.code}>{l.label}</option>
+            {/each}
+          </select>
+        </label>
         <button class="tb" onclick={copyAll} title="コピー (Ctrl+C)"><ClipboardCopy class="h-4 w-4" />コピー</button>
         <button class="tb" aria-pressed={showPanel} onclick={() => (showPanel = !showPanel)} title="テキストを表示">
           <TextSelect class="h-4 w-4" />テキスト
@@ -471,7 +532,7 @@
   {/if}
 
   {#if notice && phase === 'result' && blocks.length > 0}
-    <div class="pill pointer-events-none absolute inset-x-0 bottom-8 mx-auto w-fit">{notice}</div>
+    <div class="pill pointer-events-none absolute inset-x-0 top-6 mx-auto w-fit">{notice}</div>
   {/if}
 
   <!-- Text panel: selectable source + translation, plus explanations. -->
@@ -490,8 +551,12 @@
           <section class="mb-4 rounded-lg bg-white/5 p-3 whitespace-pre-wrap">{explanation}</section>
         {/if}
         {#each blocks as b, i (i)}
-          <p class="mb-1 whitespace-pre-wrap">{b.translation ?? '（翻訳できませんでした）'}</p>
-          <p class="mb-4 whitespace-pre-wrap text-xs opacity-60">{b.source}</p>
+          {#if b.same_language}
+            <p class="mb-4 whitespace-pre-wrap">{b.source}</p>
+          {:else}
+            <p class="mb-1 whitespace-pre-wrap">{b.translation ?? '（翻訳できませんでした）'}</p>
+            <p class="mb-4 whitespace-pre-wrap text-xs opacity-60">{b.source}</p>
+          {/if}
         {/each}
       </div>
     </aside>
@@ -611,6 +676,17 @@
   }
   .tb[aria-pressed='true'] {
     background: rgba(139, 92, 246, 0.35);
+  }
+  .lang select {
+    background: transparent;
+    color: inherit;
+    border: none;
+    outline: none;
+    font: inherit;
+    cursor: pointer;
+  }
+  .lang select option {
+    color: #111;
   }
   .tb:disabled {
     opacity: 0.4;

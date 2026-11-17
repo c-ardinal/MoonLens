@@ -17,14 +17,14 @@ the project adheres to [SemVer](https://semver.org/).
   launch, and the KV cache of the shared prompt prefix is reused between
   requests. Metal on macOS; `llm-vulkan` / `llm-cuda` features are
   opt-in.
-
-### Changed
-
-- Default translate / explain / summarize chains are fully local
-  (`["llamacpp"]`, cloud and network disabled). Configs that still carry
-  the old seeded Ollama + cloud chains are moved to the built-in engine
-  automatically; the Ollama, DeepL and Gemini providers remain available
-  for anyone who adds them to a chain.
+- Target language in the selector. Text that is already in the target
+  language (detected from its script, plus English function words for
+  Latin text) and text without letters (prices, times) is no longer sent
+  to the translator and stays uncovered in the overlay, so a Japanese
+  screen no longer round-trips ja→ja. The toolbar shows the detected
+  source language and a target-language menu; changing it re-translates
+  the same OCR result without re-scanning, and the choice is remembered
+  for the next selection. New command `retranslate_selection`.
 
 - Japanese / Chinese OCR: new `ppocr` provider runs PP-OCRv5 mobile
   models (detection + recognition) on rten. It reads kana, kanji,
@@ -48,6 +48,15 @@ the project adheres to [SemVer](https://semver.org/).
   their context.
 - `cargo run --example ocr_bench -- <image>` prints OCR timings, lines
   and paragraph blocks for a screenshot.
+
+
+### Changed
+
+- Default translate / explain / summarize chains are fully local
+  (`["llamacpp"]`, cloud and network disabled). Configs that still carry
+  the old seeded Ollama + cloud chains are moved to the built-in engine
+  automatically; the Ollama, DeepL and Gemini providers remain available
+  for anyone who adds them to a chain.
 
 ### Fixed
 
