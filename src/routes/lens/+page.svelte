@@ -7,6 +7,7 @@
   import PrivacyBadge from '$lib/components/PrivacyBadge.svelte';
   import type { CaptureFlowResult } from '$lib/ipc';
   import { extractText } from '$lib/result';
+  import { errorText } from '$lib/errors';
 
   const params = new URLSearchParams(
     typeof window !== 'undefined' ? window.location.search : ''
@@ -57,7 +58,7 @@
       viaCloud = r.result.via_cloud;
       provider = r.result.used_provider;
     } catch (e) {
-      lastError = String(e);
+      lastError = errorText(e);
     } finally {
       busy = false;
     }

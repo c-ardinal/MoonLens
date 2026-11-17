@@ -1,6 +1,7 @@
 # MoonLens default configuration. Every setting has a default so partial
 # user overrides are safe. Delete any section you do not want to override.
 
+config_version = 1
 active_profile = "default"
 
 [appearance]
@@ -50,7 +51,8 @@ auto_copy_qr = true
 auto_copy_transcript = false
 
 [privacy]
-allow_cloud_globally = true
+# Cloud providers (deepl, gemini) are refused unless this is turned on.
+allow_cloud_globally = false
 show_privacy_indicator = true
 notify_on_fallback_to_cloud = true
 log_level = "info"
@@ -134,13 +136,15 @@ allow_network = false
 max_cost_per_request = 0.0
 sticky_session_ms = 60000
 
+# Reverse image search sends the image to a web service, so no built-in
+# provider is enabled (MoonLens is fully local). A plugin may add one.
 [providers.reverse_image_search]
-chain = ["browser.google_images", "browser.bing", "browser.yandex"]
+chain = []
 parallel_race = false
 fallback_on = ["error"]
 timeout_ms = 3000
-allow_cloud = true
-allow_network = true
+allow_cloud = false
+allow_network = false
 max_cost_per_request = 0.0
 sticky_session_ms = 0
 
@@ -239,15 +243,6 @@ det_threshold = 0.3
 box_threshold = 0.6
 unclip_ratio = 1.6
 min_confidence = 0.5
-
-[providers.configs."browser.google_images"]
-url_template = "https://www.google.com/searchbyimage?image_url={image_url}"
-
-[providers.configs."browser.bing"]
-url_template = "https://www.bing.com/images/search?view=detailv2&iss=sbi&q=imgurl:{image_url}"
-
-[providers.configs."browser.yandex"]
-url_template = "https://yandex.com/images/search?rpt=imageview&url={image_url}"
 
 # ---------------------------------------------------------------------------
 # Plugins. Enabled map is populated as users install plugins.

@@ -33,8 +33,8 @@ export type Field =
 
 export type Section =
   | { id: string; title: string; description?: string; fields: Field[] }
-  /** A section rendered by a dedicated component (model downloads). */
-  | { id: string; title: string; description?: string; component: 'models' };
+  /** A section rendered by a dedicated component. */
+  | { id: string; title: string; description?: string; component: 'models' | 'data' };
 
 const LANGUAGE_OPTIONS: Option[] = LANGUAGES.map((l) => ({ value: l.code, label: l.label }));
 
@@ -343,6 +343,12 @@ export const SECTIONS: Section[] = [
     ]
   },
   {
+    id: 'data',
+    title: 'データ',
+    description: '保存先と使用容量。アンインストール時の削除対象。',
+    component: 'data'
+  },
+  {
     id: 'advanced',
     title: '詳細',
     fields: [
@@ -397,6 +403,26 @@ export function changedPaths(a: any, b: any): string[] {
   return allFields()
     .map((f) => f.path)
     .filter((p) => JSON.stringify(getPath(a, p) ?? null) !== JSON.stringify(getPath(b, p) ?? null));
+}
+
+/**
+ * Hotkey fields that share a shortcut with another one. Only one of them
+ * could be registered, so the screen refuses to save such a set.
+ * Returns the paths involved (empty when all are distinct).
+ */
+export function duplicateHotkeys(settings: any): string[] {
+  const seen = new Map<string, string[]>();
+  for (const f of allFields()) {
+    if (f.kind !== 'hotkey') continue;
+    const v = String(getPath(settings, f.path) ?? '')
+      .trim()
+      .toLowerCase();
+    if (!v) continue;
+    const norm = v.split('+').map((k) => (k === 'cmdorctrl' ? 'commandorcontrol' : k));
+    const key = [...norm.slice(0, -1).sort(), norm[norm.length - 1]].join('+');
+    seen.set(key, [...(seen.get(key) ?? []), f.path]);
+  }
+  return [...seen.values()].filter((p) => p.length > 1).flat();
 }
 
 /** The schema's default for a field (from the section's `default` block). */

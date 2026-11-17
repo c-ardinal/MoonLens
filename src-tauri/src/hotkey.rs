@@ -21,6 +21,9 @@ use crate::{
     subtitle::SubtitleService,
 };
 
+/// Notice id for shortcuts that could not be registered.
+pub const NOTICE_HOTKEYS: &str = "hotkeys";
+
 pub fn register_all(
     app: &AppHandle,
     settings: Arc<SettingsStore>,
@@ -158,12 +161,21 @@ pub fn register_all(
         );
     }
     if failed.is_empty() {
+        crate::notices::clear(NOTICE_HOTKEYS);
         Ok(())
     } else {
-        Err(anyhow::anyhow!(
-            "ショートカット登録失敗（他アプリとの重複、または形式不正）：{}",
+        let msg = format!(
+            "ショートカット登録失敗（他アプリと重複、または形式不正）：{}",
             failed.join(", ")
-        ))
+        );
+        // Also shown on the home screen: at start-up nobody is looking
+        // at a log.
+        crate::notices::push(
+            NOTICE_HOTKEYS,
+            msg.clone(),
+            Some("/settings/#section-hotkeys"),
+        );
+        Err(anyhow::anyhow!(msg))
     }
 }
 

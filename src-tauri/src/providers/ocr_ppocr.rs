@@ -646,7 +646,7 @@ impl Provider for PpOcrProvider {
             if !models_installed(&self.models_dir) {
                 // Let the chain fall through to ocrs until the user
                 // installs the multilingual models.
-                return Err(ProviderError::LowConfidence);
+                return Err(ProviderError::NotInstalled("PP-OCRv5".into()));
             }
             let dir = self.models_dir.clone();
             let params = self.params;
