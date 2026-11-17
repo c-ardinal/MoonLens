@@ -104,9 +104,9 @@ sticky_session_ms = 30000
   Visual Studio Build Tools + LLVM）
 - Vulkan SDK（内蔵 llama.cpp を GPU で動かすため。Windows は LunarG の
   Vulkan SDK を入れて環境変数 `VULKAN_SDK` を通す。Linux は `libvulkan-dev`、
-  `glslc`、`spirv-headers`。macOS は Metal を使うので不要）。Windows で
-  `vulkan-shaders-gen` の install が `cmake_install.cmake` で失敗するときは、
-  Developer PowerShell で `$env:CMAKE_GENERATOR = "Ninja"` にしてビルドする
+  `glslc`、`spirv-headers`。macOS は Metal を使うので不要）。Windows では
+  llama.cpp の入れ子のビルドでパスが 260 文字を超えて失敗するため、
+  `$env:CARGO_TARGET_DIR = "C:\mlt"` のように短いビルド先を指定する
 - Windows では一度だけ `git config --global core.longpaths true` を実行する
   （llama.cpp を git から取得しており、パスが 260 文字を超えるため）
 - 翻訳モデルはアプリ起動後、ホーム画面の「翻訳モデル」からダウンロードする

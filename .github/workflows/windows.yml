@@ -52,16 +52,20 @@ jobs:
         with:
           cache: true
 
-      # The Visual Studio generator fails the install step of llama.cpp's
-      # vulkan-shaders-gen sub-build ("cmake_install.cmake: Not a file",
-      # MSB8066) with VS 2026 / CMake 4. Ninja in an MSVC developer shell
-      # builds it (and is faster).
+      # llama.cpp's Vulkan backend builds a nested CMake project
+      # (vulkan-shaders-gen) whose paths under the default target dir
+      # exceed MAX_PATH. Build with Ninja in an MSVC developer shell and a
+      # short target dir.
       - uses: ilammy/msvc-dev-cmd@v1
       - name: Use Ninja for CMake
         shell: bash
         run: |
           pip install ninja
           echo "CMAKE_GENERATOR=Ninja" >> "$GITHUB_ENV"
+          # llama.cpp's nested vulkan-shaders-gen build creates paths past
+          # MAX_PATH under the default target dir (link.exe LNK1104 on
+          # intermediate.manifest); keep the target dir short.
+          echo "CARGO_TARGET_DIR=D:/t" >> "$GITHUB_ENV"
 
       - name: Report Vulkan loader on the runner
         shell: bash
