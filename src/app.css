@@ -25,6 +25,12 @@ body,
 
 body {
   background: var(--ml-surface);
+  /* Japanese: wrap between phrases (文節) instead of mid-word where the
+     engine supports it (Chromium / WebView2), keep kinsoku rules, and
+     avoid single-character last lines. */
+  word-break: auto-phrase;
+  line-break: strict;
+  text-wrap: pretty;
 }
 
 ::selection {

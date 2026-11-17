@@ -73,7 +73,7 @@
   beforeNavigate((nav) => {
     if (changed.length > 0 && nav.type !== 'leave') {
       nav.cancel();
-      message = { kind: 'error', text: '移動する前に「保存」か「元に戻す」を選んでください。' };
+      message = { kind: 'error', text: '未保存の変更あり。「保存」または「元に戻す」を選択してください。' };
     }
   });
 
@@ -100,7 +100,7 @@
           /* storage unavailable */
         }
       }
-      message = { kind: 'ok', text: '保存しました' };
+      message = { kind: 'ok', text: '保存完了' };
     } catch (e) {
       // Saved, but e.g. a shortcut could not be registered.
       message = { kind: 'error', text: String(e).replace(/^Error:\s*/, '') };
@@ -129,7 +129,7 @@
   <header class="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
     <div>
       <h1 class="text-xl font-semibold tracking-tight">設定</h1>
-      <p class="text-sm text-ink-muted">変更は「保存」を押すとすぐに反映されます。</p>
+      <p class="text-sm text-ink-muted">保存時に即時反映。</p>
     </div>
     <div class="relative w-full sm:w-64">
       <Search class="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-faint" />
@@ -145,7 +145,7 @@
 
   {#if loadError}
     <p class="rounded-ml border border-red-500/50 bg-red-500/10 p-3 text-sm break-words text-red-500">
-      設定を読み込めませんでした: {loadError}
+      設定の読込に失敗：{loadError}
     </p>
   {:else if !draft || !schema}
     <p class="text-ink-faint">読み込み中…</p>
@@ -197,7 +197,7 @@
           </section>
         {:else}
           <p class="rounded-ml border border-dashed border-border p-6 text-center text-sm text-ink-muted">
-            「{query}」に一致する設定はありません。
+            「{query}」：該当なし
           </p>
         {/each}
       </div>
@@ -217,7 +217,7 @@
         {#if message && changed.length === 0}
           {message.text}
         {:else}
-          保存していない変更が {changed.length} 件あります
+          未保存の変更：{changed.length} 件
           {#if message?.kind === 'error'}<br />{message.text}{/if}
         {/if}
       </p>

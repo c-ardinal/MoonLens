@@ -155,7 +155,7 @@
     {#if !translation && !source && !lastError}
       <div class="flex h-full flex-col items-center justify-center gap-2 text-ink-muted">
         <Camera class="h-6 w-6 text-ink-faint" />
-        <p class="text-sm">対象をこのウィンドウで覆い、再キャプチャ ↻</p>
+        <p class="text-sm">対象範囲に重ねて再キャプチャ ↻</p>
       </div>
     {:else}
       <div class="mb-2 flex items-center justify-between">

@@ -120,8 +120,8 @@
       class="rounded-ml-sm p-1 text-ink-faint transition hover:bg-surface-muted hover:text-ink {isDefault
         ? 'invisible'
         : ''}"
-      title="既定値に戻す"
-      aria-label="{field.label}を既定値に戻す"
+      title="初期値に戻す"
+      aria-label="{field.label}：初期値に戻す"
       onclick={() => onChange(defaultValue)}
     >
       <RotateCcw class="h-3.5 w-3.5" />

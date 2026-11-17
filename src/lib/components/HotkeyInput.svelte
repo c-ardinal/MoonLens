@@ -42,10 +42,10 @@
   onblur={() => (recording = false)}
 >
   {#if recording}
-    <span class="font-sans text-xs text-ink-muted">キーを押してください（Esc で取消・Backspace で無効）</span>
+    <span class="font-sans text-xs text-ink-muted">キー入力待ち（Esc：取消／Backspace：無効化）</span>
   {:else if value}
     {displayAccelerator(value)}
   {:else}
-    <span class="font-sans text-xs text-ink-faint">なし</span>
+    <span class="font-sans text-xs text-ink-faint">未設定</span>
   {/if}
 </button>

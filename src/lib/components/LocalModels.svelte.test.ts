@@ -47,8 +47,8 @@ describe('<LocalModels>', () => {
     expect(getByText('翻訳')).toBeInTheDocument();
     expect(getByText('説明・要約')).toBeInTheDocument();
     // The chat model can also take over translation; PLaMo cannot assist.
-    expect(getByText('翻訳に使う')).toBeInTheDocument();
-    expect(queryByText('説明・要約に使う')).not.toBeInTheDocument();
+    expect(getByText('翻訳用に設定')).toBeInTheDocument();
+    expect(queryByText('説明用に設定')).not.toBeInTheDocument();
     // Interrupted download offers to resume.
     expect(getByText('再開')).toBeInTheDocument();
     expect(getByText('/data/llm')).toBeInTheDocument();

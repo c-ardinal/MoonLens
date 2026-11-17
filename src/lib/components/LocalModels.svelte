@@ -87,10 +87,10 @@
 </script>
 
 <section class="rounded-ml border border-border bg-surface-elevated p-4 shadow-ml sm:p-5">
-  <h3 class="text-base font-semibold">翻訳・説明モデル</h3>
+  <h3 class="text-base font-semibold">翻訳・説明用モデル</h3>
   <p class="text-sm text-ink-muted">
-    翻訳・説明・要約はアプリ内蔵のエンジンで端末内だけで動きます（Ollama などは不要）。
-    翻訳には PLaMo 3 Translate、説明・要約には Gemma 4 をダウンロードしてください。
+    内蔵エンジンでローカル実行（Ollama 等は不要）。
+    翻訳用：PLaMo 3 Translate／説明・要約用：Gemma 4
   </p>
 
   <ul class="mt-3 flex flex-col gap-2">
@@ -131,7 +131,7 @@
                   class="inline-flex items-center gap-1 rounded-ml-sm border border-border px-3 py-1.5 text-sm text-ink-muted hover:border-accent/50 hover:text-ink"
                   onclick={() => choose(m.id, 'translate')}
                 >
-                  <Check class="h-4 w-4" /> 翻訳に使う
+                  <Check class="h-4 w-4" /> 翻訳用に設定
                 </button>
               {/if}
               {#if m.style === 'chat_template' && !forAssist}
@@ -139,7 +139,7 @@
                   class="inline-flex items-center gap-1 rounded-ml-sm border border-border px-3 py-1.5 text-sm text-ink-muted hover:border-accent/50 hover:text-ink"
                   onclick={() => choose(m.id, 'assistant')}
                 >
-                  <Check class="h-4 w-4" /> 説明・要約に使う
+                  <Check class="h-4 w-4" /> 説明用に設定
                 </button>
               {/if}
               <button

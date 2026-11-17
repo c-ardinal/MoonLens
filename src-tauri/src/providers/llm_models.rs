@@ -60,7 +60,7 @@ pub const CATALOG: &[CatalogModel] = &[
     CatalogModel {
         id: "plamo-3-translate-2b",
         label: "PLaMo 3 Translate 2B",
-        note: "翻訳の推奨モデル。高品質で高速。翻訳専用",
+        note: "推奨。高品質・高速（翻訳専用）",
         file: "plamo-3-translate-2b-Q4_K_M.gguf",
         url: "https://huggingface.co/pfnet/plamo-3-translate-2b-GGUF/resolve/main/plamo-3-translate-2b-Q4_K_M.gguf",
         size: 1_807_203_040,
@@ -72,7 +72,7 @@ pub const CATALOG: &[CatalogModel] = &[
     CatalogModel {
         id: "plamo-3-translate-0.8b",
         label: "PLaMo 3 Translate 0.8B",
-        note: "最速・省メモリ。低スペック PC 向け。翻訳専用",
+        note: "最速・省メモリ。低スペック PC 向け（翻訳専用）",
         file: "plamo-3-translate-0.8b-Q4_K_M.gguf",
         url: "https://huggingface.co/pfnet/plamo-3-translate-0.8b-GGUF/resolve/main/plamo-3-translate-0.8b-Q4_K_M.gguf",
         size: 573_126_848,
@@ -84,7 +84,7 @@ pub const CATALOG: &[CatalogModel] = &[
     CatalogModel {
         id: "gemma-4-e4b",
         label: "Gemma 4 E4B",
-        note: "説明・要約用の汎用モデル（翻訳にも使えます）",
+        note: "説明・要約用の汎用モデル（翻訳にも対応）",
         file: "gemma-4-E4B-it-Q4_K_M.gguf",
         url: "https://huggingface.co/unsloth/gemma-4-E4B-it-GGUF/resolve/main/gemma-4-E4B-it-Q4_K_M.gguf",
         size: 4_977_171_584,
@@ -96,7 +96,7 @@ pub const CATALOG: &[CatalogModel] = &[
     CatalogModel {
         id: "gemma-4-e2b",
         label: "Gemma 4 E2B",
-        note: "軽量な汎用モデル。説明・要約を速く、品質は E4B より下がります",
+        note: "軽量汎用モデル。E4B 比で高速・低品質",
         file: "gemma-4-E2B-it-Q4_K_M.gguf",
         url: "https://huggingface.co/unsloth/gemma-4-E2B-it-GGUF/resolve/main/gemma-4-E2B-it-Q4_K_M.gguf",
         size: 3_106_738_272,

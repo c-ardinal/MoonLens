@@ -109,7 +109,7 @@
         <input
           value={q}
           oninput={(e) => onQueryInput((e.target as HTMLInputElement).value)}
-          placeholder="原文・訳文を検索"
+          placeholder="原文・訳文で検索"
           aria-label="履歴を検索"
           class="w-full rounded-ml-sm sm:w-72 border border-border bg-surface-elevated py-1.5 pl-7 pr-3 text-sm"
         />
@@ -147,11 +147,11 @@
       class="rounded-ml border border-dashed border-border bg-surface-elevated p-8 text-center text-ink-muted"
     >
       {#if q.trim().length > 0}
-        <p class="break-words">「{q}」に一致する履歴はありません。</p>
+        <p class="break-words">「{q}」：該当なし</p>
       {:else if keepHistory === false}
-        <p>履歴の保存はオフになっています。<a href="/settings/#section-history" class="text-accent underline-offset-2 hover:underline">設定</a>でオンにできます。</p>
+        <p>履歴保存：オフ（変更は<a href="/settings/#section-history" class="text-accent underline-offset-2 hover:underline">設定</a>）</p>
       {:else}
-        <p>まだ履歴がありません。画面を翻訳すると、ここに残ります。</p>
+        <p>履歴なし。画面翻訳の実行後に表示。</p>
       {/if}
     </div>
   {/if}
@@ -214,8 +214,8 @@
       onclick={(e) => e.stopPropagation()}
       onkeydown={(e) => e.key === 'Escape' && (confirmClear = false)}
     >
-      <h2 class="text-base font-semibold">履歴を全て削除しますか？</h2>
-      <p class="mt-1 text-sm text-ink-muted">この操作は取り消せません。</p>
+      <h2 class="text-base font-semibold">全履歴を削除</h2>
+      <p class="mt-1 text-sm text-ink-muted">この操作は取り消し不可。</p>
       <div class="mt-4 flex justify-end gap-2">
         <button
           class="rounded-ml-sm border border-border bg-surface px-3 py-1.5 text-sm"
@@ -227,7 +227,7 @@
           class="rounded-ml-sm bg-red-500 px-3 py-1.5 text-sm font-medium text-white"
           onclick={wipe}
         >
-          削除する
+          削除
         </button>
       </div>
     </div>

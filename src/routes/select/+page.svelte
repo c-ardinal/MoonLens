@@ -154,9 +154,9 @@
     blocks = r.blocks ?? [];
     phase = 'result';
     if (r.intent !== 'qr' && blocks.length === 0) {
-      notice = 'テキストが見つかりませんでした。範囲を変えてもう一度ドラッグしてください。';
+      notice = 'テキスト未検出。範囲を変更して再選択してください。';
     } else if (allSameLanguage(blocks)) {
-      flash(`すでに${languageLabel(r.target_language)}です。ツールバーで訳す言語を変えられます`, 4000);
+      flash(`翻訳不要（${languageLabel(r.target_language)}）。翻訳先はツールバーで変更可能`, 4000);
     }
   }
 
@@ -252,9 +252,9 @@
     if (!text) return;
     try {
       await navigator.clipboard.writeText(text);
-      flash('コピーしました');
+      flash('コピー完了');
     } catch {
-      flash('コピーできませんでした');
+      flash('コピー失敗');
     }
   }
 
@@ -267,7 +267,7 @@
       const r = await runExplain(`次のテキストの内容を${languageLabel(targetLang) || '日本語'}で簡潔に説明してください:\n\n${src}`);
       explanation = extractText(r);
     } catch (e) {
-      explanation = `説明に失敗しました: ${String(e)}`;
+      explanation = `説明の生成に失敗：${String(e)}`;
     }
   }
 
@@ -275,7 +275,7 @@
     if (!result?.source_rect) return;
     await pinOverlay(result.source_rect);
     pinned = true;
-    flash('ピン留めしました。領域が変わると自動で再翻訳します');
+    flash('ピン留め完了。変化時に自動再翻訳');
   }
 
   async function openQr() {
@@ -455,7 +455,7 @@
   <!-- Hint pill. -->
   {#if phase === 'select' && !drag}
     <div class="pill pointer-events-none absolute inset-x-0 top-6 mx-auto w-fit">
-      ドラッグで範囲を選択 · クリックで画面全体を翻訳 · Esc で閉じる
+      ドラッグ：範囲翻訳 · クリック：全画面翻訳 · Esc：終了
     </div>
   {:else if phase === 'processing'}
     <div class="pill pointer-events-none absolute inset-x-0 top-6 mx-auto w-fit">
@@ -492,11 +492,11 @@
           class="tb"
           aria-pressed={showOriginal}
           onclick={() => (showOriginal = !showOriginal)}
-          title="原文と翻訳を切り替え"
+          title="原文／訳文の切替"
         >
-          {#if showOriginal}<Eye class="h-4 w-4" />翻訳を表示{:else}<EyeOff class="h-4 w-4" />原文を表示{/if}
+          {#if showOriginal}<Eye class="h-4 w-4" />訳文{:else}<EyeOff class="h-4 w-4" />原文{/if}
         </button>
-        <label class="tb lang" title="訳す言語">
+        <label class="tb lang" title="翻訳先言語">
           <span class="opacity-70">{languageLabel(result?.source_language) || '自動'} →</span>
           <select
             style="width: calc({languageLabel(targetLang).length}em + 22px)"
@@ -512,11 +512,11 @@
           </select>
         </label>
         <button class="tb" onclick={copyAll} title="コピー (Ctrl+C)"><ClipboardCopy class="h-4 w-4" />コピー</button>
-        <button class="tb" aria-pressed={showPanel} onclick={() => (showPanel = !showPanel)} title="テキストを表示">
+        <button class="tb" aria-pressed={showPanel} onclick={() => (showPanel = !showPanel)} title="テキスト表示">
           <TextSelect class="h-4 w-4" />テキスト
         </button>
-        <button class="tb" onclick={explain} title="内容を説明"><Languages class="h-4 w-4" />説明</button>
-        <button class="tb" onclick={pin} disabled={pinned} title="ピン留め: 同じ領域を自動再翻訳">
+        <button class="tb" onclick={explain} title="内容説明"><Languages class="h-4 w-4" />説明</button>
+        <button class="tb" onclick={pin} disabled={pinned} title="ピン留め（変化時に自動再翻訳）">
           <Pin class="h-4 w-4" />
         </button>
       {:else}
@@ -549,7 +549,7 @@
           {#if b.same_language}
             <p class="mb-4 whitespace-pre-wrap">{b.source}</p>
           {:else}
-            <p class="mb-1 whitespace-pre-wrap">{b.translation ?? '（翻訳できませんでした）'}</p>
+            <p class="mb-1 whitespace-pre-wrap">{b.translation ?? '（翻訳失敗）'}</p>
             <p class="mb-4 whitespace-pre-wrap text-xs opacity-60">{b.source}</p>
           {/if}
         {/each}
