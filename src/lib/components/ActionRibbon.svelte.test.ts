@@ -3,12 +3,13 @@ import { fireEvent, render } from '@testing-library/svelte';
 import ActionRibbon from './ActionRibbon.svelte';
 
 describe('<ActionRibbon>', () => {
-  it('renders the five canonical text-mode actions in order by default', () => {
+  it('renders the canonical text-mode actions in order by default', () => {
     const { container } = render(ActionRibbon);
     const ids = Array.from(container.querySelectorAll<HTMLElement>('[data-action]')).map(
       (el) => el.dataset.action
     );
-    expect(ids).toEqual(['translate', 'copy', 'search', 'explain', 'pin']);
+    // No reverse image search: MoonLens never sends captures to the web.
+    expect(ids).toEqual(['translate', 'copy', 'explain', 'pin']);
   });
 
   it('promotes open_url first when intent is qr', () => {
@@ -22,24 +23,15 @@ describe('<ActionRibbon>', () => {
     expect(ids).not.toContain('translate');
   });
 
-  it('promotes search first when intent is photo', () => {
+  it('puts explain first for photos and offers no web search', () => {
     const { container } = render(ActionRibbon, { props: { intent: 'photo' } });
     const ids = Array.from(container.querySelectorAll<HTMLElement>('[data-action]')).map(
       (el) => el.dataset.action
     );
-    // Photo content should send the user to reverse image search first;
     // translate stays in the ribbon because OCR may have found text.
-    expect(ids[0]).toBe('search');
+    expect(ids[0]).toBe('explain');
     expect(ids).toContain('translate');
-  });
-
-  it('treats mixed intent as text-with-search-bumped-up', () => {
-    const { container } = render(ActionRibbon, { props: { intent: 'mixed' } });
-    const ids = Array.from(container.querySelectorAll<HTMLElement>('[data-action]')).map(
-      (el) => el.dataset.action
-    );
-    expect(ids[0]).toBe('translate');
-    expect(ids[1]).toBe('search');
+    expect(ids).not.toContain('search');
   });
 
   it('invokes onAction with the clicked action id', async () => {

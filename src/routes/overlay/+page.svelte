@@ -4,8 +4,10 @@
   import PrivacyBadge from '$lib/components/PrivacyBadge.svelte';
   import ActionRibbon from '$lib/components/ActionRibbon.svelte';
   import {
+    getSettings,
     hideOverlay,
     onOverlay,
+    onPinState,
     pinOverlay,
     unpinOverlay,
     runExplain,
@@ -28,8 +30,10 @@
   let intent = $state<Intent | null>(null);
   let sourceRect = $state<CaptureFlowRect | null>(null);
   let unlisten: (() => void) | undefined;
+  let unlistenPin: (() => void) | undefined;
 
   onMount(async () => {
+    unlistenPin = await onPinState((p) => (pinned = p));
     unlisten = await onOverlay((event: OverlayEvent) => {
       if (event.kind === 'processing') {
         status = 'processing';
@@ -60,7 +64,10 @@
     });
   });
 
-  onDestroy(() => unlisten?.());
+  onDestroy(() => {
+    unlisten?.();
+    unlistenPin?.();
+  });
 
   function copy() {
     if (translation) navigator.clipboard.writeText(translation).catch(() => {});
@@ -95,7 +102,7 @@
   }
 
   async function onRibbonAction(
-    a: 'translate' | 'copy' | 'search' | 'explain' | 'pin' | 'open_url'
+    a: 'translate' | 'copy' | 'explain' | 'pin' | 'open_url'
   ) {
     if (a === 'copy') {
       copy();
@@ -116,15 +123,16 @@
     }
     if (a === 'translate') {
       // Re-run translation on the currently displayed source_text.
-      // Useful when the user changed target language via settings.
+      // Uses the target language from settings (it may have changed).
       if (source) {
         status = 'processing';
         statusMessage = '翻訳中…';
         try {
+          const settings = await getSettings().catch(() => null);
           const r = await runTranslate({
             text: source,
             source_language: 'auto',
-            target_language: 'ja'
+            target_language: settings?.subtitle?.target_language ?? 'ja'
           });
           translation = extractText(r);
           viaCloud = r.via_cloud;
@@ -154,16 +162,6 @@
         statusMessage = String(e);
       }
       return;
-    }
-    if (a === 'search') {
-      // Reverse image search from the overlay is only useful if we
-      // can produce a URL; we would need to upload the captured
-      // image to get a URL first. For now, redirect the user to the
-      // browser search for the source text as a graceful fallback.
-      if (source) {
-        const q = encodeURIComponent(source);
-        await runReverseImageSearch(`https://www.google.com/search?q=${q}`);
-      }
     }
   }
 
