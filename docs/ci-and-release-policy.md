@@ -97,7 +97,23 @@ superseded runs so minutes aren't burned on stale commits. Runs on
 `**.md` (includes `CHANGELOG.md`), `docs/**`, `LICENSE` do not trigger CI. The
 burst of doc-only commits near a release cycle is free.
 
+## Dependency audit (`.github/workflows/audit.yml`)
+
+`cargo audit` (all four crates) and `npm audit` run every Monday, on
+demand, and on PRs that change a lockfile or manifest. No compile, so
+a run costs ~2 billing minutes. Vulnerability advisories fail the run;
+"unmaintained" / "unsound" notices are warnings. Runtime npm deps fail
+on moderate+, dev-only tooling is reported but never fails. The weekly
+schedule matters because advisories are published after merge: a
+lockfile that was clean last month can be vulnerable today.
+
+GitHub Actions versions are bumped by Dependabot (`.github/dependabot.yml`),
+grouped into one monthly PR against `release`, so it costs one CI run.
+
 ## Release build split (`.github/workflows/release.yml`)
+
+`workflow_dispatch` (re-running a release for an existing tag) checks
+out **the tag**, not the branch the run was started from.
 
 ### Current cycle (v0.1.0-rc.1): Linux only in CI
 

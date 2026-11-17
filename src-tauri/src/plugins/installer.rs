@@ -40,12 +40,19 @@ pub fn extract_zip(archive: &Path, dest_root: &Path) -> Result<PathBuf> {
     // Second pass: extract every file, rejecting unsafe names.
     for i in 0..zip.len() {
         let mut entry = zip.by_index(i)?;
-        let name = entry
-            .enclosed_name()
-            .ok_or_else(|| anyhow!("zip entry rejected for unsafe name: {}", entry.name()))?
-            .to_path_buf();
+        let name = entry.enclosed_name().ok_or_else(|| {
+            anyhow!(
+                "zip entry rejected for unsafe name: {}",
+                entry.name().unwrap_or_default()
+            )
+        })?;
         if !is_safe_relative(&name) {
             anyhow::bail!("zip entry escapes install dir: {}", name.display());
+        }
+        // Symlinks could point outside the install dir (or at a file a
+        // later entry overwrites through the link); plugins never need them.
+        if entry.is_symlink() {
+            anyhow::bail!("zip entry is a symlink (not allowed): {}", name.display());
         }
         let out_path = install_dir.join(&name);
         if entry.is_dir() {
@@ -60,11 +67,12 @@ pub fn extract_zip(archive: &Path, dest_root: &Path) -> Result<PathBuf> {
         #[cfg(unix)]
         {
             // Preserve the executable bit so sidecar binaries remain
-            // runnable after install. The zip crate exposes unix-style
-            // modes via `unix_mode`.
+            // runnable after install, but only the plain rwx bits:
+            // setuid / setgid / sticky and group/other write from an
+            // untrusted archive are dropped.
             if let Some(mode) = entry.unix_mode() {
                 use std::os::unix::fs::PermissionsExt;
-                fs::set_permissions(&out_path, fs::Permissions::from_mode(mode))?;
+                fs::set_permissions(&out_path, fs::Permissions::from_mode(safe_mode(mode)))?;
             }
         }
     }
@@ -77,7 +85,7 @@ pub fn extract_zip(archive: &Path, dest_root: &Path) -> Result<PathBuf> {
 fn read_manifest_from_zip<R: io::Read + io::Seek>(zip: &mut zip::ZipArchive<R>) -> Result<String> {
     for i in 0..zip.len() {
         let mut entry = zip.by_index(i)?;
-        let name = entry.name().to_string();
+        let name = entry.name()?.into_owned();
         if name == "plugin.toml" || name.ends_with("/plugin.toml") {
             let mut s = String::new();
             entry.read_to_string(&mut s)?;
@@ -85,6 +93,14 @@ fn read_manifest_from_zip<R: io::Read + io::Seek>(zip: &mut zip::ZipArchive<R>) 
         }
     }
     Err(anyhow!("archive does not contain plugin.toml at root"))
+}
+
+/// Permission bits applied to an extracted file: owner rwx is kept,
+/// group/other keep read+execute, everything else (setuid, setgid,
+/// sticky, group/other write) is cleared.
+#[cfg_attr(not(unix), allow(dead_code))]
+fn safe_mode(mode: u32) -> u32 {
+    mode & 0o755
 }
 
 /// Reject characters that the host filesystem does not like in directory
@@ -145,5 +161,75 @@ mod tests {
         // On Unix a leading "/" produces a RootDir component; on Windows
         // a drive letter produces Prefix. Both must be rejected.
         assert!(!is_safe_relative(Path::new("/etc/passwd")));
+    }
+
+    #[test]
+    fn safe_mode_strips_setuid_setgid_sticky_and_shared_write() {
+        assert_eq!(safe_mode(0o4755), 0o755);
+        assert_eq!(safe_mode(0o2755), 0o755);
+        assert_eq!(safe_mode(0o1777), 0o755);
+        assert_eq!(safe_mode(0o100644), 0o644);
+        assert_eq!(safe_mode(0o700), 0o700);
+    }
+
+    fn write_archive(
+        path: &Path,
+        build: impl FnOnce(&mut zip::ZipWriter<fs::File>, zip::write::SimpleFileOptions),
+    ) {
+        use std::io::Write;
+        let mut w = zip::ZipWriter::new(fs::File::create(path).unwrap());
+        let opts = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored);
+        w.start_file("plugin.toml", opts).unwrap();
+        w.write_all(MANIFEST.as_bytes()).unwrap();
+        build(&mut w, opts);
+        w.finish().unwrap();
+    }
+
+    const MANIFEST: &str = r#"
+[plugin]
+id = "com.example.t"
+name = "t"
+version = "0.1.0"
+author = "t"
+license = "MIT"
+kind = "sidecar"
+entry = "bin/run"
+api_version = "1"
+
+[capabilities]
+provides = ["translator"]
+consumes = []
+"#;
+
+    #[test]
+    fn extract_rejects_symlink_entries() {
+        let dir = tempfile::tempdir().unwrap();
+        let archive = dir.path().join("p.zip");
+        write_archive(&archive, |w, opts| {
+            w.add_symlink("evil", "/etc/passwd", opts).unwrap();
+        });
+        let err = extract_zip(&archive, &dir.path().join("out")).unwrap_err();
+        assert!(err.to_string().contains("symlink"), "{err}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn extract_drops_setuid_bit_but_keeps_exec() {
+        use std::io::Write;
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let archive = dir.path().join("p.zip");
+        write_archive(&archive, |w, opts| {
+            w.start_file("bin/run", opts.unix_permissions(0o4755))
+                .unwrap();
+            w.write_all(b"#!/bin/sh\n").unwrap();
+        });
+        let root = extract_zip(&archive, &dir.path().join("out")).unwrap();
+        let mode = fs::metadata(root.join("bin/run"))
+            .unwrap()
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o7777, 0o755);
     }
 }
