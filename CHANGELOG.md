@@ -8,6 +8,43 @@ the project adheres to [SemVer](https://semver.org/).
 
 ### Fixed
 
+- No window ever received an event in a real build: without a capability
+  file Tauri rejects every plugin call from the webviews, including
+  `listen()`, so the selector never got its frozen frame, translations
+  did not stream and settings changes did not reach other windows. Added
+  `src-tauri/capabilities/default.json`.
+- The first launch showed nothing (the main window starts hidden and only
+  the tray could open it; some Linux desktops have no tray). Every launch
+  now shows the main window; `--hidden` starts in the tray.
+- A second launch started a second tray icon whose shortcuts all failed;
+  it now focuses the running instance.
+- Closing the main window destroyed it and the tray "表示" item then did
+  nothing. Closing now hides it. The frameless window also gained a
+  draggable title bar with minimize / close, and the command palette a
+  quit command.
+- The QR "開く" button sent the decoded URL to Google's image search. It
+  now opens the URL itself (http / https only).
+- With no OCR model installed a capture said "テキスト未検出"; missing
+  translation / OCR / assistant models, timeouts and unsupported CPUs now
+  show a Japanese message, with a "モデル準備" button where a download fixes
+  it.
+- Pinning from the selector showed nothing (the floating overlay stayed
+  hidden). Pinned results now appear beside the region, never over it.
+- Live subtitles without a whisper.cpp server opened the subtitle window
+  and repeated an English error every few seconds. Starting now checks the
+  server first, and three failures in a row stop the subtitles.
+- Saving the settings screen reverted a model picked in the model list
+  while the screen was open (and hand edits to `config.toml`).
+- History search only looked at the newest 500 entries.
+- A broken `config.toml` reset every setting and the next save overwrote
+  the user's file; a corrupt history database stopped the app from
+  starting. Bad values are now dropped one by one, the original file is
+  kept as `config.toml.broken-<time>` / `moonlens.db.broken-<time>`, and
+  the home screen says so. Shortcut registration failures at startup are
+  shown there too.
+- A `config.toml` missing a section got Rust's empty defaults (e.g. no OCR
+  chain) instead of the bundled ones.
+
 - The pin hotkey, the history hotkey and the command-palette hotkey did
   nothing (their events went to a hidden window or had no listener). The
   pin hotkey now pins or unpins the last translated region.
@@ -33,6 +70,23 @@ the project adheres to [SemVer](https://semver.org/).
   still hold the old seeded values are upgraded at load.
 
 ### Changed
+
+- `config.toml` now stores only the values that differ from the bundled
+  defaults (plus `config_version`), so improved defaults reach existing
+  installs; `config.default.toml` next to it lists every default. Files
+  are written atomically.
+- Models moved to the app's local data folder
+  (`<local data>/io.moonlens.app/models`; `%LOCALAPPDATA%` on Windows), so
+  uninstalling with "delete app data" removes them. The old
+  `moonlens/models` folder is moved over on first launch.
+- Model downloads check free disk space first, report network / disk /
+  integrity failures in Japanese, and deleting a model asks to confirm.
+  Model files no catalog entry owns are listed for deletion.
+- The settings screen has a "データ" section with folders and sizes, and
+  refuses to save two actions bound to the same shortcut.
+- The global cloud switch defaults to off and the reverse-image-search
+  chain (Google / Bing / Yandex) is empty; existing configs are migrated.
+- Lifecycle case matrix: `docs/lifecycle.md`.
 
 - Settings that were stored but ignored now work and are on the settings
   screen: history retention (`storage.retention_days`, `max_entries`;
