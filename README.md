@@ -18,7 +18,6 @@ PC常駐の Google Lens 風ツール。1つのグローバルホットキーで
 - **OCR**: [`ocrs`](https://github.com/robertknight/ocrs) crate（追加の OCR エンジンはプラグインで差し替え可）
 - **QR**: `rqrr` crate
 - **翻訳 (local)**: 内蔵 llama.cpp（`llama-cpp-2`、静的リンク）で GGUF を実行。翻訳の既定は PLaMo 3 Translate 2B（0.8B も選択可）、説明・要約は Gemma 4 E4B。モデルはアプリのホーム画面からダウンロード（SHA-256 検証・中断再開）。モデル選定の根拠は [docs/translation-models.md](docs/translation-models.md)
-- **用語集・文体**: 訳語の固定（翻訳先言語別）と日本語の文体（敬体／常体）を設定 →「翻訳」で指定。PLaMo 3 Translate には PFML3 の `glossary` / `form` でそのまま渡す
 - **翻訳 (cloud / Ollama)**: DeepL / Gemini API、Ollama は任意のオプション（既定チェーンには入っていない）
 - **ASR**: `whisper.cpp` HTTP サーバ（別途起動が必要。未接続時はライブ字幕の開始時に案内）
 - **画面キャプチャ**: `xcap` 0.9、**音声ループバック**: `cpal`
