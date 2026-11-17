@@ -4,65 +4,94 @@ name: build
 # Windows (×2 multiplier, ~30 min wall-clock) eat the free-tier
 # budget disproportionately, so they are reserved for:
 #
-#   * `release.yml` — runs on tag push, always builds all three
-#     platforms because that is the installer-bundling path.
+#   * `release.yml` — runs on tag push (installer bundling path).
 #   * This workflow's `workflow_dispatch` with `all_platforms=true`
 #     — on-demand cross-platform check before cutting a release tag.
 #
-# Linux catches ~95% of regressions (most tests are platform-agnostic;
-# xcap / cpal Linux backends compile in CI). Platform-specific bugs
-# that slip through surface on the tag build; if the tag fails,
-# delete the failed release and tag a patch.
+# Triggers: PRs (any base) + pushes to `main` / `release` only.
+# Feature branches are covered by their PR, so a push to a branch
+# with an open PR no longer runs the suite twice (push + PR).
+# Run manually via workflow_dispatch for a branch without a PR.
 #
-# Concurrency cancels superseded runs on feature branches and PRs.
-# `paths-ignore` skips doc-only churn.
+# Two jobs run in parallel so frontend breakage reports in ~3 min
+# instead of waiting behind the ~15 min Rust build:
+#
+#   * `frontend` — svelte-check, vitest, production `vite build`.
+#   * `rust`     — rustfmt + clippy (-D warnings) + tests for all
+#                  four crates (app, plugin SDK, two SDK examples).
+#
+# See docs/ci-and-release-policy.md for the budget rationale.
 
 on:
   push:
-    branches: [main, release, 'claude/**', 'feature/**', 'fix/**', 'hotfix/**']
-    paths-ignore:
-      - '**.md'
-      - 'docs/**'
-      - 'CHANGELOG.md'
-      - 'LICENSE'
-  pull_request:
     branches: [main, release]
     paths-ignore:
       - '**.md'
       - 'docs/**'
-      - 'CHANGELOG.md'
+      - 'LICENSE'
+  pull_request:
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
       - 'LICENSE'
   workflow_dispatch:
     inputs:
       all_platforms:
-        description: 'Also run Windows + macOS (pre-tag smoke test)'
+        description: 'Also run the Rust job on Windows + macOS (pre-tag smoke test)'
         type: boolean
         default: false
+
+permissions:
+  contents: read
 
 concurrency:
   group: build-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' && github.ref != 'refs/heads/release' }}
 
+env:
+  CARGO_TERM_COLOR: always
+  # Incremental compilation only bloats the cache on CI.
+  CARGO_INCREMENTAL: 0
+
 jobs:
-  check:
+  frontend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install JS deps
+        run: npm ci
+
+      - name: Typecheck (svelte-check)
+        run: npm run check
+
+      - name: Vitest (logic + DOM render tests)
+        run: npm test
+
+      - name: Production build (vite)
+        run: npm run build
+
+  rust:
     strategy:
       fail-fast: false
       # Matrix expands to all three platforms only when triggered via
       # workflow_dispatch with all_platforms=true. Default: Linux only.
       matrix:
         platform: ${{ fromJSON(github.event.inputs.all_platforms == 'true' && '[{"name":"linux","os":"ubuntu-latest"},{"name":"windows","os":"windows-latest"},{"name":"macos","os":"macos-14"}]' || '[{"name":"linux","os":"ubuntu-latest"}]') }}
+    name: rust (${{ matrix.platform.name }})
     runs-on: ${{ matrix.platform.os }}
     timeout-minutes: 60
     steps:
-      # v5 is the first release that runs on Node 24 natively, which
-      # keeps CI clear of the Node 20 deprecation warnings emitted by
-      # older action versions on current GitHub runners.
       - uses: actions/checkout@v5
 
-      # Free ~30 GiB on Ubuntu runners. The base image ships with Android
-      # SDK, .NET, GHC, etc. that we never use; without this Cargo's debug
-      # build of Tauri + wasmtime + ocrs reliably hits "no space left on
-      # device". macOS and Windows have plenty of free space already.
+      # Free ~30 GiB on Ubuntu runners. Without this Cargo's debug build
+      # of Tauri + wasmtime + ocrs reliably hits "no space left on device".
       - name: Free disk space (linux)
         if: matrix.platform.name == 'linux'
         run: |
@@ -84,8 +113,7 @@ jobs:
           # xcap 0.9's Linux backend pulls in PipeWire (Wayland portal
           # screen capture) plus GBM / Wayland / DRM for the DMABUF path.
           # Missing any one of these shows up as a linker "-l... not
-          # found" miles deep in the test build, so keep the list
-          # explicit.
+          # found" deep in the test build, so keep the list explicit.
           sudo apt-get install -y --no-install-recommends \
             libwebkit2gtk-4.1-dev \
             libappindicator3-dev \
@@ -102,11 +130,6 @@ jobs:
             libdrm-dev \
             libxkbcommon-dev
 
-      - uses: actions/setup-node@v5
-        with:
-          node-version: 22
-          cache: npm
-
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
@@ -118,55 +141,57 @@ jobs:
             plugin-sdk/rust
             plugin-sdk/examples/hello-translator
             plugin-sdk/examples/music-recognizer
-          # Different OSes need separate caches because compiled artifacts
-          # are not portable. The platform name keeps them apart.
           key: ${{ matrix.platform.name }}
+          # Only main/release write the cache. PR runs restore from it
+          # (base-branch caches are visible to PRs), which keeps the
+          # 10 GB repo cache quota from being evicted by every PR.
+          save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/release' }}
 
-      - name: Install JS deps
-        run: npm ci
+      # tauri::generate_context! embeds frontendDist (../build) at
+      # compile time; an empty dir is enough for clippy/tests and saves
+      # this job a full npm install + vite build.
+      - name: Stub frontend dist
+        shell: bash
+        run: mkdir -p build
 
-      - name: Typecheck frontend
-        run: npm run check
+      - name: rustfmt (all crates)
+        shell: bash
+        run: |
+          set -e
+          for d in src-tauri plugin-sdk/rust plugin-sdk/examples/hello-translator plugin-sdk/examples/music-recognizer; do
+            echo "::group::rustfmt $d"
+            (cd "$d" && cargo fmt --all -- --check)
+            echo "::endgroup::"
+          done
 
-      - name: Vitest (logic + DOM render tests)
-        run: npm test
-
-      - name: Cargo fmt
+      - name: Clippy (src-tauri)
         working-directory: src-tauri
-        run: cargo fmt --all -- --check
+        run: cargo clippy --all-targets --no-deps --locked -- -D warnings
 
-      - name: Cargo clippy (src-tauri)
-        working-directory: src-tauri
-        run: cargo clippy --all-targets --no-deps -- -D warnings
-
-      - name: Cargo clippy (plugin SDK)
+      - name: Clippy (plugin SDK)
         working-directory: plugin-sdk/rust
-        run: cargo clippy --all-targets --no-deps -- -D warnings
+        run: cargo clippy --all-targets --no-deps --locked -- -D warnings
 
-      - name: Cargo clippy (hello-translator)
+      - name: Clippy (hello-translator)
         working-directory: plugin-sdk/examples/hello-translator
-        run: cargo clippy --all-targets --no-deps -- -D warnings
+        run: cargo clippy --all-targets --no-deps --locked -- -D warnings
 
-      - name: Cargo clippy (music-recognizer)
+      - name: Clippy (music-recognizer)
         working-directory: plugin-sdk/examples/music-recognizer
-        run: cargo clippy --all-targets --no-deps -- -D warnings
+        run: cargo clippy --all-targets --no-deps --locked -- -D warnings
 
-      - name: Cargo unit tests
+      - name: Tests (src-tauri, unit + integration)
         working-directory: src-tauri
-        run: cargo test --lib --no-fail-fast
+        run: cargo test --locked --no-fail-fast
 
-      - name: Cargo integration tests
-        working-directory: src-tauri
-        run: cargo test --tests --no-fail-fast
-
-      - name: Test plugin SDK
+      - name: Tests (plugin SDK)
         working-directory: plugin-sdk/rust
-        run: cargo test
+        run: cargo test --locked
 
-      - name: Build + test hello-translator example
+      - name: Tests (hello-translator)
         working-directory: plugin-sdk/examples/hello-translator
-        run: cargo test
+        run: cargo test --locked
 
-      - name: Build + test music-recognizer example
+      - name: Tests (music-recognizer)
         working-directory: plugin-sdk/examples/music-recognizer
-        run: cargo test
+        run: cargo test --locked

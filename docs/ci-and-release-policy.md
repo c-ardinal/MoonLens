@@ -37,8 +37,8 @@ This is the single number that drives every decision below.
 
 ### Default: Linux only
 
-All pushes (feature branches, `main`, `release`) and all PRs run on
-`ubuntu-latest` only. Rationale:
+Every PR (any base branch) and every push to `main` / `release` runs
+on `ubuntu-latest` only. Rationale:
 
 - Linux catches ~95% of regressions. Platform-specific bugs (xcap
   Linux backends, cpal WASAPI vs CoreAudio vs PulseAudio, Windows
@@ -51,10 +51,35 @@ All pushes (feature branches, `main`, `release`) and all PRs run on
   Linux; the remaining Mac-only surface is small enough that
   breakage would be caught during local dev on a Mac.
 
+### Triggers: PR-driven, not push-driven
+
+Pushes to feature branches (`claude/**`, `feature/**`, ...) do **not**
+trigger CI on their own; the branch's PR does. Previously a push to a
+branch with an open PR ran the full suite twice (once for `push`, once
+for `pull_request`), doubling cost for the most frequent event. To
+check a branch that has no PR yet, run the workflow manually
+(`Actions → build → Run workflow`, pick the branch).
+
+### Jobs
+
+Two jobs run in parallel:
+
+- `frontend` (~3 min): `npm ci`, `npm run check` (svelte-check),
+  `npm test` (vitest), `npm run build` (production vite build).
+  Gives fast feedback on UI changes without waiting for Rust.
+- `rust` (~15 min): `cargo fmt --check` on all four crates, `clippy
+  --locked -D warnings` and `cargo test --locked` for `src-tauri`,
+  the plugin SDK and both SDK examples. `--locked` fails the run if a
+  `Cargo.toml` change was pushed without the matching `Cargo.lock`.
+
+The Rust cache (`Swatinem/rust-cache`) is only **written** by runs on
+`main` / `release`; PR runs restore from it. This keeps the 10 GB
+repo cache quota from being churned by every PR.
+
 ### On-demand matrix expansion
 
 `workflow_dispatch` exposes an `all_platforms: boolean` input. When
-set true the matrix fans out to Linux + Windows + macOS. Use cases:
+set true the `rust` job fans out to Linux + Windows + macOS. Use cases:
 
 - Pre-tag smoke test: cross-platform sanity before cutting an `rc`.
 - Investigation: a Linux-green PR suspected of platform-specific
@@ -69,7 +94,7 @@ superseded runs so minutes aren't burned on stale commits. Runs on
 
 ### `paths-ignore`
 
-`**.md`, `docs/**`, `CHANGELOG.md`, `LICENSE` do not trigger CI. The
+`**.md` (includes `CHANGELOG.md`), `docs/**`, `LICENSE` do not trigger CI. The
 burst of doc-only commits near a release cycle is free.
 
 ## Release build split (`.github/workflows/release.yml`)
@@ -134,7 +159,7 @@ Targeted cost for a typical release cycle under the current policy:
 
 | Step                                        | Billing min |
 | ------------------------------------------- | ----------: |
-| Feature branch push × ~5 iterations         |     ~90    |
+| PR push × ~5 iterations (PR-only, no dup)   |     ~90    |
 | PR merge into `release`                     |      ~18    |
 | Tag `vX.Y.Z-rc.N` → Linux-only bundle       |      ~25    |
 | PR merge `release → main` + tag `vX.Y.Z`    |      ~43    |
@@ -152,12 +177,13 @@ vs. what CI gates:
 
 | Check                                       | Dev machine | CI (Linux) |
 | ------------------------------------------- | :---------: | :--------: |
-| `cargo fmt --check`                         |      ✓      |     ✓      |
+| `cargo fmt --check` (all 4 crates)          |      ✓      |     ✓      |
 | `cargo clippy -D warnings` (all 4 crates)   |      ✓      |     ✓      |
 | `cargo test --lib`                          |      ✓      |     ✓      |
 | `cargo test --tests`                        |      ✓      |     ✓      |
 | `npm run check`                             |      ✓      |     ✓      |
 | `npm test` (vitest)                         |      ✓      |     ✓      |
+| `npm run build` (vite production build)     |      ✓      |     ✓      |
 | `npm run tauri:dev` smoke test              |      ✓      |            |
 | `npm run tauri:build` (Windows installer)   | ✓ (release) |            |
 | `.deb` / `.AppImage` / `.rpm`               |             | ✓ (tag)    |
