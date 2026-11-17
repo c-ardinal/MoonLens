@@ -1,24 +1,36 @@
 //! OCR via the `ocrs` crate.
 //!
-//! Models are loaded lazily: on first `run` the provider looks for
-//! `text-detection.rten` and `text-recognition.rten` under `$APPDATA/models/`.
+//! Models are loaded lazily and cached for the life of the process: on
+//! first `run` the provider looks for `text-detection.onnx` and
+//! `text-recognition.onnx` (or the legacy `.rten` files) under the data dir.
 //! If either is missing the provider returns `LowConfidence` so chains can
 //! fall through (e.g. to a plugin-provided OCR). The `download_models`
 //! helper populates the directory from the upstream S3 bucket and is
 //! wired up through a Tauri command so the UI can offer a one-click setup.
 
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
+#[cfg(feature = "ocrs-engine")]
+use std::sync::Arc;
 
 use async_trait::async_trait;
+#[cfg(feature = "ocrs-engine")]
 use parking_lot::Mutex;
 
 use super::{Capability, OcrLine, Provider, ProviderError, TaskInput, TaskOutput};
 
+/// Upstream moved the published models from `.rten` to `.onnx`; the old
+/// `.rten` objects now return 403, so fresh installs must fetch ONNX.
 pub const DETECTION_MODEL_URL: &str =
-    "https://ocrs-models.s3-accelerate.amazonaws.com/text-detection.rten";
+    "https://ocrs-models.s3-accelerate.amazonaws.com/text-detection.onnx";
 pub const RECOGNITION_MODEL_URL: &str =
-    "https://ocrs-models.s3-accelerate.amazonaws.com/text-recognition.rten";
+    "https://ocrs-models.s3-accelerate.amazonaws.com/text-recognition.onnx";
+
+pub const DETECTION_MODEL_FILE: &str = "text-detection.onnx";
+pub const RECOGNITION_MODEL_FILE: &str = "text-recognition.onnx";
+/// Pre-0.2 installs downloaded `.rten` files; keep loading them so
+/// existing users do not have to re-download.
+const LEGACY_DETECTION_FILE: &str = "text-detection.rten";
+const LEGACY_RECOGNITION_FILE: &str = "text-recognition.rten";
 
 pub fn default_models_dir() -> Option<PathBuf> {
     dirs_like("moonlens/models")
@@ -41,23 +53,61 @@ fn dirs_like(suffix: &str) -> Option<PathBuf> {
     base.map(|b| b.join(suffix))
 }
 
+/// Resolve the detection / recognition model paths in `dir`, preferring
+/// ONNX and falling back to legacy `.rten` files.
+pub fn model_paths(dir: &Path) -> Option<(PathBuf, PathBuf)> {
+    let pick = |new: &str, legacy: &str| {
+        let p = dir.join(new);
+        if non_empty(&p) {
+            return Some(p);
+        }
+        let l = dir.join(legacy);
+        non_empty(&l).then_some(l)
+    };
+    Some((
+        pick(DETECTION_MODEL_FILE, LEGACY_DETECTION_FILE)?,
+        pick(RECOGNITION_MODEL_FILE, LEGACY_RECOGNITION_FILE)?,
+    ))
+}
+
+fn non_empty(p: &Path) -> bool {
+    std::fs::metadata(p).map(|m| m.len() > 0).unwrap_or(false)
+}
+
+/// How much to enlarge a capture before OCR (`upscale` provider config).
+/// Default is no scaling: measured on real screenshots, a 2× upscale of
+/// 1× DPI text made recognition slightly *worse* (`automatically` →
+/// `automaticallv`) at the same speed, so it is opt-in only.
+pub fn upscale_factor(configured: f32) -> f32 {
+    if configured > 0.0 {
+        configured.clamp(1.0, 4.0)
+    } else {
+        1.0
+    }
+}
+
 pub struct OcrsProvider {
     id: String,
     models_dir: PathBuf,
-    /// Cached engine once the models have been loaded. The engine is not
-    /// `Send + Sync` friendly in older versions, so we guard with a mutex.
-    #[cfg(feature = "ocrs-engine")]
-    engine: OnceLock<Mutex<Option<ocrs::OcrEngine>>>,
+    upscale: f32,
 }
 
 impl OcrsProvider {
-    pub fn new(id: impl Into<String>, _config: &serde_json::Value) -> Self {
-        let models_dir = default_models_dir().unwrap_or_else(|| PathBuf::from("./models"));
+    pub fn new(id: impl Into<String>, config: &serde_json::Value) -> Self {
+        let models_dir = config
+            .get("models_dir")
+            .and_then(|v| v.as_str())
+            .map(PathBuf::from)
+            .or_else(default_models_dir)
+            .unwrap_or_else(|| PathBuf::from("./models"));
+        let upscale = config
+            .get("upscale")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.0) as f32;
         Self {
             id: id.into(),
             models_dir,
-            #[cfg(feature = "ocrs-engine")]
-            engine: OnceLock::new(),
+            upscale,
         }
     }
 
@@ -66,16 +116,41 @@ impl OcrsProvider {
     }
 }
 
+/// Process-wide engine cache. Loading the two models takes hundreds of
+/// milliseconds, and providers are rebuilt on every settings change, so
+/// the cache lives outside the provider and is keyed by model directory.
+#[cfg(feature = "ocrs-engine")]
+static ENGINE: Mutex<Option<(PathBuf, Arc<ocrs::OcrEngine>)>> = Mutex::new(None);
+
+#[cfg(feature = "ocrs-engine")]
+fn engine_for(dir: &Path) -> anyhow::Result<Arc<ocrs::OcrEngine>> {
+    let mut guard = ENGINE.lock();
+    if let Some((cached_dir, engine)) = guard.as_ref() {
+        if cached_dir == dir {
+            return Ok(engine.clone());
+        }
+    }
+    let engine = Arc::new(try_load_engine(dir)?);
+    *guard = Some((dir.to_path_buf(), engine.clone()));
+    Ok(engine)
+}
+
+/// Load a fresh engine from `dir` (uncached). Exposed for the
+/// `ocr_bench` example.
+#[cfg(feature = "ocrs-engine")]
+pub fn load_engine(dir: &Path) -> anyhow::Result<ocrs::OcrEngine> {
+    try_load_engine(dir)
+}
+
 #[cfg(feature = "ocrs-engine")]
 fn try_load_engine(dir: &Path) -> anyhow::Result<ocrs::OcrEngine> {
     use ocrs::{OcrEngine, OcrEngineParams};
-    let detection_path = dir.join("text-detection.rten");
-    let recognition_path = dir.join("text-recognition.rten");
-    if !detection_path.exists() || !recognition_path.exists() {
-        anyhow::bail!("ocrs models not installed at {}", dir.display());
-    }
-    let detection = rten::Model::load_file(&detection_path)?;
-    let recognition = rten::Model::load_file(&recognition_path)?;
+    let (detection_path, recognition_path) = model_paths(dir)
+        .ok_or_else(|| anyhow::anyhow!("ocrs models not installed at {}", dir.display()))?;
+    let detection = rten::Model::load_file(&detection_path)
+        .map_err(|e| anyhow::anyhow!("load {}: {e}", detection_path.display()))?;
+    let recognition = rten::Model::load_file(&recognition_path)
+        .map_err(|e| anyhow::anyhow!("load {}: {e}", recognition_path.display()))?;
     let engine = OcrEngine::new(OcrEngineParams {
         detection_model: Some(detection),
         recognition_model: Some(recognition),
@@ -83,6 +158,61 @@ fn try_load_engine(dir: &Path) -> anyhow::Result<ocrs::OcrEngine> {
     })
     .map_err(|e| anyhow::anyhow!("ocrs init: {e}"))?;
     Ok(engine)
+}
+
+/// Run detection + recognition and return lines with bboxes in the
+/// coordinate space of the *original* (un-upscaled) image.
+#[cfg(feature = "ocrs-engine")]
+pub fn recognize(
+    engine: &ocrs::OcrEngine,
+    img: &image::DynamicImage,
+    upscale: f32,
+) -> anyhow::Result<Vec<OcrLine>> {
+    use ocrs::TextItem;
+    let scale = upscale_factor(upscale);
+    let rgb = if scale > 1.0 {
+        let w = (img.width() as f32 * scale).round() as u32;
+        let h = (img.height() as f32 * scale).round() as u32;
+        img.resize_exact(w, h, image::imageops::FilterType::Triangle)
+            .to_rgb8()
+    } else {
+        img.to_rgb8()
+    };
+    let (w, h) = (rgb.width(), rgb.height());
+    let source = ocrs::ImageSource::from_bytes(rgb.as_raw(), (w, h))
+        .map_err(|e| anyhow::anyhow!("ocrs image source: {e}"))?;
+    let input = engine
+        .prepare_input(source)
+        .map_err(|e| anyhow::anyhow!("ocrs prepare: {e}"))?;
+    let words = engine
+        .detect_words(&input)
+        .map_err(|e| anyhow::anyhow!("ocrs detect: {e}"))?;
+    let line_rects = engine.find_text_lines(&input, &words);
+    let line_texts = engine
+        .recognize_text(&input, &line_rects)
+        .map_err(|e| anyhow::anyhow!("ocrs recognize: {e}"))?;
+    Ok(line_texts
+        .into_iter()
+        .flatten()
+        .filter_map(|line| {
+            let text = line.to_string().trim().to_string();
+            if text.is_empty() {
+                return None;
+            }
+            let r = line.bounding_rect();
+            let bbox = [
+                r.left() as f32 / scale,
+                r.top() as f32 / scale,
+                r.width() as f32 / scale,
+                r.height() as f32 / scale,
+            ];
+            Some(OcrLine {
+                text,
+                bbox,
+                confidence: 1.0,
+            })
+        })
+        .collect())
 }
 
 #[async_trait]
@@ -104,64 +234,23 @@ impl Provider for OcrsProvider {
 
         #[cfg(feature = "ocrs-engine")]
         {
-            // Get or lazily initialize the engine.
-            let cell = self.engine.get_or_init(|| Mutex::new(None));
-            {
-                let mut guard = cell.lock();
-                if guard.is_none() {
-                    match try_load_engine(&self.models_dir) {
-                        Ok(e) => *guard = Some(e),
-                        Err(e) => {
-                            tracing::warn!("ocrs models unavailable: {e}");
-                            return Err(ProviderError::LowConfidence);
-                        }
-                    }
-                }
-            }
-
-            // Inference is CPU-bound; move off the async runtime thread.
             let models_dir = self.models_dir.clone();
-            let image_png_owned = image_png.clone();
-            let lines = tokio::task::spawn_blocking(move || -> anyhow::Result<Vec<OcrLine>> {
-                let engine = try_load_engine(&models_dir)?;
-                let img = image::load_from_memory(&image_png_owned)?;
-                let rgb = img.to_rgb8();
-                let (w, h) = (rgb.width() as usize, rgb.height() as usize);
-                let source = ocrs::ImageSource::from_bytes(rgb.as_raw(), (w as u32, h as u32))
-                    .map_err(|e| anyhow::anyhow!("ocrs image source: {e}"))?;
-                let input = engine
-                    .prepare_input(source)
-                    .map_err(|e| anyhow::anyhow!("ocrs prepare: {e}"))?;
-                let words = engine
-                    .detect_words(&input)
-                    .map_err(|e| anyhow::anyhow!("ocrs detect: {e}"))?;
-                let line_rects = engine.find_text_lines(&input, &words);
-                let line_texts = engine
-                    .recognize_text(&input, &line_rects)
-                    .map_err(|e| anyhow::anyhow!("ocrs recognize: {e}"))?;
-                Ok(line_texts
-                    .into_iter()
-                    .filter_map(|line_opt| {
-                        let line = line_opt?;
-                        let text = line.to_string();
-                        if text.trim().is_empty() {
-                            return None;
-                        }
-                        // The detector rotated-rects do not expose an axis
-                        // aligned bbox through a stable trait in the version
-                        // we pin to. The overlay only needs rects for layout
-                        // hints, so a zeroed placeholder is fine for now.
-                        Some(OcrLine {
-                            text,
-                            bbox: [0.0, 0.0, 0.0, 0.0],
-                            confidence: 1.0,
-                        })
-                    })
-                    .collect())
-            })
-            .await
-            .map_err(|e| ProviderError::Other(e.to_string()))?
-            .map_err(|e| ProviderError::Other(e.to_string()))?;
+            let upscale = self.upscale;
+            // Model loading and inference are CPU-bound; keep both off
+            // the async runtime threads.
+            let lines =
+                tokio::task::spawn_blocking(move || -> Result<Vec<OcrLine>, ProviderError> {
+                    let engine = engine_for(&models_dir).map_err(|e| {
+                        tracing::warn!("ocrs models unavailable: {e}");
+                        ProviderError::LowConfidence
+                    })?;
+                    let img = image::load_from_memory(&image_png)
+                        .map_err(|e| ProviderError::Other(e.to_string()))?;
+                    recognize(&engine, &img, upscale)
+                        .map_err(|e| ProviderError::Other(e.to_string()))
+                })
+                .await
+                .map_err(|e| ProviderError::Other(e.to_string()))??;
 
             if lines.is_empty() {
                 return Err(ProviderError::LowConfidence);
@@ -170,7 +259,7 @@ impl Provider for OcrsProvider {
         }
         #[cfg(not(feature = "ocrs-engine"))]
         {
-            let _ = image_png;
+            let _ = (image_png, self.upscale);
             Err(ProviderError::LowConfidence)
         }
     }
@@ -195,8 +284,8 @@ pub async fn install_models_with_progress(
     std::fs::create_dir_all(models_dir)?;
     let client = reqwest::Client::new();
     for (url, filename) in [
-        (DETECTION_MODEL_URL, "text-detection.rten"),
-        (RECOGNITION_MODEL_URL, "text-recognition.rten"),
+        (DETECTION_MODEL_URL, DETECTION_MODEL_FILE),
+        (RECOGNITION_MODEL_URL, RECOGNITION_MODEL_FILE),
     ] {
         let path = models_dir.join(filename);
         if path.exists()
@@ -216,7 +305,7 @@ pub async fn install_models_with_progress(
         // Write atomically to a tempfile then rename, so a cancelled
         // download does not leave a truncated .rten for the engine to
         // try to load on the next launch.
-        let tmp_path = path.with_extension("rten.part");
+        let tmp_path = path.with_extension("part");
         let mut file = tokio::fs::File::create(&tmp_path).await?;
         let mut downloaded: u64 = 0;
         while let Some(chunk) = stream.next().await {
@@ -238,4 +327,35 @@ pub async fn install_models_with_progress(
 /// `install_models_with_progress(dir, None)`.
 pub async fn install_models(models_dir: &Path) -> anyhow::Result<()> {
     install_models_with_progress(models_dir, None).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn upscale_is_opt_in_and_clamped() {
+        assert_eq!(upscale_factor(0.0), 1.0);
+        assert_eq!(upscale_factor(2.0), 2.0);
+        assert_eq!(upscale_factor(9.0), 4.0);
+        assert_eq!(upscale_factor(0.5), 1.0);
+    }
+
+    #[test]
+    fn model_paths_prefer_onnx_and_accept_legacy_rten() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(model_paths(dir.path()).is_none());
+        std::fs::write(dir.path().join("text-detection.rten"), b"x").unwrap();
+        std::fs::write(dir.path().join("text-recognition.rten"), b"x").unwrap();
+        let (d, r) = model_paths(dir.path()).unwrap();
+        assert!(d.ends_with("text-detection.rten"));
+        assert!(r.ends_with("text-recognition.rten"));
+        std::fs::write(dir.path().join(DETECTION_MODEL_FILE), b"x").unwrap();
+        let (d, _) = model_paths(dir.path()).unwrap();
+        assert!(d.ends_with(DETECTION_MODEL_FILE));
+        // Empty files (interrupted downloads) are ignored.
+        std::fs::write(dir.path().join(RECOGNITION_MODEL_FILE), b"").unwrap();
+        let (_, r) = model_paths(dir.path()).unwrap();
+        assert!(r.ends_with("text-recognition.rten"));
+    }
 }

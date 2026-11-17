@@ -10,6 +10,7 @@ pub mod clipboard;
 pub mod hotkey;
 pub mod intent;
 pub mod ipc;
+pub mod layout;
 pub mod lens;
 pub mod macos_permissions;
 pub mod overlay;

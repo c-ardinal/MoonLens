@@ -82,6 +82,37 @@ pub mod rect {
         best.map(|(i, _)| i)
     }
 
+    /// Index of the monitor containing the global point `(x, y)`, e.g. the
+    /// mouse cursor. Falls back to the nearest monitor (by edge distance)
+    /// so a cursor reported a pixel off-screen still resolves.
+    pub fn monitor_at_point(monitors: &[MonitorBounds], x: i32, y: i32) -> Option<usize> {
+        let dist = |m: &MonitorBounds| -> i64 {
+            let (x0, y0) = (m.origin_x as i64, m.origin_y as i64);
+            let (x1, y1) = (x0 + m.w as i64, y0 + m.h as i64);
+            let (px, py) = (x as i64, y as i64);
+            let dx = if px < x0 {
+                x0 - px
+            } else if px >= x1 {
+                px - x1 + 1
+            } else {
+                0
+            };
+            let dy = if py < y0 {
+                y0 - py
+            } else if py >= y1 {
+                py - y1 + 1
+            } else {
+                0
+            };
+            dx * dx + dy * dy
+        };
+        monitors
+            .iter()
+            .enumerate()
+            .min_by_key(|(_, m)| dist(m))
+            .map(|(i, _)| i)
+    }
+
     /// Project a global rect onto the chosen monitor, clipping any parts
     /// that spill off the edges. Returns `None` if the rect does not
     /// intersect any monitor.
@@ -117,6 +148,21 @@ pub mod rect {
                 w,
                 h,
             }
+        }
+
+        #[test]
+        fn point_resolves_to_containing_monitor() {
+            let monitors = vec![
+                m(0, 0, 1920, 1080),
+                m(1920, 0, 2560, 1440),
+                m(-1280, 0, 1280, 1024),
+            ];
+            assert_eq!(monitor_at_point(&monitors, 10, 10), Some(0));
+            assert_eq!(monitor_at_point(&monitors, 1920, 500), Some(1));
+            assert_eq!(monitor_at_point(&monitors, -1, 500), Some(2));
+            // Off every monitor: nearest wins.
+            assert_eq!(monitor_at_point(&monitors, 5000, 100), Some(1));
+            assert_eq!(monitor_at_point(&[], 0, 0), None);
         }
 
         #[test]
@@ -417,6 +463,22 @@ pub fn capture_primary_full() -> Result<DynamicImage> {
     let monitor = monitors.first().context("no monitor")?;
     let full = monitor.capture_image().context("capture")?;
     Ok(DynamicImage::ImageRgba8(full))
+}
+
+/// PNG encode tuned for speed over size: used for full-monitor frames
+/// that only travel over local IPC (a 4K frame encodes in ~100 ms
+/// instead of ~1 s with default compression).
+pub fn png_bytes_fast(img: &image::RgbaImage) -> Result<Vec<u8>> {
+    use image::codecs::png::{CompressionType, FilterType, PngEncoder};
+    use image::ImageEncoder;
+    let mut out = Vec::new();
+    PngEncoder::new_with_quality(&mut out, CompressionType::Fast, FilterType::Sub).write_image(
+        img.as_raw(),
+        img.width(),
+        img.height(),
+        image::ExtendedColorType::Rgba8,
+    )?;
+    Ok(out)
 }
 
 pub fn png_bytes(img: &DynamicImage) -> Result<Vec<u8>> {

@@ -306,32 +306,7 @@ pub async fn capture_and_process(
         }
     });
 
-    // Honour the clipboard policy: translation for text captures, QR
-    // payload for QR captures. Source text is only copied when the user
-    // opted in (default off). All of this is no-op safe when the user
-    // disabled the relevant setting.
-    let clipboard_cfg = state.settings.snapshot().clipboard.clone();
-    if let Some(src) = &bundle.source_text {
-        clipboard::auto_copy(&app, clipboard::Kind::Source, src, &clipboard_cfg);
-    }
-    match &bundle.result.output {
-        crate::providers::TaskOutput::Text(t) => {
-            let kind = match bundle.intent {
-                crate::providers::Intent::Qr => clipboard::Kind::Qr,
-                _ => clipboard::Kind::Translation,
-            };
-            clipboard::auto_copy(&app, kind, t, &clipboard_cfg);
-        }
-        crate::providers::TaskOutput::Ocr { lines } => {
-            let joined = lines
-                .iter()
-                .map(|l| l.text.as_str())
-                .collect::<Vec<_>>()
-                .join("\n");
-            clipboard::auto_copy(&app, clipboard::Kind::Source, &joined, &clipboard_cfg);
-        }
-        _ => {}
-    }
+    apply_clipboard_policy(&app, &state, &bundle);
 
     overlay::show_centered(&app).ok();
     overlay::emit(
@@ -345,6 +320,89 @@ pub async fn capture_and_process(
     )
     .ok();
     Ok(bundle)
+}
+
+/// Honour the clipboard policy: translation for text captures, QR
+/// payload for QR captures. Source text is only copied when the user
+/// opted in (default off). All of this is no-op safe when the user
+/// disabled the relevant setting.
+fn apply_clipboard_policy(app: &AppHandle, state: &AppState, bundle: &CaptureFlowResult) {
+    let clipboard_cfg = state.settings.snapshot().clipboard.clone();
+    if let Some(src) = &bundle.source_text {
+        clipboard::auto_copy(app, clipboard::Kind::Source, src, &clipboard_cfg);
+    }
+    match &bundle.result.output {
+        crate::providers::TaskOutput::Text(t) => {
+            let kind = match bundle.intent {
+                crate::providers::Intent::Qr => clipboard::Kind::Qr,
+                _ => clipboard::Kind::Translation,
+            };
+            clipboard::auto_copy(app, kind, t, &clipboard_cfg);
+        }
+        crate::providers::TaskOutput::Ocr { lines } => {
+            let joined = lines
+                .iter()
+                .map(|l| l.text.as_str())
+                .collect::<Vec<_>>()
+                .join("\n");
+            clipboard::auto_copy(app, clipboard::Kind::Source, &joined, &clipboard_cfg);
+        }
+        _ => {}
+    }
+}
+
+/// Send the selector's frozen frame (PNG) as a raw binary response.
+#[tauri::command]
+pub async fn get_frozen_frame() -> Result<tauri::ipc::Response, String> {
+    let frame = selector::frame().ok_or("no frozen frame")?;
+    Ok(tauri::ipc::Response::new(frame.png.clone()))
+}
+
+/// Process a selection on the frozen frame (`None` = whole frame).
+///
+/// Emits `moonlens://selector-analysis` with the positioned, not yet
+/// translated blocks as soon as OCR finishes, so the selector can mask
+/// the source text while translation streams in, then returns the
+/// final bundle.
+#[tauri::command]
+pub async fn process_frozen_selection(
+    rect: Option<selector::FrameRect>,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<CaptureFlowResult, String> {
+    let (png, r, monitor_index) = tokio::task::spawn_blocking(move || selector::take_crop(rect))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())?;
+    let mut bundle = state
+        .pipeline
+        .analyze_capture(png)
+        .await
+        .map_err(|e| e.to_string())?;
+    bundle.source_rect = Some(crate::pipeline::CaptureFlowRect {
+        monitor_index,
+        x: r.x as i32,
+        y: r.y as i32,
+        w: r.w,
+        h: r.h,
+    });
+    if bundle.needs_translation() {
+        app.emit_to("selector", "moonlens://selector-analysis", &bundle)
+            .ok();
+        state
+            .pipeline
+            .translate_capture(&mut bundle)
+            .await
+            .map_err(|e| e.to_string())?;
+    }
+    apply_clipboard_policy(&app, &state, &bundle);
+    Ok(bundle)
+}
+
+/// Close the selector and drop the frozen frame.
+#[tauri::command]
+pub async fn close_selector(app: AppHandle) -> Result<(), String> {
+    selector::hide(&app).map_err(|e| e.to_string())
 }
 
 #[derive(serde::Serialize, Clone)]
@@ -554,7 +612,10 @@ pub async fn clear_history(state: State<'_, AppState>) -> Result<usize, String> 
 
 #[tauri::command]
 pub async fn start_region_selection(app: AppHandle) -> Result<(), String> {
-    selector::show(&app).map_err(|e| e.to_string())
+    tokio::task::spawn_blocking(move || selector::show(&app))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]

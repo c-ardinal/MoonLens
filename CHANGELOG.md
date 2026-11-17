@@ -6,7 +6,37 @@ the project adheres to [SemVer](https://semver.org/).
 
 ## Unreleased
 
-_No changes yet since v0.1.0-rc.1._
+### Added
+
+- Lens-style in-place translation. The capture hotkey now freezes the
+  monitor under the cursor, you select on the still image (or click to
+  translate the whole screen), and each paragraph's translation is
+  painted over the original text with matching background / text
+  colours. Toolbar: original ⇄ translation toggle, copy, selectable text
+  panel, explain, search, pin. `Esc` closes.
+- Translation streams into the paragraph boxes as tokens arrive.
+- OCR returns real line bounding boxes; lines are grouped into
+  paragraphs (columns and headings stay separate, wrapped lines are
+  joined, CJK-aware) and translated in one request so sentences keep
+  their context.
+- `cargo run --example ocr_bench -- <image>` prints OCR timings, lines
+  and paragraph blocks for a screenshot.
+
+### Fixed
+
+- OCR model download: upstream removed the `.rten` model files (403),
+  so fresh installs could not OCR at all. Models are now the `.onnx`
+  files (ocrs 0.14 / rten 0.28); existing `.rten` installs keep working.
+- OCR reloaded both models from disk on every capture; the engine is
+  now cached for the life of the process.
+- `tauri dev` / debug builds ran OCR unoptimised (~30 s per capture on
+  a 820×360 screenshot); the ML crates are now optimised in dev too
+  (~0.6 s).
+- QR decoding never ran with the default config because `rqrr` had no
+  `[providers.configs]` entry. Built-in providers referenced by a chain
+  are now registered with defaults.
+- Multi-monitor: the selector opens on the monitor under the cursor
+  instead of always the primary one.
 
 ## v0.1.0-rc.1 — first public release candidate
 

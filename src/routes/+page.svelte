@@ -211,7 +211,7 @@
       <div>
         <h2 class="text-base font-semibold">OCR モデル</h2>
         <p class="text-sm text-ink-muted">
-          初回のみ ocrs 用 text-detection / text-recognition モデル (≈100 MB) をダウンロードします。
+          初回のみ ocrs 用 text-detection / text-recognition モデル (約 12 MB) をダウンロードします。
         </p>
       </div>
       <button

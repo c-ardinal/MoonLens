@@ -1,128 +1,500 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
-  import { invoke } from '@tauri-apps/api/core';
-  import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
-  import { hideOverlay } from '$lib/ipc';
+  import { onDestroy, onMount, tick } from 'svelte';
+  import { listen, type UnlistenFn } from '@tauri-apps/api/event';
+  import {
+    ClipboardCopy,
+    Eye,
+    EyeOff,
+    ExternalLink,
+    Languages,
+    Pin,
+    QrCode,
+    Search,
+    Sparkles,
+    TextSelect,
+    X
+  } from 'lucide-svelte';
+  import PrivacyBadge from '$lib/components/PrivacyBadge.svelte';
+  import {
+    closeSelector,
+    getFrozenFrame,
+    onOverlay,
+    pinOverlay,
+    processFrozenSelection,
+    runExplain,
+    runReverseImageSearch,
+    type CaptureFlowResult,
+    type FrameReady,
+    type FrameRect,
+    type LensBlock
+  } from '$lib/ipc';
+  import { extractText } from '$lib/result';
+  import {
+    blockCssRect,
+    dragRect,
+    fitFontSize,
+    joinedText,
+    rgb,
+    splitStreaming,
+    toCssRect,
+    toFrameRect,
+    toolbarPosition,
+    type CssRect
+  } from '$lib/lens-overlay';
 
-  // Drag-to-select implemented entirely in the renderer; backend receives
-  // only the resulting rect via `capture_and_process`. The selector window
-  // covers the full primary monitor and is otherwise transparent.
+  // Lens-style selector. When it opens, the backend has already frozen the
+  // monitor under the cursor; we show that frame, let the user drag (or
+  // click for the whole screen), and paint translations in place over the
+  // frozen image. A new drag starts over; Esc closes.
 
-  let dragging = $state(false);
-  let startX = $state(0);
-  let startY = $state(0);
-  let curX = $state(0);
-  let curY = $state(0);
-  let dpr = $state(1);
-  let busy = $state(false);
+  type Phase = 'loading' | 'select' | 'processing' | 'result' | 'error';
 
-  const win = getCurrentWebviewWindow();
+  let phase = $state<Phase>('loading');
+  let frameUrl = $state<string | null>(null);
+  let frameW = $state(0);
+  let frameH = $state(0);
+  let vw = $state(typeof window !== 'undefined' ? window.innerWidth : 1);
+  let vh = $state(typeof window !== 'undefined' ? window.innerHeight : 1);
+  const scale = $derived(frameW > 0 ? frameW / vw : window.devicePixelRatio || 1);
 
-  onMount(() => {
-    dpr = window.devicePixelRatio || 1;
-  });
+  let drag = $state<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
+  let selection = $state<CssRect | null>(null);
+  let crop = $state<FrameRect | null>(null);
+  let blocks = $state<LensBlock[]>([]);
+  let result = $state<CaptureFlowResult | null>(null);
+  let showOriginal = $state(false);
+  let showPanel = $state(false);
+  let errorMessage = $state('');
+  let notice = $state('');
+  let explanation = $state<string | null>(null);
+  let pinned = $state(false);
+  let streamed = '';
+  let runId = 0;
+  let toolbarEl = $state<HTMLElement | null>(null);
+  let toolbarSize = $state({ width: 360, height: 44 });
 
-  function rect() {
-    const x = Math.min(startX, curX);
-    const y = Math.min(startY, curY);
-    const w = Math.abs(curX - startX);
-    const h = Math.abs(curY - startY);
-    return { x, y, w, h };
+  const unlisteners: UnlistenFn[] = [];
+
+  async function loadFrame(ready: FrameReady) {
+    reset();
+    phase = 'loading';
+    try {
+      const buf = await getFrozenFrame();
+      if (frameUrl) URL.revokeObjectURL(frameUrl);
+      frameUrl = URL.createObjectURL(new Blob([buf], { type: 'image/png' }));
+      frameW = ready.width;
+      frameH = ready.height;
+      phase = 'select';
+      if (ready.auto_full) await run(null);
+    } catch (e) {
+      fail(e);
+    }
   }
+
+  function reset() {
+    runId++;
+    drag = null;
+    selection = null;
+    crop = null;
+    blocks = [];
+    result = null;
+    showOriginal = false;
+    showPanel = false;
+    errorMessage = '';
+    notice = '';
+    explanation = null;
+    pinned = false;
+    streamed = '';
+  }
+
+  function fail(e: unknown) {
+    phase = 'error';
+    errorMessage = String(e).replace(/^Error:\s*/, '');
+  }
+
+  async function run(css: CssRect | null) {
+    const id = ++runId;
+    const full = { left: 0, top: 0, width: vw, height: vh };
+    selection = css ?? full;
+    crop = css ? toFrameRect(css, scale) : { x: 0, y: 0, w: frameW, h: frameH };
+    blocks = [];
+    result = null;
+    streamed = '';
+    explanation = null;
+    notice = '';
+    phase = 'processing';
+    try {
+      const r = await processFrozenSelection(css ? crop : null);
+      if (id !== runId) return;
+      result = r;
+      if (r.source_rect) crop = { x: r.source_rect.x, y: r.source_rect.y, w: r.source_rect.w, h: r.source_rect.h };
+      blocks = r.blocks ?? [];
+      phase = 'result';
+      if (r.intent !== 'qr' && blocks.length === 0) {
+        notice = 'テキストが見つかりませんでした。範囲を変えてもう一度ドラッグしてください。';
+      }
+    } catch (e) {
+      if (id === runId) fail(e);
+    }
+  }
+
+  // ---- pointer handling -------------------------------------------------
 
   function pointerdown(e: PointerEvent) {
-    if (busy) return;
-    dragging = true;
-    startX = e.clientX;
-    startY = e.clientY;
-    curX = e.clientX;
-    curY = e.clientY;
-    (e.target as HTMLElement).setPointerCapture(e.pointerId);
+    if (e.button !== 0 || phase === 'loading') return;
+    drag = { x0: e.clientX, y0: e.clientY, x1: e.clientX, y1: e.clientY };
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
   }
   function pointermove(e: PointerEvent) {
-    if (!dragging) return;
-    curX = e.clientX;
-    curY = e.clientY;
+    if (!drag) return;
+    drag = { ...drag, x1: e.clientX, y1: e.clientY };
   }
-  async function pointerup(_e: PointerEvent) {
-    if (!dragging || busy) return;
-    dragging = false;
-    const r = rect();
-    if (r.w < 8 || r.h < 8) {
-      // Treat tiny drags as a cancel.
-      await win.hide();
+  async function pointerup() {
+    if (!drag) return;
+    const r = dragRect(drag.x0, drag.y0, drag.x1, drag.y1);
+    drag = null;
+    if (r.width < 6 && r.height < 6) {
+      // A click (no drag): translate the whole screen, like Lens'
+      // "translate" mode. While a result is shown, a click outside the
+      // selection just dismisses it so the user can select again.
+      if (phase === 'result' || phase === 'error') {
+        reset();
+        phase = 'select';
+        return;
+      }
+      await run(null);
       return;
     }
-    busy = true;
-    try {
-      const region = {
-        monitor_index: 0,
-        x: Math.round(r.x * dpr),
-        y: Math.round(r.y * dpr),
-        w: Math.round(r.w * dpr),
-        h: Math.round(r.h * dpr)
-      };
-      // Hide first so the captured frame does not include our overlay.
-      await win.hide();
-      await invoke('capture_and_process', { args: region });
-    } finally {
-      busy = false;
-    }
+    await run(r);
   }
-  async function cancel(e: KeyboardEvent) {
+
+  async function close() {
+    reset();
+    phase = 'loading';
+    if (frameUrl) URL.revokeObjectURL(frameUrl);
+    frameUrl = null;
+    await closeSelector().catch(() => {});
+  }
+
+  function keydown(e: KeyboardEvent) {
     if (e.key === 'Escape') {
-      await hideOverlay();
-      await win.hide();
+      e.preventDefault();
+      close();
+    } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'c' && phase === 'result') {
+      // Copy the user's text selection if any, else everything.
+      if (!window.getSelection()?.toString()) {
+        e.preventDefault();
+        copyAll();
+      }
     }
   }
 
-  $effect(() => {
-    window.addEventListener('keydown', cancel);
-    return () => window.removeEventListener('keydown', cancel);
+  // ---- actions ----------------------------------------------------------
+
+  function flash(msg: string) {
+    notice = msg;
+    setTimeout(() => {
+      if (notice === msg) notice = '';
+    }, 1800);
+  }
+
+  async function copyAll() {
+    const text =
+      result?.intent === 'qr'
+        ? qrPayload
+        : joinedText(blocks, showOriginal ? 'source' : 'translation');
+    if (!text) return;
+    try {
+      await navigator.clipboard.writeText(text);
+      flash('コピーしました');
+    } catch {
+      flash('コピーできませんでした');
+    }
+  }
+
+  async function search() {
+    const q = joinedText(blocks, 'source') || qrPayload;
+    if (!q) return;
+    await runReverseImageSearch(`https://www.google.com/search?q=${encodeURIComponent(q.slice(0, 1500))}`);
+  }
+
+  async function explain() {
+    const src = joinedText(blocks, 'source');
+    if (!src) return;
+    explanation = '説明を生成中…';
+    showPanel = true;
+    try {
+      const r = await runExplain(`次のテキストの内容を日本語で簡潔に説明してください:\n\n${src}`);
+      explanation = extractText(r);
+    } catch (e) {
+      explanation = `説明に失敗しました: ${String(e)}`;
+    }
+  }
+
+  async function pin() {
+    if (!result?.source_rect) return;
+    await pinOverlay(result.source_rect);
+    pinned = true;
+    flash('ピン留めしました。領域が変わると自動で再翻訳します');
+  }
+
+  async function openQr() {
+    if (/^https?:\/\//i.test(qrPayload)) await runReverseImageSearch(qrPayload);
+  }
+
+  const qrPayload = $derived(
+    result?.intent === 'qr' && result ? extractText(result.result) : ''
+  );
+  const translating = $derived(phase === 'processing' && blocks.length > 0);
+
+  // ---- text fitting -----------------------------------------------------
+
+  /** Shrink the font until the translation fits its box (Lens behaviour). */
+  function fit(node: HTMLElement, params: { text: string | null; max: number }) {
+    const apply = (p: { text: string | null; max: number }) => {
+      const min = 7;
+      const size = fitFontSize(
+        (px) => {
+          node.style.fontSize = `${px}px`;
+          // The text lives in an inline-block child so it can be centred
+          // vertically; measure that child against the box.
+          const inner = node.firstElementChild as HTMLElement | null;
+          const h = inner ? inner.offsetHeight : node.scrollHeight;
+          const w = inner ? inner.scrollWidth : node.scrollWidth;
+          return h <= node.clientHeight + 1 && w <= node.clientWidth + 1;
+        },
+        min,
+        Math.max(min, p.max)
+      );
+      node.style.fontSize = `${size}px`;
+    };
+    apply(params);
+    return { update: apply };
+  }
+
+  // ---- lifecycle --------------------------------------------------------
+
+  onMount(async () => {
+    const onResize = () => {
+      vw = window.innerWidth;
+      vh = window.innerHeight;
+    };
+    window.addEventListener('resize', onResize);
+    window.addEventListener('keydown', keydown);
+    unlisteners.push(() => window.removeEventListener('resize', onResize));
+    unlisteners.push(() => window.removeEventListener('keydown', keydown));
+    try {
+      unlisteners.push(
+        await listen<FrameReady>('moonlens://selector-frame', (e) => loadFrame(e.payload))
+      );
+      unlisteners.push(
+        await listen<CaptureFlowResult>('moonlens://selector-analysis', (e) => {
+          if (phase !== 'processing') return;
+          blocks = e.payload.blocks ?? [];
+          streamed = '';
+        })
+      );
+      unlisteners.push(
+        await onOverlay((ev) => {
+          if (ev.kind !== 'chunk' || phase !== 'processing' || blocks.length === 0) return;
+          streamed += ev.delta;
+          const parts = splitStreaming(streamed, blocks.length);
+          blocks = blocks.map((b, i) => ({ ...b, translation: parts[i] ?? b.translation }));
+        })
+      );
+    } catch {
+      /* not running inside Tauri (pure frontend dev) */
+    }
   });
+
+  onDestroy(() => {
+    unlisteners.forEach((u) => u());
+    if (frameUrl) URL.revokeObjectURL(frameUrl);
+  });
+
+  $effect(() => {
+    if (toolbarEl && phase === 'result') {
+      tick().then(() => {
+        if (toolbarEl) toolbarSize = { width: toolbarEl.offsetWidth, height: toolbarEl.offsetHeight };
+      });
+    }
+  });
+
+  const activeRect = $derived(
+    drag ? dragRect(drag.x0, drag.y0, drag.x1, drag.y1) : selection
+  );
+  const toolbarPos = $derived(
+    selection ? toolbarPosition(selection, toolbarSize, { width: vw, height: vh }) : null
+  );
+  const cropCss = $derived(crop ? toCssRect(crop, scale) : null);
 </script>
 
 <div
   role="application"
   aria-label="領域を選択"
-  class="fixed inset-0 cursor-crosshair select-none"
-  style="background: rgba(0, 0, 0, 0.18)"
+  class="fixed inset-0 select-none overflow-hidden"
+  class:cursor-crosshair={phase !== 'loading'}
+  style="background: #000"
   onpointerdown={pointerdown}
   onpointermove={pointermove}
   onpointerup={pointerup}
 >
-  {#if dragging}
-    {@const r = rect()}
-    <div class="absolute inset-x-0 top-0 bg-black/60" style="height: {r.y}px"></div>
-    <div
-      class="absolute left-0 bg-black/60"
-      style="top: {r.y}px; width: {r.x}px; height: {r.h}px"
-    ></div>
-    <div
-      class="absolute right-0 bg-black/60"
-      style="top: {r.y}px; width: calc(100% - {r.x + r.w}px); height: {r.h}px"
-    ></div>
-    <div
-      class="absolute inset-x-0 bottom-0 bg-black/60"
-      style="height: calc(100% - {r.y + r.h}px)"
-    ></div>
+  {#if frameUrl}
+    <img
+      src={frameUrl}
+      alt=""
+      draggable="false"
+      class="pointer-events-none absolute inset-0 h-full w-full"
+    />
+  {/if}
 
+  <!-- Dim everything except the active rect. -->
+  {#if activeRect}
+    {@const r = activeRect}
+    <div class="dim absolute inset-x-0 top-0" style="height: {r.top}px"></div>
+    <div class="dim absolute left-0" style="top: {r.top}px; width: {r.left}px; height: {r.height}px"></div>
     <div
-      class="pointer-events-none absolute border-2 border-accent shadow-[0_0_0_1px_rgba(255,255,255,0.4)]"
-      style="left: {r.x}px; top: {r.y}px; width: {r.w}px; height: {r.h}px"
+      class="dim absolute right-0"
+      style="top: {r.top}px; width: calc(100% - {r.left + r.width}px); height: {r.height}px"
     ></div>
+    <div class="dim absolute inset-x-0 bottom-0" style="height: calc(100% - {r.top + r.height}px)"></div>
     <div
-      class="pointer-events-none absolute rounded-md bg-black/80 px-2 py-0.5 text-xs font-mono text-white"
-      style="left: {r.x}px; top: {Math.max(0, r.y - 22)}px"
-    >
-      {Math.round(r.w)} × {Math.round(r.h)}
-    </div>
+      class="frame pointer-events-none absolute"
+      class:scanning={phase === 'processing'}
+      style="left: {r.left}px; top: {r.top}px; width: {r.width}px; height: {r.height}px"
+    ></div>
+    {#if drag}
+      <div
+        class="pointer-events-none absolute rounded-md bg-black/75 px-2 py-0.5 font-mono text-xs text-white"
+        style="left: {r.left}px; top: {Math.max(0, r.top - 24)}px"
+      >
+        {Math.round(r.width * scale)} × {Math.round(r.height * scale)}
+      </div>
+    {/if}
   {:else}
+    <div class="dim absolute inset-0"></div>
+  {/if}
+
+  <!-- In-place translation blocks. -->
+  {#if cropCss && blocks.length > 0 && !showOriginal}
+    <!-- Clipped to the selection so nothing paints over the dimmed area. -->
     <div
-      class="pointer-events-none absolute inset-x-0 top-6 mx-auto w-fit rounded-full bg-black/60 px-4 py-1.5 text-sm text-white shadow-ml"
+      class="pointer-events-none absolute overflow-hidden"
+      style="left: {cropCss.left}px; top: {cropCss.top}px; width: {cropCss.width}px; height: {cropCss.height}px"
     >
-      ドラッグで領域選択 · ESC でキャンセル
+    {#each blocks as b, i (i)}
+      {#if b.bbox[2] > 0 && crop}
+        {@const r = blockCssRect(b, crop, scale)}
+        <div
+          role="presentation"
+          class="block pointer-events-auto absolute overflow-hidden"
+          class:pending={b.translation == null}
+          style="left: {r.left - cropCss.left}px; top: {r.top - cropCss.top}px; width: {r.width}px; height: {r.height}px;
+                 background: {rgb(b.colors?.background, 'rgba(255,255,255,0.96)')};
+                 color: {rgb(b.colors?.foreground, '#111')};"
+          onpointerdown={(e) => e.stopPropagation()}
+          onpointerup={(e) => e.stopPropagation()}
+          title={b.source}
+        >
+          {#if b.translation != null}
+            <div
+              class="fit h-full w-full"
+              use:fit={{ text: b.translation, max: (b.line_height / scale) * 0.92 }}
+            >
+              <span class="fit-text">{b.translation}</span>
+            </div>
+          {/if}
+        </div>
+      {/if}
+    {/each}
     </div>
+  {/if}
+
+  <!-- Hint pill. -->
+  {#if phase === 'select' && !drag}
+    <div class="pill pointer-events-none absolute inset-x-0 top-6 mx-auto w-fit">
+      ドラッグで範囲を選択 · クリックで画面全体を翻訳 · Esc で閉じる
+    </div>
+  {:else if phase === 'processing'}
+    <div class="pill pointer-events-none absolute inset-x-0 top-6 mx-auto w-fit">
+      <Sparkles class="inline h-3.5 w-3.5 animate-pulse" />
+      {translating ? '翻訳中…' : '文字を認識中…'}
+    </div>
+  {/if}
+
+  <!-- Result toolbar. -->
+  {#if (phase === 'result' || phase === 'error') && toolbarPos}
+    <div
+      bind:this={toolbarEl}
+      class="toolbar absolute flex items-center gap-1"
+      style="left: {toolbarPos.left}px; top: {toolbarPos.top}px"
+      onpointerdown={(e) => e.stopPropagation()}
+      onpointerup={(e) => e.stopPropagation()}
+      role="toolbar"
+      tabindex="-1"
+    >
+      {#if phase === 'error'}
+        <span class="px-2 text-sm text-red-400">{errorMessage}</span>
+      {:else if result?.intent === 'qr'}
+        <QrCode class="ml-1 h-4 w-4 opacity-80" />
+        <span class="max-w-[420px] truncate px-1 text-sm" title={qrPayload}>{qrPayload}</span>
+        {#if /^https?:\/\//i.test(qrPayload)}
+          <button class="tb" onclick={openQr} title="ブラウザで開く"><ExternalLink class="h-4 w-4" />開く</button>
+        {/if}
+        <button class="tb" onclick={copyAll} title="コピー"><ClipboardCopy class="h-4 w-4" />コピー</button>
+      {:else if blocks.length > 0}
+        {#if result}
+          <PrivacyBadge viaCloud={result.result.via_cloud} provider={result.result.used_provider} />
+        {/if}
+        <button
+          class="tb"
+          aria-pressed={showOriginal}
+          onclick={() => (showOriginal = !showOriginal)}
+          title="原文と翻訳を切り替え"
+        >
+          {#if showOriginal}<Eye class="h-4 w-4" />翻訳を表示{:else}<EyeOff class="h-4 w-4" />原文を表示{/if}
+        </button>
+        <button class="tb" onclick={copyAll} title="コピー (Ctrl+C)"><ClipboardCopy class="h-4 w-4" />コピー</button>
+        <button class="tb" aria-pressed={showPanel} onclick={() => (showPanel = !showPanel)} title="テキストを表示">
+          <TextSelect class="h-4 w-4" />テキスト
+        </button>
+        <button class="tb" onclick={explain} title="内容を説明"><Languages class="h-4 w-4" />説明</button>
+        <button class="tb" onclick={search} title="Google で検索"><Search class="h-4 w-4" />検索</button>
+        <button class="tb" onclick={pin} disabled={pinned} title="ピン留め: 同じ領域を自動再翻訳">
+          <Pin class="h-4 w-4" />
+        </button>
+      {:else}
+        <span class="px-2 text-sm">{notice}</span>
+      {/if}
+      <button class="tb" onclick={close} title="閉じる (Esc)"><X class="h-4 w-4" /></button>
+    </div>
+  {/if}
+
+  {#if notice && phase === 'result' && blocks.length > 0}
+    <div class="pill pointer-events-none absolute inset-x-0 bottom-8 mx-auto w-fit">{notice}</div>
+  {/if}
+
+  <!-- Text panel: selectable source + translation, plus explanations. -->
+  {#if showPanel && phase === 'result'}
+    <aside
+      class="panel absolute right-4 top-4 bottom-4 flex w-[380px] max-w-[45vw] flex-col"
+      onpointerdown={(e) => e.stopPropagation()}
+      onpointerup={(e) => e.stopPropagation()}
+    >
+      <header class="flex items-center justify-between border-b border-white/10 px-4 py-2">
+        <span class="text-sm font-medium">テキスト</span>
+        <button class="tb" onclick={() => (showPanel = false)} title="閉じる"><X class="h-4 w-4" /></button>
+      </header>
+      <div class="flex-1 select-text overflow-auto px-4 py-3 text-sm leading-relaxed">
+        {#if explanation}
+          <section class="mb-4 rounded-lg bg-white/5 p-3 whitespace-pre-wrap">{explanation}</section>
+        {/if}
+        {#each blocks as b, i (i)}
+          <p class="mb-1 whitespace-pre-wrap">{b.translation ?? '（翻訳できませんでした）'}</p>
+          <p class="mb-4 whitespace-pre-wrap text-xs opacity-60">{b.source}</p>
+        {/each}
+      </div>
+    </aside>
   {/if}
 </div>
 
@@ -133,5 +505,114 @@
     margin: 0;
     padding: 0;
     overflow: hidden;
+  }
+  .dim {
+    background: rgba(0, 0, 0, 0.45);
+    pointer-events: none;
+  }
+  .frame {
+    border-radius: 6px;
+    box-shadow:
+      0 0 0 2px rgba(255, 255, 255, 0.95),
+      0 0 0 4px rgba(139, 92, 246, 0.55),
+      0 8px 32px rgba(0, 0, 0, 0.35);
+  }
+  .frame.scanning {
+    background: linear-gradient(
+      100deg,
+      transparent 20%,
+      rgba(167, 139, 250, 0.28) 45%,
+      rgba(255, 255, 255, 0.35) 50%,
+      rgba(167, 139, 250, 0.28) 55%,
+      transparent 80%
+    );
+    background-size: 250% 100%;
+    animation: scan 1.2s linear infinite;
+  }
+  @keyframes scan {
+    from {
+      background-position: 120% 0;
+    }
+    to {
+      background-position: -120% 0;
+    }
+  }
+  .block {
+    border-radius: 3px;
+    user-select: text;
+    cursor: text;
+    box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.04);
+  }
+  .block.pending {
+    background-image: linear-gradient(
+      100deg,
+      transparent 30%,
+      rgba(139, 92, 246, 0.18) 50%,
+      transparent 70%
+    ) !important;
+    background-size: 250% 100%;
+    animation: scan 1.1s linear infinite;
+  }
+  .fit {
+    display: flex;
+    align-items: center;
+    padding: 0 2px;
+  }
+  .fit-text {
+    display: block;
+    width: 100%;
+    line-height: 1.18;
+    overflow-wrap: anywhere;
+    word-break: normal;
+    font-family: var(--ml-font-ui);
+    font-weight: 500;
+  }
+  .pill {
+    border-radius: 999px;
+    background: rgba(20, 20, 24, 0.82);
+    color: #fff;
+    padding: 6px 16px;
+    font-size: 13px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+    backdrop-filter: blur(12px);
+  }
+  .toolbar {
+    z-index: 20;
+  }
+  .panel {
+    z-index: 10;
+  }
+  .toolbar,
+  .panel {
+    border-radius: 14px;
+    background: rgba(24, 24, 28, 0.9);
+    color: #f4f4f5;
+    padding: 4px;
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+    backdrop-filter: blur(16px) saturate(1.6);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    cursor: default;
+  }
+  .panel {
+    padding: 0;
+  }
+  .tb {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    border-radius: 10px;
+    padding: 6px 10px;
+    font-size: 13px;
+    white-space: nowrap;
+    transition: background 120ms;
+  }
+  .tb:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.1);
+  }
+  .tb[aria-pressed='true'] {
+    background: rgba(139, 92, 246, 0.35);
+  }
+  .tb:disabled {
+    opacity: 0.4;
   }
 </style>
