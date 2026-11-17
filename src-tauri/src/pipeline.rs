@@ -27,6 +27,7 @@ use crate::{
         SettingsStore,
     },
     storage::Storage,
+    translation_cache::{CachedTranslation, TranslationCache},
 };
 
 /// Outcome reported to the UI per task attempt. `used_provider`/`via_cloud`
@@ -57,6 +58,8 @@ pub struct Pipeline {
     /// overlay webview; unset in test builds that construct a pipeline
     /// directly.
     chunk_sink: RwLock<Option<ChunkSink>>,
+    /// Per-paragraph translations, so re-selected text shows instantly.
+    cache: TranslationCache,
 }
 
 impl Pipeline {
@@ -72,6 +75,7 @@ impl Pipeline {
             providers: RwLock::new(HashMap::new()),
             sticky: RwLock::new(HashMap::new()),
             chunk_sink: RwLock::new(None),
+            cache: TranslationCache::default(),
         };
         me.rebuild_providers();
         me
@@ -92,6 +96,7 @@ impl Pipeline {
             providers: RwLock::new(providers),
             sticky: RwLock::new(HashMap::new()),
             chunk_sink: RwLock::new(None),
+            cache: TranslationCache::default(),
         }
     }
 
@@ -103,9 +108,16 @@ impl Pipeline {
         self.rebuild_providers();
     }
 
+    /// Forget cached translations (provider or settings changed).
+    pub fn clear_translation_cache(&self) {
+        self.cache.clear();
+    }
+
     /// Rebuild the in-memory provider map from the current settings. Called
     /// on startup and whenever settings hot-reload.
     pub fn rebuild_providers(&self) {
+        // A different model or prompt must not be masked by old output.
+        self.clear_translation_cache();
         let s = self.settings.snapshot();
         let mut map: HashMap<String, ProviderHandle> = HashMap::new();
         let empty = serde_json::Value::Object(Default::default());
@@ -348,6 +360,7 @@ impl Pipeline {
                 translation: None,
                 colors: (b.bbox[2] > 0.0).then(|| layout::estimate_colors(&rgba, b.bbox)),
                 same_language: false,
+                from_cache: false,
             })
             .collect();
 
@@ -370,7 +383,7 @@ impl Pipeline {
             },
         };
         let target = self.settings.snapshot().subtitle.target_language.clone();
-        Self::mark_same_language(&mut bundle, &target);
+        self.prepare_translation(&mut bundle, &target);
         Ok(bundle)
     }
 
@@ -382,6 +395,24 @@ impl Pipeline {
         for b in &mut bundle.blocks {
             b.same_language = lang::already_in(&b.source, target);
             b.translation = b.same_language.then(|| b.source.clone());
+            b.from_cache = false;
+        }
+    }
+
+    /// [`Self::mark_same_language`] plus filling blocks whose translation
+    /// into `target` is cached. Call before showing the analysed bundle so
+    /// cached paragraphs appear immediately; only the remaining blocks
+    /// (see [`LensBlock::needs_request`]) go to the translator.
+    pub fn prepare_translation(&self, bundle: &mut CaptureFlowResult, target: &str) {
+        Self::mark_same_language(bundle, target);
+        for b in &mut bundle.blocks {
+            if b.same_language {
+                continue;
+            }
+            if let Some(hit) = self.cache.get(target, &b.source) {
+                b.translation = Some(hit.text);
+                b.from_cache = true;
+            }
         }
     }
 
@@ -405,19 +436,34 @@ impl Pipeline {
         target_language: &str,
     ) -> Result<(), ProviderError> {
         let s = self.settings.snapshot();
-        Self::mark_same_language(bundle, target_language);
+        self.prepare_translation(bundle, target_language);
         let pending: Vec<usize> = (0..bundle.blocks.len())
-            .filter(|&i| !bundle.blocks[i].same_language)
+            .filter(|&i| bundle.blocks[i].needs_request())
             .collect();
         let target_language = target_language.to_string();
 
         if pending.is_empty() {
-            // Everything is already readable: no round-trip at all.
+            // Everything is already readable or cached: no round-trip.
+            let cached: Vec<CachedTranslation> = bundle
+                .blocks
+                .iter()
+                .filter(|b| b.from_cache)
+                .filter_map(|b| self.cache.get(&target_language, &b.source))
+                .collect();
+            let text = bundle
+                .blocks
+                .iter()
+                .filter_map(|b| b.translation.clone())
+                .collect::<Vec<_>>()
+                .join(layout::BLOCK_SEPARATOR);
             bundle.result = TaskResult {
                 task: "translate".into(),
-                output: TaskOutput::Text(bundle.source_text.clone().unwrap_or_default()),
-                used_provider: "builtin.passthrough".into(),
-                via_cloud: false,
+                output: TaskOutput::Text(text),
+                used_provider: cached
+                    .first()
+                    .map(|c| c.provider.clone())
+                    .unwrap_or_else(|| "builtin.passthrough".into()),
+                via_cloud: cached.iter().any(|c| c.via_cloud),
                 latency_ms: 0,
                 fallback_reasons: vec![],
             };
@@ -469,6 +515,17 @@ impl Pipeline {
                 }
             };
         for (&i, t) in pending.iter().zip(translations) {
+            if let Some(text) = &t {
+                self.cache.put(
+                    &target_language,
+                    &bundle.blocks[i].source,
+                    CachedTranslation {
+                        text: text.clone(),
+                        provider: translate.used_provider.clone(),
+                        via_cloud: translate.via_cloud,
+                    },
+                );
+            }
             bundle.blocks[i].translation = t;
         }
 
@@ -559,6 +616,17 @@ pub struct LensBlock {
     /// is the source text. The overlay leaves such blocks uncovered.
     #[serde(default)]
     pub same_language: bool,
+    /// True when `translation` came from the translation cache rather
+    /// than this request.
+    #[serde(default)]
+    pub from_cache: bool,
+}
+
+impl LensBlock {
+    /// Whether this block still has to be sent to the translator.
+    pub fn needs_request(&self) -> bool {
+        !self.same_language && !self.from_cache
+    }
 }
 
 impl CaptureFlowResult {

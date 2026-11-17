@@ -55,6 +55,8 @@ export interface LensBlock {
   colors: { background: [number, number, number]; foreground: [number, number, number] } | null;
   /** Already in the target language (or no letters): not translated. */
   same_language?: boolean;
+  /** Translation came from the local translation cache (shown at once). */
+  from_cache?: boolean;
 }
 
 export interface CaptureFlowResult {

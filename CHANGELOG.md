@@ -6,7 +6,18 @@ the project adheres to [SemVer](https://semver.org/).
 
 ## Unreleased
 
+### Removed
+
+- The selector's "検索" button (opened a Google web search). MoonLens is
+  fully local and does not hand text to web services.
+
 ### Added
+
+- Translation cache. Each paragraph's translation is kept in memory
+  (per target language, up to 2,000 paragraphs) so re-selecting the same
+  text, scrolling back, or a pinned region re-rendering shows the
+  translation instantly; only paragraphs not seen before go to the
+  model. Cleared whenever settings / providers change.
 
 - Target language in the selector. Text that is already in the target
   language (detected from its script, plus English function words for

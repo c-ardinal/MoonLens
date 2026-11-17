@@ -9,7 +9,6 @@
     Languages,
     Pin,
     QrCode,
-    Search,
     Sparkles,
     TextSelect,
     X
@@ -257,12 +256,6 @@
     } catch {
       flash('コピーできませんでした');
     }
-  }
-
-  async function search() {
-    const q = joinedText(blocks, 'source') || qrPayload;
-    if (!q) return;
-    await runReverseImageSearch(`https://www.google.com/search?q=${encodeURIComponent(q.slice(0, 1500))}`);
   }
 
   async function explain() {
@@ -520,7 +513,6 @@
           <TextSelect class="h-4 w-4" />テキスト
         </button>
         <button class="tb" onclick={explain} title="内容を説明"><Languages class="h-4 w-4" />説明</button>
-        <button class="tb" onclick={search} title="Google で検索"><Search class="h-4 w-4" />検索</button>
         <button class="tb" onclick={pin} disabled={pinned} title="ピン留め: 同じ領域を自動再翻訳">
           <Pin class="h-4 w-4" />
         </button>
