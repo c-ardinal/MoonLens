@@ -1,0 +1,17 @@
+# Keep the GitHub Actions used by the workflows up to date (Node runtime
+# deprecations, security fixes). Grouped into one monthly PR so it costs
+# a single CI run. npm / cargo are covered by the weekly audit workflow
+# (.github/workflows/audit.yml) instead of version-bump PRs, to keep
+# Actions minutes and lockfile churn low.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    target-branch: release
+    schedule:
+      interval: monthly
+    groups:
+      actions:
+        patterns: ['*']
+    commit-message:
+      prefix: ci

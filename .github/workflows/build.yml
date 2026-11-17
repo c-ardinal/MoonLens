@@ -52,6 +52,10 @@ env:
   CARGO_TERM_COLOR: always
   # Incremental compilation only bloats the cache on CI.
   CARGO_INCREMENTAL: 0
+  # Full debuginfo makes the src-tauri test build ~20 GB and slows the
+  # link step; line tables keep file:line in panic backtraces at a
+  # fraction of the size (smaller rust-cache too).
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
 
 jobs:
   frontend:
