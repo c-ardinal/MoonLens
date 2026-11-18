@@ -14,6 +14,10 @@ name: release
 on:
   push:
     tags: ['v*']
+  # Dry run of the Windows installer build when this file changes:
+  # nothing is published, the installers are kept as run artifacts.
+  pull_request:
+    paths: ['.github/workflows/release.yml']
   workflow_dispatch:
     inputs:
       tag:
@@ -22,6 +26,17 @@ on:
 
 permissions:
   contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  # Fetch git dependencies (llama-cpp-rs and its llama.cpp submodule)
+  # with the git CLI: libgit2 stalled on the submodule on Windows.
+  CARGO_NET_GIT_FETCH_WITH_CLI: 'true'
 
 jobs:
   guard:
@@ -34,6 +49,7 @@ jobs:
           # started from (usually the default branch), not the tag.
           ref: ${{ github.event.inputs.tag || github.ref }}
       - name: Check tag branch hygiene
+        if: github.event_name != 'pull_request'
         shell: bash
         env:
           # Passed via env, not interpolated into the script, so a
@@ -59,6 +75,7 @@ jobs:
       # Version / tag / @tauri-apps pairing check (seconds, no installs).
       # Catches the mistakes that otherwise fail 20 min into the bundle.
       - name: Release preflight
+        if: github.event_name != 'pull_request'
         shell: bash
         env:
           TAG: ${{ github.event.inputs.tag || github.ref_name }}
@@ -69,19 +86,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Budget-saving mode: Linux only for this release cycle.
-        # The free-tier minute budget is nearly exhausted and the
-        # macOS runner's ×10 billing multiplier alone would push us
-        # over. Windows bundles (.msi / .nsis) are produced locally
-        # and attached via `gh release upload`; macOS is deferred to
-        # the next release cycle.
-        #
-        # To restore full 3-platform output (after budget reset or
-        # on a paid plan) uncomment the macos / windows entries.
-        include:
-          - { name: linux, os: ubuntu-latest, bundle: deb,appimage,rpm }
-          # - { name: macos, os: macos-14, bundle: dmg }
-          # - { name: windows, os: windows-latest, bundle: msi,nsis }
+        # Linux + Windows on tag push. macOS (x10 billing multiplier) is
+        # deferred, see docs/ci-and-release-policy.md. A PR dry run
+        # builds Windows only: that is the build that breaks.
+        include: ${{ fromJSON(github.event_name == 'pull_request'
+          && '[{"name":"windows","os":"windows-latest","bundle":"msi,nsis"}]'
+          || '[{"name":"linux","os":"ubuntu-latest","bundle":"deb,appimage,rpm"},{"name":"windows","os":"windows-latest","bundle":"msi,nsis"}]') }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 90
     steps:
@@ -120,7 +130,7 @@ jobs:
           cache: true
       - uses: ilammy/msvc-dev-cmd@v1
         if: matrix.name == 'windows'
-      - name: Use Ninja for CMake (windows)
+      - name: Windows build environment
         if: matrix.name == 'windows'
         shell: bash
         run: |
@@ -130,16 +140,40 @@ jobs:
           # MAX_PATH under the default target dir (link.exe LNK1104 on
           # intermediate.manifest); keep the target dir short.
           echo "CARGO_TARGET_DIR=D:/t" >> "$GITHUB_ENV"
+          # bindgen (llama-cpp-sys-2) needs libclang; the runner ships LLVM.
+          echo "LIBCLANG_PATH=C:\\Program Files\\LLVM\\bin" >> "$GITHUB_ENV"
+          # llama.cpp submodule paths exceed 260 chars under ~/.cargo/git.
+          git config --global core.longpaths true
+
+      # Compiler cache in the Actions cache: llama.cpp / whisper.cpp
+      # (C/C++, through CMake's compiler launcher) and the Rust crates.
+      # Only our own crate, the LTO link and the bundler run every time.
+      # Caches are scoped per ref: a re-run of the same tag (or PR) hits
+      # it; a new tag reads the default branch's cache only. Measured
+      # build times: docs/ci-and-release-policy.md ("Windows build speed").
+      - uses: mozilla-actions/sccache-action@v0.0.9
+      - name: Enable sccache
+        shell: bash
+        run: |
+          {
+            echo "SCCACHE_GHA_ENABLED=true"
+            echo "RUSTC_WRAPPER=sccache"
+            echo "CMAKE_C_COMPILER_LAUNCHER=sccache"
+            echo "CMAKE_CXX_COMPILER_LAUNCHER=sccache"
+          } >> "$GITHUB_ENV"
 
       - uses: actions/setup-node@v5
         with: { node-version: 22, cache: npm }
 
       - uses: dtolnay/rust-toolchain@stable
 
+      # Registry + git checkouts only (llama-cpp-rs with its llama.cpp
+      # submodule is a slow fetch); compiled code goes through sccache.
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
           key: release-${{ matrix.name }}
+          cache-targets: false
 
       - uses: taiki-e/install-action@v2
         with:
@@ -176,7 +210,8 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           projectPath: .
-          tagName: ${{ github.event.inputs.tag || github.ref_name }}
+          # Empty on a PR dry run: build only, no release.
+          tagName: ${{ github.event_name != 'pull_request' && (github.event.inputs.tag || github.ref_name) || '' }}
           releaseName: 'MoonLens ${{ github.event.inputs.tag || github.ref_name }}'
           # Created as a draft: check the assets and notes, then press
           # "Publish release" (see docs/RELEASING.md).
@@ -207,8 +242,24 @@ jobs:
           includeUpdaterJson: false
           args: --bundles ${{ matrix.bundle }} --config src-tauri/tauri.release.conf.json
 
+      - name: Keep the installers (dry run)
+        if: github.event_name == 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: moonlens-windows-installers
+          path: |
+            D:/t/release/bundle/msi/*.msi
+            D:/t/release/bundle/nsis/*.exe
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Compiler cache stats
+        if: always()
+        shell: bash
+        run: sccache --show-stats || true
+
       - name: Attach licence file to the release
-        if: matrix.name == 'linux'
+        if: matrix.name == 'linux' && github.event_name != 'pull_request'
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
