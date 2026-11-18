@@ -29,7 +29,9 @@ export type Field =
       zeroLabel?: string;
     }
   | { kind: 'color'; path: string; label: string; help?: string }
-  | { kind: 'hotkey'; path: string; label: string; help?: string };
+  | { kind: 'hotkey'; path: string; label: string; help?: string }
+  /** Editable term list (rendered by GlossaryEditor). */
+  | { kind: 'glossary'; path: string; label: string; help?: string };
 
 export type Section =
   | { id: string; title: string; description?: string; fields: Field[] }
@@ -50,6 +52,23 @@ export const SECTIONS: Section[] = [
         label: '翻訳先言語',
         help: '画面翻訳・ライブ字幕に共通。範囲選択ツールバーでも一時変更可能。',
         options: LANGUAGE_OPTIONS
+      },
+      {
+        kind: 'select',
+        path: 'translation.style',
+        label: '文体',
+        help: '日本語への翻訳時のみ適用。',
+        options: [
+          { value: 'auto', label: '自動' },
+          { value: 'polite', label: '敬体（です・ます）' },
+          { value: 'plain', label: '常体（だ・である）' }
+        ]
+      },
+      {
+        kind: 'glossary',
+        path: 'translation.glossary',
+        label: '用語集',
+        help: '原文中の用語を指定の訳語に固定。'
       }
     ]
   },

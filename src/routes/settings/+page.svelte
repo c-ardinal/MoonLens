@@ -15,6 +15,8 @@
   import LocalModels from '$lib/components/LocalModels.svelte';
   import OcrModels from '$lib/components/OcrModels.svelte';
   import DataLocations from '$lib/components/DataLocations.svelte';
+  import GlossaryEditor from '$lib/components/GlossaryEditor.svelte';
+  import { compactGlossary } from '$lib/glossary';
 
   /** The selector remembers the language last picked in its toolbar. */
   const SELECTOR_LANG_KEY = 'moonlens.selector.targetLanguage';
@@ -104,11 +106,14 @@
     if (!draft || saving || clashes.length > 0) return;
     saving = true;
     message = null;
-    const next = $state.snapshot(draft);
+    let next = $state.snapshot(draft);
+    // Rows added but never filled in are not worth keeping.
+    next = setPath(next, 'translation.glossary', compactGlossary(getPath(next, 'translation.glossary')));
     const languageChanged = changed.includes('subtitle.target_language');
     try {
       await setSettings(next);
       saved = structuredClone(next);
+      draft = structuredClone(next);
       if (languageChanged) {
         // A language picked in the selector toolbar would otherwise keep
         // overriding the one chosen here.
@@ -205,13 +210,23 @@
                 class="mt-3 divide-y divide-border rounded-ml border border-border bg-surface-elevated px-4 shadow-ml"
               >
                 {#each fields as field (field.path)}
-                  <SettingField
-                    {field}
-                    value={getPath(draft, field.path)}
-                    defaultValue={getPath(defaults, field.path) ?? null}
-                    invalid={clashes.includes(field.path)}
-                    onChange={(v) => update(field.path, v)}
-                  />
+                  {#if field.kind === 'glossary'}
+                    <GlossaryEditor
+                      label={field.label}
+                      help={field.help}
+                      value={getPath(draft, field.path)}
+                      defaultLang={getPath(draft, 'subtitle.target_language') ?? 'ja'}
+                      onChange={(v) => update(field.path, v)}
+                    />
+                  {:else}
+                    <SettingField
+                      {field}
+                      value={getPath(draft, field.path)}
+                      defaultValue={getPath(defaults, field.path) ?? null}
+                      invalid={clashes.includes(field.path)}
+                      onChange={(v) => update(field.path, v)}
+                    />
+                  {/if}
                 {/each}
               </div>
             {/if}

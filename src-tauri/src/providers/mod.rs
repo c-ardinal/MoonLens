@@ -6,6 +6,7 @@
 //! same trait so [`crate::pipeline`] does not care which is which.
 
 pub mod asr_whisper;
+pub mod glossary;
 pub mod lang;
 pub mod llm_models;
 pub mod ocr_ocrs;
