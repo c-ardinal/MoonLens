@@ -149,7 +149,8 @@ jobs:
       # (C/C++, through CMake's compiler launcher) and the Rust crates.
       # Only our own crate, the LTO link and the bundler run every time.
       # Caches are scoped per ref: a re-run of the same tag (or PR) hits
-      # it; a new tag reads the default branch's cache only.
+      # it; a new tag reads the default branch's cache only. Measured
+      # build times: docs/ci-and-release-policy.md ("Windows build speed").
       - uses: mozilla-actions/sccache-action@v0.0.9
       - name: Enable sccache
         shell: bash
