@@ -26,6 +26,12 @@ pub const TRANSLATE_TIMEOUT_MS: u32 = 15000;
 pub const LEGACY_REVERSE_IMAGE_SEARCH_CHAIN: [&str; 3] =
     ["browser.google_images", "browser.bing", "browser.yandex"];
 
+/// Speech recognition chain shipped up to v0.1.0: an external whisper.cpp
+/// server that had to be started by hand. The engine is built in now.
+pub const LEGACY_ASR_CHAIN: [&str; 1] = ["whisper_cpp.large_v3_turbo"];
+pub const LEGACY_ASR_TIMEOUT_MS: u32 = 15000;
+pub const ASR_TIMEOUT_MS: u32 = 60000;
+
 /// Apply every rule; returns true when anything changed.
 pub fn migrate_legacy_defaults(s: &mut Settings) -> bool {
     let mut changed = false;
@@ -58,6 +64,14 @@ pub fn migrate_legacy_defaults(s: &mut Settings) -> bool {
     }
     for id in LEGACY_REVERSE_IMAGE_SEARCH_CHAIN {
         changed |= s.providers.configs.remove(id).is_some();
+    }
+    if s.providers.asr.chain == LEGACY_ASR_CHAIN {
+        s.providers.asr.chain = vec![crate::providers::asr_local::LOCAL_ASR_ID.to_string()];
+        changed = true;
+    }
+    if s.providers.asr.timeout_ms == LEGACY_ASR_TIMEOUT_MS {
+        s.providers.asr.timeout_ms = ASR_TIMEOUT_MS;
+        changed = true;
     }
     changed
 }
@@ -108,6 +122,8 @@ mod tests {
             .map(|x| x.to_string())
             .collect();
         s.privacy.allow_cloud_globally = true;
+        s.providers.asr.chain = LEGACY_ASR_CHAIN.iter().map(|x| x.to_string()).collect();
+        s.providers.asr.timeout_ms = LEGACY_ASR_TIMEOUT_MS;
         s
     }
 
@@ -120,6 +136,8 @@ mod tests {
         assert!(o.get("system_prompt").is_none());
         assert_eq!(s.providers.translate.timeout_ms, TRANSLATE_TIMEOUT_MS);
         assert!(s.providers.reverse_image_search.chain.is_empty());
+        assert_eq!(s.providers.asr.chain, ["whisper"]);
+        assert_eq!(s.providers.asr.timeout_ms, ASR_TIMEOUT_MS);
         assert!(migrate_versioned(&mut s, 0));
         assert!(!s.privacy.allow_cloud_globally);
         assert_eq!(s.config_version, CONFIG_VERSION);
@@ -142,6 +160,8 @@ mod tests {
         cfg.insert("system_prompt".into(), "my own prompt".into());
         s.providers.translate.timeout_ms = 4000;
         s.providers.reverse_image_search.chain = vec!["plugin.my_search".into()];
+        s.providers.asr.chain = vec!["whisper_cpp.large_v3_turbo".into(), "whisper".into()];
+        s.providers.asr.timeout_ms = 20000;
         assert!(!migrate_legacy_defaults(&mut s));
         assert_eq!(s.providers.configs["ollama.gemma4"]["model"], "qwen3.5:9b");
         assert_eq!(

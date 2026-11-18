@@ -53,6 +53,11 @@ macro_rules! all_commands {
             ipc::cancel_llm_download,
             ipc::delete_llm_model,
             ipc::select_llm_model,
+            ipc::list_asr_models,
+            ipc::install_asr_model,
+            ipc::cancel_asr_download,
+            ipc::delete_asr_model,
+            ipc::select_asr_model,
             ipc::show_main,
             ipc::hide_overlay,
             ipc::start_region_selection,
@@ -285,9 +290,7 @@ fn build_tray(app: &AppHandle) -> Result<()> {
             }
             "subtitle" => {
                 let state = app.state::<AppState>();
-                if let Err(e) = state.subtitle.toggle(app) {
-                    tracing::warn!("subtitle toggle failed: {e:?}");
-                }
+                state.subtitle.toggle_checked(app);
             }
             "plugins" => route_main(app, "/plugins/"),
             "history" => route_main(app, "/history/"),

@@ -106,15 +106,7 @@ pub fn register_all(
             if !matches!(e.state(), ShortcutState::Pressed) {
                 return;
             }
-            match subtitle_s.toggle(&app_s) {
-                Ok(running) => {
-                    tracing::info!("subtitle running={running}");
-                }
-                Err(err) => {
-                    tracing::warn!("subtitle toggle failed: {err:?}");
-                    let _ = app_s.emit("moonlens://hotkey", "toggle_subtitle_failed");
-                }
-            }
+            subtitle_s.toggle_checked(&app_s);
         },
     );
 

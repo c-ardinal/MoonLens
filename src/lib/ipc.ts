@@ -219,6 +219,37 @@ export const selectLlmModel = (id: string, role: LlmRole = 'translate') =>
   safeInvoke<void>('select_llm_model', { id, role });
 export const onLlmProgress = (handler: (p: LlmProgress) => void): Promise<UnlistenFn> =>
   listen<LlmProgress>('moonlens://llm-model-progress', (e) => handler(e.payload));
+/** A whisper.cpp model the built-in speech recognition can run. */
+export interface AsrModel {
+  id: string;
+  label: string;
+  note: string;
+  file: string;
+  url: string;
+  size: number;
+  sha256: string;
+  license: string;
+  license_url: string;
+  installed: boolean;
+  partial_bytes: number;
+  downloading: boolean;
+}
+
+export interface AsrModels {
+  /** Model used for live subtitles. */
+  selected: string;
+  dir: string;
+  models: AsrModel[];
+}
+
+export const listAsrModels = () =>
+  safeInvoke<AsrModels>('list_asr_models', undefined, { selected: '', dir: '', models: [] });
+export const installAsrModel = (id: string) => safeInvoke<string>('install_asr_model', { id });
+export const cancelAsrDownload = (id: string) => safeInvoke<boolean>('cancel_asr_download', { id });
+export const deleteAsrModel = (id: string) => safeInvoke<void>('delete_asr_model', { id });
+export const selectAsrModel = (id: string) => safeInvoke<void>('select_asr_model', { id });
+export const onAsrProgress = (handler: (p: LlmProgress) => void): Promise<UnlistenFn> =>
+  listen<LlmProgress>('moonlens://asr-model-progress', (e) => handler(e.payload));
 export const showMain = () => safeInvoke<void>('show_main');
 export const hideOverlay = () => safeInvoke<void>('hide_overlay');
 

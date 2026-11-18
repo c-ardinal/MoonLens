@@ -115,11 +115,13 @@ allow_network = false
 max_cost_per_request = 0.0
 sticky_session_ms = 0
 
+# Built-in whisper.cpp. A chunk can hold up to ~28 s of backlog, which a
+# CPU-only PC may need several seconds to decode.
 [providers.asr]
-chain = ["whisper_cpp.large_v3_turbo"]
+chain = ["whisper"]
 parallel_race = false
 fallback_on = ["error"]
-timeout_ms = 15000
+timeout_ms = 60000
 allow_cloud = false
 allow_network = false
 max_cost_per_request = 0.0
@@ -236,11 +238,20 @@ api_key_env = "GEMINI_API_KEY"
 model = "gemini-2.5-flash"
 temperature = 0.2
 
+# Built-in speech recognition (whisper.cpp) for live subtitles. Models
+# are downloaded from the settings screen. `model` is a catalog id:
+# "whisper-large-v3-turbo" (default) or "whisper-small".
+# GPU use follows `performance.use_gpu_if_available`.
+[providers.configs.whisper]
+model = "whisper-large-v3-turbo"
+threads = 0
+beam_size = 1
+
+# Optional: an external whisper.cpp server, for anyone who prefers it.
+# Not used by the default chain; put "whisper_cpp.large_v3_turbo" in
+# `[providers.asr] chain` to enable it.
 [providers.configs."whisper_cpp.large_v3_turbo"]
 endpoint = "http://127.0.0.1:9002"
-model = "large-v3-turbo"
-threads = 4
-compute_type = "int8"
 
 [providers.configs.ocrs]
 detection_threshold = 0.4

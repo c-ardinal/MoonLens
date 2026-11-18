@@ -5,10 +5,12 @@
 //! providers are registered by [`crate::plugins`]. Both paths implement the
 //! same trait so [`crate::pipeline`] does not care which is which.
 
+pub mod asr_local;
 pub mod asr_whisper;
 pub mod glossary;
 pub mod lang;
 pub mod llm_models;
+pub mod model_store;
 pub mod ocr_ocrs;
 pub mod ocr_ppocr;
 pub mod qr_rqrr;
@@ -17,6 +19,7 @@ pub mod translate_deepl;
 pub mod translate_gemini;
 pub mod translate_llama;
 pub mod translate_ollama;
+pub mod whisper_models;
 
 use std::sync::Arc;
 

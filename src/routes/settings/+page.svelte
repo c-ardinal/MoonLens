@@ -13,6 +13,7 @@
   import { errorText } from '$lib/errors';
   import SettingField from '$lib/components/SettingField.svelte';
   import LocalModels from '$lib/components/LocalModels.svelte';
+  import AsrModels from '$lib/components/AsrModels.svelte';
   import OcrModels from '$lib/components/OcrModels.svelte';
   import DataLocations from '$lib/components/DataLocations.svelte';
   import GlossaryEditor from '$lib/components/GlossaryEditor.svelte';
@@ -204,6 +205,7 @@
               <div class="mt-3 flex flex-col gap-3">
                 <LocalModels />
                 <OcrModels />
+                <AsrModels />
               </div>
             {:else}
               <div
