@@ -6,6 +6,22 @@ the project adheres to [SemVer](https://semver.org/).
 
 ## Unreleased
 
+### Added
+
+- Live translation. The selector's "ライブ" button (or the pin
+  shortcut) keeps translating the selected region in place on the live
+  screen: translations are painted over the source text in a
+  click-through window that follows the content as it changes
+  (subtitles, chat, game dialogue), instead of showing a popup beside
+  the region. A translation whose source area changes is hidden at
+  once, before OCR runs again; text that is the same as before (a video
+  behind a subtitle) is not re-translated; text still being typed out
+  is translated once it reads the same twice; paragraphs seen before
+  come from the translation cache. The window is excluded from screen
+  capture on Windows / macOS, so it never reads its own translations
+  (on Linux it is hidden for the moment of each capture). Uses the
+  selector's target language. The pin shortcut stops it.
+
 ### Performance
 
 - Local translation, explanation and summaries run on the GPU on

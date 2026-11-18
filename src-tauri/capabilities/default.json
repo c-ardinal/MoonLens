@@ -3,7 +3,7 @@
   "identifier": "default",
   "description": "What MoonLens' own windows may call besides the app's commands: events (listen / emit), window dragging for the frameless windows, and hiding / minimizing the main window. Without a capability Tauri rejects every plugin call, including event listeners.",
   "local": true,
-  "windows": ["main", "overlay", "subtitle", "selector", "lens-*"],
+  "windows": ["main", "overlay", "subtitle", "selector", "live", "lens-*"],
   "permissions": [
     "core:default",
     "core:window:allow-start-dragging",

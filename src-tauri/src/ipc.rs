@@ -224,16 +224,14 @@ pub async fn capture_region_cmd(
     Ok(CapturedRegion { image_png })
 }
 
-/// End-to-end: capture a region (or the whole primary monitor if `args`
-/// is `None`), run intent → OCR → translate, and return the full flow
-/// result. Emits overlay events so the floating panel updates live.
-/// Start the region watcher on the last captured rect so subsequent
-/// pixel changes refresh the overlay automatically. Matches the
-/// "pinned overlay" UX. Idempotent: calling it twice just replaces
-/// the target.
+/// Live translation: paint translations over `args` on the live screen
+/// and keep them current as it changes (see `region_watcher`).
+/// `target_language` defaults to the configured target. Idempotent:
+/// calling it again moves live translation to the new region.
 #[tauri::command]
 pub async fn pin_overlay(
     args: RegionArgs,
+    target_language: Option<String>,
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
@@ -245,6 +243,9 @@ pub async fn pin_overlay(
             w: args.w,
             h: args.h,
         },
+        target_language: target_language
+            .map(|t| t.trim().to_string())
+            .filter(|t| !t.is_empty()),
     };
     state.region_watcher.start(
         app.clone(),
@@ -258,7 +259,7 @@ pub async fn pin_overlay(
 
 #[tauri::command]
 pub async fn unpin_overlay(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
-    state.region_watcher.stop();
+    state.region_watcher.stop_with(&app);
     let _ = app.emit("moonlens://pin-state", false);
     Ok(())
 }
@@ -412,6 +413,7 @@ pub async fn process_frozen_selection(
                 w: r.w,
                 h: r.h,
             },
+            target_language: target_language.clone(),
         });
     if bundle.needs_translation() {
         // The selector remembers the language last picked in its toolbar;
