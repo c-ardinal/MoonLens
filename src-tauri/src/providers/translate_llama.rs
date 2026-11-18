@@ -17,7 +17,8 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 
-use super::lang::translation_prompt;
+use super::glossary::{pfml3_form, pfml3_glossary, TranslateOptions};
+use super::lang::translation_prompt_with;
 use super::llm_models::{self, PromptStyle};
 use super::{Capability, Provider, ProviderError, TaskInput, TaskOutput, TranslateContext};
 
@@ -91,6 +92,8 @@ pub struct LlamaTranslator {
     label: String,
     params: GenParams,
     chunk_sink: Option<ChunkSink>,
+    /// User glossary / Japanese style (Settings → 翻訳).
+    options: Arc<TranslateOptions>,
 }
 
 /// Provider id of the general (chat) model used for explain / summarize;
@@ -153,7 +156,13 @@ impl LlamaTranslator {
             label,
             params: GenParams::from_config(cfg, use_gpu),
             chunk_sink: None,
+            options: Arc::default(),
         }
+    }
+
+    pub fn with_options(mut self, options: Arc<TranslateOptions>) -> Self {
+        self.options = options;
+        self
     }
 
     pub fn with_chunk_sink(mut self, sink: ChunkSink) -> Self {
@@ -176,11 +185,24 @@ pub enum Job {
     Pfml3 {
         text: String,
         target: String,
+        /// Matched glossary pairs (source term, rendering).
+        glossary: Vec<(String, String)>,
+        /// PFML3 `form` (`plain` / `polite`) for Japanese output.
+        form: Option<&'static str>,
+        /// Earlier parts of the capture and reference text.
         context: TranslateContext,
     },
 }
 
 pub fn build_job(style: PromptStyle, input: TaskInput) -> Result<Job, ProviderError> {
+    build_job_with(style, input, &TranslateOptions::default())
+}
+
+pub fn build_job_with(
+    style: PromptStyle,
+    input: TaskInput,
+    opts: &TranslateOptions,
+) -> Result<Job, ProviderError> {
     match (style, input) {
         (
             PromptStyle::ChatTemplate,
@@ -191,7 +213,8 @@ pub fn build_job(style: PromptStyle, input: TaskInput) -> Result<Job, ProviderEr
                 ..
             },
         ) => {
-            let (system, user) = translation_prompt(&text, &source_language, &target_language);
+            let (system, user) =
+                translation_prompt_with(&text, &source_language, &target_language, opts);
             Ok(Job::Chat { system, user })
         }
         (PromptStyle::ChatTemplate, TaskInput::Explain { prompt, .. }) => Ok(Job::Chat {
@@ -213,6 +236,8 @@ pub fn build_job(style: PromptStyle, input: TaskInput) -> Result<Job, ProviderEr
                 ..
             },
         ) => Ok(Job::Pfml3 {
+            glossary: opts.terms_for(&text, &target_language),
+            form: opts.form_for(&target_language),
             text,
             target: pfml3_lang(&target_language),
             context,
@@ -237,13 +262,38 @@ fn pfml3_lang(code: &str) -> String {
 }
 
 /// PFML3 prompt (BOS is added by the tokenizer).
+pub fn pfml3_prompt(text: &str, target: &str) -> String {
+    pfml3_prompt_with(text, target, &[], None)
+}
+
+/// [`pfml3_prompt`] with the optional glossary (placed right before
+/// `input`) and style attribute (after `lang` on `output`), as in the
+/// PLaMo 3 Translate model card. With neither it equals `pfml3_prompt`.
+pub fn pfml3_prompt_with(
+    text: &str,
+    target: &str,
+    glossary: &[(String, String)],
+    form: Option<&str>,
+) -> String {
+    pfml3_prompt_in_context(text, target, glossary, form, &TranslateContext::default())
+}
+
+/// [`pfml3_prompt_with`] plus the capture's context, in the order the
+/// model card prescribes: `context` right after `dataset`, then the
+/// earlier `input`/`output` pairs (`context.history`), then the
+/// glossary right before the current `input`.
 ///
-/// `context.reference` becomes the `context` element and
-/// `context.history` the earlier `input`/`output` pairs, in the order
-/// the model card prescribes. Each call for the same capture then
-/// starts with the previous call's prompt and output, so the engine's
-/// prefix cache only has to evaluate the new part.
-pub fn pfml3_prompt(text: &str, target: &str, context: &TranslateContext) -> String {
+/// Each call for the same capture starts with the previous call's
+/// prompt and output (the style attribute is repeated on every
+/// `output` so it stays identical), so the engine's prefix cache only
+/// has to evaluate the new part.
+pub fn pfml3_prompt_in_context(
+    text: &str,
+    target: &str,
+    glossary: &[(String, String)],
+    form: Option<&str>,
+    context: &TranslateContext,
+) -> String {
     let mut p = String::from("<|plamo:tag|>dataset<|plamo:msg|>translation");
     if let Some(r) = context
         .reference
@@ -254,17 +304,19 @@ pub fn pfml3_prompt(text: &str, target: &str, context: &TranslateContext) -> Str
         p.push_str(r);
     }
     for (src, out) in &context.history {
-        p.push_str(&pfml3_pair(src, target));
+        p.push_str(&pfml3_pair(src, target, form));
         p.push_str(out);
     }
-    p.push_str(&pfml3_pair(text, target));
+    p.push_str(&pfml3_glossary(glossary));
+    p.push_str(&pfml3_pair(text, target, form));
     p
 }
 
-fn pfml3_pair(src: &str, target: &str) -> String {
+fn pfml3_pair(src: &str, target: &str, form: Option<&str>) -> String {
     format!(
         "<|plamo:tag|>input<|plamo:msg|>{src}\
-         <|plamo:tag|>output<|plamo:key|>lang<|plamo:val|>{target}<|plamo:msg|>"
+         <|plamo:tag|>output<|plamo:key|>lang<|plamo:val|>{target}{}<|plamo:msg|>",
+        pfml3_form(form)
     )
 }
 
@@ -367,7 +419,7 @@ impl Provider for LlamaTranslator {
     }
 
     async fn run(&self, input: TaskInput) -> Result<TaskOutput, ProviderError> {
-        let job = build_job(self.style, input)?;
+        let job = build_job_with(self.style, input, &self.options)?;
         if !self.model_path.is_file() {
             // Not downloaded yet: let the chain fall through.
             tracing::debug!("local model {} not installed", self.label);
@@ -470,8 +522,8 @@ mod engine {
     use parking_lot::Mutex;
 
     use super::{
-        clean_output, pfml3_prompt, render_chat_template, take_utf8, ChunkSink, GenParams, Job,
-        STOP_STRINGS,
+        clean_output, pfml3_prompt_in_context, render_chat_template, take_utf8, ChunkSink,
+        GenParams, Job, STOP_STRINGS,
     };
     use crate::providers::ProviderError;
 
@@ -506,8 +558,17 @@ mod engine {
         BACKEND
             .get_or_init(|| {
                 llama_cpp_2::send_logs_to_tracing(llama_cpp_2::LogOptions::default());
+                crate::gpu::prepare();
                 match LlamaBackend::init() {
-                    Ok(b) => Some(b),
+                    Ok(b) => {
+                        let gpus = crate::gpu::offload_devices();
+                        if gpus.is_empty() {
+                            tracing::info!("local models run on the CPU (no GPU found)");
+                        } else {
+                            tracing::info!("local models can offload to: {}", gpus.join(", "));
+                        }
+                        Some(b)
+                    }
                     Err(e) => {
                         tracing::error!("llama.cpp backend init failed: {e}");
                         None
@@ -576,9 +637,24 @@ mod engine {
         *slot = None;
         let backend = backend()?;
         let started = std::time::Instant::now();
-        let mp = LlamaModelParams::default().with_n_gpu_layers(params.n_gpu_layers);
-        let model = LlamaModel::load_from_file(backend, path, &mp)
-            .map_err(|e| ProviderError::Other(format!("loading {}: {e}", path.display())))?;
+        let load = |layers: u32| {
+            let mp = LlamaModelParams::default().with_n_gpu_layers(layers);
+            LlamaModel::load_from_file(backend, path, &mp)
+        };
+        let model = match load(params.n_gpu_layers) {
+            Ok(m) => Ok(m),
+            // Not enough GPU memory, or a driver that cannot run the
+            // backend: the CPU still translates, just more slowly.
+            Err(e) if params.n_gpu_layers > 0 => {
+                tracing::warn!(
+                    "loading {} on the GPU failed ({e}); using the CPU",
+                    path.display()
+                );
+                load(0)
+            }
+            Err(e) => Err(e),
+        }
+        .map_err(|e| ProviderError::Other(format!("loading {}: {e}", path.display())))?;
         let template = model
             .chat_template(None)
             .ok()
@@ -667,8 +743,13 @@ mod engine {
             Job::Pfml3 {
                 text,
                 target,
+                glossary,
+                form,
                 context,
-            } => (pfml3_prompt(text, target, context), true),
+            } => (
+                pfml3_prompt_in_context(text, target, glossary, *form, context),
+                true,
+            ),
             Job::Chat { system, user } => {
                 let tmpl = loaded
                     .template
@@ -838,6 +919,8 @@ mod tests {
         }
     }
 
+    use crate::providers::lang::translation_prompt;
+
     #[test]
     fn chat_job_keeps_text_out_of_the_instructions() {
         let job = build_job(
@@ -864,18 +947,93 @@ mod tests {
     #[test]
     fn pfml3_prompt_matches_reference_format() {
         let job = build_job(PromptStyle::Pfml3, tr("会議は来週です。", "auto", "en")).unwrap();
+        let Job::Pfml3 { text, target, .. } = job else {
+            panic!("expected pfml3 job")
+        };
+        assert_eq!(
+            pfml3_prompt(&text, &target),
+            "<|plamo:tag|>dataset<|plamo:msg|>translation<|plamo:tag|>input<|plamo:msg|>会議は来週です。<|plamo:tag|>output<|plamo:key|>lang<|plamo:val|>en<|plamo:msg|>"
+        );
+    }
+
+    fn opts(style: crate::settings::schema::JaStyle, g: &[(&str, &str)]) -> TranslateOptions {
+        use crate::settings::schema::{GlossaryEntry, TranslationSettings};
+        TranslateOptions::from_settings(&TranslationSettings {
+            style,
+            glossary: g
+                .iter()
+                .map(|(s, t)| GlossaryEntry {
+                    source: s.to_string(),
+                    target: t.to_string(),
+                    lang: String::new(),
+                })
+                .collect(),
+        })
+    }
+
+    fn rendered(job: Job) -> String {
         let Job::Pfml3 {
             text,
             target,
-            context,
+            glossary,
+            form,
+            ..
         } = job
         else {
             panic!("expected pfml3 job")
         };
-        assert_eq!(
-            pfml3_prompt(&text, &target, &context),
-            "<|plamo:tag|>dataset<|plamo:msg|>translation<|plamo:tag|>input<|plamo:msg|>会議は来週です。<|plamo:tag|>output<|plamo:key|>lang<|plamo:val|>en<|plamo:msg|>"
+        pfml3_prompt_with(&text, &target, &glossary, form)
+    }
+
+    #[test]
+    fn pfml3_without_options_is_unchanged() {
+        use crate::settings::schema::JaStyle;
+        let plain =
+            rendered(build_job(PromptStyle::Pfml3, tr("会議は来週です。", "auto", "en")).unwrap());
+        assert_eq!(plain, pfml3_prompt("会議は来週です。", "en"));
+        // A glossary whose terms are absent changes nothing either.
+        let o = opts(JaStyle::Polite, &[("管理画面", "dashboard")]);
+        let job = build_job_with(PromptStyle::Pfml3, tr("会議は来週です。", "auto", "en"), &o);
+        assert_eq!(rendered(job.unwrap()), plain);
+    }
+
+    #[test]
+    fn pfml3_carries_glossary_and_form() {
+        use crate::settings::schema::JaStyle;
+        let o = opts(JaStyle::Plain, &[("dashboard", "管理画面")]);
+        let job = build_job_with(
+            PromptStyle::Pfml3,
+            tr("Open the Dashboard.", "auto", "ja"),
+            &o,
         );
+        assert_eq!(
+            rendered(job.unwrap()),
+            "<|plamo:tag|>dataset<|plamo:msg|>translation\
+             <|plamo:tag|>glossary<|plamo:index|>dashboard<|plamo:item|>管理画面\
+             <|plamo:tag|>input<|plamo:msg|>Open the Dashboard.\
+             <|plamo:tag|>output<|plamo:key|>lang<|plamo:val|>ja\
+             <|plamo:key|>form<|plamo:val|>plain<|plamo:msg|>"
+        );
+    }
+
+    #[test]
+    fn chat_job_carries_glossary_in_the_system_prompt() {
+        use crate::settings::schema::JaStyle;
+        let o = opts(JaStyle::Polite, &[("dashboard", "管理画面")]);
+        let job = build_job_with(
+            PromptStyle::ChatTemplate,
+            tr("Open the dashboard.", "en", "ja"),
+            &o,
+        )
+        .unwrap();
+        let Job::Chat { system, user } = job else {
+            panic!("expected chat job")
+        };
+        assert_eq!(user, "Open the dashboard.");
+        assert!(system.contains("dashboard => 管理画面"));
+        assert!(system.contains("desu/masu"));
+        let (base, _) = translation_prompt("Open the dashboard.", "en", "ja");
+        assert!(system.starts_with(&base));
     }
 
     #[test]
@@ -884,7 +1042,7 @@ mod tests {
             history: vec![("Theme".into(), "テーマ".into())],
             reference: Some("Light\n\nDark".into()),
         };
-        let p = pfml3_prompt("System", "ja", &ctx);
+        let p = pfml3_prompt_in_context("System", "ja", &[], None, &ctx);
         assert_eq!(
             p,
             "<|plamo:tag|>dataset<|plamo:msg|>translation\
@@ -898,7 +1056,16 @@ mod tests {
         // previous call is reused.
         let mut next = ctx.clone();
         next.history.push(("System".into(), "システム".into()));
-        assert!(pfml3_prompt("Reset", "ja", &next).starts_with(&(p + "システム")));
+        assert!(
+            pfml3_prompt_in_context("Reset", "ja", &[], None, &next).starts_with(&(p + "システム"))
+        );
+        // Glossary goes right before the current input, form on every output.
+        let g = vec![("Reset".to_string(), "リセット".to_string())];
+        let q = pfml3_prompt_in_context("Reset", "ja", &g, Some("plain"), &next);
+        assert!(q.contains(
+            "<|plamo:item|>リセット<|plamo:tag|>input<|plamo:msg|>Reset<|plamo:tag|>output"
+        ));
+        assert_eq!(q.matches("<|plamo:key|>form<|plamo:val|>plain").count(), 3);
     }
 
     #[test]
@@ -1037,6 +1204,75 @@ mod tests {
             let TaskOutput::Text(s) = out else { panic!() };
             eprintln!("[{:.1}s] {text:?} -> {s:?}", t.elapsed().as_secs_f32());
             assert!(!s.is_empty());
+        }
+    }
+
+    /// Glossary / style against a real model:
+    /// `MOONLENS_TEST_GGUF=… [MOONLENS_TEST_STYLE=pfml3] cargo test --lib
+    ///  local_model_follows_glossary -- --ignored --nocapture`
+    #[cfg(feature = "local-llm")]
+    #[tokio::test]
+    #[ignore]
+    async fn local_model_follows_glossary_and_style() {
+        use crate::settings::schema::JaStyle;
+        let Ok(path) = std::env::var("MOONLENS_TEST_GGUF") else {
+            return;
+        };
+        let style = std::env::var("MOONLENS_TEST_STYLE").unwrap_or_default();
+        let cfg = serde_json::json!({"model_path": path, "prompt_style": style});
+        type Case<'a> = (JaStyle, &'a [(&'a str, &'a str)], &'a str, &'a str);
+        let cases: [Case; 6] = [
+            (
+                JaStyle::Auto,
+                &[],
+                "Open the dashboard to see every owner.",
+                "ja",
+            ),
+            (
+                JaStyle::Auto,
+                &[("dashboard", "管理画面"), ("owner", "担当者")],
+                "Open the dashboard to see every owner.",
+                "ja",
+            ),
+            (
+                JaStyle::Polite,
+                &[],
+                "This system is convenient. It saves time.",
+                "ja",
+            ),
+            (
+                JaStyle::Plain,
+                &[],
+                "This system is convenient. It saves time.",
+                "ja",
+            ),
+            (
+                JaStyle::Auto,
+                &[],
+                "オーナーでフィルタリングできます。",
+                "en",
+            ),
+            (
+                JaStyle::Auto,
+                &[("オーナー", "assignee")],
+                "オーナーでフィルタリングできます。",
+                "en",
+            ),
+        ];
+        for (st, g, text, tgt) in cases {
+            let p =
+                LlamaTranslator::new("llamacpp", &cfg, false).with_options(Arc::new(opts(st, g)));
+            let t = std::time::Instant::now();
+            let TaskOutput::Text(s) = p.run(tr(text, "auto", tgt)).await.unwrap() else {
+                panic!()
+            };
+            eprintln!(
+                "[{:.1}s] {st:?} {g:?} {text:?} -> {s:?}",
+                t.elapsed().as_secs_f32()
+            );
+            for (_, want) in g {
+                assert!(s.to_lowercase().contains(&want.to_lowercase()), "{s}");
+            }
         }
     }
 }

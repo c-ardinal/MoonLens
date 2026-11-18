@@ -1,6 +1,7 @@
 {
   "name": "moonlens",
   "version": "0.1.0",
+  "license": "MIT",
   "private": true,
   "description": "PC-resident Google Lens-style tool: OCR translate, QR, reverse image search, live subtitles, with local LLM and plugins.",
   "type": "module",
@@ -20,7 +21,7 @@
     "@sveltejs/kit": "^2.5.0",
     "@sveltejs/vite-plugin-svelte": "^4.0.0",
     "@tailwindcss/postcss": "^4.2.2",
-    "@tauri-apps/cli": "^2.0.0",
+    "@tauri-apps/cli": "^2.12.5",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/svelte": "^5.3.1",
     "@types/node": "^22.0.0",
@@ -36,9 +37,9 @@
     "vitest": "^4.1.4"
   },
   "dependencies": {
-    "@tauri-apps/api": "^2.0.0",
-    "@tauri-apps/plugin-global-shortcut": "^2.0.0",
-    "@tauri-apps/plugin-shell": "^2.0.0",
+    "@tauri-apps/api": "^2.12.5",
+    "@tauri-apps/plugin-global-shortcut": "^2.4.1",
+    "@tauri-apps/plugin-shell": "^2.6.0",
     "lucide-svelte": "^0.460.0",
     "motion": "^11.0.0"
   }

@@ -17,11 +17,11 @@ use crate::{
     intent, lang, layout,
     plugins::PluginRegistry,
     providers::{
-        asr_whisper::WhisperCppProvider, ocr_ocrs::OcrsProvider, qr_rqrr::RqrrProvider,
-        search_serpapi::BrowserSearchProvider, translate_deepl::DeepLTranslator,
-        translate_gemini::GeminiProvider, translate_llama::LlamaTranslator,
-        translate_ollama::OllamaTranslator, Capability, Intent, OcrLine, ProviderError,
-        ProviderHandle, TaskInput, TaskOutput, TranslateContext,
+        asr_whisper::WhisperCppProvider, glossary::TranslateOptions, ocr_ocrs::OcrsProvider,
+        qr_rqrr::RqrrProvider, search_serpapi::BrowserSearchProvider,
+        translate_deepl::DeepLTranslator, translate_gemini::GeminiProvider,
+        translate_llama::LlamaTranslator, translate_ollama::OllamaTranslator, Capability, Intent,
+        OcrLine, ProviderError, ProviderHandle, TaskInput, TaskOutput, TranslateContext,
     },
     settings::{
         schema::{FallbackCondition, TaskChain},
@@ -151,8 +151,9 @@ impl Pipeline {
         let empty = serde_json::Value::Object(Default::default());
         let sink = self.chunk_sink.read().clone();
         let use_gpu = s.performance.use_gpu_if_available;
+        let opts = Arc::new(TranslateOptions::from_settings(&s.translation));
         for (id, cfg) in &s.providers.configs {
-            if let Some(h) = builtin_provider(id, cfg, sink.as_ref(), use_gpu) {
+            if let Some(h) = builtin_provider(id, cfg, sink.as_ref(), use_gpu, &opts) {
                 map.insert(id.clone(), h);
             }
         }
@@ -185,7 +186,7 @@ impl Pipeline {
             if map.contains_key(id) {
                 continue;
             }
-            if let Some(h) = builtin_provider(id, &empty, sink.as_ref(), use_gpu) {
+            if let Some(h) = builtin_provider(id, &empty, sink.as_ref(), use_gpu, &opts) {
                 map.insert(id.clone(), h);
             }
         }
@@ -918,17 +919,18 @@ fn builtin_provider(
     cfg: &serde_json::Value,
     sink: Option<&ChunkSink>,
     use_gpu: bool,
+    opts: &Arc<TranslateOptions>,
 ) -> Option<ProviderHandle> {
     Some(match id {
         LOCAL_LLM_ID | LOCAL_ASSIST_ID => {
-            let mut p = LlamaTranslator::new(id, cfg, use_gpu);
+            let mut p = LlamaTranslator::new(id, cfg, use_gpu).with_options(opts.clone());
             if let Some(sink) = sink {
                 p = p.with_chunk_sink(sink.clone());
             }
             Arc::new(p)
         }
         id if id.starts_with("ollama.") => {
-            let mut p = OllamaTranslator::new(id, cfg);
+            let mut p = OllamaTranslator::new(id, cfg).with_options(opts.clone());
             if let Some(sink) = sink {
                 p = p.with_chunk_sink(sink.clone());
             }

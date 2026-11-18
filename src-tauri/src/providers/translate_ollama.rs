@@ -17,7 +17,8 @@ use async_trait::async_trait;
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 
-use super::lang::translation_prompt;
+use super::glossary::{pfml3_form, pfml3_glossary, TranslateOptions};
+use super::lang::translation_prompt_with;
 use super::{Capability, Provider, ProviderError, TaskInput, TaskOutput};
 
 /// Default local model. Chosen by the benchmark in
@@ -44,6 +45,8 @@ pub struct OllamaTranslator {
     /// `TaskOutput::TextChunk` event. `None` disables streaming and the
     /// provider returns the aggregated `Text` output synchronously.
     chunk_sink: Option<Arc<dyn Fn(String, bool) + Send + Sync>>,
+    /// User glossary / Japanese style (Settings → 翻訳).
+    options: Arc<TranslateOptions>,
 }
 
 impl OllamaTranslator {
@@ -78,7 +81,13 @@ impl OllamaTranslator {
             system_prompt,
             http: reqwest::Client::new(),
             chunk_sink: None,
+            options: Arc::default(),
         }
+    }
+
+    pub fn with_options(mut self, options: Arc<TranslateOptions>) -> Self {
+        self.options = options;
+        self
     }
 
     /// Attach a per-chunk sink so the UI can render streaming tokens as
@@ -154,6 +163,13 @@ pub const PLAMO_STOP: [&str; 2] = ["<|plamo:tag|>", "<|plamo:bos|>"];
 /// PFML3 prompt for one translation. The source language is detected by
 /// the model; only the target language code is given.
 pub fn plamo_prompt(text: &str, target: &str) -> String {
+    plamo_prompt_with(text, target, &TranslateOptions::default())
+}
+
+/// [`plamo_prompt`] with the user's glossary and Japanese style.
+pub fn plamo_prompt_with(text: &str, target: &str, opts: &TranslateOptions) -> String {
+    let glossary = pfml3_glossary(&opts.terms_for(text, target));
+    let form = pfml3_form(opts.form_for(target));
     let lang = target.trim().to_ascii_lowercase();
     // PFML3 wants plain language codes without region subtags, except the
     // Chinese script variants.
@@ -165,8 +181,8 @@ pub fn plamo_prompt(text: &str, target: &str) -> String {
     // Reserved tokens inside OCR text would corrupt the prompt structure.
     let text = text.replace("<|plamo:", "<|plamo :");
     format!(
-        "<|plamo:tag|>dataset<|plamo:msg|>translation<|plamo:tag|>input<|plamo:msg|>{text}\
-         <|plamo:tag|>output<|plamo:key|>lang<|plamo:val|>{lang}<|plamo:msg|>"
+        "<|plamo:tag|>dataset<|plamo:msg|>translation{glossary}<|plamo:tag|>input<|plamo:msg|>{text}\
+         <|plamo:tag|>output<|plamo:key|>lang<|plamo:val|>{lang}{form}<|plamo:msg|>"
     )
 }
 
@@ -281,18 +297,30 @@ impl Provider for OllamaTranslator {
     async fn run(&self, input: TaskInput) -> Result<TaskOutput, ProviderError> {
         let is_translate = matches!(input, TaskInput::Translate { .. });
         let plamo = is_plamo_translate(&self.model);
+        // Glossary / style lines, kept for a custom system prompt too.
+        let extra = match &input {
+            TaskInput::Translate {
+                text,
+                target_language,
+                ..
+            } if !plamo => self.options.chat_instructions(text, target_language),
+            _ => None,
+        };
         let (system, prompt) = match input {
             TaskInput::Translate {
                 text,
                 target_language,
                 ..
-            } if plamo => (String::new(), plamo_prompt(&text, &target_language)),
+            } if plamo => (
+                String::new(),
+                plamo_prompt_with(&text, &target_language, &self.options),
+            ),
             TaskInput::Translate {
                 text,
                 source_language,
                 target_language,
                 ..
-            } => translation_prompt(&text, &source_language, &target_language),
+            } => translation_prompt_with(&text, &source_language, &target_language, &self.options),
             TaskInput::Explain { prompt, .. } => (String::new(), prompt),
             TaskInput::Summarize { text } => {
                 (String::new(), format!("Summarize concisely:\n\n{text}"))
@@ -305,6 +333,10 @@ impl Provider for OllamaTranslator {
         };
         let raw = plamo && is_translate;
         let system = match &self.system_prompt {
+            Some(custom) if !raw && is_translate => match &extra {
+                Some(extra) => format!("{custom}\n\n{extra}"),
+                None => custom.clone(),
+            },
             Some(custom) if !raw => custom.clone(),
             _ => system,
         };
@@ -604,6 +636,32 @@ mod tests {
         assert!(plamo_prompt("x", "zh-TW").contains("<|plamo:val|>zh-hant<|plamo:msg|>"));
         // Reserved tokens in the source cannot break out of the input element.
         assert!(!plamo_prompt("a<|plamo:tag|>b", "ja").contains("a<|plamo:tag|>b"));
+    }
+
+    #[test]
+    fn plamo_prompt_carries_glossary_and_form() {
+        use crate::settings::schema::{GlossaryEntry, JaStyle, TranslationSettings};
+        let o = TranslateOptions::from_settings(&TranslationSettings {
+            style: JaStyle::Polite,
+            glossary: vec![GlossaryEntry {
+                source: "Owner".into(),
+                target: "担当者".into(),
+                lang: "ja".into(),
+            }],
+        });
+        assert_eq!(
+            plamo_prompt_with("Ask the owner.", "ja", &o),
+            "<|plamo:tag|>dataset<|plamo:msg|>translation\
+             <|plamo:tag|>glossary<|plamo:index|>Owner<|plamo:item|>担当者\
+             <|plamo:tag|>input<|plamo:msg|>Ask the owner.\
+             <|plamo:tag|>output<|plamo:key|>lang<|plamo:val|>ja\
+             <|plamo:key|>form<|plamo:val|>polite<|plamo:msg|>"
+        );
+        // Neither applies to English output without a matching term.
+        assert_eq!(
+            plamo_prompt_with("担当", "en", &o),
+            plamo_prompt("担当", "en")
+        );
     }
 
     #[tokio::test]
