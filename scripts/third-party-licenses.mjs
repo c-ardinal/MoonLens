@@ -14,7 +14,8 @@
 // Usage: node scripts/third-party-licenses.mjs [output path]
 
 import { execFileSync } from 'node:child_process';
-import { readFileSync, writeFileSync, existsSync, readdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, readdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -27,14 +28,16 @@ const esc = (s) =>
   String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
 
 // --- Rust crates -------------------------------------------------------
-const about = JSON.parse(
-  execFileSync('cargo', ['about', 'generate', '--format', 'json'], {
-    cwd: tauriDir,
-    encoding: 'utf8',
-    maxBuffer: 256 * 1024 * 1024,
-    stdio: ['ignore', 'pipe', 'inherit'],
-  }),
-);
+// Written to a file with `-o`: on Windows cargo-about refuses to write
+// to a redirected stdout (it guards against PowerShell re-encoding).
+const aboutDir = mkdtempSync(join(tmpdir(), 'moonlens-about-'));
+const aboutJson = join(aboutDir, 'about.json');
+execFileSync('cargo', ['about', 'generate', '--format', 'json', '-o', aboutJson], {
+  cwd: tauriDir,
+  stdio: ['ignore', 'inherit', 'inherit'],
+});
+const about = JSON.parse(readFileSync(aboutJson, 'utf8'));
+rmSync(aboutDir, { recursive: true, force: true });
 // Group identical licence texts so e.g. one MIT text with its copyright
 // line is not repeated hundreds of times.
 const rustGroups = new Map();
