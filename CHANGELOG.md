@@ -6,6 +6,18 @@ the project adheres to [SemVer](https://semver.org/).
 
 ## Unreleased
 
+### Performance
+
+- Local translation, explanation and summaries run on the GPU on
+  Windows and Linux. The built-in llama.cpp now includes its Vulkan
+  backend there (NVIDIA, AMD and Intel GPUs through the installed
+  driver; macOS already used Metal), where releases used to run models
+  on the CPU only. Without a usable GPU nothing changes: on Windows
+  `vulkan-1.dll` is delay-loaded, so a PC without a GPU driver still
+  starts and translates on the CPU, and a model that does not fit in
+  GPU memory is loaded on the CPU instead of failing. The log names the
+  GPU in use. Building now needs the Vulkan SDK (see README).
+
 ### Fixed
 
 - No window ever received an event in a real build: without a capability

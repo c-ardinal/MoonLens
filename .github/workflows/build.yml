@@ -132,7 +132,33 @@ jobs:
             libwayland-dev \
             libegl1-mesa-dev \
             libdrm-dev \
-            libxkbcommon-dev
+            libxkbcommon-dev \
+            libvulkan-dev \
+            glslc \
+            spirv-headers
+
+      # llama.cpp's Vulkan backend (Windows / Linux) builds against the
+      # Vulkan SDK. Only the SDK: the runner has no GPU driver, so the
+      # tests also cover starting without vulkan-1.dll.
+      - name: Vulkan SDK (windows)
+        if: matrix.platform.name == 'windows'
+        uses: jakoch/install-vulkan-sdk-action@v1.8.1
+        with:
+          cache: true
+
+      # See windows.yml: VS generator breaks the vulkan-shaders-gen install.
+      - uses: ilammy/msvc-dev-cmd@v1
+        if: matrix.platform.name == 'windows'
+      - name: Use Ninja for CMake (windows)
+        if: matrix.platform.name == 'windows'
+        shell: bash
+        run: |
+          pip install ninja
+          echo "CMAKE_GENERATOR=Ninja" >> "$GITHUB_ENV"
+          # llama.cpp's nested vulkan-shaders-gen build creates paths past
+          # MAX_PATH under the default target dir (link.exe LNK1104 on
+          # intermediate.manifest); keep the target dir short.
+          echo "CARGO_TARGET_DIR=D:/t" >> "$GITHUB_ENV"
 
       - uses: dtolnay/rust-toolchain@stable
         with:

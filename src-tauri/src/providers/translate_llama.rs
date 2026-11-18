@@ -513,8 +513,17 @@ mod engine {
         BACKEND
             .get_or_init(|| {
                 llama_cpp_2::send_logs_to_tracing(llama_cpp_2::LogOptions::default());
+                crate::gpu::prepare();
                 match LlamaBackend::init() {
-                    Ok(b) => Some(b),
+                    Ok(b) => {
+                        let gpus = crate::gpu::offload_devices();
+                        if gpus.is_empty() {
+                            tracing::info!("local models run on the CPU (no GPU found)");
+                        } else {
+                            tracing::info!("local models can offload to: {}", gpus.join(", "));
+                        }
+                        Some(b)
+                    }
                     Err(e) => {
                         tracing::error!("llama.cpp backend init failed: {e}");
                         None
@@ -583,9 +592,24 @@ mod engine {
         *slot = None;
         let backend = backend()?;
         let started = std::time::Instant::now();
-        let mp = LlamaModelParams::default().with_n_gpu_layers(params.n_gpu_layers);
-        let model = LlamaModel::load_from_file(backend, path, &mp)
-            .map_err(|e| ProviderError::Other(format!("loading {}: {e}", path.display())))?;
+        let load = |layers: u32| {
+            let mp = LlamaModelParams::default().with_n_gpu_layers(layers);
+            LlamaModel::load_from_file(backend, path, &mp)
+        };
+        let model = match load(params.n_gpu_layers) {
+            Ok(m) => Ok(m),
+            // Not enough GPU memory, or a driver that cannot run the
+            // backend: the CPU still translates, just more slowly.
+            Err(e) if params.n_gpu_layers > 0 => {
+                tracing::warn!(
+                    "loading {} on the GPU failed ({e}); using the CPU",
+                    path.display()
+                );
+                load(0)
+            }
+            Err(e) => Err(e),
+        }
+        .map_err(|e| ProviderError::Other(format!("loading {}: {e}", path.display())))?;
         let template = model
             .chat_template(None)
             .ok()
