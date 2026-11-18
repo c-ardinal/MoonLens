@@ -1,14 +1,14 @@
 # MoonLens — PC版 Google Lens風ツール（設計プラン）
 
-## Context（なぜこれを作るか）
+## Context（開発目的）
 
-PC上で外国語コンテンツ（ゲーム画面、Webの画像内文字、PDF、動画字幕の読めない部分、動画音声そのもの、QRコード）に遭遇したとき、用途ごとに別ツール（翻訳サイト、QRアプリ、Whisperスクリプト、画像検索）へ手動で渡すのが面倒。Google Lens + ライブ字幕 + リバース画像検索 を **1つのグローバルホットキー** に統合し、ローカルLLMによるプライバシー重視の翻訳を第一級に扱う常駐ツールが欲しい。
+PC上で外国語コンテンツ（ゲーム画面、Webの画像内文字、PDF、動画字幕の読めない部分、動画音声そのもの、QRコード）に遭遇時、用途別に別ツール（翻訳サイト、QRアプリ、Whisperスクリプト、画像検索）へ手動で受け渡す手間が煩雑。Google Lens + ライブ字幕 + リバース画像検索 を **1つのグローバルホットキー** に統合し、ローカルLLMによるプライバシー重視の翻訳を最優先とする常駐ツールが必要。
 
 ## スタックの結論
 
 - **フルRust + Tauri 2**。MoonBitハイブリッド案はIPC性能・pre-1.0非互換リスク・FFI作業量でコストが見合わず不採用（プロジェクト名「MoonLens」はブランドとして維持）。
-- **音楽認識は不採用**：Shazam非公式APIは規約グレー、ACRCloud等は有償で運用コストが合わない。抽象層のpluginポイントだけ残し、個人利用拡張可能な余地を確保。
-- 既存OSS調査結論：残り全機能（OCR翻訳／画像検索／QR／動画字幕／ローカルLLM）をクロスプラットフォームで統合した実装は無く、MoonLensの存在意義あり。各サブ機能はRust crate / サイドカーを **composeする** 方針。
+- **音楽認識は不採用**：Shazam非公式APIは規約グレー、ACRCloud等は有償で運用コストが合わない。抽象層のpluginポイントのみ維持し、個人利用拡張可能な余地を確保。
+- 既存OSS調査結論：その他全機能（OCR翻訳／画像検索／QR／動画字幕／ローカルLLM）をクロスプラットフォームで統合した実装は皆無で、MoonLensの存在意義あり。各サブ機能はRust crate / サイドカーを **composeする** 方針。
 
 ## アーキテクチャ
 
@@ -40,11 +40,11 @@ PC上で外国語コンテンツ（ゲーム画面、Webの画像内文字、PDF
 
 参照点：**Raycast / Linear / Arc / Obsidian**。静かで高密度、キーボードファースト。
 
-- **フロントエンド**：Svelte 5（runes）+ Vite。軽量・起動速い・バンドル小。
-- **スタイリング**：Tailwind CSS v4 + カスタムデザイントークン。shadcn丸出しにせず自作コンポーネント。
+- **フロントエンド**：Svelte 5（runes）+ Vite。軽量・高速起動・小バンドル。
+- **スタイリング**：Tailwind CSS v4 + カスタムデザイントークン。shadcnの直接使用は回避し、自作コンポーネント。
 - **モーション**：`motion-one` or Svelte transitions。60fps spring のみ、派手なエフェクト排除。
 - **カラー**：モノクロ基調（#0A0A0A / #FAFAFA）+ 単一アクセント（violet-500系）。ダーク/ライト自動切替＋手動。
-- **タイポ**：Inter Variable（UI）+ JetBrains Mono（コード）。行間広め、字間タイト。
+- **タイポ**：Inter Variable（UI）+ JetBrains Mono（コード）。行間ワイド、字間タイト。
 - **アイコン**：Lucide。線画1.5px統一。
 - **ウィンドウクローム**：`decorations: false` + 自作タイトルバー。角丸12px、微細ボーダー（1px, 5%不透明）、影 `0 8px 32px rgba(0,0,0,.12)`。
 - **オーバーレイ**：半透明 backdrop-filter（blur 24px, saturate 1.8）。ガラスパネル。
@@ -55,7 +55,7 @@ PC上で外国語コンテンツ（ゲーム画面、Webの画像内文字、PDF
 
 ## 機能スコープ（一気通貫で全実装）
 
-フェーズ分けはしない。以下をすべてリリース対象とする：
+フェーズ分割なし。以下を全てリリース対象とする：
 
 1. **グローバルホットキー + 領域選択 + OCR + ローカルLLM翻訳 + オーバーレイ表示**
 2. **自動コンテンツ判別**：QR／テキスト主体／写真主体 を領域内容から自動分岐。曖昧時のみミニツールバー
@@ -76,28 +76,28 @@ PC上で外国語コンテンツ（ゲーム画面、Webの画像内文字、PDF
 
 ## 設定の外出し方針（カスタマイズ性最優先）
 
-「UI・挙動・プロバイダに関わるあらゆる定数を設定ファイルから制御可能にする」を原則とする。ハードコードは禁止、全てSettings経由。工数増は許容。
+「UI・挙動・プロバイダに関する全定数を設定ファイルで制御可能にする」を原則とする。ハードコードは禁止、全てSettings経由。工数増は許容。
 
 ### 設定保存形式
 - **形式**：TOML（可読性）＋JSON Schemaでバリデーション。
 - **場所**：OS既定の config dir（`$XDG_CONFIG_HOME/moonlens/config.toml` 等）。
 - **レイヤ**：`default.toml`（同梱）→ `user.toml`（上書き）→ プロファイル（複数切替可）。
 - **ホットリロード**：保存で即反映、再起動不要（ホットキー再登録等も）。
-- **エクスポート/インポート**：JSON/TOMLで書き出し・読み込み、Gist共有用URL対応。
+- **エクスポート/インポート**：JSON/TOML形式で入出力、Gist共有用URL対応。
 
 ### プロバイダ優先度チェーン（全タスク共通モデル）
-各タスク（Translate / OCR / ASR / Explain / Summarize / ReverseImageSearch）ごとに独立した **順序付きチェーン** と **フォールバック条件** を定義可能：
+各タスク（Translate / OCR / ASR / Explain / Summarize / ReverseImageSearch）単位で独立した **順序付きチェーン** と **フォールバック条件** を定義可能：
 
 ```toml
 [providers.translate]
 chain = ["ollama.gemma4", "deepl", "gemini", "plugin.my_translator"]
-parallel_race = false           # trueで同時呼び出し、最速勝ち
+parallel_race = false           # trueで並列呼出、最速を採用
 fallback_on = ["timeout", "error", "rate_limit", "offline"]
 timeout_ms = 3000
 allow_cloud = true              # falseならローカルのみ
 allow_network = true
 max_cost_per_request = 0.001    # USD想定
-sticky_session_ms = 30000       # 一度成功したプロバイダをこの期間優先
+sticky_session_ms = 30000       # 成功済みプロバイダを本期間優先
 
 [providers.translate.ollama.gemma4]
 endpoint = "http://127.0.0.1:11434"
@@ -114,16 +114,16 @@ formality = "default"
 ```
 
 ### タスク別に上書き可能な項目（例）
-- **Translate**：言語ペア既定、敬体/常体、用語集ファイル、禁止ワード、カスタムシステムプロンプト、chainごとの最低文字数閾値
+- **Translate**：言語ペア既定、敬体/常体、用語集ファイル、禁止ワード、カスタムシステムプロンプト、chain単位の最低文字数閾値
 - **OCR**：言語ヒント、エンジン優先度（`ocrs` / `paddle` / plugin）、前処理（二値化・デノイズ・upscale係数）、信頼度閾値、矩形検出モード
 - **QR**：URLドメイン allow/deny、プロトコル allow（http/https/wifi/tel/mailto）、警告表示条件
 - **ASR**：モデル（`large-v3-turbo`/`medium`/`base`）、VAD感度、言語固定/自動、翻訳パイプの有無、chunk長、overlap
-- **ReverseImageSearch**：検索エンジン順（Google/Bing/Yandex/SauceNAO/...）、外部ブラウザ/アプリ内のどちら、SerpAPI使用可否
+- **ReverseImageSearch**：検索エンジン順（Google/Bing/Yandex/SauceNAO/...）、外部ブラウザ/アプリ内の選択、SerpAPI使用可否
 - **Explain / Summarize / CustomAction**：各々独立したプロバイダチェーンとプロンプト
 - **Overlay**：フォント・行高・不透明度・blur強度・最大幅・配置・自動追従方式・消滅条件・影
-- **Hotkey**：機能ごとに全て割当可（Capture/PinOverlay/Subtitle開始/終了/コマンドパレット/履歴/...）
-- **Clipboard**：コンテンツ種別（text/qr/translation/transcript）ごとに自動コピー on/off
-- **Privacy**：プロバイダごとに `allow_cloud` 上書き、ログレベル、履歴保存期間、暗号化 on/off、画像保存 on/off
+- **Hotkey**：機能単位で全て割当可（Capture/PinOverlay/Subtitle開始/終了/コマンドパレット/履歴/...）
+- **Clipboard**：コンテンツ種別（text/qr/translation/transcript）単位で自動コピー on/off
+- **Privacy**：プロバイダ単位で `allow_cloud` 上書き、ログレベル、履歴保存期間、暗号化 on/off、画像保存 on/off
 - **Storage**：履歴件数上限、保存先、暗号化キー導出方式、バックアップ
 - **Telemetry**：デフォルトoff、opt-inのみ
 - **Appearance**：テーマ（light/dark/system）、アクセントカラー、密度（compact/normal/comfortable）、言語（UI）
@@ -133,24 +133,24 @@ formality = "default"
 ### 設定UI実装
 - 設定画面は **自動生成** を基本：各Rust側モジュールが `SettingsSchema`（JSON Schema＋UIヒント）を publish し、Svelte側が自動でフォームを描画。新規プロバイダ追加時にUI手書き不要。
 - 詳細編集派のため **Rawエディタ** （Monacoでtoml編集＋即バリデーション）も提供。
-- 検索バー（設定項目横断検索）、差分表示、ワンクリックで「既定に戻す」。
+- 検索バー（設定項目横断検索）、差分表示、ワンクリックで「既定値に復元」。
 
 ## プラグイン機構
 
-ユーザが機能を追加・削除できる仕組み。音楽認識、特殊OCR、独自翻訳プロバイダ、カスタムアクション等を本体から独立して配布可能。
+ユーザによる機能の追加・削除の仕組み。音楽認識、特殊OCR、独自翻訳プロバイダ、カスタムアクション等を本体から独立して配布可能。
 
 ### 2種のプラグイン形態
 1. **WASM Component プラグイン**（推奨・デフォルト）
    - Runtime：`wasmtime` + WebAssembly Component Model（WIT interface）
-   - 言語自由：Rust / Go / TypeScript(jco) / Python(componentize-py) / MoonBit 等、WASM Componentを出力できれば何でも
+   - 言語自由：Rust / Go / TypeScript(jco) / Python(componentize-py) / MoonBit 等、WASM Component出力可能な言語は全て対応
    - サンドボックス化：WASI preview2、ファイル/ネット/環境変数アクセスは宣言許可制
-   - 配布：単一 `.wasm` + `plugin.toml` manifest を zip したもの（`.moonlens-plugin`）
+   - 配布：単一 `.wasm` + `plugin.toml` manifest の zip 圧縮形式（`.moonlens-plugin`）
    - 用途：純粋計算（OCR後処理、翻訳プロバイダ呼び出しラッパ、カスタムアクション、intent分類拡張）
 
 2. **Sidecar プラグイン**
    - プロセス分離、JSON-RPC over stdio（`jsonrpc-core`互換）
    - 言語・ライブラリ自由（Python/Node/シェルスクリプトまで可）
-   - OS API・重いML・GPL依存が必要な機能向け（例：音楽認識、PaddleOCR、whisper、OBS連携）
+   - OS API・高負荷ML・GPL依存が必要な機能向け（例：音楽認識、PaddleOCR、whisper、OBS連携）
    - 配布：実行ファイル＋`plugin.toml`＋依存セットアップスクリプト
    - 起動制御：onDemand / persistent / keepAlive秒数 を選択
 
@@ -169,7 +169,7 @@ api_version = "1"                    # MoonLens Plugin API バージョン
 [capabilities]
 # 宣言した能力のみMoonLensが呼び出し対象として認識
 provides = ["music_recognizer"]      # or "translator","ocr","asr","action","intent_classifier","overlay_renderer" 等
-consumes = ["audio_loopback"]        # MoonLens本体から貰う入力
+consumes = ["audio_loopback"]        # MoonLens本体からの入力
 
 [permissions]
 # 許可制、ユーザがインストール時に確認
@@ -182,7 +182,7 @@ clipboard = false
 subprocess = false
 
 [settings]
-# 自動生成UIに使うschema
+# 自動生成UI用のschema
 schema = "schema.json"
 
 [ui]
@@ -191,7 +191,7 @@ settings_page = "ui/settings.html"
 ```
 
 ### 拡張ポイント（Extension points）
-プラグインが提供できる役割：
+プラグインの提供可能な役割：
 - `translator` / `ocr` / `asr` / `reverse_image_search` / `qr_handler`
 - `intent_classifier`（領域内容の判定を拡張）
 - `action`（結果パネルのアクションリボンに項目追加）
@@ -204,7 +204,7 @@ settings_page = "ui/settings.html"
 
 ### プラグイン配布・インストール
 - **ローカルインストール**：`.moonlens-plugin` zipファイルをドラッグ＆ドロップ
-- **レジストリ（将来）**：GitHub Releases ベースの index（mooncakes.io 風）。v1では手動配布のみでOK
+- **レジストリ（将来）**：GitHub Releases ベースの index（mooncakes.io 風）。v1は手動配布のみ
 - **署名**：ed25519で manifest に署名、レジストリ経由は署名必須、ローカルは警告のみ
 - **更新**：manifest に `update_url` 指定時に自動チェック（opt-in）
 - **有効化/無効化**：再起動不要、トグル即反映
@@ -213,7 +213,7 @@ settings_page = "ui/settings.html"
 - `plugin-sdk/` に WIT定義、Rust macro（`#[moonlens::plugin]`）、サンプル3種（Hello Translator / Music Recognizer stub / Custom Action）
 - `moonlens plugin new` CLI で雛形生成
 - デバッグ用：ホットリロード、ログビュー、MoonLens本体API modelビュー
-- ドキュメント：extension point ごとの仕様、セキュリティガイド、公開手順
+- ドキュメント：extension point 単位の仕様、セキュリティガイド、公開手順
 
 ## 採用する既存OSS / crate
 
@@ -240,7 +240,7 @@ settings_page = "ui/settings.html"
 | 設定 | `toml` + `schemars` + `jsonschema` | TOML保存・schema生成・検証 |
 | JSON-RPC | `jsonrpsee` | sidecarプラグイン通信 |
 
-**参考にするが流用しない**：Translumo（Win限定だがオーバーレイUX）、LunaTranslator（マルチバックエンド抽象）、NormCap（クロスプラットフォームOCR UX）、Koharu（Rust+MLパイプライン）、Raycast（UI density）。
+**参考対象（流用なし）**：Translumo（Win限定だがオーバーレイUX）、LunaTranslator（マルチバックエンド抽象）、NormCap（クロスプラットフォームOCR UX）、Koharu（Rust+MLパイプライン）、Raycast（UI density）。
 
 ## リスクと対策
 
@@ -249,7 +249,7 @@ settings_page = "ui/settings.html"
 - **LLMレイテンシ**：Ollama `/api/generate` `stream:true` 必須、初トークン <500ms目標。
 - **whisper.cpp CPU負荷**：常時稼働せず明示トグル、アイドル時停止。デフォルト `large-v3-turbo` 量子化、軽量機向け `base` 自動フォールバック。
 - **画像検索のAPI規約**：ブラウザ起動が第一選択、SerpAPIは任意キー設定時のみ。
-- **OCR精度**：ocrsが英数に強いがCJK弱い場合 PaddleOCR サイドカーへ言語別ルーティング。
+- **OCR精度**：ocrsは英数に高精度だがCJKが低精度の場合 PaddleOCR サイドカーへ言語別ルーティング。
 - **Wayland画面キャプチャ**：ポータル経由必須、xcapのWayland対応状況をCI確認。
 
 ## リポジトリ構成
@@ -335,12 +335,12 @@ MoonLens/
    - 動画再生中 → ループバック音声→Whisper→翻訳字幕オーバーレイ（遅延 <1.5秒）
    - 写真領域 → アクション選択UI → ブラウザでGoogle Images起動
 2. **プロバイダフォールバック**：Ollama停止 → DeepL自動切替 → プライバシー表示「Cloud」へ遷移、トースト通知
-3. **ピン留め再翻訳**：原文が変わると自動で訳文更新、変化なしでは再翻訳せず
+3. **ピン留め再翻訳**：原文変化時に訳文を自動更新、変化なしの場合は再翻訳なし
 4. **履歴全文検索**：100件以上の履歴から日本語/英語混在で検索ヒット
 5. **CI**：GitHub ActionsでWin/Mac/Linux 3系列ビルド、installer生成
 6. **Rust単体テスト**：intent判別・状態遷移・プロバイダ選択・フォールバックロジック（`cargo test`）
 7. **E2E**：Playwrightでオーバーレイ/設定画面のインタラクション
-8. **性能**：HiDPIマルチモニタでキャプチャずれ無し、常駐メモリ <150MB（LLM除く）、ホットキー反応 <100ms
+8. **性能**：HiDPIマルチモニタでキャプチャのズレなし、常駐メモリ <150MB（LLM除く）、ホットキー反応 <100ms
 9. **プライバシー**：ネットワーク全ブロック + Ollama起動環境でローカル翻訳完結
 10. **設定ホットリロード**：`config.toml` 保存で即時反映（ホットキー再登録、モデル差替、UI再描画）
 11. **プラグイン**：サンプル3種が有効化→動作→無効化で完全に機能停止、権限宣言と実アクセスが一致

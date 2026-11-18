@@ -46,7 +46,7 @@
     {
       id: 'microphone',
       title: 'マイク',
-      description: 'マイク入力の文字起こしに必須。',
+      description: 'マイク入力の音声認識に必須。',
       icon: Mic,
       detectable: false
     },
@@ -113,7 +113,7 @@
         <div>
           <h2 class="text-base font-semibold">macOS の権限設定</h2>
           <p class="mt-1 text-sm text-ink-muted">
-            主要機能に OS 権限が必要。各項目からシステム設定を開き、MoonLens を許可。
+            主要機能に OS 権限が必要。各項目のシステム設定で MoonLens を許可。
           </p>
         </div>
         <button
@@ -188,7 +188,7 @@
           class="rounded-ml-sm bg-accent px-3 py-1.5 text-sm font-medium text-white"
           onclick={dismiss}
         >
-          完了／後で設定
+          完了／スキップ
         </button>
       </footer>
     </div>

@@ -181,21 +181,21 @@ jobs:
           # Created as a draft: check the assets and notes, then press
           # "Publish release" (see docs/RELEASING.md).
           releaseBody: |
-            MoonLens は画面上の文字を端末内だけで OCR・翻訳する常駐ツールです。
-            翻訳・OCR はすべてローカルで実行し、画像やテキストを外部へ送信しません。
+            MoonLens は画面上の文字を端末内で OCR・翻訳する常駐ツールです。
+            翻訳・OCR は全処理をローカルで実行し、画像・テキストの外部送信はありません。
 
             ## 導入
             | OS | ファイル |
             | --- | --- |
             | Windows | `MoonLens_*_x64-setup.exe`（推奨）または `*.msi` |
-            | Linux | `*.AppImage`（実行権限を付けて起動）、`*.deb`、`*.rpm` |
+            | Linux | `*.AppImage`（実行権限の付与後に起動）、`*.deb`、`*.rpm` |
 
-            初回起動後、ホーム画面の「モデル準備」から翻訳モデルと OCR モデルを取得してください
-            （既定の翻訳モデル PLaMo 3 Translate 2B は約 1.8 GB）。取得時のみ通信が発生します。
+            初回起動後、ホーム画面の「モデル準備」で翻訳モデル・OCR モデルを取得してください
+            （既定の翻訳モデル PLaMo 3 Translate 2B は約 1.8 GB）。通信の発生は取得時のみです。
 
             インストーラーは未署名のため、Windows では SmartScreen の「詳細情報 → 実行」で起動します。
 
-            変更点は `CHANGELOG.md`、同梱ライブラリとモデルのライセンスは
+            変更内容は `CHANGELOG.md`、同梱ライブラリ・モデルのライセンスは
             `THIRD_PARTY_LICENSES.html` を参照してください。
 
             Built with PLaMo.

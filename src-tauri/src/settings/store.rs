@@ -29,13 +29,13 @@ const DEFAULT_TOML: &str = include_str!("default.toml");
 /// First lines of the user file. Kept short; the reference file carries
 /// every key with its default.
 const USER_HEADER: &str = "\
-# MoonLens 設定（変更した値のみ）。
-# 既定値の一覧：同じフォルダーの config.default.toml
-# ここにない項目は既定値を使用。保存すると即時反映。
+# MoonLens 設定（変更値のみ）。
+# 既定値の一覧：同一フォルダーの config.default.toml
+# 未記載の項目は既定値を使用。保存時に即時反映。
 ";
 
 const DEFAULTS_HEADER: &str = "\
-# MoonLens 既定値（参照用。起動時に上書きされるため編集不可）。
+# MoonLens 既定値（参照用。起動時に上書きのため編集不可）。
 # 変更は config.toml に該当キーのみ記述。
 ";
 

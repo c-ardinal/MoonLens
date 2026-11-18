@@ -59,7 +59,7 @@ pub fn download(e: &anyhow::Error) -> String {
     {
         coded("disk_full", "空き容量不足")
     } else if lower.contains("integrity") {
-        coded("integrity", "整合性検証失敗。再ダウンロードしてください")
+        coded("integrity", "整合性検証失敗。再ダウンロードが必要")
     } else if lower.contains("error sending request")
         || lower.contains("dns")
         || lower.contains("connect")

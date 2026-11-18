@@ -16,7 +16,7 @@ capture) to [AudD](https://audd.io/). The track result is formatted as
 2. Copy `target/release/music-recognizer` and `plugin.toml` into a
    sibling directory on disk, or zip the two into a
    `.moonlens-plugin` archive and install via the MoonLens
-   "プラグイン ▸ 追加" button.
+   "プラグイン ▸ ファイル追加" button.
 
 3. Set `AUDD_API_TOKEN` in the environment before launching
    MoonLens (the plugin reads it once at startup). An empty token

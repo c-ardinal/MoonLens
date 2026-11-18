@@ -60,8 +60,8 @@
       </button>
       <button
         class="rounded-ml-sm p-1.5 text-ink-faint transition hover:bg-red-500/15 hover:text-red-500"
-        title="閉じる（常駐継続）"
-        aria-label="閉じる（常駐継続）"
+        title="非表示（常駐継続）"
+        aria-label="非表示（常駐継続）"
         onclick={() => hideMain().catch(() => {})}
       >
         <X class="h-4 w-4" />

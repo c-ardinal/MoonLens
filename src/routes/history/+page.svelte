@@ -95,7 +95,7 @@
       <h1 class="text-xl font-semibold tracking-tight">履歴</h1>
       <p class="text-sm text-ink-muted">
         {#if loading}
-          読み込み中…
+          読込中…
         {:else}
           {entries.length} 件
         {/if}
@@ -117,8 +117,8 @@
       <button
         class="inline-flex items-center gap-1 rounded-ml-sm border border-border bg-surface px-3 py-1.5 text-sm text-ink-muted transition hover:border-accent/60 hover:text-ink"
         onclick={() => refresh()}
-        title="再読み込み"
-        aria-label="再読み込み"
+        title="再読込"
+        aria-label="再読込"
       >
         <RefreshCw class="h-4 w-4" />
       </button>
@@ -215,7 +215,7 @@
       onkeydown={(e) => e.key === 'Escape' && (confirmClear = false)}
     >
       <h2 class="text-base font-semibold">全履歴を削除</h2>
-      <p class="mt-1 text-sm text-ink-muted">この操作は取り消し不可。</p>
+      <p class="mt-1 text-sm text-ink-muted">この操作は復元不可。</p>
       <div class="mt-4 flex justify-end gap-2">
         <button
           class="rounded-ml-sm border border-border bg-surface px-3 py-1.5 text-sm"

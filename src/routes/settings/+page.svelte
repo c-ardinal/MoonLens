@@ -93,7 +93,7 @@
   beforeNavigate((nav) => {
     if (changed.length > 0 && nav.type !== 'leave') {
       nav.cancel();
-      message = { kind: 'error', text: '未保存の変更あり。「保存」または「元に戻す」を選択してください。' };
+      message = { kind: 'error', text: '未保存の変更あり。「保存」か「破棄」を選択。' };
     }
   });
 
@@ -171,7 +171,7 @@
       設定の読込に失敗：{loadError}
     </p>
   {:else if !draft || !defaults}
-    <p class="text-ink-faint">読み込み中…</p>
+    <p class="text-ink-faint">読込中…</p>
   {:else}
     <div class="flex flex-col gap-4 md:flex-row md:items-start md:gap-8">
       <!-- Section index: a sidebar on wide windows, a scrollable row on narrow ones. -->
@@ -254,7 +254,7 @@
           {message.text}
         {:else}
           未保存の変更：{changed.length} 件
-          {#if clashes.length > 0}<br /><span class="text-red-500">ショートカット重複あり。重複を解消してください</span>{/if}
+          {#if clashes.length > 0}<br /><span class="text-red-500">ショートカット重複あり。重複の解消が必要</span>{/if}
           {#if message?.kind === 'error'}<br />{message.text}{/if}
         {/if}
       </p>
@@ -264,7 +264,7 @@
             class="rounded-ml-sm border border-border bg-surface px-3 py-1.5 text-sm text-ink-muted hover:text-ink"
             onclick={revert}
           >
-            元に戻す
+            破棄
           </button>
           <button
             class="rounded-ml-sm bg-accent px-4 py-1.5 text-sm font-medium text-white disabled:opacity-40"
