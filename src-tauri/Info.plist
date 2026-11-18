@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Live subtitles read an audio input device (a loopback device such
+	     as BlackHole for system audio). Without this key macOS terminates
+	     the app on the first access instead of asking for permission. -->
+	<key>NSMicrophoneUsageDescription</key>
+	<string>MoonLens transcribes audio on this Mac for live subtitles. Audio never leaves the device.</string>
+</dict>
+</plist>

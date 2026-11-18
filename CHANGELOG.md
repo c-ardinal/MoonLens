@@ -6,6 +6,11 @@ the project adheres to [SemVer](https://semver.org/).
 
 ## Unreleased
 
+## v0.1.0-rc.1 — 2026-11-18
+
+First release candidate: Windows, macOS (Apple silicon) and Linux
+installers for testing on real machines.
+
 ### Added
 
 - Live translation. The selector's "ライブ" button (or the pin
@@ -171,6 +176,11 @@ the project adheres to [SemVer](https://semver.org/).
 
 ### Release packaging
 
+- macOS (Apple silicon) `.dmg` is built on tag push next to the Linux
+  and Windows installers. Ad-hoc signed (Gatekeeper asks once), macOS
+  11 or later, and `Info.plist` declares the microphone use of live
+  subtitles (macOS terminates an app that opens an input device without
+  it).
 - `tauri build` refused to bundle (the release workflow would have failed
   on the first tag): `@tauri-apps/api`, `plugin-shell` and
   `plugin-global-shortcut` were on older minor versions than their Rust
@@ -296,13 +306,7 @@ the project adheres to [SemVer](https://semver.org/).
 - Multi-monitor: the selector opens on the monitor under the cursor
   instead of always the primary one.
 
-## v0.1.0-rc.1 — first public release candidate
-
-First release-candidate build. All 0.1.0 ship-criteria features are
-in and tested; this is the last chance to surface regressions before
-`v0.1.0` is tagged on the same commit.
-
-### Added
+### Added (release workflow)
 
 - Tag-driven release workflow (`.github/workflows/release.yml`) that
   produces `.dmg` / `.msi` / `.nsis` / `.AppImage` / `.deb` / `.rpm`
@@ -310,7 +314,7 @@ in and tested; this is the last chance to surface regressions before
   publish as GitHub pre-releases automatically.
 - `docs/RELEASING.md` documenting the end-to-end release flow.
 
-### Changed
+### Changed (release workflow)
 
 - `bundle.active` is `true` in the committed `tauri.conf.json` so
   `tauri build` produces installer artefacts on any machine — signing

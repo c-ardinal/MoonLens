@@ -13,6 +13,23 @@ fn main() {
         println!("cargo:rustc-link-lib=delayimp");
     }
 
+    // ggml's Metal backend uses `@available(...)`, which compiles to a
+    // call into clang's runtime (`__isPlatformVersionAtLeast`). rustc
+    // links with `-nodefaultlibs`, so that runtime is missing and the
+    // link fails ("Undefined symbols ... ___isPlatformVersionAtLeast").
+    // Link libclang_rt.osx.a from the toolchain explicitly.
+    if os == "macos" && std::env::var_os("CARGO_FEATURE_LOCAL_LLM").is_some() {
+        let resource_dir = std::process::Command::new("xcrun")
+            .args(["clang", "-print-resource-dir"])
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            .expect("`xcrun clang -print-resource-dir` failed (Xcode command line tools?)");
+        println!("cargo:rustc-link-search=native={resource_dir}/lib/darwin");
+        println!("cargo:rustc-link-lib=static=clang_rt.osx");
+    }
+
     // On Windows, Tauri links functions that only exist in Common Controls
     // v6, which a binary gets through its manifest. tauri-build embeds that
     // manifest in the app binary only, so the test binaries failed to load
