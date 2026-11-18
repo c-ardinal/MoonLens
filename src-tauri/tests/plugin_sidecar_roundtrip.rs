@@ -103,6 +103,7 @@ async fn sidecar_round_trip_translate() {
             text: "good morning".into(),
             source_language: "en".into(),
             target_language: "ja".into(),
+            context: Default::default(),
         })
         .await
         .expect("provider ok");
@@ -125,6 +126,7 @@ async fn sidecar_handles_unicode_payload() {
             text: "猫が 🐱 鳴く".into(),
             source_language: "ja".into(),
             target_language: "en".into(),
+            context: Default::default(),
         })
         .await
         .expect("provider ok");

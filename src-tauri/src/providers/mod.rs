@@ -67,6 +67,11 @@ pub enum TaskInput {
         text: String,
         source_language: String,
         target_language: String,
+        /// Text around `text` that helps the translator but must not be
+        /// translated. Only providers whose
+        /// [`Provider::takes_translation_context`] says so read it.
+        #[serde(default, skip_serializing_if = "TranslateContext::is_empty")]
+        context: TranslateContext,
     },
     Ocr {
         image_png: Vec<u8>,
@@ -92,6 +97,27 @@ pub enum TaskInput {
     IntentClassifier {
         image_png: Vec<u8>,
     },
+}
+
+/// What a translator may know about the text around a request: the
+/// earlier parts of the same capture with their translations, and other
+/// text on screen. Short labels ("Save", "Light") are ambiguous on their
+/// own; this lets them be read in context while still being translated
+/// one part at a time.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct TranslateContext {
+    /// Earlier `(source, translation)` pairs, in reading order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub history: Vec<(String, String)>,
+    /// Surrounding text for reference only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reference: Option<String>,
+}
+
+impl TranslateContext {
+    pub fn is_empty(&self) -> bool {
+        self.history.is_empty() && self.reference.is_none()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -151,6 +177,14 @@ pub trait Provider: Send + Sync {
     /// reloads; the default does nothing.
     async fn warm_up(&self) -> Result<(), ProviderError> {
         Ok(())
+    }
+    /// For translators: `Some(true)` when the provider reads
+    /// [`TranslateContext`], so a long capture can be sent in parts
+    /// without losing context. `None` when it cannot take requests right
+    /// now (e.g. its model is not installed) and the chain will fall
+    /// through to the next provider.
+    fn takes_translation_context(&self) -> Option<bool> {
+        Some(false)
     }
 }
 

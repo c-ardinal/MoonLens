@@ -27,6 +27,7 @@ pub mod selector;
 pub mod settings;
 pub mod storage;
 pub mod subtitle;
+pub mod translate_plan;
 pub mod translation_cache;
 pub mod user_error;
 

@@ -140,6 +140,17 @@ describe('target language', () => {
     expect(applyStreaming(bs, 'A').map((b) => b.translation)).toEqual(['A', 'すでに日本語', null]);
   });
 
+  it('streams into the blocks of the current part only', () => {
+    const bs = [
+      block({ source: 'a', translation: 'A' }),
+      block({ source: 'b', translation: null }),
+      block({ source: 'c', translation: null })
+    ];
+    // The first part is done; the second request covers block 1 only.
+    expect(applyStreaming(bs, 'B', [1]).map((b) => b.translation)).toEqual(['A', 'B', null]);
+    expect(applyStreaming(bs, 'B\n\nC', [1, 2]).map((b) => b.translation)).toEqual(['A', 'B', 'C']);
+  });
+
   it('skips cached blocks too', () => {
     const bs = [
       block({ source: 'a', translation: 'キャッシュ', from_cache: true }),

@@ -27,7 +27,8 @@
     type CaptureFlowResult,
     type FrameReady,
     type FrameRect,
-    type LensBlock
+    type LensBlock,
+    type TranslationProgress
   } from '$lib/ipc';
   import { extractText } from '$lib/result';
   import { errorText, parseError, type UiError } from '$lib/errors';
@@ -74,6 +75,10 @@
   let explanation = $state<string | null>(null);
   let pinned = $state(false);
   let streamed = '';
+  /** Blocks as of the latest progress event; streamed text is laid over them. */
+  let streamBase: LensBlock[] = [];
+  /** Blocks the current request streams into (undefined: all pending). */
+  let streamInto: number[] | undefined;
   let runId = 0;
   let toolbarEl = $state<HTMLElement | null>(null);
   let toolbarSize = $state({ width: 360, height: 44 });
@@ -351,6 +356,17 @@
         await listen<CaptureFlowResult>('moonlens://selector-analysis', (e) => {
           if (phase !== 'processing') return;
           blocks = e.payload.blocks ?? [];
+          streamBase = blocks;
+          streamInto = undefined;
+          streamed = '';
+        })
+      );
+      unlisteners.push(
+        await listen<TranslationProgress>('moonlens://selector-progress', (e) => {
+          if (phase !== 'processing') return;
+          blocks = e.payload.blocks;
+          streamBase = blocks;
+          streamInto = e.payload.streaming;
           streamed = '';
         })
       );
@@ -358,7 +374,7 @@
         await onOverlay((ev) => {
           if (ev.kind !== 'chunk' || phase !== 'processing' || blocks.length === 0) return;
           streamed += ev.delta;
-          blocks = applyStreaming(blocks, streamed);
+          blocks = applyStreaming(streamBase, streamed, streamInto);
         })
       );
     } catch {

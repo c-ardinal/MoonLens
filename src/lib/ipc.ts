@@ -63,6 +63,14 @@ export interface LensBlock {
   bold?: boolean;
 }
 
+/** Sent before each translation request of a capture (`moonlens://selector-progress`). */
+export interface TranslationProgress {
+  /** Blocks with the translations finished so far. */
+  blocks: LensBlock[];
+  /** Indices of the blocks the next request streams into, in order. */
+  streaming: number[];
+}
+
 export interface CaptureFlowResult {
   intent: Intent;
   source_text: string | null;

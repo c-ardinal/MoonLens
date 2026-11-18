@@ -1,0 +1,155 @@
+[
+  {
+    "id": "news-article-en",
+    "tgt": "ja",
+    "blocks": [
+      "Local Council Approves New Cycling Lanes",
+      "By Sarah Mitchell · 4 min read",
+      "The city council voted 7–2 on Tuesday to approve a network of protected cycling lanes along three of the busiest roads in the downtown area, ending a debate that has lasted more than two years.",
+      "Supporters say the lanes will make cycling safer and reduce traffic congestion, while some business owners worry that the loss of parking spaces will drive customers away.",
+      "Construction is expected to begin next spring and will be carried out in stages to keep roads open. The first section, on Market Street, should be finished by the end of June.",
+      "\"This is a big step for everyone who wants to get around the city without a car,\" said council member David Chen, who first proposed the plan.",
+      "Residents can view the full plan and leave comments on the council's website until December 15.",
+      "Related articles",
+      "City budget: where your taxes go",
+      "Bus fares to rise in January"
+    ],
+    "refs": [
+      "市議会、新たな自転車専用レーンを承認",
+      "サラ・ミッチェル · 4分で読めます",
+      "市議会は火曜日、中心部で最も交通量の多い3本の道路に沿って保護された自転車専用レーン網を整備する案を7対2で可決し、2年以上続いた議論に決着をつけた。",
+      "支持者はレーンによって自転車の安全性が高まり、交通渋滞が緩和されると話す一方、一部の事業者は駐車スペースが減ることで客足が遠のくことを懸念している。",
+      "工事は来春に始まる予定で、道路の通行を確保するため段階的に進められる。マーケット通りの最初の区間は6月末までに完成する見込みだ。",
+      "「車なしで街を移動したいすべての人にとって大きな一歩です」と、この計画を最初に提案したデビッド・チェン市議会議員は語った。",
+      "住民は12月15日まで市議会のウェブサイトで計画の全文を閲覧し、意見を寄せることができる。",
+      "関連記事",
+      "市の予算：税金の使い道",
+      "1月からバス運賃値上げ"
+    ]
+  },
+  {
+    "id": "settings-en",
+    "tgt": "ja",
+    "blocks": [
+      "Settings",
+      "General",
+      "Appearance",
+      "Privacy",
+      "Notifications",
+      "Theme",
+      "Choose how the app looks. System follows your operating system's light or dark mode.",
+      "Light",
+      "Dark",
+      "System",
+      "Font size",
+      "Changes the size of text in menus, lists and documents.",
+      "Reset",
+      "Start-up",
+      "Open the last workspace when the app starts",
+      "Check for updates automatically",
+      "Updates are downloaded in the background and installed the next time you restart.",
+      "Cancel",
+      "Save changes"
+    ],
+    "refs": [
+      "設定",
+      "一般",
+      "外観",
+      "プライバシー",
+      "通知",
+      "テーマ",
+      "アプリの見た目を選択します。「システム」はOSのライトモードまたはダークモードに従います。",
+      "ライト",
+      "ダーク",
+      "システム",
+      "フォントサイズ",
+      "メニュー、リスト、ドキュメントの文字サイズを変更します。",
+      "リセット",
+      "起動",
+      "起動時に前回のワークスペースを開く",
+      "自動的にアップデートを確認する",
+      "アップデートはバックグラウンドでダウンロードされ、次回の再起動時にインストールされます。",
+      "キャンセル",
+      "変更を保存"
+    ]
+  },
+  {
+    "id": "game-en",
+    "tgt": "ja",
+    "blocks": [
+      "QUEST LOG",
+      "The Lost Lighthouse",
+      "Old Marta says the lighthouse keeper vanished three nights ago, and since then no ship has dared to enter the bay. Find out what happened to him.",
+      "Talk to the fisherman at the docks",
+      "Search the keeper's cottage",
+      "Climb to the top of the lighthouse",
+      "Reward",
+      "250 Gold",
+      "Rusty Key",
+      "Marta: \"Be careful up there. The stairs are older than I am, and they were never meant for someone carrying a sword.\"",
+      "Track",
+      "Abandon"
+    ],
+    "refs": [
+      "クエストログ",
+      "失われた灯台",
+      "マルタ婆さんによると、灯台守が3日前の夜に姿を消し、それ以来どの船も湾に入ろうとしないという。彼に何があったのか突き止めよう。",
+      "波止場の漁師と話す",
+      "灯台守の小屋を調べる",
+      "灯台の頂上まで登る",
+      "報酬",
+      "250ゴールド",
+      "錆びた鍵",
+      "マルタ「上では気をつけるんだよ。あの階段はあたしより年寄りだし、剣を持った人が上ることなんて考えて造られちゃいないからね」",
+      "追跡",
+      "破棄"
+    ]
+  },
+  {
+    "id": "docs-ja",
+    "tgt": "en",
+    "blocks": [
+      "インストール手順",
+      "本ソフトウェアを利用するには、事前に以下の環境を用意してください。",
+      "対応OS：Windows 10 以降、macOS 13 以降、Ubuntu 22.04 以降",
+      "メモリ：8 GB 以上（16 GB 推奨）",
+      "ダウンロードしたインストーラーを実行し、画面の指示に従って進めます。途中で管理者権限を求められた場合は、パスワードを入力してください。",
+      "インストールが完了したら、アプリを起動して初期設定を行います。初回起動時には翻訳モデルのダウンロードが始まるため、数分かかることがあります。",
+      "注意",
+      "古いバージョンがインストールされている場合は、先にアンインストールしてから新しいバージョンをインストールしてください。設定は引き継がれます。",
+      "次へ",
+      "戻る"
+    ],
+    "refs": [
+      "Installation",
+      "To use this software, prepare the following environment in advance.",
+      "Supported OS: Windows 10 or later, macOS 13 or later, Ubuntu 22.04 or later",
+      "Memory: 8 GB or more (16 GB recommended)",
+      "Run the downloaded installer and follow the on-screen instructions. If you are asked for administrator privileges, enter your password.",
+      "When the installation is complete, launch the app and complete the initial setup. The translation model is downloaded the first time you start the app, so this may take a few minutes.",
+      "Note",
+      "If an older version is installed, uninstall it first and then install the new version. Your settings will be carried over.",
+      "Next",
+      "Back"
+    ]
+  },
+  {
+    "id": "long-article-en",
+    "tgt": "ja",
+    "blocks": [
+      "How Night Trains Made a Comeback in Europe",
+      "Ten years ago, many people thought sleeper trains were finished. Rail companies were cutting routes, carriages were old, and cheap flights had made overnight rail travel look slow and expensive.",
+      "Today the picture is very different. New routes connect cities such as Vienna, Paris, Amsterdam and Berlin, and many of them sell out weeks in advance during the summer and around holidays.",
+      "Part of the reason is climate. A seat on a night train produces far less carbon dioxide than the same trip by plane, and a growing number of travellers say this matters when they choose how to travel.",
+      "Convenience also plays a role. A night train leaves from the city centre in the evening and arrives in another city centre the next morning, saving both a hotel night and the time spent getting to and from airports.",
+      "Governments have helped too. Several countries now support new connections with public money, and the European Union has named cross-border rail as a priority for the coming decade.",
+      "Not everything is solved, however. Tickets can still cost more than a flight, especially for travellers who book late, and delays on one national network can affect a train that crosses three or four borders.",
+      "Operators also say they need more modern carriages. Building a sleeper car takes years, and only a few factories in Europe can make them, so new routes are often limited by the number of vehicles available.",
+      "Passengers have their own wishes. Many ask for better Wi-Fi, quieter compartments and simpler booking across different companies, which today often requires several websites and separate tickets.",
+      "Despite these problems, most experts expect demand to keep growing. If prices fall and more carriages arrive, night trains could become a normal choice for trips of up to about 1,500 kilometres.",
+      "For now, travellers who want to try one are advised to book early, bring earplugs and a light snack, and leave a little extra time for connections on the morning of arrival.",
+      "Share this article",
+      "Comments (128)"
+    ]
+  }
+]
