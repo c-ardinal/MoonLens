@@ -1,6 +1,6 @@
 # MoonLens
 
-PC常駐の Google Lens 風ツール。1つのグローバルホットキーで
+PC 常駐型の Google Lens 風ツール。単一のグローバルホットキーで
 
 - 画面領域の OCR + ローカル LLM 翻訳 + オーバーレイ表示
 - ライブ翻訳：選択範囲へ訳文を重畳表示し、字幕・チャット等の変化へ追従して継続翻訳
@@ -8,45 +8,45 @@ PC常駐の Google Lens 風ツール。1つのグローバルホットキーで
 - 外国語動画のループバック音声からライブ字幕
 - ローカル LLM による要約・説明・対話
 
-を統合する。OCR・翻訳・要約・説明はアプリに内蔵したエンジンで端末内だけで
-完結し（Ollama などの外部ランタイムは不要）、画像やテキストを外部へ送信しない。
-通信はユーザーが開始したモデル取得時のみ。音楽認識は運用コストの観点から本体には含めず、
-プラグインとして実装できる余地を確保している。
+を統合。OCR・翻訳・要約・説明はアプリ内蔵エンジンにより端末内で完結し
+（Ollama 等の外部ランタイムは不要）、画像・テキストの外部送信なし。
+通信はユーザー操作によるモデル取得時のみ。音楽認識は運用コストの観点から本体に含めず、
+プラグインによる実装の余地を確保。
 
 ## 導入
 
-[Releases](https://github.com/c-ardinal/MoonLens/releases) から OS に合うファイルを取得する。
+[Releases](https://github.com/c-ardinal/MoonLens/releases) から OS 対応のファイルを取得。
 
 | OS | ファイル | 備考 |
 | --- | --- | --- |
-| Windows 10/11 (x64) | `MoonLens_<版>_x64-setup.exe` または `.msi` | 未署名のため SmartScreen が表示される。「詳細情報 → 実行」で起動 |
+| Windows 10/11 (x64) | `MoonLens_<版>_x64-setup.exe` または `.msi` | 未署名のため SmartScreen を表示。「詳細情報 → 実行」で起動 |
 | Linux (x64) | `.AppImage` / `.deb` / `.rpm` | AppImage は `chmod +x` 後に実行。Wayland ではポータル経由で画面取得 |
 | macOS | 未提供 | 次版以降で対応予定 |
 
 ### 初回起動
 
-1. 起動するとホーム画面が開く（タスクトレイにも常駐。`--hidden` 付きで起動するとトレイのみ）。
-2. ホーム画面の「モデル準備」から OCR モデルと翻訳モデルを取得する。既定の翻訳モデルは
-   PLaMo 3 Translate 2B（約 1.8 GB）。低速な PC では 0.8B 版を選ぶ。取得は中断・再開でき、
-   SHA-256 で検証される。
-3. `Ctrl+Shift+Space`（macOS は `⌘⇧Space`）で範囲を選択すると、その場に訳文が重なって表示される。
+1. 起動時にホーム画面を表示（タスクトレイにも常駐。`--hidden` 指定時はトレイのみ）。
+2. ホーム画面の「モデル準備」で OCR モデル・翻訳モデルを取得。既定の翻訳モデルは
+   PLaMo 3 Translate 2B（約 1.8 GB）。低速な PC では 0.8B 版を推奨。取得は中断・再開可能で、
+   SHA-256 で検証。
+3. `Ctrl+Shift+Space`（macOS は `⌘⇧Space`）で範囲を選択すると、原文位置に訳文をオーバーレイ表示。
 
 主な既定ショートカット（設定画面で変更可）:
 
 | 操作 | キー |
 | --- | --- |
-| 範囲を翻訳 | `Ctrl+Shift+Space` |
-| ウィンドウを翻訳 | `Ctrl+Shift+W` |
-| 結果を固定表示 | `Ctrl+Shift+P` |
+| 範囲翻訳 | `Ctrl+Shift+Space` |
+| 全画面翻訳 | `Ctrl+Shift+W` |
+| ピン留め切替 | `Ctrl+Shift+P` |
 | 履歴 | `Ctrl+Shift+H` |
 | コマンドパレット | `Ctrl+K` |
 | ライブ字幕 | `Ctrl+Shift+S`（初回は設定で音声認識モデルを導入） |
 
 ### アンインストール
 
-OS の標準手順で削除する。Windows のインストーラー（setup.exe）で「アプリデータ削除」を選ぶと
-設定・履歴・モデルもまとめて削除される。それ以外（.msi、deb／rpm／AppImage）では次のフォルダーが残るので、
-不要なら手動で削除する。実際のパスと使用容量は設定画面の「データ」に表示される
+OS の標準手順で削除。Windows のインストーラー（setup.exe）で「アプリデータ削除」を選択すると
+設定・履歴・モデルも一括削除。その他（.msi、deb／rpm／AppImage）は次のフォルダーが残存するため、
+不要なら手動で削除。実パスと使用容量は設定画面の「データ」に表示
 （詳細は [docs/lifecycle.md](docs/lifecycle.md)）。
 
 - Linux: `~/.config/io.moonlens.app/`、`~/.local/share/io.moonlens.app/`
@@ -88,16 +88,16 @@ MoonLens/
 
 ## カスタマイズ思想
 
-MoonLens はハードコードされた挙動を極力持たない。UI/挙動/プロバイダに関わる
-すべての定数は `config.toml`（Linux: `~/.config/io.moonlens.app/`、macOS: `~/Library/Application Support/io.moonlens.app/`、Windows: `%APPDATA%\io.moonlens.app\`）
-から制御可能で、変更は保存で即時反映される。`config.toml` には既定値と異なる値だけが
-保存され、既定値の一覧は同じフォルダーの `config.default.toml`（参照用）にある。
+MoonLens はハードコードされた挙動を極力排除。UI/挙動/プロバイダに関する
+全定数は `config.toml`（Linux: `~/.config/io.moonlens.app/`、macOS: `~/Library/Application Support/io.moonlens.app/`、Windows: `%APPDATA%\io.moonlens.app\`）
+で制御可能で、変更は保存時に即時反映。`config.toml` には既定値と異なる値のみを
+保存し、既定値の一覧は同一フォルダーの `config.default.toml`（参照用）に記載。
 各段階（導入〜削除）の挙動は [docs/lifecycle.md](docs/lifecycle.md) を参照。
 
 ### プロバイダチェーン
 
-タスク（`translate` / `ocr` / `asr` / `explain` / `summarize` / ...）ごとに
-独立した順序付きチェーンとフォールバック条件を定義する：
+タスク（`translate` / `ocr` / `asr` / `explain` / `summarize` / ...）単位で
+独立した順序付きチェーンとフォールバック条件を定義：
 
 ```toml
 [providers.translate]
@@ -110,9 +110,9 @@ allow_network = false
 sticky_session_ms = 30000
 ```
 
-プロバイダごとの設定は `[providers.configs."<id>"]` に任意キーで書ける。
-知らないキーはそのまま保存されるため、プラグインは独自スキーマで
-`[providers.configs."plugin.my_translator"]` を参照できる。
+プロバイダ単位の設定は `[providers.configs."<id>"]` に任意キーで記述可能。
+未知のキーも保存対象のため、プラグインは独自スキーマで
+`[providers.configs."plugin.my_translator"]` を参照可能。
 
 ## プラグイン
 
@@ -120,9 +120,9 @@ sticky_session_ms = 30000
 
 1. **WebAssembly Component プラグイン**: `wasmtime` サンドボックス内で動作。
    任意の言語（Rust / Go / TypeScript / Python / MoonBit...）で WIT
-   インターフェース実装すれば可。権限はマニフェストで許可制。
+   インターフェースを実装。権限はマニフェストで許可制。
 2. **サイドカープラグイン**: 子プロセスが JSON-RPC 2.0 over stdio で
-   MoonLens と通信。OS 権限・重い ML・GPL 依存などに。
+   MoonLens と通信。OS 権限・高負荷 ML・GPL 依存等の用途向け。
 
 詳細: [`plugin-sdk/docs/README.md`](plugin-sdk/docs/README.md)
 
@@ -142,14 +142,14 @@ sticky_session_ms = 30000
 - Tauri 2 系列のプラットフォーム依存（`npm run tauri info` で確認）
 - CMake と C/C++ コンパイラ、libclang（内蔵 llama.cpp のビルド用。Windows は
   Visual Studio Build Tools + LLVM）
-- Vulkan SDK（内蔵 llama.cpp を GPU で動かすため。Windows は LunarG の
-  Vulkan SDK を入れて環境変数 `VULKAN_SDK` を通す。Linux は `libvulkan-dev`、
-  `glslc`、`spirv-headers`。macOS は Metal を使うので不要）。Windows では
-  llama.cpp の入れ子のビルドでパスが 260 文字を超えて失敗するため、
-  `$env:CARGO_TARGET_DIR = "C:\mlt"` のように短いビルド先を指定する
-- Windows では一度だけ `git config --global core.longpaths true` を実行する
-  （llama.cpp を git から取得しており、パスが 260 文字を超えるため）
-- 翻訳モデルはアプリ起動後、ホーム画面の「翻訳モデル」からダウンロードする
+- Vulkan SDK（内蔵 llama.cpp の GPU 実行用。Windows は LunarG の
+  Vulkan SDK を導入し環境変数 `VULKAN_SDK` を設定。Linux は `libvulkan-dev`、
+  `glslc`、`spirv-headers`。macOS は Metal 使用のため不要）。Windows では
+  llama.cpp の入れ子ビルドでパスが 260 文字を超過し失敗するため、
+  `$env:CARGO_TARGET_DIR = "C:\mlt"` 等の短いビルド先を指定
+- Windows では初回のみ `git config --global core.longpaths true` を実行
+  （llama.cpp を git から取得し、パスが 260 文字を超過するため）
+- 翻訳モデルはアプリ起動後、ホーム画面の「モデル準備」でダウンロード
   （保存先: `<ローカルデータ>/io.moonlens.app/models/llm`）
 - （字幕用）音声認識モデルも設定の「モデル」からダウンロードする
   （保存先: `<ローカルデータ>/io.moonlens.app/models/whisper`）
@@ -169,26 +169,26 @@ npm run tauri:build
 
 ### CI
 
-`.github/workflows/build.yml` が PR ごとに Linux で svelte-check / vitest / vite build と
-`cargo fmt` / `clippy` / `cargo test` を実行する。ネイティブコードを触る PR は `windows.yml` で
-Windows でも検証する。インストーラーはタグ push 時に `release.yml` が作る。
+`.github/workflows/build.yml` が PR 単位で Linux 上の svelte-check / vitest / vite build と
+`cargo fmt` / `clippy` / `cargo test` を実行。ネイティブコード変更を含む PR は `windows.yml` で
+Windows でも検証。インストーラーはタグ push 時に `release.yml` が生成。
 方針は [docs/ci-and-release-policy.md](docs/ci-and-release-policy.md)、
 リリース手順は [docs/RELEASING.md](docs/RELEASING.md)。
 
 ## 設計ドキュメント
 
-実装方針の全体像は Plan ファイルに集約してある：
-`docs/plan.md`（このリポジトリのスナップショット版）
+実装方針の全体像は Plan ファイルに集約：
+`docs/plan.md`（本リポジトリのスナップショット版）
 
 ## ライセンス
 
 MoonLens 本体は [MIT License](LICENSE)。
 
-同梱するライブラリ（Rust crate、npm パッケージ、llama.cpp）のライセンス全文は、リリースごとに
-`THIRD_PARTY_LICENSES.html` としてインストーラーに同梱し、Releases にも添付する
+同梱ライブラリ（Rust crate、npm パッケージ、llama.cpp）のライセンス全文は、リリース単位で
+`THIRD_PARTY_LICENSES.html` としてインストーラーに同梱し、Releases にも添付
 （生成: `node scripts/third-party-licenses.mjs`、`cargo install cargo-about` が必要）。
 
-アプリが取得するモデルはそれぞれのライセンスに従う。
+アプリが取得するモデルは各ライセンスに準拠。
 
 | モデル | ライセンス |
 | --- | --- |

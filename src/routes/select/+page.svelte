@@ -167,7 +167,7 @@
     blocks = r.blocks ?? [];
     phase = 'result';
     if (r.intent !== 'qr' && blocks.length === 0) {
-      notice = 'テキスト未検出。範囲を変更して再選択してください。';
+      notice = 'テキスト未検出。範囲を再選択。';
     } else if (allSameLanguage(blocks)) {
       flash(`翻訳不要（${languageLabel(r.target_language)}）。翻訳先はツールバーで変更可能`, 4000);
     }
@@ -471,7 +471,7 @@
   {:else if phase === 'processing'}
     <div class="pill pointer-events-none absolute inset-x-0 top-6 mx-auto w-fit">
       <Sparkles class="inline h-3.5 w-3.5 animate-pulse" />
-      {translating ? '翻訳中…' : '文字を認識中…'}
+      {translating ? '翻訳中…' : '文字認識中…'}
     </div>
   {/if}
 

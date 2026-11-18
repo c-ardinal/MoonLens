@@ -109,12 +109,12 @@ export const SECTIONS: Section[] = [
   {
     id: 'subtitle',
     title: 'ライブ字幕',
-    description: 'システム音声を文字起こし・翻訳して字幕表示。',
+    description: 'システム音声を認識・翻訳し、字幕表示。',
     fields: [
       {
         kind: 'select',
         path: 'subtitle.source_language',
-        label: '音声の言語',
+        label: '音声言語',
         options: [{ value: 'auto', label: '自動判定' }, ...LANGUAGE_OPTIONS]
       },
       {
@@ -137,7 +137,7 @@ export const SECTIONS: Section[] = [
         kind: 'number',
         path: 'subtitle.chunk_seconds',
         label: '分割長',
-        help: '短い：低遅延。長い：文脈保持・訳質安定。',
+        help: '短：低遅延。長：文脈保持・訳質安定。',
         min: 1,
         max: 10,
         step: 0.5,
@@ -184,7 +184,7 @@ export const SECTIONS: Section[] = [
   {
     id: 'popup',
     title: '訳文ポップアップ',
-    description: 'ピン留め結果などを表示する小型ウィンドウの外観。',
+    description: 'ピン留め結果等を表示する小型ウィンドウの外観。',
     fields: [
       {
         kind: 'number',
@@ -262,7 +262,7 @@ export const SECTIONS: Section[] = [
         help: '訳文と併用時は訳文を優先。'
       },
       { kind: 'toggle', path: 'clipboard.auto_copy_qr', label: 'QR コード内容' },
-      { kind: 'toggle', path: 'clipboard.auto_copy_transcript', label: 'ライブ字幕の文字起こし' }
+      { kind: 'toggle', path: 'clipboard.auto_copy_transcript', label: 'ライブ字幕の認識結果' }
     ]
   },
   {
@@ -286,7 +286,7 @@ export const SECTIONS: Section[] = [
         kind: 'number',
         path: 'storage.max_entries',
         label: '最大件数',
-        help: '超過分を古い順に自動削除。0：無制限。',
+        help: '超過時、最古の履歴から自動削除。0：無制限。',
         min: 0,
         max: 1000000,
         step: 100,

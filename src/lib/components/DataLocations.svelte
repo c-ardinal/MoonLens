@@ -22,7 +22,7 @@
   {#if error}
     <p class="text-xs break-words text-red-500">{error}</p>
   {:else if !info}
-    <p class="text-sm text-ink-faint">読み込み中…</p>
+    <p class="text-sm text-ink-faint">読込中…</p>
   {:else}
     <dl class="grid gap-3 text-sm">
       <div>

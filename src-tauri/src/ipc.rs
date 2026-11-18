@@ -46,7 +46,7 @@ pub async fn set_settings(
     Ok(())
 }
 
-/// The bundled defaults (what "初期値に戻す" restores).
+/// The bundled defaults (what "初期値に復元" restores).
 #[tauri::command]
 pub async fn get_default_settings() -> Result<Settings, String> {
     Ok(crate::settings::store::defaults())

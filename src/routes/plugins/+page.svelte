@@ -157,7 +157,7 @@
   {/if}
 
   {#if loading}
-    <p class="text-ink-faint">読み込み中…</p>
+    <p class="text-ink-faint">読込中…</p>
   {:else if plugins.length === 0}
     <div
       class="rounded-ml border border-dashed border-border bg-surface-elevated p-8 text-center text-ink-muted"

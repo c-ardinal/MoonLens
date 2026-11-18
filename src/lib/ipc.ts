@@ -140,7 +140,7 @@ async function safeInvoke<T>(cmd: string, args?: Record<string, unknown>, fallba
 export const getSettings = () => safeInvoke<Settings>('get_settings', undefined, {});
 export const setSettings = (next: Settings) => safeInvoke<void>('set_settings', { new: next });
 export const getSettingsSchema = () => safeInvoke<any>('get_settings_schema', undefined, null);
-/** The bundled defaults, for per-field "初期値に戻す". */
+/** The bundled defaults, for per-field "初期値に復元". */
 export const getDefaultSettings = () => safeInvoke<Settings>('get_default_settings', undefined, {});
 export const listPlugins = () =>
   safeInvoke<PluginDescriptor[]>('list_plugins', undefined, []);

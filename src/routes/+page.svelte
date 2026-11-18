@@ -63,7 +63,7 @@
       unlisteners.push(
         await onHotkey((action) => {
           if (action === 'toggle_pin_overlay_empty')
-            lastError = 'ピン留め対象なし。先に範囲翻訳を実行してください。';
+            lastError = 'ピン留め対象なし。範囲翻訳を先に実行。';
         })
       );
       unlisteners.push(
@@ -147,7 +147,7 @@
   <section class="rounded-ml border border-border bg-surface-elevated p-4 shadow-ml sm:p-5">
     <h2 class="text-base font-semibold">画面翻訳</h2>
     <p class="text-sm text-ink-muted">
-      画面を静止し、原文の位置に訳文を重ねて表示。全アプリからショートカットで起動可能。
+      画面を静止し、原文位置に訳文をオーバーレイ表示。全アプリでショートカット起動可能。
     </p>
     <div class="mt-4 grid gap-2 sm:grid-cols-2">
       <button
@@ -193,7 +193,7 @@
             </span>
           {/if}
         </h2>
-        <p class="text-sm text-ink-muted">システム音声を文字起こし・翻訳して字幕表示。</p>
+        <p class="text-sm text-ink-muted">システム音声を認識・翻訳し、字幕表示。</p>
         {#if subtitlePreview}
           <p class="mt-2 line-clamp-2 text-xs break-words text-ink-faint">{subtitlePreview}</p>
         {/if}
