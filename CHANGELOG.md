@@ -22,6 +22,18 @@ the project adheres to [SemVer](https://semver.org/).
   (on Linux it is hidden for the moment of each capture). Uses the
   selector's target language. The pin shortcut stops it.
 
+### Performance
+
+- Local translation, explanation and summaries run on the GPU on
+  Windows and Linux. The built-in llama.cpp now includes its Vulkan
+  backend there (NVIDIA, AMD and Intel GPUs through the installed
+  driver; macOS already used Metal), where releases used to run models
+  on the CPU only. Without a usable GPU nothing changes: on Windows
+  `vulkan-1.dll` is delay-loaded, so a PC without a GPU driver still
+  starts and translates on the CPU, and a model that does not fit in
+  GPU memory is loaded on the CPU instead of failing. The log names the
+  GPU in use. Building now needs the Vulkan SDK (see README).
+
 ### Fixed
 
 - No window ever received an event in a real build: without a capability
@@ -201,6 +213,13 @@ the project adheres to [SemVer](https://semver.org/).
   their context.
 - `cargo run --example ocr_bench -- <image>` prints OCR timings, lines
   and paragraph blocks for a screenshot.
+- Glossary and Japanese style (設定 → 翻訳). Glossary entries fix how a
+  term is translated, per target language; only terms found in the text
+  are sent with a request. The style picks 敬体 (です・ます) or 常体
+  (だ・である) for Japanese output. PLaMo 3 Translate receives both through
+  its native PFML3 `glossary` element and `form` attribute; chat models
+  (Gemma, Ollama) get them as one extra system-prompt paragraph. With an
+  empty glossary and the default style, prompts are unchanged.
 
 
 ### Changed

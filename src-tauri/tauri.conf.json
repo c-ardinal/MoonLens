@@ -100,6 +100,10 @@
       "icons/icon.icns"
     ],
     "category": "Productivity",
+    "linux": {
+      "deb": { "depends": ["libvulkan1"] },
+      "rpm": { "depends": ["vulkan-loader"] }
+    },
     "shortDescription": "Lens-style OCR, translate, QR and live subtitles",
     "longDescription": "A resident, privacy-first tool that captures any screen region or window audio to deliver OCR translation, QR decoding, reverse image search and live subtitles. Powered by local LLMs with cloud fallback, and a plugin system for user-authored extensions."
   },
