@@ -27,15 +27,11 @@ No tag has been pushed yet; `v0.1.0-rc.1` is the first one.
    and Tauri npm/crate pairing (CI runs the same check).
 3. In `CHANGELOG.md`, move everything under `## Unreleased` into the
    `## v0.1.0-rc.1` section, leaving an empty `## Unreleased`.
-4. Tag and push (see below). `release.yml` builds the Linux bundles
-   (~25 billing minutes) and creates a **draft** release.
-5. Windows installers: build locally (`npm run tauri:build`, after
-   `node scripts/third-party-licenses.mjs`, with
-   `--config src-tauri/tauri.release.conf.json`) and
-   `gh release upload v0.1.0-rc.1 <setup.exe> <.msi>`.
-6. Install from the draft's assets on a clean machine and walk the QA
+4. Tag and push (see below). `release.yml` builds the Linux and
+   Windows bundles and creates a **draft** release with both attached.
+5. Install from the draft's assets on a clean machine and walk the QA
    list below (model download, capture → translate, pin, uninstall).
-7. Press **Publish release** on the draft.
+6. Press **Publish release** on the draft.
 
 The repository is private, so a published release is only visible to
 collaborators. Making the repository public (or mirroring the binaries
@@ -96,9 +92,9 @@ Pushing the tag fires `release.yml`:
 1. The `guard` job checks the tag sits on `release` (warns otherwise).
 1b. The same job runs `scripts/check-release.mjs <tag>` and stops the
    release when the tag does not match the app version.
-2. The `build` matrix runs `tauri-action` (Linux only this cycle, see
+2. The `build` matrix runs `tauri-action` on Linux and Windows (see
    `docs/ci-and-release-policy.md`) and attaches `.AppImage` / `.deb` /
-   `.rpm`, plus `THIRD_PARTY_LICENSES.html`.
+   `.rpm`, `.msi` / `setup.exe`, plus `THIRD_PARTY_LICENSES.html`.
 3. The GitHub Release is created as a **draft**, with the pre-release
    flag set for `-` tags. Check the assets, then publish it.
 

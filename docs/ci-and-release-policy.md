@@ -124,30 +124,60 @@ grouped into one monthly PR against `release`, so it costs one CI run.
 `workflow_dispatch` (re-running a release for an existing tag) checks
 out **the tag**, not the branch the run was started from.
 
-### Current cycle (v0.1.0-rc.1): Linux only in CI
-
-The macOS + Windows matrix entries in `release.yml` are **commented
-out** for this release cycle. CI produces only `.deb` / `.AppImage` /
-`.rpm` (~25 billing minutes for the whole workflow).
+### Linux + Windows in CI
 
 **Trigger**: any `v*` tag push, e.g. `v0.1.0-rc.1`.
 
-**What runs**: `guard` (tag-branch hygiene warning) + `build` (Linux
-matrix entry) via `tauri-apps/tauri-action@v0`. No tests, no clippy
-— this workflow exists to **bundle**, not to verify. Verification
-happens earlier in `build.yml` on the same commit.
+**What runs**: `guard` (tag-branch hygiene warning + version preflight)
+and a `build` matrix of Linux (`.deb` / `.AppImage` / `.rpm`) and
+Windows (`.msi` / NSIS `setup.exe`) via `tauri-apps/tauri-action@v0`.
+Both attach to the same **draft** release. No tests, no clippy — this
+workflow exists to **bundle**, not to verify. Verification happens
+earlier in `build.yml` / `windows.yml` on the same commit.
 
-### Windows installers: built locally
+Windows used to be built on the developer's machine to save its ×2
+minutes. One Windows bundle is ~70 billing minutes cold and ~40 with
+a warm cache (see the measurements below), a few percent of the monthly free tier per tag,
+and nothing at all once the repository is public (Actions minutes on
+public repositories are free). Building in CI also means the shipped
+installer comes from a clean, reproducible environment.
 
-The primary developer runs Windows. Policy:
+### Windows build speed
 
-- Dev machine builds `.msi` and `.nsis` via `npm run tauri:build`.
-- Outputs land under `src-tauri\target\release\bundle\{msi,nsis}\`.
-- Attach to the published pre-release: `gh release upload
-  v0.1.0-rc.1 <path to .msi> <path to .nsis>`.
-- This is **not** a workaround; it stays this way even after budget
-  relief, because dogfooding builds on the dev machine catches env
-  drift (WebView2 runtime version, MSVC toolchain) that CI misses.
+- **sccache** (Actions cache backend) wraps the C/C++ compiler for
+  llama.cpp / whisper.cpp (CMake's `CMAKE_<LANG>_COMPILER_LAUNCHER`)
+  and `rustc` (`RUSTC_WRAPPER`). Not cached: our own crate, the
+  `lto = true` / `codegen-units = 1` link, Vulkan shader compilation
+  (`glslc`) and the bundler. The release profile is not relaxed for CI:
+  CI ships the same binary a local `tauri build` produces.
+- `rust-cache` keeps only `~/.cargo` (registry + the llama-cpp-rs git
+  checkout with its llama.cpp submodule), not the target dir.
+- Ninja, an MSVC developer shell and a short `CARGO_TARGET_DIR`
+  (`D:/t`, MAX_PATH) as in `windows.yml`.
+- **Cache scope**: Actions caches are per ref. A re-run of the same
+  tag reuses its cache; a *new* tag can only read caches of the default
+  branch (`main`). Making `release` the default branch (or running
+  `release.yml` from `main` once it is there) lets every tag start
+  warm.
+
+Measured (windows-latest, 4 vCPU, PR dry run, 2026-11-18):
+
+| Run                       | Job wall-clock | Billing min | Breakdown |
+| ------------------------- | -------------: | ----------: | --------- |
+| Cold (empty caches)       | 34 min         | ~70         | setup 1.5, licences 3.3, cargo build 27, bundle 1.3 |
+| Warm (same ref, cached)   | 19 min         | ~40         | setup 1.7, licences 2.3, cargo build 14, bundle 1.0 |
+
+sccache: the cold run stored 931 compilations (347 C/C++, 584 Rust);
+the warm run hit 92.9 % (C/C++ 99.7 %). The remaining ~14 min is what
+no cache covers: bin / proc-macro / cdylib crates and build scripts,
+our own crate, the fat-LTO link and Vulkan shader generation.
+
+### Dry run on PRs
+
+A PR that changes `release.yml` builds the Windows installers only
+(no release, nothing published) and keeps them as a run artifact for
+7 days, so the release path is tested before a tag depends on it and
+the installer can be tried from the PR.
 
 ### macOS installers: deferred
 
@@ -159,24 +189,11 @@ cost bottleneck. Policy for this cycle:
 - Re-introduce macOS in the **next** tag (`v0.1.0-rc.2` or `v0.1.0`)
   after the monthly Actions minute reset.
 
-### Reversion path
+### Adding macOS
 
-When budget is healthy (reset, paid plan, self-hosted runners):
-
-```diff
-  # .github/workflows/release.yml
-  matrix:
-    include:
-      - { name: linux, os: ubuntu-latest, bundle: deb,appimage,rpm }
--     # - { name: macos, os: macos-14, bundle: dmg }
--     # - { name: windows, os: windows-latest, bundle: msi,nsis }
-+     - { name: macos, os: macos-14, bundle: dmg }
-+     - { name: windows, os: windows-latest, bundle: msi,nsis }
-```
-
-Two-line diff. No other workflow files need to change. Windows-local
-build policy can continue in parallel (belt-and-braces) or be
-retired.
+When budget allows (public repository, paid plan, self-hosted runner),
+add one matrix entry in both JSON lists of `release.yml`:
+`{"name":"macos","os":"macos-14","bundle":"dmg"}`.
 
 ## Per-cycle cost budget
 
@@ -186,7 +203,7 @@ Targeted cost for a typical release cycle under the current policy:
 | ------------------------------------------- | ----------: |
 | PR push × ~5 iterations (PR-only, no dup)   |     ~90    |
 | PR merge into `release`                     |      ~18    |
-| Tag `vX.Y.Z-rc.N` → Linux-only bundle       |      ~25    |
+| Tag `vX.Y.Z-rc.N` → Linux + Windows bundles |  ~25 + ~70  |
 | PR merge `release → main` + tag `vX.Y.Z`    |      ~43    |
 | **Total per cycle**                          | **~176**   |
 
@@ -210,12 +227,13 @@ vs. what CI gates:
 | `npm test` (vitest)                         |      ✓      |     ✓      |
 | `npm run build` (vite production build)     |      ✓      |     ✓      |
 | `npm run tauri:dev` smoke test              |      ✓      |            |
-| `npm run tauri:build` (Windows installer)   | ✓ (release) |            |
+| `.msi` / `setup.exe`                        |             | ✓ (tag)    |
 | `.deb` / `.AppImage` / `.rpm`               |             | ✓ (tag)    |
 | `.dmg` (deferred)                           |             |            |
 
-CI is the authoritative Linux gate. Dev machine is the authoritative
-Windows gate. macOS has no gate this cycle — accepted risk.
+CI is the authoritative Linux gate and builds the Windows installers;
+the dev machine is the authoritative Windows smoke test. macOS has no
+gate this cycle — accepted risk.
 
 ## Skip-CI etiquette
 
