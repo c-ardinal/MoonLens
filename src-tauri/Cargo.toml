@@ -3,7 +3,7 @@ name = "moonlens"
 version = "0.1.0"
 description = "PC-resident Google Lens-style tool"
 authors = ["MoonLens contributors"]
-license = "Apache-2.0"
+license = "MIT"
 edition = "2021"
 rust-version = "1.80"
 
@@ -83,8 +83,8 @@ cpal = { version = "0.15", optional = true }
 rusqlite = { version = "0.43", features = ["bundled"] }
 
 # local LLM inference (llama.cpp, statically linked). CPU everywhere;
-# Metal on macOS. Vulkan / CUDA builds are opt-in via the `llm-vulkan`
-# / `llm-cuda` features because they need the vendor SDK at build time.
+# GPU backends: Metal on macOS and Vulkan on Windows / Linux (target
+# sections below). CUDA is opt-in via `llm-cuda` (needs the CUDA toolkit).
 llama-cpp-2 = { version = "0.1.161", default-features = false, optional = true }
 # Direct dependency only so build.rs can compile whisper.cpp against
 # the ggml this crate builds (DEP_LLAMA_GGML_CMAKE_DIR); see build.rs.
@@ -99,6 +99,15 @@ wasmtime-wasi = "36"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 llama-cpp-2 = { version = "0.1.161", default-features = false, optional = true, features = ["metal"] }
+
+# Vulkan on Windows and Linux: runs on NVIDIA, AMD and Intel GPUs through
+# the installed driver, with no vendor runtime to ship. Building needs the
+# Vulkan SDK (Windows: LunarG SDK + VULKAN_SDK; Linux: libvulkan-dev,
+# glslc, spirv-headers). Without a usable GPU the engine runs on the CPU;
+# on Windows vulkan-1.dll is delay-loaded (build.rs, src/gpu.rs) so a PC
+# without it still starts.
+[target.'cfg(any(windows, target_os = "linux"))'.dependencies]
+llama-cpp-2 = { version = "0.1.161", default-features = false, optional = true, features = ["vulkan"] }
 
 [features]
 default = ["audio", "ocrs-engine", "local-llm", "local-asr"]

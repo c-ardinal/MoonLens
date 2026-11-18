@@ -7,6 +7,7 @@
 
 pub mod asr_local;
 pub mod asr_whisper;
+pub mod glossary;
 pub mod lang;
 pub mod llm_models;
 pub mod model_store;
