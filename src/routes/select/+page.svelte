@@ -515,7 +515,7 @@
           <TextSelect class="h-4 w-4" />テキスト
         </button>
         <button class="tb" onclick={explain} title="内容説明"><Languages class="h-4 w-4" />説明</button>
-        <button class="tb" onclick={pin} disabled={pinned} title="ライブ翻訳：画面の変化に追従して訳し続ける（停止はピン留めのショートカット）">
+        <button class="tb" onclick={pin} disabled={pinned} title="ライブ翻訳：画面変化へ追従して継続翻訳（停止はライブ翻訳切替ショートカット）">
           <Radio class="h-4 w-4" />ライブ
         </button>
       {:else}

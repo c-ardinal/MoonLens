@@ -160,7 +160,7 @@ export const SECTIONS: Section[] = [
   {
     id: 'pin',
     title: 'ライブ翻訳',
-    description: '選択範囲の上に訳文を重ね、画面の変化に追従して再翻訳。',
+    description: '選択範囲へ訳文を重畳表示し、画面変化へ追従して再翻訳。',
     fields: [
       {
         kind: 'toggle',
@@ -172,7 +172,7 @@ export const SECTIONS: Section[] = [
         kind: 'number',
         path: 'performance.region_watcher_poll_ms',
         label: '監視間隔',
-        help: '画面変化の検出間隔。短いほど高応答・高 CPU 負荷。',
+        help: '画面変化の検出間隔。短時間ほど応答性向上、CPU 負荷増大。',
         min: 100,
         max: 2000,
         step: 50,
