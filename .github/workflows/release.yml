@@ -86,12 +86,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Linux + Windows on tag push. macOS (x10 billing multiplier) is
-        # deferred, see docs/ci-and-release-policy.md. A PR dry run
-        # builds Windows only: that is the build that breaks.
+        # Linux + Windows + macOS (Apple Silicon) on tag push. The
+        # repository is public, so Actions minutes are free (the x10
+        # macOS multiplier no longer applies). A PR dry run builds the
+        # two platforms that break: Windows and macOS.
         include: ${{ fromJSON(github.event_name == 'pull_request'
-          && '[{"name":"windows","os":"windows-latest","bundle":"msi,nsis"}]'
-          || '[{"name":"linux","os":"ubuntu-latest","bundle":"deb,appimage,rpm"},{"name":"windows","os":"windows-latest","bundle":"msi,nsis"}]') }}
+          && '[{"name":"windows","os":"windows-latest","bundle":"msi,nsis"},{"name":"macos","os":"macos-latest","bundle":"app,dmg"}]'
+          || '[{"name":"linux","os":"ubuntu-latest","bundle":"deb,appimage,rpm"},{"name":"windows","os":"windows-latest","bundle":"msi,nsis"},{"name":"macos","os":"macos-latest","bundle":"app,dmg"}]') }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 90
     steps:
@@ -191,21 +192,37 @@ jobs:
       - name: Third-party licences
         run: node scripts/third-party-licenses.mjs
 
-      - name: Build Tauri bundle
-        uses: tauri-apps/tauri-action@v0
+      # Apple signing / notarisation, only when the secrets exist. An
+      # unset secret reaches the job as an empty string, and an empty
+      # APPLE_SIGNING_IDENTITY would override the ad-hoc identity ("-")
+      # in tauri.conf.json, so export only the non-empty ones.
+      - name: Apple signing secrets (macos)
+        if: matrix.name == 'macos'
+        shell: bash
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Optional signing secrets. If unset, bundles are produced
-          # unsigned (valid for local use but users will see an
-          # untrusted-developer warning on macOS / SmartScreen on
-          # Windows). Populate these in repo settings once a signing
-          # identity is available.
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          for v in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY \
+                   APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
+            if [ -n "${!v}" ]; then
+              echo "::add-mask::${!v}"
+              { echo "$v<<__EOF__"; echo "${!v}"; echo "__EOF__"; } >> "$GITHUB_ENV"
+            fi
+          done
+
+      - name: Build Tauri bundle
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Unsigned bundles without signing secrets: SmartScreen warning
+          # on Windows, Gatekeeper warning on macOS (ad-hoc signed, see
+          # tauri.conf.json). Apple secrets are exported by the step
+          # above when present.
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
@@ -223,12 +240,16 @@ jobs:
             | OS | ファイル |
             | --- | --- |
             | Windows | `MoonLens_*_x64-setup.exe`（推奨）または `*.msi` |
+            | macOS（Apple シリコン） | `MoonLens_*_aarch64.dmg` |
             | Linux | `*.AppImage`（実行権限の付与後に起動）、`*.deb`、`*.rpm` |
 
             初回起動後、ホーム画面の「モデル準備」で翻訳モデル・OCR モデルを取得してください
             （既定の翻訳モデル PLaMo 3 Translate 2B は約 1.8 GB）。通信の発生は取得時のみです。
 
-            インストーラーは未署名のため、Windows では SmartScreen の「詳細情報 → 実行」で起動します。
+            インストーラーは未署名です。
+            - Windows：SmartScreen 表示時は「詳細情報 → 実行」で起動。
+            - macOS：初回起動の拒否後、「システム設定 → プライバシーとセキュリティ」の「このまま開く」で起動。
+              「壊れている」表示の場合は `xattr -dr com.apple.quarantine /Applications/MoonLens.app` を実行。
 
             変更内容は `CHANGELOG.md`、同梱ライブラリ・モデルのライセンスは
             `THIRD_PARTY_LICENSES.html` を参照してください。
@@ -242,14 +263,23 @@ jobs:
           includeUpdaterJson: false
           args: --bundles ${{ matrix.bundle }} --config src-tauri/tauri.release.conf.json
 
-      - name: Keep the installers (dry run)
-        if: github.event_name == 'pull_request'
+      - name: Keep the installers (dry run, windows)
+        if: github.event_name == 'pull_request' && matrix.name == 'windows'
         uses: actions/upload-artifact@v4
         with:
           name: moonlens-windows-installers
           path: |
             D:/t/release/bundle/msi/*.msi
             D:/t/release/bundle/nsis/*.exe
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Keep the installers (dry run, macos)
+        if: github.event_name == 'pull_request' && matrix.name == 'macos'
+        uses: actions/upload-artifact@v4
+        with:
+          name: moonlens-macos-installers
+          path: src-tauri/target/release/bundle/dmg/*.dmg
           if-no-files-found: error
           retention-days: 7
 

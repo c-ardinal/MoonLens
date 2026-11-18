@@ -21,7 +21,7 @@ PC 常駐型の Google Lens 風ツール。単一のグローバルホットキ�
 | --- | --- | --- |
 | Windows 10/11 (x64) | `MoonLens_<版>_x64-setup.exe` または `.msi` | 未署名のため SmartScreen を表示。「詳細情報 → 実行」で起動 |
 | Linux (x64) | `.AppImage` / `.deb` / `.rpm` | AppImage は `chmod +x` 後に実行。Wayland ではポータル経由で画面取得 |
-| macOS | 未提供 | 次版以降で対応予定 |
+| macOS 11 以降（Apple シリコン） | `MoonLens_<版>_aarch64.dmg` | 未署名。初回は「システム設定 → プライバシーとセキュリティ → このまま開く」。画面収録・マイクの許可が必要 |
 
 ### 初回起動
 

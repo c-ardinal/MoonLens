@@ -174,26 +174,24 @@ our own crate, the fat-LTO link and Vulkan shader generation.
 
 ### Dry run on PRs
 
-A PR that changes `release.yml` builds the Windows installers only
-(no release, nothing published) and keeps them as a run artifact for
-7 days, so the release path is tested before a tag depends on it and
+A PR that changes `release.yml` builds the Windows and macOS
+installers (no release, nothing published) and keeps them as run
+artifacts for 7 days, so the release path is tested before a tag depends on it and
 the installer can be tried from the PR.
 
-### macOS installers: deferred
+### macOS installers
 
-No Mac is available to the current developer, and CI at ×10 is the
-cost bottleneck. Policy for this cycle:
+The repository is public, so Actions minutes are free and the ×10
+macOS multiplier no longer applies. Since `v0.1.0-rc.1` every tag also
+builds `macos-latest` (Apple silicon, `app,dmg`), and a PR that changes
+`release.yml` dry-runs Windows and macOS.
 
-- Skip `.dmg` generation entirely.
-- Announce Linux + Windows coverage in the release notes.
-- Re-introduce macOS in the **next** tag (`v0.1.0-rc.2` or `v0.1.0`)
-  after the monthly Actions minute reset.
-
-### Adding macOS
-
-When budget allows (public repository, paid plan, self-hosted runner),
-add one matrix entry in both JSON lists of `release.yml`:
-`{"name":"macos","os":"macos-14","bundle":"dmg"}`.
+- Ad-hoc signed (`bundle.macOS.signingIdentity: "-"`): Gatekeeper asks
+  once ("Open Anyway"), no "damaged" error. Apple secrets, when added,
+  are exported only if non-empty and replace the ad-hoc identity.
+- `src-tauri/Info.plist` declares `NSMicrophoneUsageDescription`;
+  macOS kills an app that opens an input device without it.
+- Intel Macs are not built (add `x86_64-apple-darwin` if needed).
 
 ## Per-cycle cost budget
 
@@ -229,11 +227,11 @@ vs. what CI gates:
 | `npm run tauri:dev` smoke test              |      ✓      |            |
 | `.msi` / `setup.exe`                        |             | ✓ (tag)    |
 | `.deb` / `.AppImage` / `.rpm`               |             | ✓ (tag)    |
-| `.dmg` (deferred)                           |             |            |
+| `.dmg`                                      |             | ✓ (tag)    |
 
 CI is the authoritative Linux gate and builds the Windows installers;
-the dev machine is the authoritative Windows smoke test. macOS has no
-gate this cycle — accepted risk.
+the dev machine is the authoritative Windows smoke test. macOS is
+built on tags only, with no test gate.
 
 ## Skip-CI etiquette
 

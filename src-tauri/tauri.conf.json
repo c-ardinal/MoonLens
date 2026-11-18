@@ -102,6 +102,10 @@
       "icons/icon.icns"
     ],
     "category": "Productivity",
+    "macOS": {
+      "minimumSystemVersion": "11.0",
+      "signingIdentity": "-"
+    },
     "linux": {
       "deb": { "depends": ["libvulkan1"] },
       "rpm": { "depends": ["vulkan-loader"] }
