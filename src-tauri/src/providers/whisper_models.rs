@@ -48,7 +48,7 @@ pub const CATALOG: &[AsrModel] = &[
     AsrModel {
         id: "whisper-small",
         label: "Whisper small",
-        note: "軽量・高速。低スペック PC 向け。精度は控えめ",
+        note: "軽量・高速。低スペック PC 向け。精度は中程度",
         file: "ggml-small-q5_1.bin",
         url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small-q5_1.bin",
         size: 190_085_487,
