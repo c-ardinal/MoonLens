@@ -7,13 +7,16 @@
 //   * a release tag (argument, e.g. `v0.1.0-rc.1`) does not match that
 //     version;
 //   * an @tauri-apps/* npm package is on a different major.minor than its
-//     Rust crate in Cargo.lock (`tauri build` refuses to bundle then).
+//     Rust crate in Cargo.lock (`tauri build` refuses to bundle then);
+//   * with a tag: CHANGELOG.md has no `## <tag>` section, or changelog.d/
+//     still holds fragments (run `node scripts/changelog.mjs release <tag>`).
 //
 // Usage: node scripts/check-release.mjs [tag]
 
 import { readFileSync, existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { extractSection, readFragments } from './changelog.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const read = (p) => readFileSync(join(root, p), 'utf8');
@@ -49,6 +52,20 @@ if (tag) {
     errors.push(`tag "${tag}" is not vX.Y.Z or vX.Y.Z-(alpha|beta|rc).N`);
   } else if (m[1] !== version) {
     errors.push(`tag ${tag} does not match app version ${version}`);
+  }
+}
+
+// --- changelog folded for this tag -------------------------------------
+if (tag) {
+  if (extractSection(read('CHANGELOG.md'), tag) === null) {
+    errors.push(`CHANGELOG.md has no "## ${tag}" section (node scripts/changelog.mjs release ${tag})`);
+  }
+  const { fragments } = readFragments(root);
+  if (fragments.length) {
+    errors.push(
+      `changelog.d/ still has ${fragments.length} fragment(s); fold them before tagging ` +
+        `(node scripts/changelog.mjs release ${tag})`,
+    );
   }
 }
 
