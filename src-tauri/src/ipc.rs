@@ -81,6 +81,11 @@ pub struct TranslateArgs {
     pub text: String,
     pub source_language: String,
     pub target_language: String,
+    /// Earlier `(source, translation)` pairs of the same document (the
+    /// text translation page sends the lines already translated), read
+    /// by translators that take [`crate::providers::TranslateContext`].
+    #[serde(default)]
+    pub history: Vec<(String, String)>,
 }
 
 #[tauri::command]
@@ -96,11 +101,52 @@ pub async fn run_translate(
                 text: args.text,
                 source_language: args.source_language,
                 target_language: args.target_language,
-                context: Default::default(),
+                context: translate_context(args.history),
             },
         )
         .await
         .map_err(|e| user_error::provider(&e, Capability::Translate))
+}
+
+/// History for one request, cut to the same budget the capture flow uses
+/// so a long document cannot overflow the model's context window.
+fn translate_context(mut history: Vec<(String, String)>) -> crate::providers::TranslateContext {
+    crate::translate_plan::trim_history(&mut history, crate::translate_plan::HISTORY);
+    crate::providers::TranslateContext {
+        history,
+        reference: None,
+    }
+}
+
+#[derive(Deserialize)]
+pub struct RecordTranslationArgs {
+    pub source_text: String,
+    pub result_text: String,
+    pub provider: Option<String>,
+    #[serde(default)]
+    pub via_cloud: bool,
+}
+
+/// Save one text-translation page result to history (honours the
+/// keep-history switch and retention settings).
+#[tauri::command]
+pub async fn record_translation(
+    args: RecordTranslationArgs,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let source = args.source_text.trim();
+    let result = args.result_text.trim();
+    if source.is_empty() || result.is_empty() {
+        return Ok(());
+    }
+    state.pipeline.record_history(
+        crate::pipeline::history_kind::TEXT,
+        Some(source),
+        Some(result),
+        args.provider.as_deref(),
+        args.via_cloud,
+    );
+    Ok(())
 }
 
 #[tauri::command]
@@ -1506,6 +1552,42 @@ pub async fn delete_orphan_llm_file(name: String) -> Result<(), String> {
         .await
         .map_err(|e| e.to_string())?
         .map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn translate_args_history_is_optional() {
+        let a: TranslateArgs =
+            serde_json::from_str(r#"{"text":"x","source_language":"auto","target_language":"ja"}"#)
+                .unwrap();
+        assert!(a.history.is_empty());
+        let a: TranslateArgs = serde_json::from_str(
+            r#"{"text":"x","source_language":"auto","target_language":"ja","history":[["Theme","テーマ"]]}"#,
+        )
+        .unwrap();
+        assert_eq!(a.history, vec![("Theme".to_string(), "テーマ".to_string())]);
+    }
+
+    #[test]
+    fn translate_context_keeps_the_latest_history_within_budget() {
+        let line = "a".repeat(1000);
+        let history: Vec<(String, String)> = (0..10)
+            .map(|i| (format!("{i}{line}"), line.clone()))
+            .collect();
+        let ctx = translate_context(history);
+        assert!(ctx.reference.is_none());
+        let cost: usize = ctx
+            .history
+            .iter()
+            .map(|(s, t)| crate::translate_plan::cost(s) + crate::translate_plan::cost(t))
+            .sum();
+        assert!(cost <= crate::translate_plan::HISTORY);
+        assert!(ctx.history.last().unwrap().0.starts_with('9'));
+        assert!(translate_context(vec![]).is_empty());
+    }
 }
 
 #[cfg(test)]

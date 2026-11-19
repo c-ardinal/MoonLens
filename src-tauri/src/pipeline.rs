@@ -845,7 +845,9 @@ impl Pipeline {
         }
     }
 
-    fn record_history(
+    /// Append one row to history unless the user turned history off,
+    /// then apply the retention settings.
+    pub fn record_history(
         &self,
         kind: &str,
         source_text: Option<&str>,
