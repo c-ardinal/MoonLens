@@ -57,9 +57,21 @@ pub enum ModelTierClass {
 ///   the `enable_thinking=False` flag (this is the manual-render
 ///   equivalent).
 /// - **Gemma**: `<start_of_turn>role\ncontent<end_of_turn>`, used by
-///   Gemma 2 / Gemma 3 / Gemma 4 (incl. nano E2B/E4B). No system role
-///   in the on-the-wire format — system prompt is inlined into the
-///   first user turn.
+///   Gemma 2 / Gemma 3 (incl. nano E2B/E4B of those generations). No
+///   system role in the on-the-wire format — system prompt is inlined
+///   into the first user turn.
+/// - **Gemma4**: `<|turn>role\ncontent<turn|>`, used by Gemma 4
+///   (E2B/E4B nano). NOTE the asymmetric pipe placement — open marker
+///   is `<|turn>` (token 105), the turn-close / EOS is `<turn|>`
+///   (token 106, the model's `eos_token_id`). This is a CLEAN BREAK
+///   from the Gemma 2/3 `<start_of_turn>` / `<end_of_turn>` markers:
+///   feeding a Gemma 4 GGUF the old markers leaves them as plain text
+///   (they are not control tokens in the Gemma 4 tokenizer), so the
+///   model never sees a turn boundary and simply CONTINUES the source
+///   in its own language instead of translating — the 2026-06 Lens
+///   "English echo + 25 s generation" regression. Unlike Gemma 2/3,
+///   Gemma 4 has a real `system` turn, so the system prompt rides its
+///   own `<|turn>system` block rather than being inlined.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ChatTemplate {
@@ -67,8 +79,12 @@ pub enum ChatTemplate {
     ChatMl,
     /// ChatML with Qwen 3's reasoning mode disabled (empty think tags).
     ChatMlQwen3NoThink,
-    /// `<start_of_turn>` / `<end_of_turn>` (Gemma family).
+    /// `<start_of_turn>` / `<end_of_turn>` (Gemma 2 / 3 family).
     Gemma,
+    /// `<|turn>` / `<turn|>` (Gemma 4 family). Asymmetric pipes; EOS
+    /// is `<turn|>`. See the enum doc above for why the Gemma 2/3
+    /// markers must NOT be reused here.
+    Gemma4,
 }
 
 /// Canonical descriptor for a single picker entry. Matches the JSON
@@ -318,7 +334,7 @@ pub const TIERS: &[ModelTier] = &[
         license: "Gemma-Terms-of-Use",
         license_url: "https://ai.google.dev/gemma/terms",
         class: ModelTierClass::Standard,
-        chat_template: ChatTemplate::Gemma,
+        chat_template: ChatTemplate::Gemma4,
         // Official Google MTP drafter (Apache 2.0). The Google org
         // ships `google/gemma-4-E2B-it-assistant` as raw safetensors
         // (78M params, ~158 MB); community Q8_0 quant is the
@@ -341,7 +357,7 @@ pub const TIERS: &[ModelTier] = &[
         license: "Gemma-Terms-of-Use",
         license_url: "https://ai.google.dev/gemma/terms",
         class: ModelTierClass::Quality,
-        chat_template: ChatTemplate::Gemma,
+        chat_template: ChatTemplate::Gemma4,
         drafter: Some(DrafterSpec {
             repo: "AtomicChat/gemma-4-E4B-it-assistant-GGUF",
             filename: "gemma-4-E4B-it-assistant.Q8_0.gguf",
@@ -742,6 +758,12 @@ mod tests {
                 ChatTemplate::ChatMlQwen3NoThink
             } else if id_lc.starts_with("qwen") {
                 ChatTemplate::ChatMl
+            } else if id_lc.starts_with("gemma-4") || id_lc.starts_with("gemma4") {
+                // Gemma 4 uses the `<|turn>` / `<turn|>` markers —
+                // a clean break from the Gemma 2/3 `<start_of_turn>`
+                // format. Feeding it the old markers is what caused
+                // the 2026-06 Lens English-echo regression.
+                ChatTemplate::Gemma4
             } else if id_lc.starts_with("gemma") {
                 ChatTemplate::Gemma
             } else if id_lc.starts_with("llm-jp") {

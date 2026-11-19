@@ -157,17 +157,27 @@ impl RoutedTranslator {
     fn dispatch_handle(&self, input: &TaskInput) -> Result<ProviderHandle, ProviderError> {
         match input {
             TaskInput::Translate {
+                text,
                 source_language,
                 target_language,
                 ..
             } => {
-                let decision = route(
-                    self.user_tier,
-                    self.hardware,
-                    source_language,
-                    target_language,
-                );
-                self.handle_for(decision, source_language, target_language)
+                // Resolve an `auto` / empty source code into a
+                // concrete `en` / `ja` from the text itself BEFORE
+                // routing. Without this, `classify("auto")` is
+                // `Other` and an English screenshot → Japanese took
+                // the slow `Other → ja` pivot through the echoing
+                // Gemma 4 stage-1 instead of the direct JA bridge.
+                // See `translation_router::detect_source_lang`.
+                let resolved_src: &str =
+                    if crate::translation_router::is_auto_source(source_language) {
+                        crate::translation_router::detect_source_lang(text)
+                            .unwrap_or(source_language)
+                    } else {
+                        source_language
+                    };
+                let decision = route(self.user_tier, self.hardware, resolved_src, target_language);
+                self.handle_for(decision, resolved_src, target_language)
             }
             TaskInput::Explain { .. } | TaskInput::Summarize { .. } => {
                 let id = self.aux_tier_id();
@@ -526,36 +536,25 @@ impl Provider for RoutedTranslator {
         let dispatched_input = rewired.unwrap_or(input);
         let handle = self.dispatch_handle(&dispatched_input)?;
 
-        // MBR for upper tiers: same monotonic-N contract as `run`,
-        // but the streaming sink has to be handled with care —
-        // emitting tokens from N candidates would surface 5
-        // half-translations to the user before the chosen winner.
-        // Instead, run MBR silently (each candidate's tokens go to
-        // a /dev/null sink), then push the winning text to the
-        // caller's sink as a single final chunk. The user sees no
-        // streaming, but `runTranslate` (the only IPC path that
-        // would normally stream) collects the final string via the
-        // return value anyway, so the perceptible UX is unchanged.
-        let n = if matches!(dispatched_input, TaskInput::Translate { .. }) {
-            mbr_n_for_tier(self.user_tier)
-        } else {
-            1
-        };
-
-        if n > 1 {
-            let out = run_mbr(handle.as_ref(), &dispatched_input, n).await?;
-            let restored = unmask_output(out, &map);
-            // Surface the winning text to the caller's sink as one
-            // chunk so streaming consumers still get content. The
-            // sink itself doesn't see placeholders here because
-            // `unmask_output` already restored them.
-            if let TaskOutput::Text(t) = &restored {
-                sink(t.clone(), true);
-            } else if let TaskOutput::TextChunk { delta, .. } = &restored {
-                sink(delta.clone(), true);
-            }
-            return Ok(restored);
-        }
+        // NO MBR on the streaming path. `run_streaming` /
+        // `run_with_sink` is consumed ONLY by the real-time Lens flow
+        // (lens_pipeline / lens_watcher); the batch IPC translate
+        // path uses `run()` below, which keeps the full per-tier MBR.
+        //
+        // 2026-06 Lens regression fix: Quality's MBR-N=5 ran the inner
+        // model FIVE times per OCR line. On long lines that pushed a
+        // single flow past the translate chain's `timeout_ms` (20.5 s
+        // in the field config), so `Pipeline::run_inner`'s `timeout()`
+        // aborted the whole translation. The Lens pipeline then saw an
+        // empty result and fell back to surfacing the SOURCE on the
+        // card — the user-visible "English echo on a Quality GPU"
+        // symptom, even though the model had produced correct
+        // Japanese. Single-shot here keeps the Lens ~5× faster (well
+        // inside the timeout) AND restores ACTUAL token streaming: the
+        // old MBR branch buffered all N candidates silently and then
+        // emitted one final chunk, so the live overlay never streamed
+        // anyway. Capture-flow quality is unaffected (it goes through
+        // `run`).
 
         // Streaming sink: wrap the caller's sink with a stateful
         // placeholder restorer. A placeholder like `__MLENS_T_3__`

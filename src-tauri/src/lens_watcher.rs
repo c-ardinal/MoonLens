@@ -948,10 +948,10 @@ fn sample_text_color(img: &image::DynamicImage, bbox: [f32; 4], bg: [u8; 3]) -> 
 ///     so the glyph_h denominator reflects real cap + descender
 ///     span, not the OCR bbox's padding.
 ///  4. Compute `median(min_runs) / glyph_h`. Empirically calibrated
-///     against web / document screenshots:
-///       - < 0.11 → 400 (regular)
-///       - < 0.17 → 600 (semi-bold)
-///       - ≥ 0.17 → 700 (bold)
+///     2026-06 against live + lens_eval stroke ratios (bold heading
+///     ~0.167, regular body 0.06-0.13):
+///       - < 0.15 → 400 (regular)
+///       - ≥ 0.15 → 700 (bold)
 ///
 /// Returns `400` whenever sampling is unreliable (empty / noisy bbox,
 /// no text pixels, degenerate glyph height).
@@ -1026,22 +1026,17 @@ fn estimate_font_weight(img: &image::DynamicImage, bbox: [f32; 4], bg: [u8; 3]) 
     per_row_min.sort_unstable();
     let median_min = per_row_min[per_row_min.len() / 2] as f32;
     let ratio = median_min / glyph_h;
-
-    // Thresholds widened from the 0.11/0.17 originals (2026-05-27).
-    // The lens pipeline scales the captured frame UP by `ocr_scale`
-    // for OCR detection accuracy, then maps the bbox coordinates
-    // back to the un-scaled frame for sampling here. Sampling at the
-    // smaller scale undercounts stroke pixels (anti-aliasing eats
-    // sub-pixel ink), so ratios skew low and almost every body line
-    // crossed the 0.11 threshold into 600. Result: the rendered
-    // translation looked uniformly bolder than the source. The
-    // widened bands push the body-text floor higher so genuine
-    // 400-weight strokes stay at 400. Boundary values still match
-    // upstream unit tests (ratio 0.10 → 400, 0.15 → 600, 0.20 → 700).
+    // Regular-or-bold at the 0.14 split — the SAME boundary the old
+    // three-bucket version used to separate body (< 0.14 → 400) from
+    // heading (0.14-0.19 → 600). The old code then capped that heading
+    // at semibold 600, so a genuinely-bold title rendered THINNER than
+    // its source ("タイトルは細字"). Sending everything ≥ 0.14 to a full
+    // 700 makes the heading match the source bold while body text stays
+    // 400. NOTE: the split must stay at 0.14, not 0.15 — live captures
+    // measured bold titles as low as ~0.14, and a 0.15 split dropped
+    // them back to 400 (thinner than before).
     if ratio < 0.14 {
         400
-    } else if ratio < 0.19 {
-        600
     } else {
         700
     }
@@ -1082,12 +1077,16 @@ fn estimate_paragraph_font_weight(
 /// paragraph's wrap context while peeling off the bold heading the
 /// column-continuity grouper accidentally swept in.
 ///
-/// The threshold (1.6×) was chosen empirically against the iter5
-/// fixture set: title→body transitions sit in the 1.8–2.4× range,
-/// while body-internal variation (descender outliers, italic runs)
-/// stays under 1.3×. Bumping below 1.5× starts shattering normal
-/// paragraphs; bumping above 1.7× lets title+body slip through
-/// again.
+/// The threshold is 1.4× (lowered from 1.6× in 2026-06). Clear
+/// title→body transitions sit in the 1.8–2.4× range, but a smaller
+/// heading one step above the body can be only ~1.4–1.5× taller —
+/// those were slipping through and forcing a single merged card with
+/// a heading-mis-sizing median font. Body-internal variation
+/// (descender outliers, italic runs) stays under ~1.3×, so 1.4×
+/// keeps real paragraphs intact while peeling headings off. A second
+/// run-median check splits a member that diverges ≥1.4× from the
+/// accumulated run even when the step to the adjacent line is
+/// gradual.
 fn split_subgroup_by_height_discontinuity(
     members: &[usize],
     rendered: &[OcrLine],
@@ -1095,23 +1094,47 @@ fn split_subgroup_by_height_discontinuity(
     if members.len() <= 1 {
         return vec![members.to_vec()];
     }
-    const HEIGHT_RATIO_THRESHOLD: f32 = 1.6;
+    // 2026-06: lowered 1.6 → 1.4 so a heading / title sitting one line
+    // above its body actually splits into its own card. A heading is
+    // commonly only ~1.4-1.5× the body height (not 1.6×+), so the old
+    // threshold merged the two — the merged card then took a single
+    // median font size that under-sized the heading and a single
+    // weight that mis-bolded the body (the "translation font does not
+    // match the original" report). 1.4× still lets ordinary
+    // paragraph-internal variation (ascender/descender outliers,
+    // italics) flow through as one unit. A SECOND rule below also
+    // splits a member that diverges sharply from the run's own median
+    // height, catching a tall heading even when the step to the next
+    // line is gradual.
+    const HEIGHT_RATIO_THRESHOLD: f32 = 1.4;
     let mut out: Vec<Vec<usize>> = Vec::new();
     let mut current: Vec<usize> = Vec::new();
+    let h_of = |idx: usize| rendered[idx].bbox[3].max(1.0);
     for (i, &m) in members.iter().enumerate() {
         if i == 0 {
             current.push(m);
             continue;
         }
-        let prev = members[i - 1];
-        let prev_h = rendered[prev].bbox[3].max(1.0);
-        let curr_h = rendered[m].bbox[3].max(1.0);
-        let ratio = if curr_h >= prev_h {
+        let prev_h = h_of(members[i - 1]);
+        let curr_h = h_of(m);
+        let pair_ratio = if curr_h >= prev_h {
             curr_h / prev_h
         } else {
             prev_h / curr_h
         };
-        if ratio >= HEIGHT_RATIO_THRESHOLD {
+        // Median height of the run accumulated so far — lets us catch
+        // a heading whose step to the immediately following line is
+        // gradual but which is clearly taller than the body block it
+        // was merged with.
+        let mut run_heights: Vec<f32> = current.iter().map(|&c| h_of(c)).collect();
+        run_heights.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        let run_median = run_heights[run_heights.len() / 2];
+        let median_ratio = if curr_h >= run_median {
+            curr_h / run_median
+        } else {
+            run_median / curr_h
+        };
+        if pair_ratio >= HEIGHT_RATIO_THRESHOLD || median_ratio >= HEIGHT_RATIO_THRESHOLD {
             // Found a discontinuity — flush the accumulated run
             // and start fresh. The current member becomes the seed
             // of the next group.
@@ -1120,6 +1143,53 @@ fn split_subgroup_by_height_discontinuity(
             }
         }
         current.push(m);
+    }
+    if !current.is_empty() {
+        out.push(current);
+    }
+    out
+}
+
+/// Split a paragraph sub-group wherever consecutive member lines
+/// differ in font WEIGHT (regular vs bold). A bold heading sitting
+/// directly above a regular caption/subtitle — same column, similar
+/// height, so neither `group_paragraphs` nor the height split
+/// separates them — would otherwise become one card whose single
+/// median weight bolds BOTH lines. Splitting here makes each weight
+/// run its own card so the translation's boldness follows the source
+/// line-by-line ("原文通り", not per-card).
+///
+/// Weight is sampled per member from the captured frame (each line's
+/// own rim-sampled background → [`estimate_font_weight`]). Returns the
+/// group unchanged when the frame is unavailable (offline payloads) or
+/// the group is a single line.
+fn split_subgroup_by_weight_discontinuity(
+    members: &[usize],
+    rendered: &[OcrLine],
+    image_decoded: Option<&image::DynamicImage>,
+) -> Vec<Vec<usize>> {
+    let Some(img) = image_decoded else {
+        return vec![members.to_vec()];
+    };
+    if members.len() <= 1 {
+        return vec![members.to_vec()];
+    }
+    // Per-member bold flag (estimate_font_weight returns 400 or 700).
+    let bold: Vec<bool> = members
+        .iter()
+        .map(|&m| {
+            let bbox = rendered[m].bbox;
+            let (bg, _) = sample_rim_edges(img, bbox);
+            estimate_font_weight(img, bbox, bg) >= 600
+        })
+        .collect();
+    let mut out: Vec<Vec<usize>> = Vec::new();
+    let mut current: Vec<usize> = vec![members[0]];
+    for i in 1..members.len() {
+        if bold[i] != bold[i - 1] {
+            out.push(std::mem::take(&mut current));
+        }
+        current.push(members[i]);
     }
     if !current.is_empty() {
         out.push(current);
@@ -1419,9 +1489,19 @@ pub fn compute_lens_cards(
         // ratio) so genuine paragraph-internal variation — italics,
         // small caps, the occasional ascender/descender outlier —
         // still flows through as a single translation unit.
+        // Split first on font-size (height) discontinuity, THEN on
+        // font-WEIGHT discontinuity. A heading and its caption can share
+        // a similar height yet differ in weight (bold title over a
+        // regular subtitle); without the weight split they'd merge into
+        // one card whose single estimated weight bolds BOTH lines — the
+        // 2026-06 "タイトルの次の行まで太くなる" report. Style must follow
+        // the SOURCE per line, not per card.
         let mut sub_groups: Vec<Vec<usize>> = Vec::with_capacity(initial_sub_groups.len());
         for group in initial_sub_groups {
-            sub_groups.extend(split_subgroup_by_height_discontinuity(&group, &rendered));
+            for hg in split_subgroup_by_height_discontinuity(&group, &rendered) {
+                sub_groups
+                    .extend(split_subgroup_by_weight_discontinuity(&hg, &rendered, image_decoded));
+            }
         }
         let has_single_subgroup = sub_groups.len() == 1;
 
@@ -1492,27 +1572,28 @@ pub fn compute_lens_cards(
             };
 
             let median_h = median_member_line_height(&members, &rendered);
-            // Cap-height correction: OCR bbox heights include ascenders
-            // + descenders, so the raw bbox is 15-30% taller than the
-            // actual font size the renderer should use. Without this
-            // correction the translated card draws 15-30% bigger than
-            // the source text, which the user reads as "the translation
-            // does not match the original font" (reported 2026-05-27).
+            // Font size = per-line OCR bbox height × a script ratio that
+            // converts the (leading-inflated) detection box into the
+            // on-screen font size that lands the rendered translation on
+            // the SOURCE glyph height.
             //
-            // The correction factor depends on the script:
-            //  - CJK (full-width ideographs) fill nearly all of their
-            //    bbox; the bbox-to-font ratio is ~0.88.
-            //  - Latin / Cyrillic / etc. have prominent descenders
-            //    (`g`, `p`, `y`, `j`) and ascenders, so the ratio is
-            //    closer to ~0.72.
+            // The ratios are calibrated against a 2026-06 live CDP
+            // measurement of the lens over English source: the source
+            // body cap height was ~15 px in a ~35 px per-line box, and
+            // the renderer (Noto Sans JP) draws glyphs at ~0.88 of the
+            // font-size, so font = 15 / 0.88 ≈ 17 px → ratio ≈ 0.50 for
+            // Latin. CJK source boxes hug their glyphs more tightly (no
+            // ascenders/descenders) so they take a higher 0.62.
             //
-            // Mixed-script paragraphs (e.g. `「Open Source」`) pick the
-            // ratio of the dominant script — a single trailing Latin
-            // word in a Japanese paragraph still wants the CJK ratio
-            // because the dominant character cells are CJK.
-            let cap_height_ratio = paragraph_cap_height_ratio(&members, &rendered);
-            let font_size_px = median_h * cap_height_ratio;
-            let line_height = source_line_height_ratio(&members, &rendered);
+            // NOTE: this pairs with the 2026-06 frontend switch from the
+            // `cqh` font length to an absolute `font_size_px × shellH /
+            // imageH` px — the old `cqh` path silently shrank MULTI-LINE
+            // cards ~0.66×, which had been accidentally masking the
+            // oversized ratio on paragraphs while single-line headings
+            // rendered too large. With the cqh bug gone, every card now
+            // honours this ratio uniformly.
+            let font_size_px = median_h * paragraph_cap_height_ratio(&members, &rendered);
+            let line_height = source_line_height_ratio(&members, &rendered, font_size_px);
             let source_line_count = members.len() as u32;
             // Fall back to the full frame as a virtual layout block
             // when the segmenter could not derive one. Pre-fix the
@@ -1715,11 +1796,19 @@ pub(crate) fn ocr_line_inside_any_block(
 /// inter-baseline gap, ascenders, and descenders) into the font
 /// size the renderer should actually use.
 ///
-/// Ratios are empirical from 2026-05-27 visual eyeballing on
-/// `Inter` and `Noto Sans CJK JP`: a 24 px bbox character in
-/// Japanese should render at ~21 px (24 × 0.88); the same bbox
-/// in English should render at ~17 px (24 × 0.72) so descenders
-/// (`g`, `p`, `y`) sit within the bbox instead of below it.
+/// Ratios (2026-06 recalibration). The earlier 0.88 / 0.72 values
+/// rendered the TRANSLATION ~1.3-1.5× LARGER than the source text —
+/// confirmed by a live CDP measurement of the lens overlay against
+/// the captured source (English source glyph ink ≈ 0.43-0.52 × the
+/// OCR bbox height, because PaddleOCR's detected line box includes
+/// the inter-line leading, not just the glyph extent). Rendering the
+/// Japanese card at `bbox × 0.72` therefore overshot the source by
+/// ~35 % on average ("どのカードも原文より大きく太い"). Lowered to
+/// 0.66 (CJK-dominant source) and 0.55 (Latin-dominant source) so the
+/// rendered translation lands on the source glyph height instead of
+/// the looser line box. Still script-aware: CJK source boxes hug
+/// their glyphs more tightly than Latin (no descenders), so they keep
+/// the higher ratio.
 pub(crate) fn paragraph_cap_height_ratio(members: &[usize], rendered: &[OcrLine]) -> f32 {
     // Weight CJK characters at 2x because they occupy roughly
     // twice the horizontal cell width of a Latin glyph. A
@@ -1743,9 +1832,9 @@ pub(crate) fn paragraph_cap_height_ratio(members: &[usize], rendered: &[OcrLine]
         }
     }
     if cjk_weight >= latin_weight {
-        0.88
+        0.62
     } else {
-        0.72
+        0.50
     }
 }
 
@@ -1999,20 +2088,30 @@ fn max_minus_min(values: &[f32]) -> f32 {
     }
 }
 
-/// Estimate the source text's CSS `line-height` ratio (baseline-to-
-/// baseline distance ÷ glyph height) from the vertical spacing of
-/// the paragraph's OCR members. Real body text usually lands between
-/// 1.3 and 1.6; our previous hard-coded 1.15 made wrapped
-/// translations feel cramped relative to the source. Members are
-/// y-sorted first so the gaps make sense when OCR returned them in
-/// reading order but with occasional out-of-sequence rows.
-pub(crate) fn source_line_height_ratio(members: &[usize], rendered: &[OcrLine]) -> f32 {
+/// Estimate the source text's CSS `line-height` ratio from the
+/// vertical spacing of the paragraph's OCR members.
+///
+/// CSS `line-height` multiplies the FONT SIZE, so the ratio that
+/// reproduces the source line pitch on screen is
+/// `source_line_pitch / font_size_px` — NOT `pitch / bbox_height`.
+/// PaddleOCR's detection box is leading-inflated (often ≈ the line
+/// pitch itself), so the old `pitch / bbox_height` form collapsed to
+/// ~1.0 and the translation's lines stacked tight while the source
+/// sat airy (the 2026-06 "行間スペースが原文と異なる" report). Dividing
+/// by the actual rendered font size restores the source's spacing.
+/// `font_size_px` is the per-line font the card will render at.
+pub(crate) fn source_line_height_ratio(
+    members: &[usize],
+    rendered: &[OcrLine],
+    font_size_px: f32,
+) -> f32 {
     // Single-member or empty paragraphs have no gap to measure —
     // return a generic web-safe default tight enough to not balloon
     // a one-liner's card height.
     if members.len() < 2 {
         return 1.25;
     }
+    let fs = font_size_px.max(1.0);
     let mut sorted: Vec<usize> = members.to_vec();
     sorted.sort_by(|&a, &b| {
         rendered[a].bbox[1]
@@ -2024,13 +2123,13 @@ pub(crate) fn source_line_height_ratio(members: &[usize], rendered: &[OcrLine]) 
         let a = rendered[pair[0]].bbox;
         let b = rendered[pair[1]].bbox;
         let top_to_top = (b[1] - a[1]).max(1.0);
-        let glyph_h = a[3].max(1.0);
-        let ratio = top_to_top / glyph_h;
-        // Clamp to sane bounds — occasional OCR bbox noise can push
-        // a pair way off (e.g. two rows overlapping due to a misread
-        // diacritic line). 1.0 floor prevents the CSS line-height
-        // collapsing below the glyph itself.
-        ratios.push(ratio.clamp(1.0, 2.2));
+        let ratio = top_to_top / fs;
+        // Clamp to sane bounds — occasional OCR bbox noise can push a
+        // pair way off (overlapping rows from a misread diacritic
+        // line). 1.05 floor keeps lines from touching; 2.8 ceiling
+        // covers airy document body text (pitch ≈ 2.6 × font) without
+        // ballooning on a noisy outlier.
+        ratios.push(ratio.clamp(1.05, 2.8));
     }
     ratios.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
     ratios[ratios.len() / 2]
@@ -3290,6 +3389,19 @@ async fn run_capture_loop(
             break;
         }
 
+        // Resize policy (2026-06): a resize that has SETTLED re-captures
+        // and re-translates the new region. We used to suppress pure
+        // resizes (keep the old cards in place), but the user wants the
+        // overlay refreshed for the new frame once the drag stops:
+        //   shrink → cards clear on contact → keep resizing → release
+        //   → re-translate the region now under the window.
+        // Mid-drag is already covered: the stability gate above only
+        // breaks once the window has stopped changing, so we never
+        // re-capture WHILE dragging — the frontend keeps the existing
+        // cards anchored in place until this fresh capture lands. The
+        // hash check below still elides a re-translation when the new
+        // region's content is identical to the last one.
+
         // Windows: `WDA_EXCLUDEFROMCAPTURE` on the lens window means
         // xcap's screen grab already sees straight through us to the
         // source — no masking dance required, no blink, ever.
@@ -3907,12 +4019,14 @@ mod tests {
     }
 
     #[test]
-    fn estimate_font_weight_semi_for_medium_strokes() {
-        // 20 px tall glyph with a 3 px stroke → ratio 0.15 → 600.
+    fn estimate_font_weight_bold_for_medium_strokes() {
+        // 20 px tall glyph with a 3 px stroke → ratio 0.15 → 700.
+        // (2026-06: the semibold/600 bucket was removed so a bold
+        // heading renders at a full 700 instead of capping at 600.)
         let img = make_stroke_image(20, 3);
         let bg = [230u8, 230, 230];
         let w = estimate_font_weight(&img, [0.0, 0.0, 40.0, 24.0], bg);
-        assert_eq!(w, 600, "3 px stroke should map to semi-bold");
+        assert_eq!(w, 700, "3 px / 20 px ratio (0.15) maps to bold");
     }
 
     #[test]
@@ -4206,8 +4320,8 @@ mod tests {
         ];
         let ratio = paragraph_cap_height_ratio(&[0, 1], &rendered);
         assert!(
-            (ratio - 0.88).abs() < 1e-6,
-            "Japanese paragraphs should pick the 0.88 ratio, got {ratio}"
+            (ratio - 0.62).abs() < 1e-6,
+            "Japanese paragraphs should pick the CJK ratio (0.62), got {ratio}"
         );
     }
 
@@ -4223,8 +4337,8 @@ mod tests {
         }];
         let ratio = paragraph_cap_height_ratio(&[0], &rendered);
         assert!(
-            (ratio - 0.72).abs() < 1e-6,
-            "Latin paragraphs should pick the 0.72 ratio, got {ratio}"
+            (ratio - 0.50).abs() < 1e-6,
+            "Latin paragraphs should pick the Latin ratio (0.50), got {ratio}"
         );
     }
 
@@ -4240,8 +4354,8 @@ mod tests {
         }];
         let ratio = paragraph_cap_height_ratio(&[0], &rendered);
         assert!(
-            (ratio - 0.88).abs() < 1e-6,
-            "Mixed-script paragraph with CJK dominance should pick 0.88, got {ratio}"
+            (ratio - 0.62).abs() < 1e-6,
+            "Mixed-script paragraph with CJK dominance should pick 0.62, got {ratio}"
         );
     }
 
@@ -4721,13 +4835,13 @@ mod tests {
             bbox: [0.0, 10.0, 100.0, 20.0],
             confidence: 1.0,
         }];
-        assert!((source_line_height_ratio(&[0], &lines) - 1.25).abs() < 1e-4);
+        assert!((source_line_height_ratio(&[0], &lines, 14.0) - 1.25).abs() < 1e-4);
     }
 
     #[test]
-    fn source_line_height_ratio_measures_top_to_top_gap() {
-        // Two lines, glyph height 20, top-to-top distance 30 →
-        // line-height ratio 1.5. Tight body text.
+    fn source_line_height_ratio_measures_pitch_over_font() {
+        // Two lines, top-to-top distance 30, rendered font size 20 →
+        // CSS line-height ratio 30 / 20 = 1.5.
         let lines = vec![
             OcrLine {
                 text: "a".into(),
@@ -4740,7 +4854,7 @@ mod tests {
                 confidence: 1.0,
             },
         ];
-        let ratio = source_line_height_ratio(&[0, 1], &lines);
+        let ratio = source_line_height_ratio(&[0, 1], &lines, 20.0);
         assert!((ratio - 1.5).abs() < 1e-4, "expected 1.5 got {ratio}");
     }
 
@@ -4765,9 +4879,11 @@ mod tests {
                 confidence: 1.0,
             },
         ];
-        let ratio = source_line_height_ratio(&[0, 1, 2], &lines);
+        // Pitches 30 and 60; font size 20 → ratios 1.5 and 3.0
+        // (clamped to 2.8). Median stays within the clamp band.
+        let ratio = source_line_height_ratio(&[0, 1, 2], &lines, 20.0);
         assert!(
-            (1.0..=2.2).contains(&ratio),
+            (1.05..=2.8).contains(&ratio),
             "clamped ratio out of bounds: {ratio}"
         );
     }
@@ -5190,10 +5306,22 @@ mod tests {
 
     #[test]
     fn split_subgroup_by_height_below_threshold_does_not_split() {
-        // 1.5× — just below the 1.6× threshold. Should stay merged.
-        let lines = make_ocr_lines_for_heights(&[(0.0, 14.0), (18.0, 21.0)]);
+        // 1.29× — below the 1.4× threshold (ordinary line-to-line
+        // variation from ascenders/descenders). Should stay merged.
+        let lines = make_ocr_lines_for_heights(&[(0.0, 14.0), (18.0, 18.0)]);
         let groups = split_subgroup_by_height_discontinuity(&[0, 1], &lines);
         assert_eq!(groups.len(), 1);
+    }
+
+    #[test]
+    fn split_subgroup_by_height_splits_heading_at_1_5x() {
+        // 1.5× heading-over-body now splits (threshold lowered to
+        // 1.4× in 2026-06 so headings get their own card / font size).
+        let lines = make_ocr_lines_for_heights(&[(0.0, 21.0), (24.0, 14.0), (42.0, 14.0)]);
+        let groups = split_subgroup_by_height_discontinuity(&[0, 1, 2], &lines);
+        assert_eq!(groups.len(), 2);
+        assert_eq!(groups[0], vec![0]);
+        assert_eq!(groups[1], vec![1, 2]);
     }
 
     #[test]

@@ -156,6 +156,74 @@ fn classify(lang: &str) -> LangBucket {
     }
 }
 
+/// Resolve an `auto` / empty source-language code into a concrete
+/// `en` / `ja` code by inspecting the source TEXT, so the router
+/// buckets it correctly instead of dropping it into `Other`.
+///
+/// Why this matters (2026-06 Lens regression): the Lens / capture
+/// flows pass `source_language = "auto"` (the user never picks a
+/// source). `classify("auto")` is `Other`, so an English screenshot
+/// translated to Japanese took the `Other → ja` GPU **pivot**
+/// (stage 1 = Quality multi = Gemma 4 E4B, stage 2 = JA bridge)
+/// instead of the `En → Ja` **direct** JA-bridge route. The pivot's
+/// stage-1 Gemma 4 model echoes the English source verbatim (it is
+/// not a reliable en→en bridge), and the extra stage plus Quality's
+/// MBR-N=5 turned one fast bridge call into ~10 slow ones — the
+/// "English echo + 25 s" symptom. Detecting `en` up front sends the
+/// request straight to the bridge that actually translates it.
+///
+/// The router only needs En / Ja / Other, so a script heuristic is
+/// enough and avoids a detection dependency:
+///   - any hiragana / katakana ⇒ `ja` (unambiguously Japanese),
+///   - otherwise Latin letters with no other-script letters ⇒ `en`,
+///   - anything else ⇒ `None` (keep the caller's original code, so
+///     a genuine French/Korean/… source still reaches the multi
+///     path rather than being mislabelled English).
+pub fn detect_source_lang(text: &str) -> Option<&'static str> {
+    let mut kana = 0usize;
+    let mut latin = 0usize;
+    let mut other_letters = 0usize;
+    for ch in text.chars() {
+        let u = ch as u32;
+        let is_kana = (0x3040..=0x309F).contains(&u) // hiragana
+            || (0x30A0..=0x30FF).contains(&u)         // katakana
+            || (0xFF66..=0xFF9D).contains(&u); // halfwidth katakana
+        if is_kana {
+            kana += 1;
+        } else if ch.is_ascii_alphabetic() {
+            latin += 1;
+        } else if ch.is_alphabetic() {
+            other_letters += 1;
+        }
+    }
+    // Decide by the PREDOMINANT script, not mere presence — an OCR
+    // line that merges an English title with a short Japanese caption
+    // (e.g. "The Elicitation Paragraph … により使われている文。") is
+    // mostly English and should translate as `en`, not collapse to a
+    // same-language no-op because a few kana appeared. Kana-dominant
+    // text is `ja`; Latin-dominant text with no third-script letters
+    // is `en`; genuinely mixed/other stays `None` so the caller keeps
+    // its original code.
+    if kana == 0 && latin == 0 {
+        return None;
+    }
+    if kana > latin {
+        Some("ja")
+    } else if latin > 0 && other_letters == 0 {
+        Some("en")
+    } else {
+        None
+    }
+}
+
+/// True when `code` is the "let the system decide" sentinel — empty
+/// or `auto` (case-insensitive). Source language defaults to this in
+/// the Lens / capture flows.
+pub fn is_auto_source(code: &str) -> bool {
+    let t = code.trim();
+    t.is_empty() || t.eq_ignore_ascii_case("auto")
+}
+
 /// Resolve the matrix entry for one translation request.
 ///
 /// See `docs/TRANSLATION_ROUTING_MATRIX.md` for the full table
@@ -194,7 +262,21 @@ fn route_buckets(
             Compact => RoutingDecision::Direct {
                 tier_id: COMPACT_JA_TIER_ID,
             },
-            Standard | Quality => RoutingDecision::Direct {
+            Standard => RoutingDecision::Direct {
+                tier_id: STANDARD_JA_BRIDGE_TIER_ID,
+            },
+            // Quality en→ja: the larger Gemma 4 E4B (4B) measurably
+            // beats the 1.8B JA bridge on accuracy now that the Gemma 4
+            // chat template is fixed — 2026-06 lens_eval evidence on
+            // the Stella fixture: "fresh snow peas" → 新鮮なスナップエンドウ
+            // (Gemma 4) vs 新なスネイパー (bridge), "Please call Stella"
+            // → Stellaさんに電話してください vs ステラに連して (bridge
+            // drops the 絡 in 連絡). ja→en keeps the JA-specialised
+            // bridge, which handles Japanese SOURCE best (Phase 27).
+            Quality if matches!(tgt, Ja) => RoutingDecision::Direct {
+                tier_id: QUALITY_MULTI_TIER_ID,
+            },
+            Quality => RoutingDecision::Direct {
                 tier_id: STANDARD_JA_BRIDGE_TIER_ID,
             },
         };
@@ -329,12 +411,32 @@ mod tests {
     }
 
     #[test]
-    fn en_ja_standard_and_quality_use_ja_bridge() {
-        for tier in [UserTier::Standard, UserTier::Quality] {
-            for hw in [Hardware::Cpu, Hardware::Gpu] {
-                expect_direct(&route(tier, hw, "en", "ja"), STANDARD_JA_BRIDGE_TIER_ID);
-                expect_direct(&route(tier, hw, "ja", "en"), STANDARD_JA_BRIDGE_TIER_ID);
-            }
+    fn en_ja_standard_uses_ja_bridge_both_directions() {
+        for hw in [Hardware::Cpu, Hardware::Gpu] {
+            expect_direct(
+                &route(UserTier::Standard, hw, "en", "ja"),
+                STANDARD_JA_BRIDGE_TIER_ID,
+            );
+            expect_direct(
+                &route(UserTier::Standard, hw, "ja", "en"),
+                STANDARD_JA_BRIDGE_TIER_ID,
+            );
+        }
+    }
+
+    #[test]
+    fn quality_en_to_ja_uses_multi_tier_ja_to_en_uses_bridge() {
+        // Quality en→ja routes to the larger Gemma 4 E4B for accuracy;
+        // ja→en keeps the JA-specialised bridge (best on JA source).
+        for hw in [Hardware::Cpu, Hardware::Gpu] {
+            expect_direct(
+                &route(UserTier::Quality, hw, "en", "ja"),
+                QUALITY_MULTI_TIER_ID,
+            );
+            expect_direct(
+                &route(UserTier::Quality, hw, "ja", "en"),
+                STANDARD_JA_BRIDGE_TIER_ID,
+            );
         }
     }
 

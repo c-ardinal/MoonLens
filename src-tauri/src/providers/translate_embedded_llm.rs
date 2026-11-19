@@ -339,6 +339,7 @@ impl EmbeddedLlmTranslator {
             .and_then(|v| v.as_str())
             .and_then(|s| match s {
                 "gemma" => Some(crate::model_registry::ChatTemplate::Gemma),
+                "gemma4" | "gemma_4" => Some(crate::model_registry::ChatTemplate::Gemma4),
                 "chatml" | "chat_ml" => Some(crate::model_registry::ChatTemplate::ChatMl),
                 _ => None,
             })
@@ -1204,6 +1205,14 @@ pub const STOP_SUFFIXES: &[&str] = &[
     "<end_of_turn>",
     "end_of_turn",
     "<end_of_turn",
+    // Gemma 4 EOS / turn-close (tokenizer id 106). Normally emitted
+    // as a single special token (caught by `is_eog`), but listed
+    // here for the same special-token-flag-stripped byte-leak case
+    // documented for `<|im_end` / `end_of_turn` above. Note the
+    // asymmetric pipe: open is `<|turn>`, close/EOS is `<turn|>`.
+    "<turn|>",
+    "turn|>",
+    "<turn|",
 ];
 
 /// Chat-template prefix markers — any substring starting with one
@@ -1239,6 +1248,12 @@ const STOP_PREFIXES: &[&str] = &[
     "|im_start>",
     "<start_of_turn",
     "start_of_turn",
+    // Gemma 4 turn markers (open `<|turn>` id 105, close `<turn|>`
+    // id 106). Catches a leaked role-start / turn-close if the
+    // special-token flag is stripped at GGUF conversion.
+    "<|turn>",
+    "<turn|",
+    "turn|>",
 ];
 
 /// If `aggregated` ends with any [`STOP_SUFFIXES`] entry, strip it
@@ -2225,56 +2240,68 @@ fn build_translation_few_shots(target_language: &str) -> Vec<(String, String)> {
     // would teach the model to expect that boilerplate around
     // every live turn, then drift when the runtime omits it.
     //
-    // Three examples per direction, ported from the proven
-    // `ollama.gemma4` defaults in default.toml. They cover:
-    //   - Idiomatic counter words (6さじ for scoopful portions,
-    //     5枚 for flat slices, 3つ for loose items).
-    //   - Omitted subjects ("三つの赤い袋に詰めてくれるでしょう"
-    //     for "scoop these things into three red bags").
-    //   - Direct noun translation (snow peas → スナップエンドウ,
-    //     toy frog → カエルのおもちゃ).
-    // The Phase 27 Lens eval showed the previous 2-anchor set
-    // ("Hello world / Performance varies") was too thin to keep
-    // smaller models (llm-jp 3.1 1.8B) idiomatic on paragraph-
-    // length OCR input — they reverted to wooden, literal output
-    // and invented words (e.g. `cover to cover`→`コヴォ`).
+    // Three examples per direction. They cover the same teaching
+    // points the old anchor set did, WITHOUT reusing a famous test
+    // passage:
+    //   - Idiomatic counter words (2本 for cables, 3個 for loose
+    //     items, 1つ for a single box).
+    //   - Omitted subjects (imperative maintenance steps —
+    //     "サイドパネルを開け…取り外し…差し込んでください").
+    //   - Direct noun translation (power cable → 電源ケーブル,
+    //     courier → 配送業者) instead of katakana pass-through.
+    //   - Paragraph-length, multi-clause output so smaller models
+    //     (llm-jp 3.1 1.8B / Hy-MT2) stay idiomatic on long OCR
+    //     input instead of reverting to wooden, literal output or
+    //     inventing words (the Phase 27 `cover to cover`→`コヴォ`
+    //     failure that a too-thin 2-anchor set let through).
+    //
+    // 2026-06-01: the previous ja/en anchors were the literal
+    // "Please call Stella…" Speech Accent Archive elicitation
+    // paragraph. That passage is one of the most common on-screen
+    // *test* texts, so the moment a user pointed the Lens at it the
+    // model matched the few-shot SOURCE and regurgitated the
+    // few-shot TARGET verbatim — surfacing the full Stella
+    // translation on cards whose actual OCR text was just the
+    // title. Generic, domain-neutral anchors remove that landmine.
     let examples: &[(&str, &str)] = match target_lower.as_str() {
         "ja" | "japanese" | "jp" => &[
             (
-                "Please call Stella. Ask her to bring these things with her from the store: \
-                 Six spoons of fresh snow peas, five thick slabs of blue cheese, and \
-                 maybe a snack for her brother Bob.",
-                "ステラに電話してください。これらのものをお店で買ってきてもらうように頼んでください。\
-                 新鮮なスナップエンドウを6さじ、厚切りのブルーチーズを5枚、\
-                 それから弟のボブのおやつも。",
+                "The starter kit includes two power cables, three spare batteries, \
+                 and a printed setup guide for the new display.",
+                "スターターキットには、電源ケーブルが2本、予備バッテリーが3個、\
+                 そして新しいディスプレイ用の印刷された設定ガイドが含まれています。",
             ),
             (
-                "We also need a small plastic snake and a big toy frog for the kids.",
-                "子供たちのために、小さなプラスチック製のヘビと大きなカエルのおもちゃも必要です。",
+                "Open the side panel, remove the old filter, and slide the new one \
+                 into place until it clicks.",
+                "サイドパネルを開け、古いフィルターを取り外し、\
+                 新しいものをカチッと音がするまで差し込んでください。",
             ),
             (
-                "She can scoop these things into three red bags, and we will go meet her \
-                 Wednesday at the train station.",
-                "彼女はこれらを赤い袋3つに詰めてくれるでしょう。水曜日に駅で待ち合わせましょう。",
+                "We can pack everything into a single box, and the courier will \
+                 pick it up on Thursday morning.",
+                "すべてを1つの箱に詰めることができます。\
+                 木曜日の朝に配送業者が集荷に来ます。",
             ),
         ],
         "en" | "english" => &[
             (
-                "ステラに電話してください。これらのものをお店で買ってきてもらうように頼んでください。\
-                 新鮮なスナップエンドウを6さじ、厚切りのブルーチーズを5枚、\
-                 それから弟のボブのおやつも。",
-                "Please call Stella. Ask her to bring these things with her from the store: \
-                 Six spoons of fresh snow peas, five thick slabs of blue cheese, and \
-                 maybe a snack for her brother Bob.",
+                "スターターキットには、電源ケーブルが2本、予備バッテリーが3個、\
+                 そして新しいディスプレイ用の印刷された設定ガイドが含まれています。",
+                "The starter kit includes two power cables, three spare batteries, \
+                 and a printed setup guide for the new display.",
             ),
             (
-                "子供たちのために、小さなプラスチック製のヘビと大きなカエルのおもちゃも必要です。",
-                "We also need a small plastic snake and a big toy frog for the kids.",
+                "サイドパネルを開け、古いフィルターを取り外し、\
+                 新しいものをカチッと音がするまで差し込んでください。",
+                "Open the side panel, remove the old filter, and slide the new one \
+                 into place until it clicks.",
             ),
             (
-                "彼女はこれらを赤い袋3つに詰めてくれるでしょう。水曜日に駅で待ち合わせましょう。",
-                "She can scoop these things into three red bags, and we will go meet her \
-                 Wednesday at the train station.",
+                "すべてを1つの箱に詰めることができます。\
+                 木曜日の朝に配送業者が集荷に来ます。",
+                "We can pack everything into a single box, and the courier will \
+                 pick it up on Thursday morning.",
             ),
         ],
         // 2026-05-18 additions: fr / de / ko / zh examples sourced
@@ -2288,10 +2315,7 @@ fn build_translation_few_shots(target_language: &str) -> Vec<(String, String)> {
         // critical one because Pivot Stage 2 routinely receives
         // exactly that kind of intermediate English.
         "fr" | "fra" | "fre" | "french" => &[
-            (
-                "Hello, world.",
-                "Bonjour, le monde.",
-            ),
+            ("Hello, world.", "Bonjour, le monde."),
             (
                 "The quick brown fox jumps over the lazy dog.",
                 "Le renard brun rapide saute par-dessus le chien paresseux.",
@@ -2302,10 +2326,7 @@ fn build_translation_few_shots(target_language: &str) -> Vec<(String, String)> {
             ),
         ],
         "de" | "deu" | "ger" | "german" => &[
-            (
-                "Hello, world.",
-                "Hallo, Welt.",
-            ),
+            ("Hello, world.", "Hallo, Welt."),
             (
                 "The quick brown fox jumps over the lazy dog.",
                 "Der schnelle braune Fuchs springt über den faulen Hund.",
@@ -2316,10 +2337,7 @@ fn build_translation_few_shots(target_language: &str) -> Vec<(String, String)> {
             ),
         ],
         "ko" | "kor" | "korean" => &[
-            (
-                "Hello, world.",
-                "안녕, 세상.",
-            ),
+            ("Hello, world.", "안녕, 세상."),
             (
                 "The quick brown fox jumps over the lazy dog.",
                 "빠른 갈색 여우가 게으른 개를 뛰어넘는다.",
@@ -2354,10 +2372,7 @@ fn build_translation_few_shots(target_language: &str) -> Vec<(String, String)> {
             ),
         ],
         "zh" | "zho" | "chi" | "chinese" => &[
-            (
-                "Hello, world.",
-                "你好，世界。",
-            ),
+            ("Hello, world.", "你好，世界。"),
             (
                 "The quick brown fox jumps over the lazy dog.",
                 "敏捷的棕色狐狸跳过懒狗。",
@@ -2418,6 +2433,7 @@ fn render_prompt(
         ChatTemplate::ChatMl => render_chatml(system, few_shots, user),
         ChatTemplate::ChatMlQwen3NoThink => render_chatml_qwen3_no_think(system, few_shots, user),
         ChatTemplate::Gemma => render_gemma(system, few_shots, user),
+        ChatTemplate::Gemma4 => render_gemma4(system, few_shots, user),
     }
 }
 
@@ -2506,6 +2522,38 @@ fn render_gemma(system: &str, few_shots: &[(String, String)], user: &str) -> Str
     } else {
         out.push_str("<start_of_turn>model\n");
     }
+    out
+}
+
+/// Gemma 4 (E2B/E4B nano). Distinct markers from Gemma 2/3:
+///   - turn open:  `<|turn>` + role + `\n`   (tokenizer id 105)
+///   - turn close: `<turn|>` + `\n`          (tokenizer id 106 = EOS)
+///   - generation prime: `<|turn>model\n`
+/// The leading `<bos>` is added by llama.cpp at tokenisation time
+/// (`add_bos`), so it is intentionally omitted here — same convention
+/// as `render_gemma`. Unlike Gemma 2/3, Gemma 4 has a real `system`
+/// turn, so the system prompt rides its own `<|turn>system` block
+/// instead of being inlined into the first user turn. Few-shot
+/// demonstrations follow as fully-completed user/model pairs, exactly
+/// the shape the model was post-trained on.
+///
+/// Using the Gemma 2/3 `<start_of_turn>` markers here is what caused
+/// the 2026-06 Lens "English echo + 25 s generation" regression: those
+/// strings are NOT control tokens in the Gemma 4 tokenizer, so the
+/// model saw no turn boundary, never entered a model turn, and
+/// continued the source text verbatim until it hit `num_predict`.
+#[cfg(feature = "embedded-llm")]
+fn render_gemma4(system: &str, few_shots: &[(String, String)], user: &str) -> String {
+    let mut out = String::new();
+    if !system.trim().is_empty() {
+        out.push_str(&format!("<|turn>system\n{}<turn|>\n", system.trim()));
+    }
+    for (u, a) in few_shots {
+        out.push_str(&format!(
+            "<|turn>user\n{u}<turn|>\n<|turn>model\n{a}<turn|>\n"
+        ));
+    }
+    out.push_str(&format!("<|turn>user\n{user}<turn|>\n<|turn>model\n"));
     out
 }
 
@@ -2971,6 +3019,23 @@ mod tests {
         assert!(
             !gemma.contains("<|im_start|>"),
             "gemma leaked ChatML markers: {gemma}"
+        );
+        // Gemma 4 uses the distinct `<|turn>` / `<turn|>` markers and
+        // a real system turn — must NOT emit the Gemma 2/3
+        // `<start_of_turn>` form (that mismatch was the 2026-06 Lens
+        // English-echo regression).
+        let gemma4 = render_prompt(ChatTemplate::Gemma4, "sys", &[], "hi");
+        assert!(
+            gemma4.contains("<|turn>system\nsys<turn|>"),
+            "gemma4 system turn malformed: {gemma4}"
+        );
+        assert!(
+            gemma4.contains("<|turn>user\nhi<turn|>\n<|turn>model\n"),
+            "gemma4 user/model turn malformed: {gemma4}"
+        );
+        assert!(
+            !gemma4.contains("<start_of_turn>") && !gemma4.contains("<end_of_turn>"),
+            "gemma4 leaked Gemma 2/3 markers: {gemma4}"
         );
     }
 

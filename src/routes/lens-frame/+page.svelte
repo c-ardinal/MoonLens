@@ -94,6 +94,39 @@
   let resolvedIndices = $state(new Set<number>());
   let imageW = $state(1);
   let imageH = $state(1);
+  // Rendered height (CSS px) of the card-positioning shell. Bound via
+  // `bind:clientHeight` on `<main class="lens-shell">`. Used to convert
+  // the backend's capture-space `font_size_px` into an absolute CSS px
+  // font size (`font_size_px × shellH / imageH`) — see `cardStyle`.
+  let shellH = $state(0);
+  let shellW = $state(0);
+  // Shell (window inner) size FROZEN at the moment a flow's OCR lines
+  // arrive. Cards are laid out in absolute px against these frozen
+  // dims (see `cardStyle`) so resizing the window afterwards does NOT
+  // rescale or move them — they stay pinned to the translated content.
+  // A shrink that reaches a card clears it (see the resize handler).
+  let capShellW = $state(0);
+  let capShellH = $state(0);
+  // Window top-left on the virtual screen, FROZEN at capture time vs.
+  // the LIVE value. Resizing from the left/top edge moves the window
+  // origin, so cards anchored to that origin would travel with it. We
+  // offset every card by (frozen − live) origin so they hold their
+  // SCREEN position regardless of which edge the user drags.
+  let capScreenX = $state(0);
+  let capScreenY = $state(0);
+  // Element wrapping all cards. During a resize we translate THIS
+  // layer imperatively (in an rAF, in sync with paint) to cancel the
+  // window-origin drift, so cards hold their screen position WITHOUT
+  // the ~1-frame lag a reactive per-card offset would introduce.
+  let cardsLayer = $state<HTMLDivElement | null>(null);
+  let resizeRaf: number | null = null;
+  let resizeSettleTimer: number | null = null;
+  // Last edge-anchor state applied to the cards layer ('L'=left/top,
+  // 'R'=right/bottom, '' = not yet anchored). Used to make `anchorLayer`
+  // idempotent so a resize burst doesn't rewrite identical CSS (and
+  // thrash layout) on every event.
+  let anchorH = '';
+  let anchorV = '';
   let currentFlowId = $state<number | null>(null);
   let streaming = $state(false);
   let hovered = $state(false);
@@ -222,39 +255,64 @@
    *  card bbox instead of sitting on one line anchored at the OCR
    *  source position. */
   function cardStyle(line: LineCard): string {
-    const [x, y, w, h] = line.bbox;
+    // Card geometry follows the SOURCE text region (`inpaint_bbox` = the
+    // grey bg_patch), NOT the wider `bbox`. The backend widens `bbox` in
+    // the alignment direction so centred/right text has slack, but that
+    // slack let a long translation spill PAST the grey patch into the
+    // transparent card area ("背景枠からはみ出している"). Sizing the card to
+    // the inpaint region instead clamps the text to the grey: a longer
+    // translation now wraps + shrinks (via the fit pass) to stay inside
+    // the source footprint. bg_patch math below degenerates to 100%/0%
+    // automatically when w==iw/h==ih, so the patch still fills the card.
+    const geomBox =
+      Array.isArray(line.inpaint_bbox) && line.inpaint_bbox.length === 4
+        ? line.inpaint_bbox
+        : line.bbox;
+    const [x, y, w, h] = geomBox;
     if (imageW === 0 || imageH === 0) return 'display:none';
     const [br, bgc, bb] = line.bg_color;
     const [fr, fg, fb] = line.fg_color;
-    const weight = line.font_weight || 400;
-    // Font size, the DPR/upscale-robust way (2026-05-28 rework).
+    let weight = line.font_weight || 400;
+    // CJK density compensation (2026-06): Noto Sans JP renders ~one
+    // step heavier than a thin Latin source at the same numeric weight,
+    // so a REGULAR Japanese translation reads as bold against a light
+    // English original ("本文は太字"). Drop non-bold CJK output to 300
+    // (Light) so it visually matches the thin source. Bold (≥600) CJK
+    // headings keep their weight, and Latin translations are untouched
+    // (Latin 400 is already as light as the source).
+    const renderText = line.translation && line.translation.length > 0 ? line.translation : line.text;
+    // Hiragana/katakana, CJK ideographs, halfwidth katakana.
+    const isCjk = /[぀-ヿ㐀-鿿ｦ-ﾟ]/.test(renderText);
+    if (isCjk && weight < 600) {
+      weight = 300;
+    }
+    // Font size, in absolute CSS px (2026-06 rework — replaces the
+    // earlier `cqh` approach).
     //
-    // The backend's `font_size_px` is the per-line cap height in the
-    // OCR coordinate space (`median_line_height × cap_height_ratio`).
-    // The card's render bbox `[x,y,w,h]` is in that SAME space. The
-    // ratio `font_size_px / h` is therefore dimensionless — it
-    // survives BOTH the 3× OCR upscale AND any devicePixelRatio,
-    // because both numerator and denominator scale together.
+    // The backend's `font_size_px` is the source glyph height in the
+    // CAPTURE coordinate space (image_w × image_h px). The shell that
+    // hosts the cards renders that whole captured region at
+    // `shellH` CSS px tall, so the capture→screen scale is exactly
+    // `shellH / imageH`. The on-screen font size is therefore
+    // `font_size_px × shellH / imageH` — one multiply, correct for any
+    // DPR or OCR upscale (both numerator inputs live in capture space,
+    // the ratio cancels the units).
     //
-    // `.lens-card` declares `container-type: size`, so `1cqh` = 1% of
-    // the card's RENDERED height. Setting the font to
-    // `(font_size_px / h) × 100` cqh makes the glyphs occupy exactly
-    // the same fraction of the card that the source glyphs occupied
-    // of their bbox — at any DPR, any zoom, any upscale — with no
-    // `/ dpr` guesswork and no absolute-px assumptions about how the
-    // window maps to the captured region. This is what fixes the
-    // "翻訳文のフォントサイズが原文に即していない" report.
-    //
-    // `fontPx` is kept ONLY as the legacy fallback for payloads that
-    // predate `font_size_px`; modern backends always populate it so
-    // the cqh path is the live one.
-    let fontCqh: number | null = null;
+    // The previous `(font_size_px / h) × 100cqh` trick was meant to be
+    // the same thing card-relative, but `container-type: size` on a
+    // grid card resolved `cqh` against a REDUCED height for MULTI-LINE
+    // cards (~0.66×), so paragraph cards rendered ~1/3 smaller than
+    // their single-line neighbours. The explicit scale below sizes
+    // every card identically regardless of line count.
+    // Use the FROZEN shell size (`capShellH`) captured when this flow's
+    // OCR lines arrived, not the live `shellH`, so the font does not
+    // rescale when the user later resizes the window.
+    const refH = capShellH > 0 ? capShellH : shellH;
+    const refW = capShellW > 0 ? capShellW : shellW;
     let fontPx: number;
-    if (typeof line.font_size_px === 'number' && line.font_size_px > 0 && h > 0) {
-      fontCqh = Math.max(2, Math.min(100, (line.font_size_px / h) * 100));
-      // Approximate px mirror for the legacy `--font-px` consumers
-      // (e.g. the fit routine's first paint before layout settles).
-      fontPx = Math.max(7, Math.min(80, line.font_size_px));
+    if (typeof line.font_size_px === 'number' && line.font_size_px > 0) {
+      const scale = refH > 0 && imageH > 0 ? refH / imageH : 1;
+      fontPx = Math.max(7, Math.min(140, line.font_size_px * scale));
     } else {
       const text = line.translation.length > 0 ? line.translation : line.text;
       const chars = Math.max(1, text.length);
@@ -335,18 +393,34 @@
     const textShadow = guard
       ? `text-shadow:0 1px 2px ${shadowColor},0 0 1px ${shadowColor};`
       : '';
+    // Absolute px geometry against the FROZEN shell size. Using px
+    // (not %) is what pins the card to the captured content: a later
+    // window resize changes the live shell but NOT `refW`/`refH`, so
+    // the card keeps its exact on-screen rect (overflow:hidden on the
+    // shell simply clips a card the shrunk window no longer covers,
+    // and the resize handler removes it outright).
+    const sx = refW > 0 && imageW > 0 ? refW / imageW : 1;
+    const sy = refH > 0 && imageH > 0 ? refH / imageH : 1;
+    // Frozen window-relative px. Origin drift from a left/top resize is
+    // cancelled by translating the parent `.lens-cards-layer` (see the
+    // resize handler), so individual cards never recompute on resize.
     return (
-      `left:${(x / imageW) * 100}%;` +
-      `top:${(y / imageH) * 100}%;` +
-      `width:${(w / imageW) * 100}%;` +
-      `height:${(h / imageH) * 100}%;` +
+      `left:${(x * sx).toFixed(1)}px;` +
+      `top:${(y * sy).toFixed(1)}px;` +
+      `width:${(w * sx).toFixed(1)}px;` +
+      `height:${(h * sy).toFixed(1)}px;` +
       `--font-px:${fontPx.toFixed(1)};` +
-      // The live font-size: a `cqh` length (card-relative, DPR-proof)
-      // when the backend gave us `font_size_px`, else the legacy
-      // absolute-px fallback. `.line-text` reads `--line-font-size`.
-      `--line-font-size:${fontCqh != null ? `${fontCqh.toFixed(2)}cqh` : `${fontPx.toFixed(1)}px`};` +
+      // Absolute CSS px (`font_size_px × shellH / imageH`). `.line-text`
+      // reads `--line-font-size`; the fit routine may shrink it further.
+      `--line-font-size:${fontPx.toFixed(1)}px;` +
       `--fw:${weight};` +
-      `--lh:${lineHeight.toFixed(2)};` +
+      // Line-height as an ABSOLUTE px (source line pitch = ratio ×
+      // base font px), NOT a unitless ratio. The fit routine shrinks
+      // the font to keep the translation within the source's line
+      // COUNT; with a ratio the pitch would shrink too and break the
+      // "原文と同じ行間" the user set. Pinning it in px keeps the line
+      // spacing at the source pitch no matter how far the font shrinks.
+      `--lh:${(lineHeight * fontPx).toFixed(2)}px;` +
       `--ta:${textAlign};` +
       background +
       `color:rgb(${fr},${fg},${fb});` +
@@ -392,51 +466,59 @@
       const card = el.closest('.lens-card') as HTMLElement | null;
       if (!card) continue;
 
-      // Reset prior fit state so we measure at the natural,
-      // cqh-derived size first (clearing inline fontSize lets the
-      // stylesheet's `--line-font-size` cqh value take over again).
+      // Reset prior fit state so we measure at the natural size first.
       el.style.transform = '';
       el.style.width = '';
       el.style.textOverflow = '';
       el.style.fontSize = '';
+      el.style.lineHeight = '';
 
       const cardH = Math.max(1, card.clientHeight);
       const cardW = Math.max(1, card.clientWidth);
-      let overflowH = el.scrollHeight / cardH;
-      let overflowW = el.scrollWidth / cardW;
-      let overflowRatio = Math.max(overflowH, overflowW);
-      if (overflowRatio <= 1.05) continue;
 
-      // Base font = the cqh-resolved computed size. Shrinking works
-      // off the ACTUAL rendered px so the proportional reduction is
-      // correct regardless of DPR.
-      const baseFontPx = parseFloat(getComputedStyle(el).fontSize) || 14;
+      // Pin the line-height so exactly N source rows span the card
+      // height. The card now IS the source inpaint region, which only
+      // covers line1-top → lineN-bottom — that is `(N-1)·pitch +
+      // glyph_height`, NOT N full CSS line-boxes. Rendering N rows at the
+      // source pitch (the absolute `--lh`) therefore overran the box by
+      // roughly one row's leading, spilling line 2+ below the grey
+      // ("本文の2行目以降がはみだす"). `cardH / N` makes the N rows span the
+      // box exactly: the vertical extent matches the source while the
+      // per-row pitch lands a hair tighter — visually the same 行間 and,
+      // crucially, never overflowing.
+      const srcLines = Math.max(1, parseInt(el.dataset.srcLines ?? '1', 10) || 1);
+      el.style.lineHeight = `${(cardH / srcLines).toFixed(2)}px`;
 
-      // Step 1: shrink font-size proportionally to the worst axis,
-      // down to 60%. Covers the common "translation is a bit longer
-      // than the source" overflow without distorting glyphs.
-      const sizeRatio = Math.max(0.6, 1 / overflowRatio);
-      const shrunkPx = Math.max(7, baseFontPx * sizeRatio);
-      el.style.fontSize = `${shrunkPx.toFixed(2)}px`;
-      overflowH = el.scrollHeight / cardH;
-      overflowW = el.scrollWidth / cardW;
-      if (Math.max(overflowH, overflowW) <= 1.05) continue;
+      // Shrink the font until the wrapped translation occupies no more
+      // than those N rows (and fits the width). With the line-height
+      // pinned above, `scrollHeight / cardH` reduces to `wrappedRows / N`,
+      // so the loop converges on "≤ N rows" — the source line count —
+      // reflowing the wrap onto fewer lines as the glyphs shrink. Iterate
+      // (the rows-vs-font relationship is non-linear) down to a 7px floor.
+      let fontPx = parseFloat(getComputedStyle(el).fontSize) || 14;
+      let guard = 0;
+      while (guard < 16) {
+        const oH = el.scrollHeight / cardH;
+        const oW = el.scrollWidth / cardW;
+        if (Math.max(oH, oW) <= 1.05) break;
+        if (fontPx <= 7) break;
+        fontPx = Math.max(7, fontPx * 0.9);
+        el.style.fontSize = `${fontPx.toFixed(2)}px`;
+        guard++;
+      }
 
-      // Step 2: still overflowing horizontally — scaleX compress on
-      // top of the smaller font. Floor 0.55 keeps glyphs legible.
-      if (overflowW > 1.05) {
-        const ratio = Math.max(0.55, 1 / overflowW);
+      // Residual horizontal overflow can only be a single token wider
+      // than the card (a long URL / identifier that `break-word`
+      // couldn't split). Compress it horizontally so it still fits the
+      // row instead of clipping.
+      const oW = el.scrollWidth / cardW;
+      if (oW > 1.05) {
+        const ratio = Math.max(0.55, 1 / oW);
         el.style.transformOrigin = 'top left';
         el.style.transform = `scaleX(${ratio.toFixed(3)})`;
         el.style.width = `${(100 / ratio).toFixed(2)}%`;
-        overflowH = el.scrollHeight / cardH;
-        overflowW = el.scrollWidth / cardW;
       }
-
-      // Step 3 (last resort): card is overflow:hidden, so any
-      // residual overflow clips mid-glyph. Ellipsis makes the cut
-      // visually honest with a "…" marker.
-      if (overflowW > 1.05 || overflowH > 1.05) {
+      if (el.scrollWidth / cardW > 1.05 || el.scrollHeight / cardH > 1.05) {
         el.style.textOverflow = 'ellipsis';
       }
     }
@@ -487,11 +569,29 @@
   $effect(() => {
     // Re-measure whenever the visible set changes (new flow's cards
     // committed, or a chunk finished streaming). `visibleLines` is
-    // the dependency tracked by Svelte 5 runes; the timeout lets the
-    // DOM flush before we measure scrollHeight.
+    // the dependency tracked by Svelte 5 runes.
     void visibleLines;
-    if (typeof window !== 'undefined') {
-      window.setTimeout(applySourceLineFit, 0);
+    if (typeof window === 'undefined') return;
+    // Robust scheduling (2026-06 fix): a single `setTimeout(0)` fired
+    // BEFORE the browser had resolved the card's container-query
+    // `cqh` font-size, so `getComputedStyle(el).fontSize` and
+    // `scrollHeight` were measured against an unsized (or 0-height
+    // container) layout. The overflow check then read ≤1.05 and the
+    // long translation was NEVER shrunk — it overflowed its
+    // single-line source box and bled over the neighbouring card
+    // (the "translation is a different size / sits away from the
+    // source" report). Measure only after layout has actually
+    // resolved the cqh units: a double rAF (guarantees one full
+    // layout+paint), and again once the JP/KR webfonts finish
+    // loading (glyph metrics change wrapping, so a pre-font measure
+    // can be wrong too).
+    let cancelled = false;
+    const run = () => {
+      if (!cancelled) applySourceLineFit();
+    };
+    requestAnimationFrame(() => requestAnimationFrame(run));
+    if (document.fonts?.ready) {
+      document.fonts.ready.then(run).catch(() => {});
     }
   });
 
@@ -556,6 +656,116 @@
   }
 
   onMount(async () => {
+    // Resize policy: cards are pinned to the captured content in
+    // absolute px, so a resize never moves or rescales them. The only
+    // effect a resize has is that SHRINKING the window past a card's
+    // own rectangle removes that card (the window edge has "reached"
+    // it). Growing the window leaves every card exactly where it was.
+    if (typeof window !== 'undefined') {
+      // Keep the cards pinned to their original SCREEN position while the
+      // window is resized — WITHOUT any per-frame JS. The previous
+      // approach translated the layer each rAF by `capScreenX -
+      // window.screenX`; that value lagged the live window motion by a
+      // frame, so the cards shivered ("小刻みに震える").
+      //
+      // CSS edge-anchoring instead: give the layer a FROZEN size
+      // (capShellW × capShellH — the captured footprint) and anchor it to
+      // whichever window edge is NOT being dragged. Dragging the LEFT or
+      // TOP edge leaves the RIGHT / BOTTOM edge fixed in screen space, so
+      // anchoring there (`right:0` / `bottom:0`) keeps every card screen-
+      // stationary with zero JS in the paint path — no laggy value, no
+      // jitter. We only need the drag DIRECTION (a sign, robust to the
+      // same read lag), not a precise origin. When the window shrinks past
+      // a card the frozen-size layer overflows the shell and the card is
+      // clipped (then pruned at settle) — the "縮小で接触したらクリア" rule.
+      const anchorLayer = () => {
+        if (!cardsLayer || !(capShellW > 0 && capShellH > 0)) return;
+        const s = cardsLayer.style;
+        // Frozen footprint (set once; cheap to re-assert but guarded).
+        if (s.width !== `${capShellW}px`) {
+          s.transform = '';
+          s.width = `${capShellW}px`;
+          s.height = `${capShellH}px`;
+        }
+        // Left edge moved (origin shifted) ⇒ right edge is the fixed one.
+        const h = window.screenX !== capScreenX ? 'R' : 'L';
+        const v = window.screenY !== capScreenY ? 'R' : 'L';
+        if (h !== anchorH) {
+          anchorH = h;
+          if (h === 'R') {
+            s.left = 'auto';
+            s.right = '0px';
+          } else {
+            s.left = '0px';
+            s.right = 'auto';
+          }
+        }
+        if (v !== anchorV) {
+          anchorV = v;
+          if (v === 'R') {
+            s.top = 'auto';
+            s.bottom = '0px';
+          } else {
+            s.top = '0px';
+            s.bottom = 'auto';
+          }
+        }
+      };
+      // ONCE, after the drag settles (origin + size stable): remove any
+      // card the resized window no longer fully contains. Doing this
+      // only at settle — not every frame — avoids permanently deleting a
+      // card that merely strayed out of bounds for a frame because the
+      // `window.screenX` read lagged the live window motion mid-drag
+      // (the "cards vanish while resizing" bug).
+      const pruneOutOfBounds = () => {
+        if (!(capShellW > 0 && capShellH > 0 && imageW > 0 && imageH > 0 && cardsLayer)) return;
+        // The layer is now CSS edge-anchored at its FROZEN capture size,
+        // so card coordinates live in the same capShell space as the live
+        // window: a card is reachable by the shrink exactly when it falls
+        // outside the current window rect. Compare card px against the
+        // live shell size; the anchored edge is the fixed one, the
+        // opposite edge is where the shrink bites.
+        const sx = capShellW / imageW;
+        const sy = capShellH / imageH;
+        const liveW = shellW > 0 ? shellW : capShellW;
+        const liveH = shellH > 0 ? shellH : capShellH;
+        // When anchored right/bottom, the visible window covers the
+        // [capShell - live, capShell] band; otherwise [0, live].
+        const anchoredRight = window.screenX !== capScreenX;
+        const anchoredBottom = window.screenY !== capScreenY;
+        const minX = anchoredRight ? capShellW - liveW : 0;
+        const maxX = anchoredRight ? capShellW : liveW;
+        const minY = anchoredBottom ? capShellH - liveH : 0;
+        const maxY = anchoredBottom ? capShellH : liveH;
+        const stillInside = (l: LineCard): boolean => {
+          const gb =
+            Array.isArray(l.inpaint_bbox) && l.inpaint_bbox.length === 4 ? l.inpaint_bbox : l.bbox;
+          const left = gb[0] * sx;
+          const top = gb[1] * sy;
+          const right = left + gb[2] * sx;
+          const bottom = top + gb[3] * sy;
+          return left >= minX - 2 && top >= minY - 2 && right <= maxX + 2 && bottom <= maxY + 2;
+        };
+        const pv = visibleLines.filter(stillInside);
+        if (pv.length !== visibleLines.length) visibleLines = pv;
+        const pp = pendingLines.filter(stillInside);
+        if (pp.length !== pendingLines.length) pendingLines = pp;
+      };
+      const onResize = () => {
+        // Re-anchor on every size change (cheap, idempotent CSS writes;
+        // no rAF, no per-frame value to lag → no jitter).
+        anchorLayer();
+        // Prune once, shortly after the drag stops.
+        if (resizeSettleTimer) clearTimeout(resizeSettleTimer);
+        resizeSettleTimer = window.setTimeout(() => {
+          resizeSettleTimer = null;
+          anchorLayer(); // settle at the final, stable edge anchor
+          pruneOutOfBounds(); // remove cards the shrink actually reached
+        }, 160);
+      };
+      window.addEventListener('resize', onResize);
+      unlisteners.push(() => window.removeEventListener('resize', onResize));
+    }
     // Pull the user's configured pair before the first flow event
     // lands. The backend already consulted settings to choose the
     // translate target, so reading the same source here keeps the
@@ -615,6 +825,31 @@
         if (currentFlowId !== null && e.flow_id !== currentFlowId) return;
         imageW = Math.max(1, e.image_w);
         imageH = Math.max(1, e.image_h);
+        // Freeze the shell size AND the window's screen origin for THIS
+        // flow's layout. Cards map their capture-space bbox into px
+        // against these dims and offset by the origin drift, so they
+        // stay pinned to content (and screen position) across resizes.
+        capShellW = shellW > 0 ? shellW : capShellW;
+        capShellH = shellH > 0 ? shellH : capShellH;
+        if (typeof window !== 'undefined') {
+          capScreenX = window.screenX;
+          capScreenY = window.screenY;
+        }
+        // Fresh flow: the layout is rebuilt for the current window, so
+        // drop any leftover resize anchoring (edge anchor + frozen size)
+        // and fall back to the default CSS `inset:0` 100% layer.
+        if (cardsLayer) {
+          const s = cardsLayer.style;
+          s.transform = '';
+          s.width = '';
+          s.height = '';
+          s.left = '';
+          s.right = '';
+          s.top = '';
+          s.bottom = '';
+        }
+        anchorH = '';
+        anchorV = '';
         pendingLines = e.lines.map((l) => ({
           line_index: l.line_index,
           text: l.text,
@@ -732,6 +967,14 @@
 
   onDestroy(() => {
     for (const u of unlisteners) u();
+    if (resizeSettleTimer) {
+      clearTimeout(resizeSettleTimer);
+      resizeSettleTimer = null;
+    }
+    if (resizeRaf !== null && typeof cancelAnimationFrame !== 'undefined') {
+      cancelAnimationFrame(resizeRaf);
+      resizeRaf = null;
+    }
     if (typeof window !== 'undefined') {
       window.removeEventListener('keydown', handleKey);
     }
@@ -754,6 +997,8 @@
 -->
 <main
   class="lens-shell"
+  bind:clientHeight={shellH}
+  bind:clientWidth={shellW}
   class:opacity-0={masked}
   class:lens-hovered={hovered || modelLoading}
   class:lens-loading={modelLoading}
@@ -843,6 +1088,7 @@
   <div class="lens-bracket lens-bracket-bl" aria-hidden="true"></div>
   <div class="lens-bracket lens-bracket-br" aria-hidden="true"></div>
 
+  <div class="lens-cards-layer" bind:this={cardsLayer}>
   {#each visibleLines as line (line.line_index)}
     <button
       type="button"
@@ -887,6 +1133,7 @@
       </div>
     {/if}
   {/each}
+  </div>
 
   {#if visibleLines.length === 0 && !streaming && hovered}
     <div class="lens-empty">
@@ -993,6 +1240,26 @@
   .lens-shell.opacity-0 {
     opacity: 0;
     pointer-events: none;
+  }
+
+  /* Container for all cards. During a resize this layer is pinned to its
+     captured footprint and CSS edge-anchored to the window edge that is
+     NOT being dragged (see `anchorLayer`), so cards hold their screen
+     position with zero per-frame JS.
+     NOTE: deliberately NO `will-change: transform` / compositor hint.
+     Promoting the layer to its own GPU texture made the browser re-place
+     that texture from layout one frame behind the live window motion on a
+     left/top-edge drag — the cards shivered ("小刻みに震える"). Painted in
+     normal flow, the cards move atomically with the window instead.
+     `pointer-events: none` keeps the transparent area click-through; the
+     cards re-enable it themselves. */
+  .lens-cards-layer {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+  }
+  .lens-cards-layer :global(.lens-card) {
+    pointer-events: auto;
   }
 
   /* ============================================================
@@ -1328,9 +1595,30 @@
     padding: 0 1px;
     box-sizing: border-box;
     overflow: hidden;
+    /* Wrapping (2026-06):
+       - `white-space: pre-wrap` keeps the source's line STRUCTURE so
+         the card renders the same line COUNT at the same source-derived
+         line-height (`--lh`) — switching to `normal` reflowed the text
+         to a different number of lines and broke the "行間" the user had
+         dialled in. Each source line still soft-wraps internally when a
+         translation runs long, so growth is handled without forcing the
+         break onto the source's exact byte positions.
+       - `word-break: auto-phrase` breaks Japanese at PHRASE boundaries
+         (using the browser's line-break dictionary) so katakana words
+         like スナップエンドウ / プラスチック stay whole instead of being
+         chopped mid-word the way `normal` splits between any two kana.
+         It degrades to `normal` on engines without auto-phrase support,
+         and leaves Latin word-breaking unchanged (only at spaces).
+       - `line-break: strict` adds kinsoku (never start a line with 。、
+         or a closing bracket).
+       - `overflow-wrap: break-word` is the last-resort escape for a
+         single token WIDER THAN THE CARD (long URL / identifier): it
+         breaks only such over-wide tokens, never an ordinary word that
+         would simply fit on the next line. */
     white-space: pre-wrap;
-    overflow-wrap: anywhere;
-    word-break: break-word;
+    word-break: auto-phrase;
+    line-break: strict;
+    overflow-wrap: break-word;
     /* Multi-script font stack: Latin glyphs come from Geist (matches
        the rest of the app's typography), Japanese from Noto Sans
        JP, Korean from Noto Sans KR. Listing CJK families AFTER
@@ -1364,7 +1652,7 @@
     /* Source-derived ratio; JS rewrites scaleX when the wrapped
        output would exceed `source_line_count` rows so the text
        stays the same size/weight but squeezes horizontally. */
-    line-height: var(--lh, 1.25);
+    line-height: var(--lh, normal);
     /* Mirror the source's horizontal alignment so a centred
        heading stays centred and a right-aligned status strip
        stays right-aligned even when the translation is narrower
