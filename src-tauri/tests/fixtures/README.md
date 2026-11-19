@@ -32,3 +32,11 @@ check that `profile.release` still sets `opt-level = "z"` and `lto`.
 - On `Summarize` input, returns `sum: <text>`.
 - Every other variant returns `LowConfidence`, exercising the error
   marshalling path in the host.
+
+## `lens/` (committed)
+
+Screenshots and synthetic images with OCR ground truth (`*.json`, one
+per image) for `tests/lens_images_live.rs`: image in, Japanese
+translation out through the real PP-OCR and built-in translator. The
+test is `#[ignore]` (needs the downloaded models); see its header for
+the command.

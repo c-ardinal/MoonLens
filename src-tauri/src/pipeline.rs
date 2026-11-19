@@ -88,6 +88,27 @@ pub struct Pipeline {
     cache: TranslationCache,
 }
 
+/// Time a local translator gets per source character on top of nothing:
+/// the chain timeout is the floor. A CPU-only PC generates roughly 50
+/// Japanese characters a second with the default 2B model, so a fixed
+/// 15 s cut the later paragraphs of a long capture (about 1,800
+/// characters) and left them untranslated.
+const LOCAL_TRANSLATE_MS_PER_CHAR: u64 = 40;
+
+/// Timeout for one provider call. Local translation scales with the
+/// text length (generation time grows with it); everything else, and
+/// any cloud provider, keeps the chain's fixed timeout.
+pub fn effective_timeout(chain_ms: u32, input: &TaskInput, is_local: bool) -> Duration {
+    let floor = u64::from(chain_ms);
+    let ms = match input {
+        TaskInput::Translate { text, .. } if is_local => {
+            floor.max(text.chars().count() as u64 * LOCAL_TRANSLATE_MS_PER_CHAR)
+        }
+        _ => floor,
+    };
+    Duration::from_millis(ms)
+}
+
 impl Pipeline {
     pub fn new(
         settings: Arc<SettingsStore>,
@@ -276,7 +297,7 @@ impl Pipeline {
                     continue;
                 }
             }
-            let to = Duration::from_millis(chain.timeout_ms as u64);
+            let to = effective_timeout(chain.timeout_ms, &input, prov.is_local());
             let res = timeout(to, prov.run(input.clone())).await;
             match res {
                 Ok(Ok(out)) => {
@@ -306,7 +327,7 @@ impl Pipeline {
                         .iter()
                         .any(|c| matches!(c, FallbackCondition::Timeout))
                     {
-                        return Err(ProviderError::Timeout(chain.timeout_ms));
+                        return Err(ProviderError::Timeout(to.as_millis() as u32));
                     }
                     reasons.push(format!("{id}: timeout"));
                 }

@@ -183,4 +183,34 @@ mod tests {
             &ProviderError::LowConfidence
         ));
     }
+
+    fn translate(text: &str) -> crate::providers::TaskInput {
+        crate::providers::TaskInput::Translate {
+            text: text.into(),
+            source_language: "en".into(),
+            target_language: "ja".into(),
+            context: Default::default(),
+        }
+    }
+
+    #[test]
+    fn local_translation_timeout_grows_with_text_length() {
+        use crate::pipeline::effective_timeout;
+        // Short text: the chain timeout is the floor.
+        assert_eq!(
+            effective_timeout(15_000, &translate("hello"), true),
+            Duration::from_millis(15_000)
+        );
+        // 1,000 characters on a local engine: 40 s.
+        let long = "a".repeat(1_000);
+        assert_eq!(
+            effective_timeout(15_000, &translate(&long), true),
+            Duration::from_millis(40_000)
+        );
+        // Cloud providers keep the fixed timeout.
+        assert_eq!(
+            effective_timeout(15_000, &translate(&long), false),
+            Duration::from_millis(15_000)
+        );
+    }
 }

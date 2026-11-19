@@ -124,6 +124,16 @@ ocrs-engine = ["dep:ocrs", "dep:rten", "dep:rten-tensor", "dep:flate2", "dep:tar
 tempfile = "3"
 wat = "1"
 
+# tests/lens_capture_windows.rs: a probe window over a screen region.
+[target.'cfg(windows)'.dev-dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    "Win32_System_LibraryLoader",
+    "Win32_UI_HiDpi",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
 [profile.release]
 codegen-units = 1
 lto = true

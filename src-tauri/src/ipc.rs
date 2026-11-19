@@ -1365,6 +1365,8 @@ pub struct DataLocations {
     pub config_dir: String,
     pub data_dir: String,
     pub models_dir: String,
+    /// Log files (`moonlens.log`); attach them to bug reports.
+    pub log_dir: String,
     pub models_bytes: u64,
     pub data_bytes: u64,
 }
@@ -1383,6 +1385,9 @@ pub async fn data_locations(app: AppHandle) -> Result<DataLocations, String> {
         config_dir: config_dir.display().to_string(),
         data_dir: data_dir.display().to_string(),
         models_dir: models_dir.display().to_string(),
+        log_dir: crate::log_dir()
+            .map(|p| p.display().to_string())
+            .unwrap_or_default(),
         models_bytes,
         // The models folder may live inside the data folder.
         data_bytes: if models_dir.starts_with(&data_dir) {
