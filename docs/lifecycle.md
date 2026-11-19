@@ -74,6 +74,7 @@ MoonLens の導入〜削除の各段階で発生するケースと、期待動�
 | D-20 | ライブ字幕：無音・微小音 | 認識対象外（Whisper が無音から「ご視聴ありがとうございました」等を生成する現象の防止） | 修正 | `subtitle::tests::silence_gate` |
 | D-21 | ライブ字幕：GPU 初期化失敗 | CPU で再読込して継続 | 修正 | `asr_local::engine::open`。GPU 実機は未確認（要実機） |
 | D-22 | ライブ字幕：音声の言語「自動判定」 | 言語判定は数チャンクごとに実施し、その間は直前の判定結果を使用（判定ごとに処理時間が倍増するため） | 修正 | `REDETECT_EVERY` |
+| D-25 | 履歴の種別絞込・詳細表示 | 種別タブ（全件・画面・Lens・ライブ・テキスト・QR、件数付き、0 件の種別は非表示）で絞込。一覧の選択項目を右側に詳細表示（原文・訳文の全文、各コピー、削除）。旧形式の `translate` 行は「画面」扱い | 新規 | `history.test.ts`、`capture_flow_blocks::history_rows_record_where_the_translation_came_from`。Xvfb 実アプリで確認 |
 
 ## 4. カスタマイズ
 

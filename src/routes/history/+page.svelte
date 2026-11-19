@@ -1,6 +1,14 @@
 <script lang="ts">
   import { onDestroy, onMount } from 'svelte';
-  import { Search, Trash2, RefreshCw, Cloud, Cpu, XCircle } from 'lucide-svelte';
+  import { Search, Trash2, RefreshCw, Cloud, Cpu, Copy, Check } from 'lucide-svelte';
+  import {
+    HISTORY_FILTERS,
+    applyFilter,
+    countByFilter,
+    kindLabel,
+    nextSelection,
+    type HistoryFilter
+  } from '$lib/history';
   import {
     getSettings,
     listHistory,
@@ -16,17 +24,38 @@
   let confirmClear = $state(false);
   let refreshTimer: ReturnType<typeof setTimeout> | undefined;
   let keepHistory = $state<boolean | null>(null);
+  let filter = $state<HistoryFilter>('all');
+  let selectedId = $state<number | null>(null);
+  let copied = $state<'source' | 'result' | null>(null);
+  let copiedTimer: ReturnType<typeof setTimeout> | undefined;
 
-  const KIND_LABELS: Record<string, string> = {
-    translate: '翻訳',
-    capture: '画面翻訳',
-    ocr: '文字認識',
-    qr: 'QR コード',
-    explain: '説明',
-    summarize: '要約',
-    transcript: '字幕',
-    asr: '字幕'
-  };
+  const visible = $derived(applyFilter(entries, filter));
+  const counts = $derived(countByFilter(entries));
+  const current = $derived(visible.find((e) => e.id === nextSelection(visible, selectedId)) ?? null);
+
+  async function copy(which: 'source' | 'result') {
+    const text = which === 'source' ? current?.source_text : current?.result_text;
+    if (!text) return;
+    try {
+      await navigator.clipboard.writeText(text);
+      copied = which;
+      if (copiedTimer) clearTimeout(copiedTimer);
+      copiedTimer = setTimeout(() => (copied = null), 1500);
+    } catch (e) {
+      error = `コピー失敗：${String(e)}`;
+    }
+  }
+
+  function dateLabel(created: number): string {
+    return new Date(created * 1000).toLocaleString('ja-JP', {
+      year: 'numeric',
+      month: 'numeric',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+  }
+
 
   async function refresh(query = q) {
     loading = true;
@@ -48,6 +77,7 @@
   });
   onDestroy(() => {
     if (refreshTimer) clearTimeout(refreshTimer);
+    if (copiedTimer) clearTimeout(copiedTimer);
   });
 
   function onQueryInput(value: string) {
@@ -89,7 +119,7 @@
   }
 </script>
 
-<main class="mx-auto flex max-w-3xl flex-col gap-4 px-4 py-6 sm:px-6">
+<main class="mx-auto flex max-w-5xl flex-col gap-4 px-4 py-6 sm:px-6">
   <header class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
     <div>
       <h1 class="text-xl font-semibold tracking-tight">履歴</h1>
@@ -154,50 +184,119 @@
         <p>履歴なし。画面翻訳の実行後に表示。</p>
       {/if}
     </div>
-  {/if}
+  {:else if entries.length > 0}
+    <div
+      class="scrollbar-minimal flex gap-1 overflow-x-auto"
+      role="tablist"
+      aria-label="種別"
+    >
+      {#each HISTORY_FILTERS.filter((f) => f.value === 'all' || f.value === filter || counts[f.value] > 0) as f (f.value)}
+        <button
+          role="tab"
+          aria-selected={filter === f.value}
+          class="inline-flex shrink-0 items-center gap-1.5 rounded-ml-sm px-3 py-1.5 text-sm transition {filter === f.value
+            ? 'bg-accent-soft text-ink'
+            : 'text-ink-muted hover:bg-surface-muted hover:text-ink'}"
+          onclick={() => (filter = f.value)}
+        >
+          {f.label}
+          <span class="text-xs tabular-nums text-ink-faint">{counts[f.value]}</span>
+        </button>
+      {/each}
+    </div>
 
-  <ul class="flex flex-col gap-2">
-    {#each entries as e (e.id)}
-      <li class="group rounded-ml border border-border bg-surface-elevated p-3 shadow-ml">
-        <div class="flex items-center justify-between gap-2 text-xs text-ink-faint">
-          <span class="flex min-w-0 flex-wrap items-center gap-2">
-            <time datetime={new Date(e.created_at * 1000).toISOString()} title={new Date(e.created_at * 1000).toLocaleString('ja-JP')}>
-              {when(e.created_at)}
-            </time>
-            <span class="rounded-full bg-surface-muted px-2 py-0.5">
-              {KIND_LABELS[e.kind] ?? e.kind}
-            </span>
-            {#if e.provider}
+    <div class="grid min-h-0 gap-3 sm:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
+      <ul
+        class="scrollbar-minimal flex max-h-[60vh] flex-col gap-1.5 overflow-y-auto sm:max-h-[calc(100vh-15rem)]"
+        aria-label="履歴一覧"
+      >
+        {#if visible.length === 0}
+          <li class="rounded-ml border border-dashed border-border p-6 text-center text-sm text-ink-muted">
+            該当なし
+          </li>
+        {/if}
+        {#each visible as e (e.id)}
+          <li>
+            <button
+              class="w-full rounded-ml border p-2.5 text-left transition {current?.id === e.id
+                ? 'border-accent/60 bg-accent-soft'
+                : 'border-border bg-surface-elevated hover:border-accent/40'}"
+              aria-current={current?.id === e.id ? 'true' : undefined}
+              onclick={() => (selectedId = e.id)}
+            >
+              <span class="flex items-center gap-2 text-xs text-ink-faint">
+                <span class="rounded-full bg-surface-muted px-2 py-0.5">{kindLabel(e.kind)}</span>
+                <time datetime={new Date(e.created_at * 1000).toISOString()}>{when(e.created_at)}</time>
+              </span>
+              <span class="mt-1 line-clamp-2 break-words text-sm leading-snug">
+                {e.result_text ?? e.source_text ?? ''}
+              </span>
+            </button>
+          </li>
+        {/each}
+      </ul>
+
+      {#if current}
+        <section
+          class="flex min-w-0 flex-col rounded-ml border border-border bg-surface-elevated shadow-ml sm:max-h-[calc(100vh-15rem)]"
+          aria-label="履歴詳細"
+        >
+          <div class="flex flex-wrap items-center gap-2 border-b border-border px-4 py-3 text-xs text-ink-faint">
+            <span class="rounded-full bg-surface-muted px-2 py-0.5">{kindLabel(current.kind)}</span>
+            <time datetime={new Date(current.created_at * 1000).toISOString()}>{dateLabel(current.created_at)}</time>
+            {#if current.provider}
               <span class="inline-flex items-center gap-1 font-mono">
-                {#if e.via_cloud}
+                {#if current.via_cloud}
                   <Cloud class="h-3 w-3 text-accent" />
                 {:else}
                   <Cpu class="h-3 w-3" />
                 {/if}
-                {e.provider}
+                {current.provider}
               </span>
             {/if}
-          </span>
-          <button
-            class="shrink-0 rounded-ml-sm p-1 opacity-60 transition group-hover:opacity-100 focus-visible:opacity-100"
-            onclick={() => remove(e.id)}
-            title="削除"
-            aria-label="この履歴を削除"
-          >
-            <XCircle class="h-4 w-4 text-ink-faint hover:text-red-500" />
-          </button>
-        </div>
-        {#if e.source_text}
-          <p class="mt-1 font-mono text-xs break-words text-ink-faint whitespace-pre-wrap">
-            {e.source_text}
-          </p>
-        {/if}
-        {#if e.result_text}
-          <p class="mt-1 text-sm leading-relaxed break-words whitespace-pre-wrap">{e.result_text}</p>
-        {/if}
-      </li>
-    {/each}
-  </ul>
+          </div>
+          <div class="scrollbar-minimal flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4">
+            {#if current.source_text}
+              <div>
+                <div class="mb-1 flex items-center justify-between">
+                  <h2 class="text-xs font-medium text-ink-muted">原文</h2>
+                  <button
+                    class="inline-flex items-center gap-1 rounded-ml-sm px-2 py-0.5 text-xs text-ink-muted transition hover:bg-surface-muted hover:text-ink"
+                    onclick={() => copy('source')}
+                  >
+                    {#if copied === 'source'}<Check class="h-3.5 w-3.5 text-accent" />コピー完了{:else}<Copy class="h-3.5 w-3.5" />コピー{/if}
+                  </button>
+                </div>
+                <p class="font-mono text-xs leading-relaxed break-words whitespace-pre-wrap text-ink-muted">{current.source_text}</p>
+              </div>
+            {/if}
+            {#if current.result_text}
+              <div>
+                <div class="mb-1 flex items-center justify-between">
+                  <h2 class="text-xs font-medium text-ink-muted">{current.kind === 'qr' ? '内容' : '訳文'}</h2>
+                  <button
+                    class="inline-flex items-center gap-1 rounded-ml-sm px-2 py-0.5 text-xs text-ink-muted transition hover:bg-surface-muted hover:text-ink"
+                    onclick={() => copy('result')}
+                  >
+                    {#if copied === 'result'}<Check class="h-3.5 w-3.5 text-accent" />コピー完了{:else}<Copy class="h-3.5 w-3.5" />コピー{/if}
+                  </button>
+                </div>
+                <p class="text-sm leading-relaxed break-words whitespace-pre-wrap">{current.result_text}</p>
+              </div>
+            {/if}
+          </div>
+          <div class="flex justify-end border-t border-border px-4 py-2">
+            <button
+              class="inline-flex items-center gap-1 rounded-ml-sm px-2 py-1 text-xs text-ink-muted transition hover:bg-red-500/10 hover:text-red-500"
+              onclick={() => current && remove(current.id)}
+            >
+              <Trash2 class="h-3.5 w-3.5" />削除
+            </button>
+          </div>
+        </section>
+      {/if}
+    </div>
+  {/if}
 </main>
 
 {#if confirmClear}
