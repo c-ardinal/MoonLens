@@ -8,7 +8,7 @@ name: build
 #   * This workflow's `workflow_dispatch` with `all_platforms=true`
 #     — on-demand cross-platform check before cutting a release tag.
 #
-# Triggers: PRs (any base) + pushes to `main` / `release` only.
+# Triggers: PRs (any base) + pushes to `main` / `develop` / `release` only.
 # Feature branches are covered by their PR, so a push to a branch
 # with an open PR no longer runs the suite twice (push + PR).
 # Run manually via workflow_dispatch for a branch without a PR.
@@ -24,7 +24,7 @@ name: build
 
 on:
   push:
-    branches: [main, release]
+    branches: [main, develop, release]
     paths-ignore:
       - '**.md'
       - 'docs/**'

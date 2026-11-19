@@ -20,6 +20,11 @@ on:
       - 'src-tauri/src/providers/translate_llama.rs'
       - 'src-tauri/src/providers/llm_models.rs'
       - 'src-tauri/src/gpu.rs'
+      # Screen capture and the Lens window's capture exclusion behave
+      # differently on Windows (tests/lens_capture_windows.rs).
+      - 'src-tauri/src/capture.rs'
+      - 'src-tauri/src/lens.rs'
+      - 'src-tauri/tests/lens_capture_windows.rs'
       - '.github/workflows/windows.yml'
   workflow_dispatch:
 

@@ -41,12 +41,52 @@ static LOG_FILTER: OnceLock<reload::Handle<EnvFilter, Registry>> = OnceLock::new
 pub fn run() {
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
     let (filter, handle) = reload::Layer::new(filter);
+    // Release builds on Windows have no console, so stdout alone loses
+    // every log line. Also write to `<local data>/io.moonlens.app/logs`.
+    let file_layer = open_log_file().map(|f| {
+        fmt::layer()
+            .with_ansi(false)
+            .with_writer(std::sync::Mutex::new(f))
+    });
     tracing_subscriber::registry()
         .with(filter)
         .with(fmt::layer())
+        .with(file_layer)
         .init();
     let _ = LOG_FILTER.set(handle);
+    // Release builds abort on panic; record it in the log file first.
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        tracing::error!("panic: {info}");
+        default_hook(info);
+    }));
     app::build().expect("failed to build Tauri app");
+}
+
+/// Log file size that triggers rotation at start-up (one old file kept).
+const LOG_ROTATE_BYTES: u64 = 5 * 1024 * 1024;
+
+/// `<local data>/io.moonlens.app/logs` (`%LOCALAPPDATA%` on Windows).
+pub fn log_dir() -> Option<std::path::PathBuf> {
+    providers::ocr_ocrs::local_data_base()
+        .map(|b| b.join(providers::ocr_ocrs::APP_IDENTIFIER).join("logs"))
+}
+
+/// Open `moonlens.log` for appending, moving a file over
+/// [`LOG_ROTATE_BYTES`] to `moonlens.log.1` first. `None` when the
+/// folder cannot be created: logging then stays on stdout only.
+fn open_log_file() -> Option<std::fs::File> {
+    let dir = log_dir()?;
+    std::fs::create_dir_all(&dir).ok()?;
+    let path = dir.join("moonlens.log");
+    if std::fs::metadata(&path).is_ok_and(|m| m.len() > LOG_ROTATE_BYTES) {
+        let _ = std::fs::rename(&path, dir.join("moonlens.log.1"));
+    }
+    std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .ok()
 }
 
 /// Apply the configured log level. `RUST_LOG`, when set, still wins so
