@@ -404,7 +404,7 @@ impl Pipeline {
         {
             if let TaskOutput::Text(payload) = &res.output {
                 self.record_history(
-                    "qr",
+                    history_kind::QR,
                     None,
                     Some(payload),
                     Some(&res.used_provider),
@@ -557,6 +557,16 @@ impl Pipeline {
         self.translate_capture_to(bundle, &target).await
     }
 
+    /// [`Self::translate_capture`], recording history under `kind`.
+    pub async fn translate_capture_recorded_as(
+        &self,
+        bundle: &mut CaptureFlowResult,
+        kind: &str,
+    ) -> Result<(), ProviderError> {
+        let target = self.settings.snapshot().subtitle.target_language.clone();
+        self.translate_capture_as(bundle, &target, None, kind).await
+    }
+
     /// [`Self::translate_capture`] into an explicit target language (the
     /// selector's language switch). Blocks already in `target` are passed
     /// through untouched and left out of the request.
@@ -585,6 +595,20 @@ impl Pipeline {
         bundle: &mut CaptureFlowResult,
         target_language: &str,
         progress: Option<&ProgressSink>,
+    ) -> Result<(), ProviderError> {
+        self.translate_capture_as(bundle, target_language, progress, history_kind::CAPTURE)
+            .await
+    }
+
+    /// [`Self::translate_capture_with_progress`], recording the result in
+    /// history under `kind` (see [`history_kind`]) so the history page can
+    /// tell region captures, Lens windows and live translation apart.
+    pub async fn translate_capture_as(
+        &self,
+        bundle: &mut CaptureFlowResult,
+        target_language: &str,
+        progress: Option<&ProgressSink>,
+        kind: &str,
     ) -> Result<(), ProviderError> {
         let s = self.settings.snapshot();
         self.prepare_translation(bundle, target_language);
@@ -773,7 +797,7 @@ impl Pipeline {
         };
         let whole = outputs.join(layout::BLOCK_SEPARATOR);
         self.record_history(
-            "translate",
+            kind,
             Some(&sources.join(layout::BLOCK_SEPARATOR)),
             Some(whole.as_str()).filter(|t| !t.is_empty()),
             Some(&first.used_provider),
@@ -847,6 +871,21 @@ impl Pipeline {
             tracing::warn!("history retention failed: {e}");
         }
     }
+}
+
+/// `kind` values of history rows written by the pipeline. Rows from
+/// before these existed use `"translate"`.
+pub mod history_kind {
+    /// Region / full-screen capture (selector).
+    pub const CAPTURE: &str = "capture";
+    /// Lens window.
+    pub const LENS: &str = "lens";
+    /// Live translation (pinned region).
+    pub const LIVE: &str = "live";
+    /// Text translation page.
+    pub const TEXT: &str = "text";
+    /// Decoded QR code.
+    pub const QR: &str = "qr";
 }
 
 /// Output of [`Pipeline::run_capture_flow`]. The frontend renders `result`

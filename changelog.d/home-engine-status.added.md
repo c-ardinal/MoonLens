@@ -1,0 +1,1 @@
+- Home page "Local engines" card: shows the model and state (ready, not installed, downloading, unset) of the translation, explain/summarize, OCR and speech recognition engines, with a link to model management.

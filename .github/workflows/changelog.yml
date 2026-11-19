@@ -1,0 +1,46 @@
+name: changelog
+
+# Changelog fragments (changelog.d/, see changelog.d/README.md). Runs on
+# every PR, docs-only ones included, because build.yml ignores `**.md`.
+# Node only, no installs: ~10 s.
+#
+#   * fragment names / bodies are valid;
+#   * the PR adds no entries to CHANGELOG.md directly (only a release
+#     fold, which deletes fragments, may). The `changelog-edit` label
+#     allows a deliberate fix to an old entry.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: changelog-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fragments:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v5
+        with: { node-version: 22 }
+      - name: Script tests
+        run: node --test scripts/changelog.test.mjs
+      - name: Check fragments
+        env:
+          BASE: origin/${{ github.base_ref }}
+          CHANGELOG_ALLOW_EDIT: ${{ contains(github.event.pull_request.labels.*.name, 'changelog-edit') && '1' || '0' }}
+        run: node scripts/changelog.mjs check --base "$BASE"
+      - name: Pending entries
+        run: |
+          {
+            echo '### Pending changelog entries'
+            echo
+            node scripts/changelog.mjs preview
+          } >> "$GITHUB_STEP_SUMMARY"
