@@ -1,10 +1,11 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
   import { onDestroy, onMount } from 'svelte';
-  import { AlertCircle, AlertTriangle, Camera, Focus, Maximize, Mic, Square, X } from 'lucide-svelte';
+  import { AlertCircle, AlertTriangle, Camera, Cpu, Focus, Maximize, Mic, Square, X } from 'lucide-svelte';
   import {
     dismissNotice,
     getSettings,
+    listAsrModels,
     listLlmModels,
     listNotices,
     newLensWindow,
@@ -21,6 +22,7 @@
   import { displayAccelerator } from '$lib/hotkey';
   import { languageLabel } from '$lib/lens-overlay';
   import { errorText } from '$lib/errors';
+  import { STATE_LABELS, engineRows, type EngineRow } from '$lib/engine-status';
   import type { Notice } from '$lib/ipc';
 
   let lastError = $state<string | null>(null);
@@ -28,6 +30,8 @@
   let subtitlePreview = $state<string | null>(null);
   let hotkeys = $state<Record<string, string>>({});
   let targetLanguage = $state('ja');
+  /** Built-in engines with their model and state (home "local engine" card). */
+  let engines = $state<EngineRow[]>([]);
   /** What still has to be downloaded before translation works. */
   let missing = $state<string[]>([]);
   /** Problems found at start-up or in the background (config, hotkeys). */
@@ -36,24 +40,29 @@
 
   async function checkSetup() {
     try {
-      const [ocr, llm] = await Promise.all([ocrModelsStatus(), listLlmModels()]);
+      const [ocr, llm, asr] = await Promise.all([ocrModelsStatus(), listLlmModels(), listAsrModels()]);
+      engines = engineRows(llm, ocr, asr);
       const out: string[] = [];
-      if (!llm.models.find((m) => m.id === llm.selected)?.installed) out.push('翻訳モデル');
+      if (engines[0].state !== 'ready') out.push('翻訳モデル');
+      // ocrs alone reads Latin only, so PP-OCR is still offered for setup.
       if (!ocr.ppocr) out.push('OCR モデル');
       missing = out;
     } catch {
+      engines = [];
       missing = [];
     }
   }
 
   function applySettings(s: any) {
+    checkSetup();
     hotkeys = s?.hotkeys ?? {};
     targetLanguage = s?.subtitle?.target_language ?? 'ja';
   }
 
   onMount(async () => {
-    getSettings().then(applySettings).catch(() => {});
-    checkSetup();
+    getSettings().then(applySettings).catch(() => checkSetup());
+    window.addEventListener('focus', checkSetup);
+    unlisteners.push(() => window.removeEventListener('focus', checkSetup));
     listNotices()
       .then((n) => (notices = n))
       .catch(() => {});
@@ -225,6 +234,41 @@
       {/if}
     </div>
   </section>
+
+  {#if engines.length > 0}
+    <section class="rounded-ml border border-border bg-surface-elevated p-4 shadow-ml sm:p-5" aria-labelledby="engine-heading">
+      <div class="flex items-center justify-between gap-2">
+        <h2 id="engine-heading" class="flex items-center gap-2 text-base font-semibold">
+          <Cpu class="h-4 w-4 shrink-0 text-ink-muted" />ローカルエンジン
+        </h2>
+        <a href="/settings/#section-models" class="text-sm text-accent underline-offset-2 hover:underline">モデル管理</a>
+      </div>
+      <ul class="mt-3 divide-y divide-border">
+        {#each engines as row (row.id)}
+          <li class="flex items-center gap-3 py-2 text-sm">
+            <span class="w-20 shrink-0 text-ink-muted">{row.label}</span>
+            <span class="min-w-0 flex-1 truncate {row.state === 'unset' ? 'text-ink-faint' : 'font-medium'}" title={row.model}>
+              {row.model}
+            </span>
+            <span class="inline-flex shrink-0 items-center gap-1.5 text-xs {row.state === 'ready' ? 'text-ink-muted' : row.state === 'missing' ? 'text-amber-600' : 'text-ink-faint'}">
+              <span
+                class="block h-2 w-2 rounded-full {row.state === 'ready'
+                  ? 'bg-emerald-500'
+                  : row.state === 'missing'
+                    ? 'bg-amber-500'
+                    : row.state === 'downloading'
+                      ? 'animate-pulse bg-accent'
+                      : 'bg-ink-faint/40'}"
+                aria-hidden="true"
+              ></span>
+              {STATE_LABELS[row.state]}
+            </span>
+          </li>
+        {/each}
+      </ul>
+      <p class="mt-2 text-xs text-ink-faint">推論は全てローカル実行。外部送信なし。</p>
+    </section>
+  {/if}
 
   {#if lastError}
     <p class="rounded-ml border border-red-500/50 bg-red-500/10 p-3 text-sm break-words text-red-500" role="alert">

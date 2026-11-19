@@ -140,7 +140,7 @@ pub async fn record_translation(
         return Ok(());
     }
     state.pipeline.record_history(
-        "translate",
+        crate::pipeline::history_kind::TEXT,
         Some(source),
         Some(result),
         args.provider.as_deref(),
@@ -342,7 +342,8 @@ pub async fn capture_and_process(
     .map_err(|e| e.to_string())?
     .map_err(|e| e.to_string())?;
 
-    let mut bundle = capture_flow(&state.pipeline, png).await?;
+    let mut bundle =
+        capture_flow(&state.pipeline, png, crate::pipeline::history_kind::CAPTURE).await?;
     // Record the rect we actually captured so the overlay can pin the
     // region watcher onto it. Full-monitor captures resolve to the
     // primary monitor's bounds.
@@ -483,6 +484,7 @@ pub async fn process_frozen_selection(
 async fn capture_flow(
     pipeline: &crate::pipeline::Pipeline,
     png: Vec<u8>,
+    history_kind: &str,
 ) -> Result<CaptureFlowResult, String> {
     let mut bundle = pipeline
         .analyze_capture(png)
@@ -490,7 +492,7 @@ async fn capture_flow(
         .map_err(|e| user_error::provider(&e, Capability::Ocr))?;
     if bundle.needs_translation() {
         pipeline
-            .translate_capture(&mut bundle)
+            .translate_capture_recorded_as(&mut bundle, history_kind)
             .await
             .map_err(|e| user_error::provider(&e, Capability::Translate))?;
     }
@@ -1266,7 +1268,7 @@ pub async fn capture_lens_now(
             .await
             .map_err(|e| e.to_string())?
             .map_err(|e| e.to_string())?;
-    let bundle = capture_flow(&pipeline, png).await?;
+    let bundle = capture_flow(&pipeline, png, crate::pipeline::history_kind::LENS).await?;
     // Lens captures must obey the same clipboard policy as the
     // regular ⌘⇧Space flow. Without this the user's auto_copy settings
     // would apply to ad-hoc captures but silently drop lens results.
