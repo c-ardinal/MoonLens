@@ -278,7 +278,18 @@ export const runTranslate = (args: {
   text: string;
   source_language: string;
   target_language: string;
+  /** Earlier `[source, translation]` pairs of the same document. */
+  history?: [string, string][];
 }) => safeInvoke<TaskResult>('run_translate', { args });
+
+/** Save a text-translation page result to history (respects the
+ * keep-history setting on the backend). */
+export const recordTranslation = (args: {
+  source_text: string;
+  result_text: string;
+  provider: string | null;
+  via_cloud: boolean;
+}) => safeInvoke<void>('record_translation', { args });
 
 export const runIntent = (imagePng: Uint8Array) =>
   safeInvoke<string>('run_intent', { imagePng: Array.from(imagePng) });

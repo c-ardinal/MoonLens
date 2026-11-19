@@ -14,7 +14,7 @@
 
   // Overlay-type windows (selector, overlay, subtitle, lens) draw their own
   // chrome; only the main window's pages get the menu and palette.
-  const MAIN_ROUTES = ['/', '/settings/', '/history/', '/plugins/'];
+  const MAIN_ROUTES = ['/', '/translate/', '/settings/', '/history/', '/plugins/'];
   const isMain = $derived(MAIN_ROUTES.includes(page.url.pathname));
 
   onMount(async () => {

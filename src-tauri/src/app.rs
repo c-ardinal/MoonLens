@@ -33,6 +33,7 @@ macro_rules! all_commands {
             ipc::pick_and_install_plugin,
             ipc::check_plugin_updates,
             ipc::run_translate,
+            ipc::record_translation,
             ipc::run_ocr,
             ipc::run_intent,
             ipc::run_qr,
