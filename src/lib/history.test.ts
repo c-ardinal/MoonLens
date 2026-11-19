@@ -20,7 +20,8 @@ const rows = [
   row(4, 'live'),
   row(5, 'text'),
   row(6, 'qr'),
-  row(7, 'explain')
+  row(7, 'explain'),
+  row(8, 'image')
 ];
 
 describe('history filter', () => {
@@ -30,16 +31,17 @@ describe('history filter', () => {
   });
 
   it('filters by kind', () => {
-    expect(applyFilter(rows, 'all')).toHaveLength(7);
+    expect(applyFilter(rows, 'all')).toHaveLength(8);
     expect(applyFilter(rows, 'screen').map((e) => e.id)).toEqual([1, 2]);
     expect(applyFilter(rows, 'lens').map((e) => e.id)).toEqual([3]);
     expect(applyFilter(rows, 'live').map((e) => e.id)).toEqual([4]);
+    expect(applyFilter(rows, 'image').map((e) => e.id)).toEqual([8]);
     expect(applyFilter(rows, 'text').map((e) => e.id)).toEqual([5]);
     expect(applyFilter(rows, 'qr').map((e) => e.id)).toEqual([6]);
   });
 
   it('counts rows per filter; uncovered kinds count only in "all"', () => {
-    expect(countByFilter(rows)).toEqual({ all: 7, screen: 2, lens: 1, live: 1, text: 1, qr: 1 });
+    expect(countByFilter(rows)).toEqual({ all: 8, screen: 2, lens: 1, live: 1, image: 1, text: 1, qr: 1 });
   });
 
   it('shows unknown kinds as is', () => {

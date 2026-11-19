@@ -7,13 +7,14 @@
  */
 import type { HistoryEntry } from './ipc';
 
-export type HistoryFilter = 'all' | 'screen' | 'lens' | 'live' | 'text' | 'qr';
+export type HistoryFilter = 'all' | 'screen' | 'lens' | 'live' | 'image' | 'text' | 'qr';
 
 export const HISTORY_FILTERS: { value: HistoryFilter; label: string }[] = [
   { value: 'all', label: '全件' },
   { value: 'screen', label: '画面' },
   { value: 'lens', label: 'Lens' },
   { value: 'live', label: 'ライブ' },
+  { value: 'image', label: '画像' },
   { value: 'text', label: 'テキスト' },
   { value: 'qr', label: 'QR' }
 ];
@@ -23,6 +24,7 @@ const KIND_LABELS: Record<string, string> = {
   translate: '画面翻訳',
   lens: 'Lens',
   live: 'ライブ翻訳',
+  image: '画像翻訳',
   text: 'テキスト翻訳',
   qr: 'QR コード',
   ocr: '文字認識',
@@ -45,6 +47,7 @@ export function filterOf(kind: string): Exclude<HistoryFilter, 'all'> | null {
       return 'screen';
     case 'lens':
     case 'live':
+    case 'image':
     case 'text':
     case 'qr':
       return kind;
@@ -65,6 +68,7 @@ export function countByFilter(entries: HistoryEntry[]): Record<HistoryFilter, nu
     screen: 0,
     lens: 0,
     live: 0,
+    image: 0,
     text: 0,
     qr: 0
   };

@@ -576,7 +576,12 @@ pub async fn translate_image(
         };
         state
             .pipeline
-            .translate_capture_with_progress(&mut bundle, &target, Some(&progress))
+            .translate_capture_as(
+                &mut bundle,
+                &target,
+                Some(&progress),
+                crate::pipeline::history_kind::IMAGE,
+            )
             .await
             .map_err(|e| user_error::provider(&e, Capability::Translate))?;
     }
