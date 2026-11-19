@@ -6,6 +6,10 @@ the project adheres to [SemVer](https://semver.org/).
 
 ## Unreleased
 
+### Changed
+
+- New app icon: a copperplate-engraving style "moon lens" (parchment and ink, two colours). Sizes up to 32 px and 48–64 px use simplified drawings so the icon stays legible in the taskbar and tray. Sources are in `src-tauri/icons/source/`.
+
 ## v0.1.0-rc.1 — 2026-11-18
 
 First release candidate: Windows, macOS (Apple silicon) and Linux
