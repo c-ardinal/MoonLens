@@ -448,6 +448,7 @@ export interface DataLocations {
   config_dir: string;
   data_dir: string;
   models_dir: string;
+  log_dir: string;
   models_bytes: number;
   data_bytes: number;
 }

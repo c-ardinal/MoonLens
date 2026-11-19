@@ -89,7 +89,7 @@ fn legacy_models_dir() -> Option<PathBuf> {
 }
 
 /// Tauri's `app_local_data_dir` base, without needing an `AppHandle`.
-fn local_data_base() -> Option<PathBuf> {
+pub fn local_data_base() -> Option<PathBuf> {
     if cfg!(target_os = "windows") {
         std::env::var_os("LOCALAPPDATA").map(PathBuf::from)
     } else if cfg!(target_os = "macos") {

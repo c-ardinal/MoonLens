@@ -9,10 +9,12 @@
 //! The capture flow:
 //! 1. Frontend (or a change-detection timer) requests a capture for a
 //!    given lens id.
-//! 2. Rust hides the lens window briefly so the captured frame does not
-//!    include the lens UI.
+//! 2. The captured frame must not include the lens UI. Windows and macOS
+//!    exclude the window from screen capture (content protection); on
+//!    other platforms Rust hides the window for the moment of the grab.
 //! 3. Rust resolves the window's outer bounds, shrinks them by the title
-//!    bar / border offsets the renderer tells us about, and feeds the
+//!    bar / border offsets the renderer tells us about (CSS pixels, scaled
+//!    to physical pixels here), and feeds the
 //!    resulting rect to [`crate::capture::capture_global_rect`].
 //! 4. Pipeline runs as usual; the translation appears in the lens body.
 //!
@@ -282,6 +284,11 @@ pub fn create(app: &AppHandle, registry: &LensRegistryHandle) -> Result<String> 
         .always_on_top(true)
         .skip_taskbar(true)
         .resizable(true)
+        // Keep the lens UI out of its own captures. Hiding the window
+        // instead does not work on Windows: `hide()` returns before DWM
+        // has faded the window out, so the grab read the lens itself
+        // (its own Japanese placeholder) and nothing got translated.
+        .content_protected(EXCLUDED_FROM_CAPTURE)
         .visible(true)
         .build()
         .context("create lens window")?;
@@ -312,8 +319,26 @@ pub fn outer_rect(win: &WebviewWindow) -> Result<geometry::LensOuterRect> {
     })
 }
 
-/// Compute the observed rect, hide the window, capture, then show again.
-/// Returns the captured PNG.
+/// Platforms where content protection removes the window from screen
+/// captures (Windows 10 2004+: `WDA_EXCLUDEFROMCAPTURE`; macOS:
+/// `NSWindowSharingNone`). Elsewhere the window is hidden for the grab.
+const EXCLUDED_FROM_CAPTURE: bool = cfg!(any(target_os = "windows", target_os = "macos"));
+
+/// Convert the renderer's CSS-pixel insets to physical pixels. The outer
+/// rect is physical, so at 150 % scaling unscaled insets left part of the
+/// header inside the captured region.
+pub fn scale_insets(insets: geometry::LensInsets, scale: f64) -> geometry::LensInsets {
+    let s = |v: u32| (v as f64 * scale).ceil() as u32;
+    geometry::LensInsets {
+        top: s(insets.top),
+        bottom: s(insets.bottom),
+        left: s(insets.left),
+        right: s(insets.right),
+    }
+}
+
+/// Compute the observed rect and capture it without the lens window in
+/// the frame. Returns the captured PNG.
 pub fn capture_lens(app: &AppHandle, registry: &LensRegistryHandle, id: &str) -> Result<Vec<u8>> {
     use crate::capture;
 
@@ -321,14 +346,18 @@ pub fn capture_lens(app: &AppHandle, registry: &LensRegistryHandle, id: &str) ->
         .get_webview_window(id)
         .ok_or_else(|| anyhow!("lens window {id} not found"))?;
     let outer = outer_rect(&win)?;
-    let insets = registry.insets(id).unwrap_or_default();
+    let scale = win.scale_factor().unwrap_or(1.0);
+    let insets = scale_insets(registry.insets(id).unwrap_or_default(), scale);
     let observed = geometry::observed_rect(outer, insets)
         .ok_or_else(|| anyhow!("lens observation rect is empty"))?;
 
-    // Temporarily hide the window so it does not appear in the capture.
+    if EXCLUDED_FROM_CAPTURE {
+        let image = capture::capture_global_rect(observed.x, observed.y, observed.w, observed.h)?;
+        return capture::png_bytes(&image);
+    }
+    // No content protection: hide the window for the moment of the grab,
+    // with a brief pause so the compositor unmaps it first.
     win.hide().ok();
-    // Brief pause so the compositor actually unmaps the window before
-    // the screen grab runs; otherwise we capture ourselves.
     std::thread::sleep(std::time::Duration::from_millis(60));
     let result = capture::capture_global_rect(observed.x, observed.y, observed.w, observed.h);
     win.show().ok();
@@ -358,6 +387,26 @@ pub(crate) fn new_registry_for_test() -> LensRegistryHandle {
 mod tests {
     use super::*;
     use geometry::LensInsets;
+
+    #[test]
+    fn insets_scale_to_physical_pixels() {
+        let css = LensInsets {
+            top: 33,
+            bottom: 0,
+            left: 1,
+            right: 2,
+        };
+        assert_eq!(scale_insets(css, 1.0), css);
+        assert_eq!(
+            scale_insets(css, 1.5),
+            LensInsets {
+                top: 50,
+                bottom: 0,
+                left: 2,
+                right: 3
+            }
+        );
+    }
 
     #[test]
     fn track_untrack_round_trip() {
