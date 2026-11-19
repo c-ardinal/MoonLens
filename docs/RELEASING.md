@@ -25,8 +25,9 @@ No tag has been pushed yet; `v0.1.0-rc.1` is the first one.
    green `build` run on `release`.
 2. `node scripts/check-release.mjs v0.1.0-rc.1` — versions, tag shape
    and Tauri npm/crate pairing (CI runs the same check).
-3. In `CHANGELOG.md`, move everything under `## Unreleased` into the
-   `## v0.1.0-rc.1` section, leaving an empty `## Unreleased`.
+3. `node scripts/changelog.mjs release v0.1.0-rc.1` folds the
+   fragments in `changelog.d/` into a new `## v0.1.0-rc.1` section of
+   `CHANGELOG.md` and deletes them. Review and polish the section.
 4. Tag and push (see below). `release.yml` builds the Linux, Windows
    and macOS bundles and creates a **draft** release with all attached.
 5. Install from the draft's assets on a clean machine and walk the QA
@@ -53,6 +54,13 @@ automatically. The release workflow also logs a warning if a
 pre-release tag is cut outside `release`, or a full-release tag
 outside `main` — advisory only so emergency tags still work.
 
+## Changelog fragments
+
+Feature PRs never edit `CHANGELOG.md`: each adds a file
+`changelog.d/<slug>.<section>.md` (`node scripts/changelog.mjs new
+<section> <slug>`), so parallel PRs cannot conflict on it. The
+`changelog` workflow checks every PR. Format: `changelog.d/README.md`.
+
 ## Day-to-day flow
 
 ```text
@@ -76,9 +84,10 @@ git checkout release
 git pull --ff-only
 gh run watch                          # wait for the latest CI on release
 
-# 2. Update CHANGELOG.md (manual curation wins over auto-generation)
-$EDITOR CHANGELOG.md
-git add CHANGELOG.md && git commit -m "Changelog: v0.2.0-rc.1"
+# 2. Fold changelog.d/ fragments into CHANGELOG.md, then curate by hand
+node scripts/changelog.mjs release v0.2.0-rc.1
+$EDITOR CHANGELOG.md                  # add an intro line, merge duplicates
+git add -A CHANGELOG.md changelog.d && git commit -m "docs(changelog): v0.2.0-rc.1"
 git push
 
 # 3. Tag + push
@@ -90,7 +99,10 @@ Pushing the tag fires `release.yml`:
 
 1. The `guard` job checks the tag sits on `release` (warns otherwise).
 1b. The same job runs `scripts/check-release.mjs <tag>` and stops the
-   release when the tag does not match the app version.
+   release when the tag does not match the app version, when
+   `CHANGELOG.md` has no section for the tag, or when `changelog.d/`
+   still holds fragments. It then reads that section
+   (`scripts/changelog.mjs notes <tag>`) into the draft's body.
 2. The `build` matrix runs `tauri-action` on Linux, Windows and macOS
    (see `docs/ci-and-release-policy.md`) and attaches `.AppImage` /
    `.deb` / `.rpm`, `.msi` / `setup.exe`, `.dmg` (Apple silicon), plus

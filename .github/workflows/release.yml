@@ -41,6 +41,8 @@ env:
 jobs:
   guard:
     runs-on: ubuntu-latest
+    outputs:
+      notes: ${{ steps.notes.outputs.notes }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -80,6 +82,20 @@ jobs:
         env:
           TAG: ${{ github.event.inputs.tag || github.ref_name }}
         run: node scripts/check-release.mjs "$TAG"
+      # This version's CHANGELOG.md section (folded from changelog.d/ by
+      # `scripts/changelog.mjs release`) goes into the draft's body.
+      - name: Release notes from CHANGELOG.md
+        id: notes
+        if: github.event_name != 'pull_request'
+        shell: bash
+        env:
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          {
+            echo 'notes<<__NOTES_EOF__'
+            node scripts/changelog.mjs notes "$TAG"
+            echo '__NOTES_EOF__'
+          } >> "$GITHUB_OUTPUT"
 
   build:
     needs: guard
@@ -251,7 +267,10 @@ jobs:
             - macOS：初回起動の拒否後、「システム設定 → プライバシーとセキュリティ」の「このまま開く」で起動。
               「壊れている」表示の場合は `xattr -dr com.apple.quarantine /Applications/MoonLens.app` を実行。
 
-            変更内容は `CHANGELOG.md`、同梱ライブラリ・モデルのライセンスは
+            ## 変更内容
+            ${{ needs.guard.outputs.notes }}
+
+            過去の変更履歴は `CHANGELOG.md`、同梱ライブラリ・モデルのライセンスは
             `THIRD_PARTY_LICENSES.html` を参照してください。
 
             Built with PLaMo.
