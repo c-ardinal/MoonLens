@@ -307,10 +307,13 @@ pub fn close(app: &AppHandle, registry: &LensRegistryHandle, id: &str) -> Result
     Ok(())
 }
 
-/// Resolve the outer rect (in physical coords) of a lens window.
-pub fn outer_rect(win: &WebviewWindow) -> Result<geometry::LensOuterRect> {
-    let pos = win.outer_position()?;
-    let size = win.outer_size()?;
+/// Resolve the client (webview) rect of a lens window in physical
+/// coords. Not the outer rect: on Windows 11 a frameless window's outer
+/// rect includes an invisible resize border, which shifted the captured
+/// region against the header inset the renderer reports.
+pub fn inner_rect(win: &WebviewWindow) -> Result<geometry::LensOuterRect> {
+    let pos = win.inner_position()?;
+    let size = win.inner_size()?;
     Ok(geometry::LensOuterRect {
         x: pos.x,
         y: pos.y,
@@ -345,7 +348,7 @@ pub fn capture_lens(app: &AppHandle, registry: &LensRegistryHandle, id: &str) ->
     let win = app
         .get_webview_window(id)
         .ok_or_else(|| anyhow!("lens window {id} not found"))?;
-    let outer = outer_rect(&win)?;
+    let outer = inner_rect(&win)?;
     let scale = win.scale_factor().unwrap_or(1.0);
     let insets = scale_insets(registry.insets(id).unwrap_or_default(), scale);
     let observed = geometry::observed_rect(outer, insets)
