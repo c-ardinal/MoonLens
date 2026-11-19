@@ -20,6 +20,8 @@
   let provider = $state('');
   let busy = $state(false);
   let lastError = $state<string | null>(null);
+  /** The last capture ran but found no text in the region. */
+  let empty = $state(false);
   let autoRefreshMs = $state(0);
   let headerEl: HTMLElement;
   let unlisten: UnlistenFn | undefined;
@@ -47,16 +49,21 @@
     }
   }
 
+  function apply(r: CaptureFlowResult) {
+    source = r.source_text;
+    translation = extractText(r.result);
+    viaCloud = r.result.via_cloud;
+    provider = r.result.used_provider;
+    empty = !source?.trim() && !translation.trim();
+  }
+
   async function capture() {
     if (busy) return;
     busy = true;
     lastError = null;
     try {
       const r = (await invoke('capture_lens_now', { id })) as CaptureFlowResult;
-      source = r.source_text;
-      translation = extractText(r.result);
-      viaCloud = r.result.via_cloud;
-      provider = r.result.used_provider;
+      apply(r);
     } catch (e) {
       lastError = errorText(e);
     } finally {
@@ -87,12 +94,7 @@
     reportInsets();
     // Listen for the pipeline result in case the backend drives a capture
     // (e.g. from auto-refresh rules we add later).
-    unlisten = await listen<CaptureFlowResult>('moonlens://lens-result', (e) => {
-      source = e.payload.source_text;
-      translation = extractText(e.payload.result);
-      viaCloud = e.payload.result.via_cloud;
-      provider = e.payload.result.used_provider;
-    });
+    unlisten = await listen<CaptureFlowResult>('moonlens://lens-result', (e) => apply(e.payload));
     const ro = new ResizeObserver(() => reportInsets());
     if (headerEl) ro.observe(headerEl);
   });
@@ -156,7 +158,12 @@
     {#if !translation && !source && !lastError}
       <div class="flex h-full flex-col items-center justify-center gap-2 text-ink-muted">
         <Camera class="h-6 w-6 text-ink-faint" />
-        <p class="text-sm">対象範囲に配置して再キャプチャ ↻</p>
+        {#if empty}
+          <p class="text-sm">範囲内に文字なし</p>
+          <p class="text-xs text-ink-faint">位置・サイズ調整後、再キャプチャ ↻</p>
+        {:else}
+          <p class="text-sm">対象範囲に配置して再キャプチャ ↻</p>
+        {/if}
       </div>
     {:else}
       <div class="mb-2 flex items-center justify-between">

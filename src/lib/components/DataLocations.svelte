@@ -37,6 +37,12 @@
         <dt class="font-medium">設定ファイル</dt>
         <dd class="text-xs break-all text-ink-faint"><code class="font-mono">{info.config_dir}</code></dd>
       </div>
+      {#if info.log_dir}
+        <div>
+          <dt class="font-medium">ログ <span class="font-normal text-ink-muted">不具合報告時に添付</span></dt>
+          <dd class="text-xs break-all text-ink-faint"><code class="font-mono">{info.log_dir}</code></dd>
+        </div>
+      {/if}
     </dl>
     <p class="mt-3 text-xs text-ink-muted">
       完全削除：アンインストール後、上記フォルダーを削除。

@@ -6,6 +6,22 @@ the project adheres to [SemVer](https://semver.org/).
 
 ## Unreleased
 
+### Fixed
+
+- Lens window: captures no longer include the lens window itself on
+  Windows, which left every capture untranslated. Windows and macOS now
+  exclude the window from capture; the header inset is scaled for high
+  DPI; an empty capture shows a "no text" state.
+- Long captures on a CPU-only PC: the built-in translator's timeout now
+  grows with the text (40 ms per character, the chain timeout as the
+  floor). A fixed 15 s left the later paragraphs of a ~1,800-character
+  capture untranslated.
+
+### Added
+
+- Log file at `<local data>/io.moonlens.app/logs/moonlens.log` (panics
+  included), listed in Settings > Data.
+
 ## v0.1.0-rc.1 — 2026-11-18
 
 First release candidate: Windows, macOS (Apple silicon) and Linux
