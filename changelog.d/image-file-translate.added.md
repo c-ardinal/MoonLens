@@ -1,0 +1,1 @@
+- Image translation page: open, paste (Ctrl+V) or drop a PNG / JPEG / WebP file to recognize and translate its text, shown in place on the image like a screen translation, with a block list, original/translation toggle, copy and target language. EXIF orientation of photos is applied.

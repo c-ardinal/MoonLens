@@ -486,3 +486,50 @@ pub fn png_bytes(img: &DynamicImage) -> Result<Vec<u8>> {
     img.write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png)?;
     Ok(out)
 }
+
+/// Largest image file accepted by "translate an image file" (bytes).
+pub const MAX_IMAGE_FILE_BYTES: usize = 40 * 1024 * 1024;
+
+/// Decode an image file (PNG / JPEG / WebP) into the PNG bytes the
+/// capture pipeline expects, applying the EXIF orientation so phone
+/// photos are not read sideways.
+pub fn image_file_png(bytes: &[u8]) -> Result<Vec<u8>> {
+    use image::ImageDecoder;
+    if bytes.len() > MAX_IMAGE_FILE_BYTES {
+        anyhow::bail!("too large");
+    }
+    let reader = image::ImageReader::new(std::io::Cursor::new(bytes)).with_guessed_format()?;
+    let mut decoder = reader.into_decoder()?;
+    let orientation = decoder.orientation()?;
+    let mut img = DynamicImage::from_decoder(decoder)?;
+    img.apply_orientation(orientation);
+    png_bytes(&img)
+}
+
+#[cfg(test)]
+mod image_file_tests {
+    use super::*;
+
+    fn encode(img: &DynamicImage, format: image::ImageFormat) -> Vec<u8> {
+        let mut out = Vec::new();
+        img.write_to(&mut std::io::Cursor::new(&mut out), format)
+            .unwrap();
+        out
+    }
+
+    #[test]
+    fn jpeg_and_png_files_become_png() {
+        let img = DynamicImage::new_rgb8(40, 20);
+        for format in [image::ImageFormat::Jpeg, image::ImageFormat::Png] {
+            let png = image_file_png(&encode(&img, format)).unwrap();
+            let back = image::load_from_memory_with_format(&png, image::ImageFormat::Png).unwrap();
+            assert_eq!((back.width(), back.height()), (40, 20));
+        }
+    }
+
+    #[test]
+    fn rejects_non_images_and_oversized_files() {
+        assert!(image_file_png(b"not an image").is_err());
+        assert!(image_file_png(&vec![0u8; MAX_IMAGE_FILE_BYTES + 1]).is_err());
+    }
+}

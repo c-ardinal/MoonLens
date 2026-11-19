@@ -1,6 +1,6 @@
 <script lang="ts">
   import { page } from '$app/state';
-  import { Home, History, Languages, Minus, Puzzle, Settings as SettingsIcon, X } from 'lucide-svelte';
+  import { Home, History, Image as ImageIcon, Languages, Minus, Puzzle, Settings as SettingsIcon, X } from 'lucide-svelte';
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import { hideMain } from '$lib/ipc';
 
@@ -18,6 +18,7 @@
   const items = [
     { href: '/', label: 'ホーム', icon: Home },
     { href: '/translate/', label: '翻訳', icon: Languages },
+    { href: '/image/', label: '画像翻訳', icon: ImageIcon },
     { href: '/history/', label: '履歴', icon: History },
     { href: '/plugins/', label: 'プラグイン', icon: Puzzle },
     { href: '/settings/', label: '設定', icon: SettingsIcon }
@@ -40,7 +41,7 @@
           <a
             href={item.href}
             aria-current={active(item.href) ? 'page' : undefined}
-            class="inline-flex items-center gap-1.5 rounded-ml-sm px-3 py-1.5 text-sm transition {active(item.href)
+            class="inline-flex items-center gap-1.5 rounded-ml-sm px-2 py-1.5 text-sm transition md:px-3 {active(item.href)
               ? 'bg-accent-soft text-ink'
               : 'text-ink-muted hover:bg-surface-muted hover:text-ink'}"
           >

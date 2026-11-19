@@ -255,6 +255,31 @@ export const hideOverlay = () => safeInvoke<void>('hide_overlay');
 
 /** PNG bytes of the frame the selector froze when it opened. */
 export const getFrozenFrame = () => safeInvoke<ArrayBuffer>('get_frozen_frame');
+
+/** Events of one image translation run carry the caller's run id. */
+export type ImageRunEvent<T> = T & { run: number };
+
+/**
+ * Translate an image file (PNG / JPEG / WebP). The bytes go as the raw
+ * request body; `moonlens://image-analysis` and `moonlens://image-progress`
+ * stream the blocks to this window while it runs.
+ */
+export async function translateImage(
+  bytes: Uint8Array,
+  run: number,
+  targetLanguage?: string
+): Promise<CaptureFlowResult> {
+  if (!hasTauri()) throw new Error('Tauri not available: translate_image');
+  const headers: Record<string, string> = { run: String(run) };
+  if (targetLanguage) headers.target = targetLanguage;
+  return (await invoke('translate_image', bytes, { headers })) as CaptureFlowResult;
+}
+/** Bytes of an image file dropped on the window (the webview only gets its path). */
+export const readImageFile = (path: string) => safeInvoke<ArrayBuffer>('read_image_file', { path });
+export const onImageAnalysis = (handler: (e: ImageRunEvent<CaptureFlowResult>) => void) =>
+  listen<ImageRunEvent<CaptureFlowResult>>('moonlens://image-analysis', (e) => handler(e.payload));
+export const onImageProgress = (handler: (e: ImageRunEvent<TranslationProgress>) => void) =>
+  listen<ImageRunEvent<TranslationProgress>>('moonlens://image-progress', (e) => handler(e.payload));
 /** OCR + translate a selection of the frozen frame (null = whole frame). */
 export const processFrozenSelection = (rect: FrameRect | null, targetLanguage?: string | null) =>
   safeInvoke<CaptureFlowResult>('process_frozen_selection', {

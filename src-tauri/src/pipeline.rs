@@ -886,6 +886,8 @@ pub mod history_kind {
     pub const LIVE: &str = "live";
     /// Text translation page.
     pub const TEXT: &str = "text";
+    /// Image translation page (an image file).
+    pub const IMAGE: &str = "image";
     /// Decoded QR code.
     pub const QR: &str = "qr";
 }
