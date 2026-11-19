@@ -106,6 +106,22 @@ fn pipeline_with(
     merge: bool,
     calls: Arc<AtomicUsize>,
 ) -> Pipeline {
+    pipeline_storing(
+        lines,
+        target,
+        merge,
+        calls,
+        Arc::new(Storage::open_in_memory().unwrap()),
+    )
+}
+
+fn pipeline_storing(
+    lines: &[(&'static str, f32)],
+    target: &str,
+    merge: bool,
+    calls: Arc<AtomicUsize>,
+    storage: Arc<Storage>,
+) -> Pipeline {
     let tmp = tempfile::tempdir().unwrap();
     let store = SettingsStore::load_from(tmp.path().join("config.toml")).unwrap();
     let mut s = Settings::default();
@@ -127,11 +143,7 @@ fn pipeline_with(
     let mut providers: HashMap<String, ProviderHandle> = HashMap::new();
     providers.insert("stub_ocr".into(), Arc::new(StubOcr(lines.to_vec())));
     providers.insert("stub_tr".into(), Arc::new(StubTranslator { merge, calls }));
-    Pipeline::with_providers(
-        Arc::new(store),
-        Arc::new(Storage::open_in_memory().unwrap()),
-        providers,
-    )
+    Pipeline::with_providers(Arc::new(store), storage, providers)
 }
 
 fn white_png(w: u32, h: u32) -> Vec<u8> {
@@ -324,4 +336,45 @@ async fn cache_is_per_target_language() {
     pipe.clear_translation_cache();
     pipe.translate_capture_to(&mut r, "fr").await.unwrap();
     assert_eq!(calls.load(Ordering::Relaxed), 3);
+}
+
+#[tokio::test]
+async fn history_rows_record_where_the_translation_came_from() {
+    use moonlens_lib::pipeline::history_kind;
+    let storage = Arc::new(Storage::open_in_memory().unwrap());
+    let pipe = pipeline_storing(
+        ENGLISH_LINES,
+        "en-not-target",
+        false,
+        Arc::new(AtomicUsize::new(0)),
+        storage.clone(),
+    );
+
+    let mut r = pipe.run_capture_flow(white_png(300, 140)).await.unwrap();
+    pipe.prepare_translation(&mut r, "fr");
+    pipe.translate_capture_as(&mut r, "fr", None, history_kind::LIVE)
+        .await
+        .unwrap();
+    // A fresh pipeline (empty translation cache; cached text records no
+    // row) writing to the same history.
+    let pipe = pipeline_storing(
+        ENGLISH_LINES,
+        "en-not-target",
+        false,
+        Arc::new(AtomicUsize::new(0)),
+        storage.clone(),
+    );
+    let mut r = pipe.analyze_capture(white_png(300, 140)).await.unwrap();
+    pipe.translate_capture_recorded_as(&mut r, history_kind::LENS)
+        .await
+        .unwrap();
+
+    let kinds: Vec<String> = storage
+        .recent(10)
+        .unwrap()
+        .into_iter()
+        .map(|e| e.kind)
+        .collect();
+    // Newest first.
+    assert_eq!(kinds, vec!["lens", "live", "capture"]);
 }

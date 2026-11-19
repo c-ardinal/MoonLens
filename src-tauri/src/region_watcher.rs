@@ -387,7 +387,12 @@ async fn run_watch(
             continue;
         }
         if let Err(e) = pipeline
-            .translate_capture_to(&mut bundle, &target_language)
+            .translate_capture_as(
+                &mut bundle,
+                &target_language,
+                None,
+                crate::pipeline::history_kind::LIVE,
+            )
             .await
         {
             tracing::warn!("live translation: {e}");
