@@ -41,7 +41,7 @@
           <a
             href={item.href}
             aria-current={active(item.href) ? 'page' : undefined}
-            class="inline-flex items-center gap-1.5 rounded-ml-sm px-3 py-1.5 text-sm transition {active(item.href)
+            class="inline-flex items-center gap-1.5 rounded-ml-sm px-2 py-1.5 text-sm transition md:px-3 {active(item.href)
               ? 'bg-accent-soft text-ink'
               : 'text-ink-muted hover:bg-surface-muted hover:text-ink'}"
           >
