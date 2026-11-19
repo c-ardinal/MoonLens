@@ -106,6 +106,12 @@ superseded runs so minutes aren't burned on stale commits. Runs on
 `**.md` (includes `CHANGELOG.md`), `docs/**`, `LICENSE` do not trigger CI. The
 burst of doc-only commits near a release cycle is free.
 
+## Changelog check (`.github/workflows/changelog.yml`)
+
+Every PR, docs-only ones included: validates the fragments in
+`changelog.d/` and rejects entries added to `CHANGELOG.md` outside a
+release fold. Node only, no installs (~10 s).
+
 ## Dependency audit (`.github/workflows/audit.yml`)
 
 `cargo audit` (all four crates) and `npm audit` run every Monday, on
