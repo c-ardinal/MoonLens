@@ -7,6 +7,7 @@
     History,
     Focus,
     Home,
+    Image as ImageIcon,
     Maximize,
     Settings as SettingsIcon,
     Mic,
@@ -88,6 +89,7 @@
       run: toggleSub
     },
     { id: 'home', label: 'ホーム', icon: Home, run: go('/') },
+    { id: 'image', label: '画像ファイル翻訳', icon: ImageIcon, run: go('/image/') },
     { id: 'settings', label: '設定', icon: SettingsIcon, run: go('/settings/') },
     { id: 'history', label: '履歴', hint: hint('open_history'), icon: History, run: go('/history/') },
     { id: 'plugins', label: 'プラグイン管理', icon: Puzzle, run: go('/plugins/') },

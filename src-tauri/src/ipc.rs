@@ -497,6 +497,126 @@ async fn translate_for_selector(
         .map_err(|e| user_error::provider(&e, Capability::Translate))
 }
 
+/// Events of one "translate an image file" run, sent to the window that
+/// asked (`moonlens://image-analysis` / `moonlens://image-progress`).
+/// `run` echoes the caller's id so a page can drop events of a run it
+/// has abandoned.
+#[derive(serde::Serialize, Clone)]
+struct ImageRunEvent<T: serde::Serialize> {
+    run: u32,
+    #[serde(flatten)]
+    payload: T,
+}
+
+/// Translate an image file (PNG / JPEG / WebP) the user opened, pasted
+/// or dropped on the image translation page. The raw file bytes are the
+/// request body; headers carry `run` (caller's id, echoed in events)
+/// and optionally `target` (target language, default: settings).
+///
+/// Emits the positioned, untranslated blocks right after OCR and a
+/// progress event before each translation request, like the selector,
+/// then returns the final bundle. Nothing is copied to the clipboard.
+#[tauri::command]
+pub async fn translate_image(
+    request: tauri::ipc::Request<'_>,
+    webview: tauri::Webview,
+    state: State<'_, AppState>,
+) -> Result<CaptureFlowResult, String> {
+    let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else {
+        return Err(user_error::coded("error", "画像データなし"));
+    };
+    let header = |name: &str| {
+        request
+            .headers()
+            .get(name)
+            .and_then(|v| v.to_str().ok())
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty())
+    };
+    let run: u32 = header("run").and_then(|v| v.parse().ok()).unwrap_or(0);
+    let target = header("target")
+        .unwrap_or_else(|| state.settings.snapshot().subtitle.target_language.clone());
+    if bytes.len() > capture::MAX_IMAGE_FILE_BYTES {
+        return Err(user_error::coded("error", "画像サイズ超過（上限 40 MB）"));
+    }
+    let bytes = bytes.clone();
+    let png = tokio::task::spawn_blocking(move || capture::image_file_png(&bytes))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|_| user_error::coded("error", "画像読込失敗（PNG・JPEG・WebP のみ対応）"))?;
+    let mut bundle = state
+        .pipeline
+        .analyze_capture(png)
+        .await
+        .map_err(|e| user_error::provider(&e, Capability::Ocr))?;
+    if bundle.needs_translation() {
+        let label = webview.label().to_string();
+        state.pipeline.prepare_translation(&mut bundle, &target);
+        webview
+            .emit_to(
+                label.as_str(),
+                "moonlens://image-analysis",
+                ImageRunEvent {
+                    run,
+                    payload: &bundle,
+                },
+            )
+            .ok();
+        let emitter = webview.clone();
+        let progress = move |p: &crate::pipeline::TranslationProgress| {
+            emitter
+                .emit_to(
+                    label.as_str(),
+                    "moonlens://image-progress",
+                    ImageRunEvent { run, payload: p },
+                )
+                .ok();
+        };
+        state
+            .pipeline
+            .translate_capture_with_progress(&mut bundle, &target, Some(&progress))
+            .await
+            .map_err(|e| user_error::provider(&e, Capability::Translate))?;
+    }
+    Ok(bundle)
+}
+
+/// Raw bytes of an image file dropped on the image translation page
+/// (the webview gets only its path). Limited to image extensions and
+/// [`capture::MAX_IMAGE_FILE_BYTES`].
+#[tauri::command]
+pub async fn read_image_file(path: String) -> Result<tauri::ipc::Response, String> {
+    let p = std::path::PathBuf::from(&path);
+    if !is_image_path(&p) {
+        return Err(user_error::coded(
+            "error",
+            "非対応形式（PNG・JPEG・WebP のみ対応）",
+        ));
+    }
+    let len = std::fs::metadata(&p)
+        .map_err(|e| user_error::coded("error", format!("読込失敗：{e}")))?
+        .len();
+    if len as usize > capture::MAX_IMAGE_FILE_BYTES {
+        return Err(user_error::coded("error", "画像サイズ超過（上限 40 MB）"));
+    }
+    let bytes = tokio::fs::read(&p)
+        .await
+        .map_err(|e| user_error::coded("error", format!("読込失敗：{e}")))?;
+    Ok(tauri::ipc::Response::new(bytes))
+}
+
+fn is_image_path(p: &std::path::Path) -> bool {
+    p.extension()
+        .and_then(|e| e.to_str())
+        .map(|e| {
+            matches!(
+                e.to_ascii_lowercase().as_str(),
+                "png" | "jpg" | "jpeg" | "webp"
+            )
+        })
+        .unwrap_or(false)
+}
+
 /// Close the selector and drop the frozen frame.
 #[tauri::command]
 pub async fn close_selector(app: AppHandle) -> Result<(), String> {
@@ -1379,4 +1499,20 @@ pub async fn delete_orphan_llm_file(name: String) -> Result<(), String> {
         .await
         .map_err(|e| e.to_string())?
         .map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod image_file_tests {
+    use super::is_image_path;
+    use std::path::Path;
+
+    #[test]
+    fn only_image_extensions_are_read() {
+        assert!(is_image_path(Path::new("/tmp/shot.PNG")));
+        assert!(is_image_path(Path::new("C:\\photos\\menu.jpeg")));
+        assert!(is_image_path(Path::new("a.webp")));
+        assert!(!is_image_path(Path::new("/home/u/.ssh/id_ed25519")));
+        assert!(!is_image_path(Path::new("notes.txt")));
+        assert!(!is_image_path(Path::new("png")));
+    }
 }

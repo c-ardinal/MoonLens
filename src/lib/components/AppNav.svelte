@@ -1,6 +1,6 @@
 <script lang="ts">
   import { page } from '$app/state';
-  import { Home, History, Minus, Puzzle, Settings as SettingsIcon, X } from 'lucide-svelte';
+  import { Home, History, Image as ImageIcon, Minus, Puzzle, Settings as SettingsIcon, X } from 'lucide-svelte';
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import { hideMain } from '$lib/ipc';
 
@@ -17,6 +17,7 @@
 
   const items = [
     { href: '/', label: 'ホーム', icon: Home },
+    { href: '/image/', label: '画像翻訳', icon: ImageIcon },
     { href: '/history/', label: '履歴', icon: History },
     { href: '/plugins/', label: 'プラグイン', icon: Puzzle },
     { href: '/settings/', label: '設定', icon: SettingsIcon }
