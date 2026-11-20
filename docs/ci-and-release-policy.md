@@ -178,19 +178,22 @@ the warm run hit 92.9 % (C/C++ 99.7 %). The remaining ~14 min is what
 no cache covers: bin / proc-macro / cdylib crates and build scripts,
 our own crate, the fat-LTO link and Vulkan shader generation.
 
-### Dry run on PRs
+### Installer builds on PRs
 
-A PR that changes `release.yml` builds the Windows and macOS
-installers (no release, nothing published) and keeps them as run
-artifacts for 7 days, so the release path is tested before a tag depends on it and
-the installer can be tried from the PR.
+Label a PR `installer:windows` and/or `installer:macos` to build those
+installers from its head (no release, nothing published). They are
+kept as run artifacts for 7 days (`moonlens-windows-installers`,
+`moonlens-macos-installers` on the run's summary page). Use it for test
+builds of unreleased work and to dry-run changes to `release.yml`.
+Each new push to a labelled PR rebuilds; without a label only the
+few-second guard job runs.
 
 ### macOS installers
 
 The repository is public, so Actions minutes are free and the ×10
 macOS multiplier no longer applies. Since `v0.1.0-rc.1` every tag also
-builds `macos-latest` (Apple silicon, `app,dmg`), and a PR that changes
-`release.yml` dry-runs Windows and macOS.
+builds `macos-latest` (Apple silicon, `app,dmg`); on a PR, label
+`installer:macos` (see above).
 
 - Ad-hoc signed (`bundle.macOS.signingIdentity: "-"`): Gatekeeper asks
   once ("Open Anyway"), no "damaged" error. Apple secrets, when added,

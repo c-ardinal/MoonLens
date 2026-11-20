@@ -14,10 +14,13 @@ name: release
 on:
   push:
     tags: ['v*']
-  # Dry run of the Windows installer build when this file changes:
-  # nothing is published, the installers are kept as run artifacts.
+  # Installer builds for a PR, on demand: label the PR
+  # `installer:windows` and/or `installer:macos`. Nothing is published;
+  # the installers are kept as run artifacts for 7 days. Used for test
+  # builds of unreleased work and to dry-run changes to this file.
+  # Without a label only the (seconds-long) guard job runs.
   pull_request:
-    paths: ['.github/workflows/release.yml']
+    types: [opened, synchronize, reopened, labeled]
   workflow_dispatch:
     inputs:
       tag:
@@ -29,7 +32,9 @@ permissions:
 
 concurrency:
   group: release-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  # A new push to the PR replaces its running build; adding a label
+  # does not (the labelled run waits instead).
+  cancel-in-progress: ${{ github.event_name == 'pull_request' && github.event.action != 'labeled' }}
 
 env:
   CARGO_TERM_COLOR: always
@@ -43,7 +48,33 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       notes: ${{ steps.notes.outputs.notes }}
+      matrix: ${{ steps.matrix.outputs.matrix }}
     steps:
+      # Platforms to build: all three for a tag, the labelled ones for a
+      # PR (an empty list skips the build job).
+      - name: Build matrix
+        id: matrix
+        shell: bash
+        env:
+          EVENT: ${{ github.event_name }}
+          LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+          ACTION: ${{ github.event.action }}
+          ADDED: ${{ github.event.label.name }}
+        run: |
+          linux='{"name":"linux","os":"ubuntu-latest","bundle":"deb,appimage,rpm"}'
+          windows='{"name":"windows","os":"windows-latest","bundle":"msi,nsis"}'
+          macos='{"name":"macos","os":"macos-latest","bundle":"app,dmg"}'
+          if [ "$EVENT" != pull_request ]; then
+            list="$linux,$windows,$macos"
+          elif [ "$ACTION" = labeled ] && [ "${ADDED#installer:}" = "$ADDED" ]; then
+            list=""   # some other label was added: nothing to build
+          else
+            list=""
+            if echo "$LABELS" | grep -q '"installer:windows"'; then list="$windows"; fi
+            if echo "$LABELS" | grep -q '"installer:macos"'; then list="${list:+$list,}$macos"; fi
+          fi
+          echo "matrix=[$list]" >> "$GITHUB_OUTPUT"
+          echo "Build matrix: [$list]"
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0
@@ -99,16 +130,14 @@ jobs:
 
   build:
     needs: guard
+    if: needs.guard.outputs.matrix != '[]'
     strategy:
       fail-fast: false
       matrix:
-        # Linux + Windows + macOS (Apple Silicon) on tag push. The
-        # repository is public, so Actions minutes are free (the x10
-        # macOS multiplier no longer applies). A PR dry run builds the
-        # two platforms that break: Windows and macOS.
-        include: ${{ fromJSON(github.event_name == 'pull_request'
-          && '[{"name":"windows","os":"windows-latest","bundle":"msi,nsis"},{"name":"macos","os":"macos-latest","bundle":"app,dmg"}]'
-          || '[{"name":"linux","os":"ubuntu-latest","bundle":"deb,appimage,rpm"},{"name":"windows","os":"windows-latest","bundle":"msi,nsis"},{"name":"macos","os":"macos-latest","bundle":"app,dmg"}]') }}
+        # Linux + Windows + macOS (Apple Silicon) on tag push; on a PR,
+        # the platforms named by its `installer:*` labels. The repository
+        # is public, so Actions minutes are free.
+        include: ${{ fromJSON(needs.guard.outputs.matrix) }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 90
     steps:
