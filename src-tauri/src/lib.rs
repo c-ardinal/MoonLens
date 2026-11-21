@@ -54,6 +54,13 @@ pub fn run() {
         .with(file_layer)
         .init();
     let _ = LOG_FILTER.set(handle);
+    // First line of every run, so a log shows which build wrote it.
+    tracing::info!(
+        "MoonLens {} start (pid {}, exe {:?})",
+        build_version(),
+        std::process::id(),
+        std::env::current_exe().unwrap_or_default()
+    );
     // Release builds abort on panic; record it in the log file first.
     let default_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
@@ -61,6 +68,15 @@ pub fn run() {
         default_hook(info);
     }));
     app::build().expect("failed to build Tauri app");
+}
+
+/// Package version plus the commit it was built from, e.g.
+/// `0.1.0 (1a2b3c4d5)`.
+pub fn build_version() -> String {
+    match env!("MOONLENS_COMMIT") {
+        "" => env!("CARGO_PKG_VERSION").to_string(),
+        c => format!("{} ({c})", env!("CARGO_PKG_VERSION")),
+    }
 }
 
 /// Log file size that triggers rotation at start-up (one old file kept).

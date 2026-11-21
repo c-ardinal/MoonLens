@@ -1489,6 +1489,8 @@ pub async fn quit_app(app: AppHandle) -> Result<(), String> {
 /// uninstall notes. Sizes are in bytes.
 #[derive(Serialize)]
 pub struct DataLocations {
+    /// App version and build commit.
+    pub version: String,
     pub config_dir: String,
     pub data_dir: String,
     pub models_dir: String,
@@ -1509,6 +1511,7 @@ pub async fn data_locations(app: AppHandle) -> Result<DataLocations, String> {
             .await
             .map_err(|e| e.to_string())?;
     Ok(DataLocations {
+        version: crate::build_version(),
         config_dir: config_dir.display().to_string(),
         data_dir: data_dir.display().to_string(),
         models_dir: models_dir.display().to_string(),

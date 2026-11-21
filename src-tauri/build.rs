@@ -1,4 +1,24 @@
 fn main() {
+    // Commit the binary was built from, shown next to the version (all
+    // release candidates share one package version).
+    let commit = std::process::Command::new("git")
+        .args(["rev-parse", "--short=9", "HEAD"])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .unwrap_or_default();
+    println!("cargo:rustc-env=MOONLENS_COMMIT={commit}");
+    if let Ok(head) = std::process::Command::new("git")
+        .args(["rev-parse", "--git-path", "HEAD"])
+        .output()
+    {
+        let head = String::from_utf8_lossy(&head.stdout).trim().to_string();
+        if !head.is_empty() {
+            println!("cargo:rerun-if-changed={head}");
+        }
+    }
+
     #[cfg(feature = "local-asr")]
     whisper::build();
 

@@ -26,6 +26,10 @@
   {:else}
     <dl class="grid gap-3 text-sm">
       <div>
+        <dt class="font-medium">バージョン</dt>
+        <dd class="text-xs text-ink-faint"><code class="font-mono">{info.version}</code></dd>
+      </div>
+      <div>
         <dt class="font-medium">モデル <span class="font-normal text-ink-muted">{size(info.models_bytes)}</span></dt>
         <dd class="text-xs break-all text-ink-faint"><code class="font-mono">{info.models_dir}</code></dd>
       </div>

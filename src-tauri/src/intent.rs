@@ -9,9 +9,17 @@ use crate::providers::Intent;
 /// Quick heuristics only. A real implementation can chain into a QR detector
 /// + a tiny saliency model via plugins.
 pub fn classify(img: &DynamicImage) -> Intent {
+    match image_stats(img) {
+        Some(s) => classify_stats(s),
+        None => Intent::Unknown,
+    }
+}
+
+/// Luma mean / standard deviation of `img`; `None` below 64x64 px.
+pub fn image_stats(img: &DynamicImage) -> Option<Stats> {
     let (w, h) = img.dimensions();
     if w < 64 || h < 64 {
-        return Intent::Unknown;
+        return None;
     }
     let gray = img.to_luma8();
     let mut sum: f64 = 0.0;
@@ -24,8 +32,10 @@ pub fn classify(img: &DynamicImage) -> Intent {
     }
     let mean = sum / n;
     let var = (sumsq / n) - mean * mean;
-    let std = var.max(0.0).sqrt();
-    classify_stats(Stats { mean, std })
+    Some(Stats {
+        mean,
+        std: var.max(0.0).sqrt(),
+    })
 }
 
 /// Extracted pure scoring so it can be unit tested without synthesizing
