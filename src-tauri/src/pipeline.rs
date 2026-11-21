@@ -95,15 +95,54 @@ pub struct Pipeline {
 /// characters) and left them untranslated.
 const LOCAL_TRANSLATE_MS_PER_CHAR: u64 = 40;
 
+/// `true` when an OCR chain error only says "no text here": every engine
+/// returned a low-confidence (empty) result or is not installed. Timeouts
+/// and engine errors are real failures and return `false`.
+pub fn ocr_found_nothing(e: &ProviderError) -> bool {
+    match e {
+        ProviderError::LowConfidence => true,
+        ProviderError::Other(msg) => msg.strip_prefix("all providers failed: ").is_some_and(|r| {
+            r.split("; ").all(|reason| {
+                reason.ends_with(&ProviderError::LowConfidence.to_string())
+                    || reason.contains(": not installed")
+                    || reason.ends_with(": not registered")
+            })
+        }),
+        _ => false,
+    }
+}
+
+/// Time local OCR gets per megapixel on top of the chain timeout floor.
+/// A full 3840x2160 frame (8.3 MP) on a slower CPU needs more than the
+/// default 5 s, and a timeout there used to read as "no text".
+const LOCAL_OCR_MS_PER_MEGAPIXEL: u64 = 1500;
+
+/// Width and height from a PNG header, without decoding the image.
+fn png_dimensions(png: &[u8]) -> Option<(u32, u32)> {
+    if png.len() < 24 || &png[..8] != b"\x89PNG\r\n\x1a\n" || &png[12..16] != b"IHDR" {
+        return None;
+    }
+    let w = u32::from_be_bytes(png[16..20].try_into().ok()?);
+    let h = u32::from_be_bytes(png[20..24].try_into().ok()?);
+    Some((w, h))
+}
+
 /// Timeout for one provider call. Local translation scales with the
-/// text length (generation time grows with it); everything else, and
-/// any cloud provider, keeps the chain's fixed timeout.
+/// text length (generation time grows with it), local OCR with the image
+/// area; everything else, and any cloud provider, keeps the chain's
+/// fixed timeout.
 pub fn effective_timeout(chain_ms: u32, input: &TaskInput, is_local: bool) -> Duration {
     let floor = u64::from(chain_ms);
     let ms = match input {
         TaskInput::Translate { text, .. } if is_local => {
             floor.max(text.chars().count() as u64 * LOCAL_TRANSLATE_MS_PER_CHAR)
         }
+        TaskInput::Ocr { image_png, .. } if is_local => match png_dimensions(image_png) {
+            Some((w, h)) => {
+                floor.max(u64::from(w) * u64::from(h) * LOCAL_OCR_MS_PER_MEGAPIXEL / 1_000_000)
+            }
+            None => floor,
+        },
         _ => floor,
     };
     Duration::from_millis(ms)
@@ -390,7 +429,15 @@ impl Pipeline {
         // override through the `intent_classifier` chain in future work.
         let img =
             image::load_from_memory(&image_png).map_err(|e| ProviderError::Other(e.to_string()))?;
-        let intent = intent::classify(&img);
+        let stats = intent::image_stats(&img);
+        let intent = stats.map_or(Intent::Unknown, intent::classify_stats);
+        tracing::info!(
+            "capture {}x{}: luma mean {:.1} std {:.1}, intent {intent:?}",
+            img.width(),
+            img.height(),
+            stats.map_or(0.0, |s| s.mean),
+            stats.map_or(0.0, |s| s.std),
+        );
 
         // 1) Try QR — decoding is almost free and short-circuits the rest.
         if let Ok(res) = self
@@ -437,11 +484,34 @@ impl Pipeline {
         let lines: Vec<OcrLine> = match ocr_res {
             Ok(TaskResult {
                 output: TaskOutput::Ocr { lines },
+                used_provider,
+                latency_ms,
+                fallback_reasons,
                 ..
-            }) => lines,
+            }) => {
+                tracing::info!(
+                    "OCR: {} lines via {used_provider} in {latency_ms} ms (fallbacks {fallback_reasons:?})",
+                    lines.len()
+                );
+                lines
+            }
+            Ok(other) => {
+                tracing::warn!("OCR returned unexpected output: {:?}", other.output);
+                vec![]
+            }
             // No OCR engine at all: "no text found" would be a lie.
             Err(e @ ProviderError::NotInstalled(_)) => return Err(e),
-            _ => vec![],
+            // Every engine ran and found nothing: a real "no text".
+            Err(e) if ocr_found_nothing(&e) => {
+                tracing::info!("OCR found no text: {e}");
+                vec![]
+            }
+            // Timeout or engine failure: report it instead of claiming
+            // the region has no text.
+            Err(e) => {
+                tracing::warn!("OCR failed: {e}");
+                return Err(e);
+            }
         };
         let text_blocks = layout::group_lines(&lines);
         let ocr_text = layout::join_blocks(&text_blocks);

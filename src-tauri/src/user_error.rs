@@ -41,6 +41,17 @@ pub fn provider(e: &ProviderError, cap: Capability) -> String {
         ProviderError::Other(m) if m.contains("AVX2") => {
             coded("cpu_unsupported", "非対応 CPU（AVX2・FMA 必須）")
         }
+        ProviderError::Other(m)
+            if m.starts_with("all providers failed") && m.contains(": timeout") =>
+        {
+            coded(
+                "timeout",
+                match cap {
+                    Capability::Ocr => "文字認識の制限時間超過。範囲を縮小して再試行",
+                    _ => "制限時間超過。範囲を縮小して再試行",
+                },
+            )
+        }
         ProviderError::Other(m) if m.starts_with("no provider configured") => {
             coded("error", "この機能のプロバイダー未設定")
         }

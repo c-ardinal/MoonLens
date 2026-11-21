@@ -481,6 +481,8 @@ export const hideMain = () => safeInvoke<void>('hide_main');
 export const quitApp = () => safeInvoke<void>('quit_app');
 
 export interface DataLocations {
+  /** App version and build commit. */
+  version: string;
   config_dir: string;
   data_dir: string;
   models_dir: string;

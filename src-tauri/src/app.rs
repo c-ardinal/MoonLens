@@ -124,6 +124,8 @@ pub fn build() -> Result<()> {
         // Must be the first plugin: a second launch hands over to the
         // running instance and exits before anything else starts.
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            // A second launch exits and hands over to this (older) process.
+            tracing::info!("second launch redirected to the running instance");
             show_main_window(app);
         }))
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())

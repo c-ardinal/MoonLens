@@ -26,8 +26,11 @@
 use std::{path::PathBuf, sync::Arc, time::Instant};
 
 use moonlens_lib::{
-    pipeline::Pipeline, plugins::registry::PluginRegistry, providers::TaskOutput,
-    settings::SettingsStore, storage::Storage,
+    pipeline::Pipeline,
+    plugins::registry::PluginRegistry,
+    providers::{Capability, TaskInput, TaskOutput},
+    settings::SettingsStore,
+    storage::Storage,
 };
 
 struct Case {
@@ -65,6 +68,21 @@ const CASES: &[Case] = &[
     Case {
         name: "synth_de_paragraph",
         expect: &[&["グレゴール", "ザムザ"], &["ベッド", "寝台"]],
+    },
+    // Full-screen captures (browser page, 1080p and 1440p at 150 %):
+    // many lines in one image, as in full-screen / large range captures.
+    Case {
+        name: "screen_fhd",
+        expect: &[&["北風"], &["太陽"], &["虹"]],
+    },
+    Case {
+        name: "screen_qhd150",
+        expect: &[&["北風"], &["太陽"], &["虹"]],
+    },
+    // 3840x2160 at 100 %, the reporter's screen: small text, full frame.
+    Case {
+        name: "screen_uhd100",
+        expect: &[&["北風"], &["太陽"], &["虹"]],
     },
     Case {
         name: "synth_ui_buttons",
@@ -151,6 +169,34 @@ async fn fixtures_are_recognised_and_translated() {
             .iter()
             .map(|l| l.as_str().unwrap().to_string())
             .collect();
+
+        // OCR alone first, through the configured chain and its timeout,
+        // so a slow or failing engine shows up here instead of as an
+        // empty result further down.
+        let t = Instant::now();
+        match pipeline
+            .run(
+                Capability::Ocr,
+                TaskInput::Ocr {
+                    image_png: png.clone(),
+                    languages: vec![],
+                },
+            )
+            .await
+        {
+            Ok(r) => println!(
+                "\n[{}] OCR {} ms via {} (fallbacks: {:?})",
+                case.name,
+                t.elapsed().as_millis(),
+                r.used_provider,
+                r.fallback_reasons
+            ),
+            Err(e) => failures.push(format!(
+                "{}: OCR failed after {} ms: {e}",
+                case.name,
+                t.elapsed().as_millis()
+            )),
+        }
 
         let t = Instant::now();
         let bundle = match pipeline.run_capture_flow(png).await {
