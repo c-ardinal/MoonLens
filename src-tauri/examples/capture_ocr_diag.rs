@@ -87,8 +87,20 @@ async fn main() {
     println!("models dir: {:?}", ocr_ocrs::default_models_dir());
 
     let tmp = std::env::temp_dir().join(format!("moonlens-diag-{}", std::process::id()));
+    std::fs::create_dir_all(&tmp).unwrap();
+    // MOONLENS_DIAG_CONFIG=<config.toml>: run with a copy of the user's
+    // real settings instead of the defaults (the original is not touched).
+    if let Some(cfg) = std::env::var_os("MOONLENS_DIAG_CONFIG") {
+        std::fs::copy(&cfg, tmp.join("config.toml")).expect("copy config");
+        println!("using a copy of {cfg:?}");
+    }
     let store = Arc::new(SettingsStore::load_from(tmp.join("config.toml")).unwrap());
     let plugins = Arc::new(PluginRegistry::load_from(tmp.join("plugins"), store.clone()).unwrap());
+    let snap = store.snapshot();
+    println!(
+        "ocr chain {:?} timeout {} ms; translate chain {:?}",
+        snap.providers.ocr.chain, snap.providers.ocr.timeout_ms, snap.providers.translate.chain
+    );
     let pipeline = Pipeline::new(store, Arc::new(Storage::open_in_memory().unwrap()), plugins);
 
     match xcap::Monitor::all() {
