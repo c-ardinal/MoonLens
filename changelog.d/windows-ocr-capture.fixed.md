@@ -1,0 +1,3 @@
+- Windows: an OCR timeout or engine failure is now reported as an error instead of "no text found" / "(photo detected)", and full-screen 4K captures get more OCR time.
+- Windows: the built-in Windows OCR engine joins the OCR chain as a fallback after PP-OCR.
+- Lens: a capture without text shows the empty-state hint instead of "(photo detected)".

@@ -124,6 +124,20 @@ ocrs-engine = ["dep:ocrs", "dep:rten", "dep:rten-tensor", "dep:flate2", "dep:tar
 tempfile = "3"
 wat = "1"
 
+# Windows.Media.Ocr (WinRT): the OS's own OCR engine, used in the OCR
+# chain next to PP-OCR (providers/ocr_windows.rs).
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62", features = [
+    "Win32_System_Com",
+    "Foundation",
+    "Foundation_Collections",
+    "Globalization",
+    "Graphics_Imaging",
+    "Media_Ocr",
+    "Storage_Streams",
+] }
+windows-future = "0.3"
+
 # tests/lens_capture_windows.rs: a probe window over a screen region.
 [target.'cfg(windows)'.dev-dependencies]
 windows-sys = { version = "0.61", features = [

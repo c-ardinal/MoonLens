@@ -1078,6 +1078,10 @@ fn builtin_provider(
         id if id.starts_with("whisper_cpp.") => Arc::new(WhisperCppProvider::new(id, cfg)),
         "ocrs" => Arc::new(OcrsProvider::new(id, cfg)),
         "ppocr" => Arc::new(crate::providers::ocr_ppocr::PpOcrProvider::new(id, cfg)),
+        #[cfg(windows)]
+        "windows" => Arc::new(crate::providers::ocr_windows::WindowsOcrProvider::new(
+            id, cfg,
+        )),
         "rqrr" => Arc::new(RqrrProvider::new(id, cfg)),
         id if id.starts_with("browser.") => Arc::new(BrowserSearchProvider::new(id, cfg)),
         _ => return None,
@@ -1093,6 +1097,14 @@ const DEFAULT_OCR_CHAIN: [&str; 2] = ["ppocr", "ocrs"];
 fn upgrade_ocr_chain(mut chain: TaskChain) -> TaskChain {
     if chain.chain == LEGACY_DEFAULT_OCR_CHAIN {
         chain.chain = DEFAULT_OCR_CHAIN.iter().map(|s| s.to_string()).collect();
+    }
+    // Windows: the OS's own OCR engine backs up PP-OCR before the
+    // Latin-only ocrs, for configs still on the default chain.
+    if cfg!(windows) && chain.chain == DEFAULT_OCR_CHAIN {
+        chain.chain = ["ppocr", "windows", "ocrs"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
     }
     chain
 }

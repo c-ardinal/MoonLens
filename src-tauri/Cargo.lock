@@ -3669,6 +3669,8 @@ dependencies = [
  "wasmtime",
  "wasmtime-wasi",
  "wat",
+ "windows 0.62.2",
+ "windows-future",
  "windows-sys 0.61.2",
  "xcap",
  "zip",
