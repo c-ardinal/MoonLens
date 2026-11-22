@@ -85,6 +85,8 @@ macro_rules! all_commands {
             ipc::clear_history,
             ipc::list_notices,
             ipc::dismiss_notice,
+            ipc::list_config_issues,
+            ipc::apply_config_fixes,
             ipc::open_external_url,
             ipc::open_main_route,
             ipc::hide_main,

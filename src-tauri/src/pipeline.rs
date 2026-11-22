@@ -255,6 +255,21 @@ impl Pipeline {
                 map.insert(id, h);
             }
         }
+        // Report chain entries the running build cannot serve (an id from
+        // an older version, a disabled plugin, a typo).
+        let mut registered: HashMap<String, Vec<Capability>> = map
+            .iter()
+            .map(|(id, h)| (id.clone(), h.capabilities().to_vec()))
+            .collect();
+        // Served inside the pipeline, not by a registered provider.
+        registered
+            .entry(BUILTIN_INTENT_ID.to_string())
+            .or_default()
+            .push(Capability::IntentClassifier);
+        crate::settings::validate::publish(
+            crate::settings::validate::Source::Providers,
+            crate::settings::validate::check_providers(&s, &registered),
+        );
         *self.providers.write() = map;
     }
 
@@ -536,7 +551,7 @@ impl Pipeline {
                 result: TaskResult {
                     task: "capture".into(),
                     output: TaskOutput::Intent(intent),
-                    used_provider: "builtin.heuristic".into(),
+                    used_provider: BUILTIN_INTENT_ID.into(),
                     via_cloud: false,
                     latency_ms: 0,
                     fallback_reasons: vec![],
@@ -1099,28 +1114,10 @@ fn builtin_provider(
 const LEGACY_DEFAULT_OCR_CHAIN: [&str; 2] = ["ocrs", "paddle"];
 const DEFAULT_OCR_CHAIN: [&str; 2] = ["ppocr", "ocrs"];
 
-/// Replace provider ids written by other builds of the app (same
-/// config file) with the built-in provider that does the same job,
-/// dropping duplicates. Unmapped, a chain of such ids registers nothing.
-fn rename_ids(chain: &mut TaskChain, from: &str, to: &str) {
-    if !chain.chain.iter().any(|id| id == from) {
-        return;
-    }
-    let mut out: Vec<String> = Vec::new();
-    for id in &chain.chain {
-        let id = if id == from { to } else { id.as_str() };
-        if !out.iter().any(|o| o == id) {
-            out.push(id.to_string());
-        }
-    }
-    chain.chain = out;
-}
-
 fn upgrade_ocr_chain(mut chain: TaskChain) -> TaskChain {
     if chain.chain == LEGACY_DEFAULT_OCR_CHAIN {
         chain.chain = DEFAULT_OCR_CHAIN.iter().map(|s| s.to_string()).collect();
     }
-    rename_ids(&mut chain, "paddle", "ppocr");
     // Windows: the OS's own OCR engine backs up PP-OCR before the
     // Latin-only ocrs, for configs still on the default chain.
     if cfg!(windows) && chain.chain == DEFAULT_OCR_CHAIN {
@@ -1135,6 +1132,8 @@ fn upgrade_ocr_chain(mut chain: TaskChain) -> TaskChain {
 /// Built-in llama.cpp provider running the translation model
 /// (PLaMo 3 Translate by default).
 pub const LOCAL_LLM_ID: &str = "llamacpp";
+/// Intent classifier built into the pipeline (no provider object).
+pub const BUILTIN_INTENT_ID: &str = "builtin.heuristic";
 /// Built-in llama.cpp provider running the general model used for
 /// explain / summarize (Gemma 4 by default).
 pub const LOCAL_ASSIST_ID: &str = "llamacpp.assistant";
@@ -1153,7 +1152,6 @@ fn upgrade_llm_chain(mut chain: TaskChain, local_id: &str) -> TaskChain {
     if LEGACY_LLM_CHAINS.iter().any(|c| chain.chain == *c) {
         chain.chain = vec![local_id.to_string()];
     }
-    rename_ids(&mut chain, "embedded.llm", local_id);
     chain
 }
 
