@@ -102,11 +102,15 @@ pub fn ocr_found_nothing(e: &ProviderError) -> bool {
     match e {
         ProviderError::LowConfidence => true,
         ProviderError::Other(msg) => msg.strip_prefix("all providers failed: ").is_some_and(|r| {
-            r.split("; ").all(|reason| {
-                reason.ends_with(&ProviderError::LowConfidence.to_string())
-                    || reason.contains(": not installed")
-                    || reason.ends_with(": not registered")
-            })
+            let low = ProviderError::LowConfidence.to_string();
+            // At least one engine must have run: a chain of unknown ids
+            // (e.g. a config written by another build) is a setup error.
+            r.split("; ").any(|reason| reason.ends_with(&low))
+                && r.split("; ").all(|reason| {
+                    reason.ends_with(&low)
+                        || reason.contains(": not installed")
+                        || reason.ends_with(": not registered")
+                })
         }),
         _ => false,
     }
@@ -229,25 +233,26 @@ impl Pipeline {
         // still gets a provider with default settings. Without this, a
         // user config that omits e.g. `[providers.configs.rqrr]` (the
         // shipped default does) silently disabled QR decoding.
-        let p = &s.providers;
+        // Chains as `run` sees them, so ids added by the upgrades
+        // (e.g. Windows OCR, renamed ids) get registered too.
         for id in [
-            &p.translate,
-            &p.ocr,
-            &p.asr,
-            &p.explain,
-            &p.summarize,
-            &p.reverse_image_search,
-            &p.qr_handler,
-            &p.intent_classifier,
+            Capability::Translate,
+            Capability::Ocr,
+            Capability::Asr,
+            Capability::Explain,
+            Capability::Summarize,
+            Capability::ReverseImageSearch,
+            Capability::QrHandler,
+            Capability::IntentClassifier,
         ]
-        .iter()
-        .flat_map(|c| c.chain.iter())
+        .into_iter()
+        .flat_map(|cap| pick_chain(&s, cap).chain)
         {
-            if map.contains_key(id) {
+            if map.contains_key(&id) {
                 continue;
             }
-            if let Some(h) = builtin_provider(id, &empty, sink.as_ref(), use_gpu, &opts) {
-                map.insert(id.clone(), h);
+            if let Some(h) = builtin_provider(&id, &empty, sink.as_ref(), use_gpu, &opts) {
+                map.insert(id, h);
             }
         }
         *self.providers.write() = map;
@@ -1094,10 +1099,28 @@ fn builtin_provider(
 const LEGACY_DEFAULT_OCR_CHAIN: [&str; 2] = ["ocrs", "paddle"];
 const DEFAULT_OCR_CHAIN: [&str; 2] = ["ppocr", "ocrs"];
 
+/// Replace provider ids written by other builds of the app (same
+/// config file) with the built-in provider that does the same job,
+/// dropping duplicates. Unmapped, a chain of such ids registers nothing.
+fn rename_ids(chain: &mut TaskChain, from: &str, to: &str) {
+    if !chain.chain.iter().any(|id| id == from) {
+        return;
+    }
+    let mut out: Vec<String> = Vec::new();
+    for id in &chain.chain {
+        let id = if id == from { to } else { id.as_str() };
+        if !out.iter().any(|o| o == id) {
+            out.push(id.to_string());
+        }
+    }
+    chain.chain = out;
+}
+
 fn upgrade_ocr_chain(mut chain: TaskChain) -> TaskChain {
     if chain.chain == LEGACY_DEFAULT_OCR_CHAIN {
         chain.chain = DEFAULT_OCR_CHAIN.iter().map(|s| s.to_string()).collect();
     }
+    rename_ids(&mut chain, "paddle", "ppocr");
     // Windows: the OS's own OCR engine backs up PP-OCR before the
     // Latin-only ocrs, for configs still on the default chain.
     if cfg!(windows) && chain.chain == DEFAULT_OCR_CHAIN {
@@ -1130,6 +1153,7 @@ fn upgrade_llm_chain(mut chain: TaskChain, local_id: &str) -> TaskChain {
     if LEGACY_LLM_CHAINS.iter().any(|c| chain.chain == *c) {
         chain.chain = vec![local_id.to_string()];
     }
+    rename_ids(&mut chain, "embedded.llm", local_id);
     chain
 }
 

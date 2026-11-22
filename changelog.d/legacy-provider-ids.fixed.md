@@ -1,0 +1,1 @@
+- Settings written by other builds that name the OCR engine `paddle` or the translator `embedded.llm` now use the built-in PP-OCR and llama.cpp providers, instead of every capture reporting "no text found". A chain of unknown providers is reported as a settings error.
