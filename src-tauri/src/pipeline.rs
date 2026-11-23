@@ -580,6 +580,7 @@ impl Pipeline {
                     from_cache: false,
                     align: b.align,
                     bold,
+                    lines: b.lines.clone(),
                 }
             })
             .collect();
@@ -893,8 +894,28 @@ impl Pipeline {
             Some(&first.used_provider),
             first.via_cloud,
         );
+        // The capture's text in reading order, including blocks served
+        // from the cache or already in the target language: `whole` only
+        // holds what this run requested, so a partly cached capture would
+        // copy and show only some of its paragraphs. When a requested
+        // block has no translation of its own (the batch reply could not
+        // be split and the per-block retries failed), keep the batch
+        // reply instead so no received text is lost.
+        let text = if pending
+            .iter()
+            .all(|&i| bundle.blocks[i].translation.is_some())
+        {
+            bundle
+                .blocks
+                .iter()
+                .filter_map(|b| b.translation.clone())
+                .collect::<Vec<_>>()
+                .join(layout::BLOCK_SEPARATOR)
+        } else {
+            whole
+        };
         bundle.result = TaskResult {
-            output: TaskOutput::Text(whole),
+            output: TaskOutput::Text(text),
             latency_ms: started.elapsed().as_millis() as u64,
             fallback_reasons: reasons,
             ..first
@@ -1038,6 +1059,10 @@ pub struct LensBlock {
     /// is drawn bold too.
     #[serde(default)]
     pub bold: bool,
+    /// Rects of the source text rows (`[x, y, w, h]`, captured-image
+    /// pixels), top to bottom. The overlay lays the translation over them.
+    #[serde(default)]
+    pub lines: Vec<[f32; 4]>,
 }
 
 impl LensBlock {

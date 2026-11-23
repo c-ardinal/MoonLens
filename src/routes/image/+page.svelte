@@ -12,8 +12,8 @@
     type CaptureFlowResult,
     type LensBlock
   } from '$lib/ipc';
-  import { LANGUAGES, applyStreaming, blockCssRect, joinedText, rgb } from '$lib/lens-overlay';
-  import { fit } from '$lib/fit';
+  import { LANGUAGES, applyStreaming, blockCssRect, growRoom, joinedText, rgb } from '$lib/lens-overlay';
+  import FlowText from '$lib/components/FlowText.svelte';
   import { parseError, type UiError } from '$lib/errors';
   import { extractText } from '$lib/result';
   import {
@@ -329,7 +329,7 @@
               {#if b.bbox[2] > 0 && !b.same_language}
                 {@const r = blockCssRect(b, crop, scale)}
                 <div
-                  class="block-box absolute overflow-hidden"
+                  class="block-box absolute"
                   class:pending={b.translation == null}
                   style="left: {r.left}px; top: {r.top}px; width: {r.width}px; height: {r.height}px;
                          background: {rgb(b.colors?.background, 'rgba(255,255,255,0.96)')};
@@ -337,11 +337,13 @@
                   title={b.source}
                 >
                   {#if b.translation != null}
-                    <div class="fit h-full w-full" use:fit={{ text: b.translation, max: (b.line_height / scale) * 0.92 }}>
-                      <span class="fit-text" style="text-align: {b.align ?? 'left'}; font-weight: {b.bold ? 700 : 500}"
-                        >{b.translation}</span
-                      >
-                    </div>
+                    <FlowText
+                      block={b}
+                      text={b.translation}
+                      {scale}
+                      grow={growRoom(blocks, i, crop.w) / scale}
+                      background={rgb(b.colors?.background, 'rgba(255,255,255,0.96)')}
+                    />
                   {/if}
                 </div>
               {/if}
@@ -413,20 +415,5 @@
     to {
       background-position: -120% 0;
     }
-  }
-  .fit {
-    display: flex;
-    align-items: center;
-    padding: 0 2px;
-  }
-  .fit-text {
-    display: block;
-    width: 100%;
-    line-height: 1.18;
-    overflow-wrap: anywhere;
-    word-break: auto-phrase;
-    line-break: strict;
-    text-wrap: pretty;
-    font-family: var(--ml-font-ui);
   }
 </style>

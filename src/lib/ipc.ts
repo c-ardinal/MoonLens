@@ -61,6 +61,8 @@ export interface LensBlock {
   align?: 'left' | 'center' | 'right';
   /** Source text looks bold; draw the translation bold too. */
   bold?: boolean;
+  /** Source text rows `[x, y, w, h]` (captured-image px), top to bottom. */
+  lines?: [number, number, number, number][];
 }
 
 /** Sent before each translation request of a capture (`moonlens://selector-progress`). */

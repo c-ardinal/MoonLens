@@ -42,6 +42,12 @@ pub struct TextBlock {
     /// laid out the same way (centred headings stay centred).
     #[serde(default)]
     pub align: Align,
+    /// Rects of the source text rows, top to bottom. The renderer flows
+    /// the translation over these rows so it keeps the original line
+    /// positions, indents and spacing. OCR fragments on the same row are
+    /// merged into one rect.
+    #[serde(default)]
+    pub lines: Vec<BBox>,
 }
 
 /// Horizontal text alignment of a block.
@@ -115,6 +121,12 @@ fn median(values: &mut [f32]) -> f32 {
     values[values.len() / 2]
 }
 
+/// Largest height ratio between consecutive lines of one paragraph. OCR
+/// line boxes of the same font vary by about 20 % (a row with `y`, `g`,
+/// `p` descenders is taller than one without), while headings are
+/// usually 1.4× the body text or more.
+const MAX_LINE_HEIGHT_RATIO: f32 = 1.3;
+
 struct Building {
     bbox: BBox,
     last: BBox,
@@ -130,7 +142,7 @@ struct Building {
 ///   heights, tightened once the block's own line spacing is known, and
 ///   when the previous line stopped short of the right edge),
 /// - it starts at the block's left edge (or shares the centre),
-/// - its height is within 1.2× of the block's last line (headings vs body
+/// - its height is within 1.3× of the block's last line (headings vs body
 ///   text become separate blocks), and
 /// - it horizontally overlaps the block (keeps columns apart).
 ///
@@ -154,6 +166,7 @@ pub fn group_lines(lines: &[OcrLine]) -> Vec<TextBlock> {
             line_height: 0.0,
             line_count: usable.len(),
             align: Align::Left,
+            lines: vec![],
         }];
     }
 
@@ -205,9 +218,15 @@ pub fn group_lines(lines: &[OcrLine]) -> Vec<TextBlock> {
             // Lines on the same row (gap negative) belong together only
             // when they also overlap horizontally; otherwise they are
             // separate columns / UI labels.
+            // Short capitalised rows stacked under each other are list
+            // items / menu entries, not a wrapped sentence.
+            let prev_text = b.lines.last().map(|l| l.text.as_str()).unwrap_or("");
+            let list_item =
+                gap > 0.0 && is_list_row(prev_text, &b.last, h) && is_list_row(&line.text, &lb, h);
             if gap <= max_gap
+                && !list_item
                 && gap >= -prev_h * 0.5
-                && size_ratio <= 1.2
+                && size_ratio <= MAX_LINE_HEIGHT_RATIO
                 && overlap > 0.0
                 && aligned
             {
@@ -244,9 +263,11 @@ pub fn group_lines(lines: &[OcrLine]) -> Vec<TextBlock> {
                 line_height: median(&mut heights),
                 line_count: b.lines.len(),
                 align: detect_align(&b.lines.iter().map(|l| l.bbox).collect::<Vec<_>>()),
+                lines: merge_rows(b.lines.iter().map(|l| l.bbox)),
             }
         })
         .collect();
+    harmonize_line_heights(&mut out);
     out.sort_by(|a, b| {
         a.bbox[1]
             .partial_cmp(&b.bbox[1])
@@ -258,6 +279,64 @@ pub fn group_lines(lines: &[OcrLine]) -> Vec<TextBlock> {
             )
     });
     out
+}
+
+/// Even out the font-size hint of single-row blocks stacked in one
+/// column (menus, lists, table cells). OCR boxes of the same font vary
+/// with ascenders and descenders, which made neighbouring translations
+/// visibly different in size. Each such block takes the median height
+/// of the left-aligned single-row blocks of similar height (≤ 1.25×).
+fn harmonize_line_heights(blocks: &mut [TextBlock]) {
+    let single: Vec<(usize, f32, f32)> = blocks
+        .iter()
+        .enumerate()
+        .filter(|(_, b)| b.line_count == 1 && b.line_height > 0.0)
+        .map(|(i, b)| (i, b.bbox[0], b.line_height))
+        .collect();
+    let mut updates = Vec::new();
+    for &(i, x, h) in &single {
+        let mut peers: Vec<f32> = single
+            .iter()
+            .filter(|&&(_, ox, oh)| (ox - x).abs() <= h.min(oh) && (oh / h).max(h / oh) <= 1.25)
+            .map(|&(_, _, oh)| oh)
+            .collect();
+        if peers.len() >= 3 {
+            updates.push((i, median(&mut peers)));
+        }
+    }
+    for (i, h) in updates {
+        blocks[i].line_height = h;
+    }
+}
+
+/// A row that reads like a list item or menu entry: short (under 12
+/// line heights wide) and starting with a capital letter. Wrapped
+/// paragraph rows are long, so they never match.
+fn is_list_row(text: &str, b: &BBox, h: f32) -> bool {
+    b[2] < h * 12.0
+        && text
+            .trim_start()
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_uppercase())
+}
+
+/// Merge line rects (in reading order) into text rows: a rect that
+/// overlaps the previous row vertically by at least half of the smaller
+/// height is part of that row.
+pub fn merge_rows<I: IntoIterator<Item = BBox>>(lines: I) -> Vec<BBox> {
+    let mut rows: Vec<BBox> = Vec::new();
+    for b in lines {
+        if let Some(last) = rows.last_mut() {
+            let overlap = bottom(last).min(bottom(&b)) - last[1].max(b[1]);
+            if overlap >= 0.5 * last[3].min(b[3]) {
+                *last = union(last, &b);
+                continue;
+            }
+        }
+        rows.push(b);
+    }
+    rows
 }
 
 /// True for scripts written without spaces between words.
@@ -560,6 +639,38 @@ mod tests {
     }
 
     #[test]
+    fn block_keeps_its_row_rects() {
+        let lines = vec![
+            line("The quick brown fox", 30.0, 10.0, 180.0, 16.0),
+            line("jumps over the lazy", 10.0, 30.0, 200.0, 16.0),
+            line("dog.", 10.0, 50.0, 40.0, 16.0),
+        ];
+        let blocks = group_lines(&lines);
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(
+            blocks[0].lines,
+            vec![
+                [30.0, 10.0, 180.0, 16.0],
+                [10.0, 30.0, 200.0, 16.0],
+                [10.0, 50.0, 40.0, 16.0]
+            ]
+        );
+    }
+
+    #[test]
+    fn fragments_on_one_row_merge_into_one_rect() {
+        let rows = merge_rows([
+            [10.0, 10.0, 50.0, 16.0],
+            [70.0, 11.0, 60.0, 15.0],
+            [10.0, 30.0, 40.0, 16.0],
+        ]);
+        assert_eq!(
+            rows,
+            vec![[10.0, 10.0, 120.0, 16.0], [10.0, 30.0, 40.0, 16.0]]
+        );
+    }
+
+    #[test]
     fn wrapped_paragraph_becomes_one_block() {
         let lines = vec![
             line("The quick brown fox", 10.0, 10.0, 200.0, 16.0),
@@ -622,6 +733,53 @@ mod tests {
             line("body text right below", 10.0, 55.0, 280.0, 14.0),
         ];
         assert_eq!(group_lines(&lines).len(), 2);
+    }
+
+    #[test]
+    fn ocr_height_jitter_keeps_a_paragraph_together() {
+        // PP-OCR boxes of one paragraph (english0001 fixture): the middle
+        // row is 1.22× taller than the first.
+        let lines = vec![
+            line("Please call Stella. Ask her", 19.7, 97.4, 837.7, 16.7),
+            line("cheese, and maybe a snack", 12.9, 125.1, 859.1, 20.5),
+            line("these things into three red bags", 13.8, 154.6, 584.7, 16.7),
+        ];
+        let blocks = group_lines(&lines);
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].lines.len(), 3);
+    }
+
+    #[test]
+    fn menu_entries_stay_separate() {
+        // Sidebar of the screen_fhd fixture.
+        let lines = vec![
+            line("Main page", 12.0, 52.0, 71.0, 21.0),
+            line("Contents", 13.0, 80.0, 62.0, 19.0),
+            line("Current events", 14.0, 108.0, 98.0, 20.0),
+        ];
+        assert_eq!(group_lines(&lines).len(), 3);
+    }
+
+    #[test]
+    fn menu_entries_share_one_font_size() {
+        let lines = vec![
+            line("Main page", 12.0, 52.0, 71.0, 21.0),
+            line("Contents", 13.0, 80.0, 62.0, 19.0),
+            line("Random article", 14.0, 108.0, 98.0, 17.0),
+            line("Heading elsewhere", 300.0, 108.0, 200.0, 30.0),
+        ];
+        let blocks = group_lines(&lines);
+        let h: Vec<f32> = blocks.iter().map(|b| b.line_height).collect();
+        assert_eq!(h, vec![19.0, 19.0, 19.0, 30.0]);
+    }
+
+    #[test]
+    fn short_wrapped_rows_still_join() {
+        let lines = vec![
+            line("The quick brown", 10.0, 10.0, 120.0, 16.0),
+            line("fox jumps", 10.0, 30.0, 80.0, 16.0),
+        ];
+        assert_eq!(group_lines(&lines).len(), 1);
     }
 
     #[test]
@@ -763,6 +921,7 @@ mod tests {
             line_height: 0.0,
             line_count: 1,
             align: Align::Left,
+            lines: vec![],
         };
         assert_eq!(join_blocks(&[b("a"), b("b")]), "a\n\nb");
     }

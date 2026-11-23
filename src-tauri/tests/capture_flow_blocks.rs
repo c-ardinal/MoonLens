@@ -236,10 +236,10 @@ async fn blocks_already_in_target_are_not_translated() {
     );
     assert!(r.blocks[2].same_language, "numbers need no translation");
     assert_eq!(calls.load(Ordering::Relaxed), 1);
-    // Only the English block went to the translator.
-    assert!(
-        matches!(&r.result.output, TaskOutput::Text(t) if t == "[This is a test of the system.]")
-    );
+    // Only the English block went to the translator; the result text
+    // still reads the whole capture in order, like the overlay does.
+    assert!(matches!(&r.result.output, TaskOutput::Text(t)
+        if t == "これは日本語の文章です。\n\n[This is a test of the system.]\n\n12:30"));
 }
 
 #[tokio::test]
@@ -317,7 +317,12 @@ async fn only_uncached_paragraphs_are_requested() {
         r.blocks[1].translation.as_deref(),
         Some("[Brand new paragraph.]")
     );
-    assert!(matches!(&r.result.output, TaskOutput::Text(t) if t == "[Brand new paragraph.]"));
+    // The result text covers the whole capture, cached paragraphs too.
+    let expected = format!(
+        "{}\n\n[Brand new paragraph.]",
+        r.blocks[0].translation.as_deref().unwrap()
+    );
+    assert!(matches!(&r.result.output, TaskOutput::Text(t) if *t == expected));
 }
 
 #[tokio::test]

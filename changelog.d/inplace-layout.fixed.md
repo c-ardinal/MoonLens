@@ -1,0 +1,4 @@
+- In-place translations (range translation, image translation, live translation) now follow the source layout: the translated text runs along the original line positions, indents and line spacing instead of being shrunk and centred in the paragraph box.
+- Paragraphs whose OCR line heights vary slightly are no longer split into one block per line, and stacked menu / list entries are no longer merged into one paragraph.
+- Short labels whose translation is longer keep their font size and extend to the right; entries stacked in one column share one font size.
+- The result text of a capture (overlay panel, auto-copy) now includes paragraphs served from the translation cache or already in the target language, in reading order.
