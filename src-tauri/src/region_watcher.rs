@@ -428,14 +428,22 @@ impl Tracker {
             decoded.as_deref().map_or(text.as_str(), |d| d)
         );
 
-        if self.shown.text.as_deref() == Some(key.as_str()) {
+        // A refresh retries blocks left untranslated (a failed request).
+        let incomplete = self
+            .shown
+            .blocks
+            .iter()
+            .any(|b| !b.same_language && b.translation.is_none());
+        if self.shown.text.as_deref() == Some(key.as_str()) && !(force && incomplete) {
             // Same text as on screen (only the background changed, or
             // the region moved over the same text): show what was hidden
             // again, at the new positions.
             self.pending_text = None;
             self.unsettled = 0;
             self.shown.thumb = Some(thumb);
-            if !self.shown.stale.is_empty() || force {
+            if let (Some(text), true) = (&decoded, force) {
+                (env.emit)(LiveEvent::Decoded { text: text.clone() });
+            } else if !self.shown.stale.is_empty() || force {
                 self.shown.stale.clear();
                 let blocks = carry_translations(&self.shown.blocks, bundle.blocks);
                 self.shown.blocks = blocks.clone();
