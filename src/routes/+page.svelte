@@ -117,8 +117,6 @@
     }
   }
 
-  const asrReady = $derived(engines.find((e) => e.id === 'asr')?.state === 'ready');
-
   /** 魔法陣の 5 機能。順序は数字キー（1〜5）と一致。 */
   const functions = $derived([
     {
@@ -147,8 +145,7 @@
       icon: 'mic',
       desc: subtitleRunning ? '字幕表示中。Enter で停止。' : 'システム音声を認識・翻訳し、字幕表示。',
       hotkey: key('toggle_subtitle'),
-      // 一覧取得前（engines 空）は施錠しない
-      locked: engines.length > 0 && !asrReady && !subtitleRunning,
+      // 施錠なし：外部 whisper.cpp サーバー・ASR プラグインも有効なため、可否判定は本体側
       run: toggleSubtitle
     },
     {
@@ -166,12 +163,7 @@
 
   function activate(i: number) {
     selected = i;
-    const f = functions[i];
-    if (f.locked) {
-      lastError = '音声認識モデル未導入。モデル準備が必要。';
-      return;
-    }
-    attempt(f.run);
+    attempt(functions[i].run);
   }
 
   function onKey(e: KeyboardEvent) {
@@ -196,7 +188,7 @@
   <!-- 支援技術・キーボード向けの機能一覧（視覚表現は魔法陣） -->
   <ul class="sr-only" aria-label="機能">
     {#each functions as f, i (f.label)}
-      <li><button onclick={() => activate(i)}>{i + 1}. {f.label}{f.locked ? '（未導入）' : ''}</button></li>
+      <li><button onclick={() => activate(i)}>{i + 1}. {f.label}</button></li>
     {/each}
   </ul>
 
@@ -241,13 +233,9 @@
         <p class="error" role="alert">{lastError}</p>
       {/if}
       <div class="go">
-        {#if current.locked}
-          <a href="/settings/#section-models" class="link">モデル準備 ▶</a>
-        {:else}
-          <button class="go-btn" onclick={() => activate(selected)}>
-            ▶ Enter で{current.label === 'ライブ字幕' && subtitleRunning ? '停止' : '開始'}
-          </button>
-        {/if}
+        <button class="go-btn" onclick={() => activate(selected)}>
+          ▶ Enter で{current.label === 'ライブ字幕' && subtitleRunning ? '停止' : '開始'}
+        </button>
       </div>
     </section>
 
