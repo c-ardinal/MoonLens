@@ -3,12 +3,17 @@
 //! A lens window is a frameless, always-on-top, mostly-transparent Tauri
 //! window that the user moves and resizes to mark an on-screen region. The
 //! region updates automatically whenever the window geometry changes (via
-//! the renderer) or on an interval configured by the user. A session can
-//! have many lens windows, each independent.
+//! the renderer). A session can have many lens windows, each independent.
+//!
+//! By default a lens reads its region continuously, like a camera lens:
+//! [`start_watch`] runs the same change-driven [`Tracker`] as live
+//! translation, so OCR runs only when the pixels change and only text not
+//! shown yet goes to the model. While the lens is dragged or resized no
+//! capture is taken; reading resumes once it holds still. With continuous
+//! reading switched off the lens is read on request only.
 //!
 //! The capture flow:
-//! 1. Frontend (or a change-detection timer) requests a capture for a
-//!    given lens id.
+//! 1. The watcher (or the frontend, on request) captures a given lens id.
 //! 2. The captured frame must not include the lens UI. Windows and macOS
 //!    exclude the window from screen capture (content protection); on
 //!    other platforms Rust hides the window for the moment of the grab.
@@ -23,11 +28,27 @@
 //! testable.
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::{anyhow, Context, Result};
+use image::DynamicImage;
 use parking_lot::Mutex;
 use serde::Serialize;
-use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
+use tauri::async_runtime::JoinHandle;
+use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
+
+use crate::{
+    pipeline::Pipeline,
+    region_watcher::{Frame, Geometry, LiveEvent, Tick, TickEnv, Tracker},
+    settings::SettingsStore,
+};
+
+/// Event with [`LiveEvent`]s for one lens window.
+pub const LENS_LIVE_EVENT: &str = "moonlens://lens-live";
+
+/// Shortest pause between readings where the lens must be hidden for a
+/// capture (no content protection): a shorter one makes it flicker.
+const HIDDEN_CAPTURE_MIN_MS: u64 = 1000;
 
 pub mod geometry {
     //! Pure rect-math for lens windows.
@@ -195,12 +216,28 @@ pub struct LensDescriptor {
     pub id: String,
     pub title: String,
     pub insets: geometry::LensInsets,
-    pub auto_refresh_ms: Option<u32>,
+    /// Reads the region continuously (see [`start_watch`]).
+    pub continuous: bool,
 }
 
 struct LensEntry {
     insets: geometry::LensInsets,
-    auto_refresh_ms: Option<u32>,
+    watch: Option<Watch>,
+}
+
+/// A running continuous reading of one lens.
+struct Watch {
+    handle: JoinHandle<()>,
+    stop: Arc<tokio::sync::Notify>,
+    /// Read now, even when nothing changed (manual refresh).
+    kick: Arc<tokio::sync::Notify>,
+}
+
+impl Watch {
+    fn stop(self) {
+        self.stop.notify_one();
+        self.handle.abort();
+    }
 }
 
 #[derive(Default)]
@@ -221,7 +258,7 @@ impl LensRegistry {
                 id: id.clone(),
                 title: format!("Lens {}", short(id)),
                 insets: e.insets,
-                auto_refresh_ms: e.auto_refresh_ms,
+                continuous: e.watch.is_some(),
             })
             .collect()
     }
@@ -231,28 +268,56 @@ impl LensRegistry {
             id,
             LensEntry {
                 insets: geometry::LensInsets::default(),
-                auto_refresh_ms: None,
+                watch: None,
             },
         ));
     }
 
     pub fn untrack(&self, id: &str) {
+        self.set_watch(id, None);
         self.entries.lock().retain(|(i, _)| i != id);
+    }
+
+    /// Replace the lens's continuous reading (stopping the old one).
+    /// Returns false for an unknown lens; `watch` is stopped then.
+    fn set_watch(&self, id: &str, watch: Option<Watch>) -> bool {
+        let mut entries = self.entries.lock();
+        let Some((_, e)) = entries.iter_mut().find(|(i, _)| i == id) else {
+            drop(entries);
+            if let Some(w) = watch {
+                w.stop();
+            }
+            return false;
+        };
+        let old = std::mem::replace(&mut e.watch, watch);
+        drop(entries);
+        if let Some(w) = old {
+            w.stop();
+        }
+        true
+    }
+
+    /// Ask a continuous reading to read now. False when the lens is not
+    /// reading continuously.
+    pub fn kick(&self, id: &str) -> bool {
+        let entries = self.entries.lock();
+        match entries
+            .iter()
+            .find(|(i, _)| i == id)
+            .and_then(|(_, e)| e.watch.as_ref())
+        {
+            Some(w) => {
+                w.kick.notify_one();
+                true
+            }
+            None => false,
+        }
     }
 
     pub fn set_insets(&self, id: &str, insets: geometry::LensInsets) {
         for (i, e) in self.entries.lock().iter_mut() {
             if i == id {
                 e.insets = insets;
-                return;
-            }
-        }
-    }
-
-    pub fn set_auto_refresh(&self, id: &str, ms: Option<u32>) {
-        for (i, e) in self.entries.lock().iter_mut() {
-            if i == id {
-                e.auto_refresh_ms = ms;
                 return;
             }
         }
@@ -340,32 +405,196 @@ pub fn scale_insets(insets: geometry::LensInsets, scale: f64) -> geometry::LensI
     }
 }
 
-/// Compute the observed rect and capture it without the lens window in
-/// the frame. Returns the captured PNG.
-pub fn capture_lens(app: &AppHandle, registry: &LensRegistryHandle, id: &str) -> Result<Vec<u8>> {
-    use crate::capture;
-
+/// Screen rect the lens observes now (physical pixels): the client
+/// area minus the renderer's header.
+pub fn observed(
+    app: &AppHandle,
+    registry: &LensRegistryHandle,
+    id: &str,
+) -> Result<geometry::LensOuterRect> {
     let win = app
         .get_webview_window(id)
         .ok_or_else(|| anyhow!("lens window {id} not found"))?;
     let outer = inner_rect(&win)?;
     let scale = win.scale_factor().unwrap_or(1.0);
     let insets = scale_insets(registry.insets(id).unwrap_or_default(), scale);
-    let observed = geometry::observed_rect(outer, insets)
-        .ok_or_else(|| anyhow!("lens observation rect is empty"))?;
+    geometry::observed_rect(outer, insets).ok_or_else(|| anyhow!("lens observation rect is empty"))
+}
 
+fn as_geometry(r: geometry::LensOuterRect) -> Geometry {
+    [r.x, r.y, r.w as i32, r.h as i32]
+}
+
+/// Capture the observed rect without the lens window in the frame.
+pub fn grab(
+    app: &AppHandle,
+    registry: &LensRegistryHandle,
+    id: &str,
+) -> Result<(DynamicImage, geometry::LensOuterRect)> {
+    use crate::capture;
+
+    let observed = observed(app, registry, id)?;
     if EXCLUDED_FROM_CAPTURE {
         let image = capture::capture_global_rect(observed.x, observed.y, observed.w, observed.h)?;
-        return capture::png_bytes(&image);
+        return Ok((image, observed));
     }
+    let win = app
+        .get_webview_window(id)
+        .ok_or_else(|| anyhow!("lens window {id} not found"))?;
     // No content protection: hide the window for the moment of the grab,
     // with a brief pause so the compositor unmaps it first.
     win.hide().ok();
     std::thread::sleep(std::time::Duration::from_millis(60));
     let result = capture::capture_global_rect(observed.x, observed.y, observed.w, observed.h);
     win.show().ok();
-    let image = result?;
-    capture::png_bytes(&image)
+    Ok((result?, observed))
+}
+
+/// Compute the observed rect and capture it without the lens window in
+/// the frame. Returns the captured PNG.
+pub fn capture_lens(app: &AppHandle, registry: &LensRegistryHandle, id: &str) -> Result<Vec<u8>> {
+    let (image, _) = grab(app, registry, id)?;
+    crate::capture::png_bytes(&image)
+}
+
+/// Switch continuous reading of a lens on or off.
+pub fn set_continuous(
+    app: &AppHandle,
+    registry: &LensRegistryHandle,
+    pipeline: Arc<Pipeline>,
+    settings: Arc<SettingsStore>,
+    id: &str,
+    on: bool,
+) {
+    if !on {
+        registry.set_watch(id, None);
+        return;
+    }
+    let stop = Arc::new(tokio::sync::Notify::new());
+    let kick = Arc::new(tokio::sync::Notify::new());
+    let handle = tauri::async_runtime::spawn(run_watch(
+        app.clone(),
+        registry.clone(),
+        pipeline,
+        settings,
+        id.to_string(),
+        stop.clone(),
+        kick.clone(),
+    ));
+    registry.set_watch(id, Some(Watch { handle, stop, kick }));
+}
+
+/// Continuous reading of one lens: every `region_watcher_poll_ms` (or on
+/// a kick) check where the lens is, and once it holds still read the
+/// region through the shared [`Tracker`].
+async fn run_watch(
+    app: AppHandle,
+    registry: LensRegistryHandle,
+    pipeline: Arc<Pipeline>,
+    settings: Arc<SettingsStore>,
+    id: String,
+    stop: Arc<tokio::sync::Notify>,
+    kick: Arc<tokio::sync::Notify>,
+) {
+    let target = tauri::EventTarget::WebviewWindow { label: id.clone() };
+    let emit_app = app.clone();
+    let emit_target = target.clone();
+    let emit = move |ev: LiveEvent| {
+        let _ = emit_app.emit_to(emit_target.clone(), LENS_LIVE_EVENT, ev);
+    };
+    let (geo_app, geo_registry, geo_id) = (app.clone(), registry.clone(), id.clone());
+    let geometry_now = move || {
+        observed(&geo_app, &geo_registry, &geo_id)
+            .ok()
+            .map(as_geometry)
+    };
+
+    let mut tracker = Tracker::new();
+    let mut last: Option<Geometry> = None;
+    // The first reading happens at once, as on a manual refresh.
+    let mut first = true;
+    loop {
+        let mut manual = std::mem::take(&mut first);
+        if !manual {
+            let mut interval = settings
+                .snapshot()
+                .performance
+                .region_watcher_poll_ms
+                .max(50) as u64;
+            if !EXCLUDED_FROM_CAPTURE {
+                interval = interval.max(HIDDEN_CAPTURE_MIN_MS);
+            }
+            tokio::select! {
+                _ = stop.notified() => break,
+                _ = kick.notified() => manual = true,
+                _ = tokio::time::sleep(Duration::from_millis(interval)) => {}
+            }
+        }
+        let target_language = settings.snapshot().subtitle.target_language.clone();
+        let env = TickEnv {
+            pipeline: &pipeline,
+            target_language: &target_language,
+            history_kind: crate::pipeline::history_kind::LENS,
+            emit: &emit,
+            geometry_now: &geometry_now,
+        };
+
+        // Where the lens is now. No capture while it is being dragged
+        // or resized (and no hiding it mid-drag where that is needed).
+        let now = match observed(&app, &registry, &id) {
+            Ok(r) => as_geometry(r),
+            Err(_) if app.get_webview_window(&id).is_none() => break,
+            Err(_) => continue, // collapsed to the header
+        };
+        if last.is_some_and(|g| g != now) {
+            last = Some(now);
+            tracker.region_moved(now, &env);
+            continue;
+        }
+        last = Some(now);
+
+        let (a, r, i) = (app.clone(), registry.clone(), id.clone());
+        let grabbed = tokio::task::spawn_blocking(move || grab(&a, &r, &i)).await;
+        let (image, rect) = match grabbed {
+            Ok(Ok(g)) => g,
+            Ok(Err(e)) => {
+                tracing::debug!("lens {id} capture: {e}");
+                continue;
+            }
+            Err(_) => break,
+        };
+        let frame = Frame {
+            image,
+            geometry: as_geometry(rect),
+        };
+        match tracker.tick(frame, manual, &env).await {
+            Ok(Tick::Translated {
+                source,
+                translation,
+                requested: true,
+            }) => {
+                // The clipboard policy of the regular capture flow, once
+                // per new text (not on every reading).
+                let cfg = settings.snapshot().clipboard.clone();
+                crate::clipboard::auto_copy(&app, crate::clipboard::Kind::Source, &source, &cfg);
+                crate::clipboard::auto_copy(
+                    &app,
+                    crate::clipboard::Kind::Translation,
+                    &translation,
+                    &cfg,
+                );
+            }
+            Ok(_) => {}
+            Err(message) => {
+                tracing::debug!("lens {id}: {message}");
+                let _ = app.emit_to(
+                    target.clone(),
+                    LENS_LIVE_EVENT,
+                    LiveEvent::Error { message },
+                );
+            }
+        }
+    }
 }
 
 /// Update the layout insets reported by the lens renderer. The renderer
@@ -439,16 +668,14 @@ mod tests {
     }
 
     #[test]
-    fn auto_refresh_is_independent_per_lens() {
+    fn lenses_start_without_continuous_reading() {
+        // The renderer switches it on; a lens the renderer never reached
+        // (dev server down) must not read the screen on its own.
         let r = new_registry_for_test();
         r.track("a".into());
-        r.track("b".into());
-        r.set_auto_refresh("b", Some(1000));
-        let list = r.list();
-        let a = list.iter().find(|d| d.id == "a").unwrap();
-        let b = list.iter().find(|d| d.id == "b").unwrap();
-        assert!(a.auto_refresh_ms.is_none());
-        assert_eq!(b.auto_refresh_ms, Some(1000));
+        assert!(!r.list()[0].continuous);
+        assert!(!r.kick("a"));
+        assert!(!r.kick("missing"));
     }
 
     #[test]

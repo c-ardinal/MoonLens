@@ -1364,14 +1364,32 @@ pub async fn set_lens_insets(
     Ok(())
 }
 
+/// Switch continuous reading of a lens window on or off. While on, the
+/// lens window gets `moonlens://lens-live` events (see `lens::start_watch`).
 #[tauri::command]
-pub async fn set_lens_auto_refresh(
+pub async fn set_lens_continuous(
     id: String,
-    ms: Option<u32>,
+    on: bool,
+    app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
-    state.lenses.set_auto_refresh(&id, ms);
+    lens::set_continuous(
+        &app,
+        &state.lenses,
+        state.pipeline.clone(),
+        state.settings.clone(),
+        &id,
+        on,
+    );
     Ok(())
+}
+
+/// Read a continuously reading lens now, even when nothing changed.
+/// Returns false when the lens is not reading continuously (the caller
+/// then uses `capture_lens_now`).
+#[tauri::command]
+pub async fn refresh_lens(id: String, state: State<'_, AppState>) -> Result<bool, String> {
+    Ok(state.lenses.kick(&id))
 }
 
 /// Capture the observed rect of a lens window and run the full pipeline.

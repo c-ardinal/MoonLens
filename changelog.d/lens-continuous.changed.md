@@ -1,0 +1,1 @@
+- The Lens window now reads its region continuously and re-translates when the screen changes, instead of on a fixed 1.5/3/10 s timer. OCR runs only when pixels change, unchanged paragraphs keep their cached translation, and nothing is captured while the lens is being moved or resized. The "常時" toggle in the header switches back to manual capture.
