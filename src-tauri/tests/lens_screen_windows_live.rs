@@ -264,7 +264,13 @@ async fn screen_captures_are_recognised_and_translated() {
     }
     let out = out_dir();
     let only = std::env::var("LENS_FIXTURE").ok();
-    let default = pipeline("");
+    // MOONLENS_E2E_CONFIG: run the capture flow on a copy of a real
+    // config.toml instead of the defaults.
+    let default = pipeline(
+        &std::env::var_os("MOONLENS_E2E_CONFIG")
+            .map(|p| std::fs::read_to_string(p).unwrap())
+            .unwrap_or_default(),
+    );
     let single: Vec<(&str, Pipeline)> = OCR_ENGINES
         .iter()
         .map(|id| {
