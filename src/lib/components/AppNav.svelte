@@ -3,7 +3,9 @@
   import { Minus, X } from 'lucide-svelte';
   import { slant } from '$lib/pixel/slant';
   import { getCurrentWindow } from '@tauri-apps/api/window';
-  import { hideMain } from '$lib/ipc';
+  import { onDestroy, onMount } from 'svelte';
+  import { getSettings, hideMain, onSettingsChanged } from '$lib/ipc';
+  import { languageLabel } from '$lib/lens-overlay';
 
   // The main window is frameless: this bar is its title bar (drag to
   // move, double-click to maximize) and carries minimize / close. Close
@@ -25,16 +27,33 @@
     { href: '/settings/', label: '設定' }
   ];
 
+  /** 翻訳先言語（ライブ字幕・画面翻訳の共通設定）。 */
+  let target = $state('');
+  const apply = (s: any) => {
+    const code = s?.subtitle?.target_language ?? '';
+    target = code ? languageLabel(code) || code : '';
+  };
+  let unlisten: (() => void) | undefined;
+  onMount(async () => {
+    getSettings().then(apply).catch(() => {});
+    try {
+      unlisten = await onSettingsChanged(apply);
+    } catch {
+      /* pure frontend dev */
+    }
+  });
+  onDestroy(() => unlisten?.());
+
   const active = (href: string) =>
     href === '/' ? page.url.pathname === '/' : page.url.pathname.startsWith(href);
 </script>
 
-<nav class="sticky top-0 z-30 bg-surface" aria-label="メインメニュー" data-tauri-drag-region>
-  <div class="flex items-center gap-1 py-2 pr-2" data-tauri-drag-region>
-    <a href="/" class="px-chip logo" data-tone="amber" use:slant={0.4}>MOONLENS</a>
-    <ul class="scrollbar-minimal flex min-w-0 flex-1 items-center gap-1 overflow-x-auto pl-2" data-tauri-drag-region>
+<nav class="sticky top-0 z-30" aria-label="メインメニュー" data-tauri-drag-region>
+  <div class="bar" data-tauri-drag-region>
+    <a href="/" class="logo" use:slant={0.4}>MOONLENS</a>
+    <ul class="tabs" data-tauri-drag-region>
       {#each items as item (item.href)}
-        <li class="shrink-0">
+        <li>
           <a
             href={item.href}
             aria-current={active(item.href) ? 'page' : undefined}
@@ -47,32 +66,70 @@
         </li>
       {/each}
     </ul>
-    <div class="flex shrink-0 items-center gap-1" data-tauri-drag-region>
+    {#if target}
+      <a href="/settings/" class="px-chip target" data-tone="amber" use:slant title="翻訳先言語：{target}（設定で変更）">{target}▶</a>
+    {/if}
+    <div class="ctls" data-tauri-drag-region>
       <button class="ctl" title="最小化" aria-label="最小化" onclick={minimize}>
-        <Minus class="h-4 w-4" />
+        <Minus class="h-6 w-6" />
       </button>
-      <button
-        class="ctl close"
-        title="非表示（常駐継続）"
-        aria-label="非表示（常駐継続）"
-        onclick={() => hideMain().catch(() => {})}
-      >
-        <X class="h-4 w-4" />
+      <button class="ctl close" title="非表示（常駐継続）" aria-label="非表示（常駐継続）" onclick={() => hideMain().catch(() => {})}>
+        <X class="h-6 w-6" />
       </button>
     </div>
   </div>
-  <div class="rule" aria-hidden="true"></div>
 </nav>
 
 <style>
+  nav {
+    height: var(--ml-nav-h);
+  }
+  .bar {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    height: 100%;
+    padding-right: 8px;
+  }
   .logo {
-    padding-left: 24px;
-    padding-right: 28px;
-    margin-left: -8px;
+    align-self: flex-start;
+    display: flex;
+    align-items: center;
+    height: 64px;
+    padding: 0 48px 0 24px;
+    background: var(--ml-px-amber);
+    color: var(--ml-px-black);
+    font-size: 32px;
+  }
+  .tabs {
+    display: flex;
+    min-width: 0;
+    flex: 1;
+    gap: 4px;
+    overflow-x: auto;
+    padding-left: 8px;
+    scrollbar-width: none;
+  }
+  .tabs li {
+    flex-shrink: 0;
+  }
+  .px-chip {
+    padding: 0 10px 0 16px;
+  }
+  .px-chip:not([data-tone]) {
+    color: var(--ml-px-mid);
   }
   .px-chip:not([data-tone]):hover {
     background: var(--ml-px-dim);
     color: var(--ml-px-cream);
+  }
+  .target {
+    flex-shrink: 0;
+  }
+  .ctls {
+    display: flex;
+    flex-shrink: 0;
+    gap: 2px;
   }
   .ctl {
     padding: 4px;
@@ -85,10 +142,5 @@
   .ctl.close:hover {
     background: var(--ml-px-red);
     color: var(--ml-px-black);
-  }
-  .rule {
-    height: 2px;
-    margin: 0 16px;
-    background: var(--ml-px-dim);
   }
 </style>

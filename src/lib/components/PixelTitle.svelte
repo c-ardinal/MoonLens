@@ -32,7 +32,7 @@
 
   function measure() {
     const dpr = window.devicePixelRatio || 1;
-    dot = Math.max(1, Math.round(dpr)) / dpr;
+    dot = Math.max(1, Math.round(2 * dpr)) / dpr;
     width = Math.floor(host.getBoundingClientRect().width / dot);
   }
 

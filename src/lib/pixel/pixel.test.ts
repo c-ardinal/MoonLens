@@ -35,7 +35,7 @@ describe('slantPolygon', () => {
 describe('dialGeometry', () => {
   it('選択項目は常に右上へ回転', () => {
     for (const sel of [0, 2, 4]) {
-      const g = dialGeometry(960, 594, 5, sel);
+      const g = dialGeometry(640, 368, 5, sel);
       expect(g.nodes[sel].angle).toBe(SELECTED_ANGLE);
       expect(g.nodes[sel].x).toBeGreaterThan(g.cx);
       expect(g.nodes[sel].y).toBeLessThan(g.cy);
@@ -43,13 +43,15 @@ describe('dialGeometry', () => {
   });
 
   it('魔法陣は右側の情報欄と重複しない', () => {
-    const g = dialGeometry(960, 594, 5, 0, 440);
-    expect(g.cx + g.r).toBeLessThanOrEqual(960 - 440 + 10);
+    // モック基準（論理 640×368、情報欄 310）：外周ルーン環は情報欄の手前
+    const g = dialGeometry(640, 368, 5, 0);
+    expect(g.r).toBe(158);
+    expect(g.cx + g.r).toBeLessThanOrEqual(640 - 310 + 10);
   });
 });
 
 describe('hitTest', () => {
-  const g = dialGeometry(960, 594, 5, 1);
+  const g = dialGeometry(640, 368, 5, 1);
   it('ノード中心は該当項目', () => {
     g.nodes.forEach((n, i) => expect(hitTest(g, n.x + 3, n.y - 3)).toBe(i));
   });

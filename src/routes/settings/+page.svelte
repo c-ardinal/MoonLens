@@ -50,18 +50,7 @@
     )
   );
 
-  // Keep the index in step with what is on screen.
-  function onScroll() {
-    let id = visible[0]?.section.id;
-    for (const { section } of visible) {
-      const el = document.getElementById(`section-${section.id}`);
-      if (el && el.getBoundingClientRect().top <= 140) id = section.id;
-    }
-    if (id) current = id;
-  }
-
   onMount(async () => {
-    window.addEventListener('scroll', onScroll, { passive: true });
     try {
       [defaults, saved] = await Promise.all([getDefaultSettings(), getSettings()]);
       draft = structuredClone($state.snapshot(saved));
@@ -80,6 +69,8 @@
       if (target) {
         await tick();
         jump(target);
+      } else {
+        jump(SECTIONS[0].id);
       }
     } catch (e) {
       loadError = String(e);
@@ -89,7 +80,6 @@
   // Leaving would silently drop the edits; ask for a decision in the save
   // bar instead (WebView dialogs are not reliable inside Tauri).
   onDestroy(() => {
-    window.removeEventListener('scroll', onScroll);
     unlisten?.();
   });
 
@@ -145,50 +135,75 @@
     message = null;
   }
 
+  /** 表示中の分類（検索結果に含まれない場合は先頭）。 */
+  const shown = $derived(visible.find((v) => v.section.id === current) ?? visible[0]);
+  /** 選択中の項目（選択帯と説明窓の対象）。 */
+  let activePath = $state<string | null>(null);
+  const activeField = $derived(shown?.fields.find((f) => f.path === activePath) ?? null);
+  const explain = $derived(activeField?.help ?? activeField?.label ?? shown?.section.description ?? '');
+
   function jump(id: string) {
     current = id;
-    document.getElementById(`section-${id}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    const s = visible.find((v) => v.section.id === id);
+    activePath = s?.fields[0]?.path ?? null;
+  }
+
+  function moveRow(delta: number) {
+    const fields = shown?.fields ?? [];
+    if (fields.length === 0) return;
+    const i = fields.findIndex((f) => f.path === activePath);
+    const next = fields[(i + delta + fields.length) % fields.length];
+    activePath = next.path;
+    const row = document.querySelector<HTMLElement>(`[data-row="${next.path}"]`);
+    row?.scrollIntoView({ block: 'nearest' });
+    row?.querySelector<HTMLElement>('input,select,button')?.focus({ preventScroll: true });
+  }
+
+  function onKey(e: KeyboardEvent) {
+    if (e.ctrlKey || e.altKey || e.metaKey) return;
+    const t = e.target as HTMLElement | null;
+    const typing = !!t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName));
+    const ids = visible.map((v) => v.section.id);
+    const at = Math.max(0, ids.indexOf(shown?.section.id ?? ''));
+    if (e.key === 'PageDown') jump(ids[(at + 1) % ids.length]);
+    else if (e.key === 'PageUp') jump(ids[(at - 1 + ids.length) % ids.length]);
+    else if (typing) return;
+    else if (e.key === 'ArrowDown') moveRow(1);
+    else if (e.key === 'ArrowUp') moveRow(-1);
+    else if (e.key === '/') document.getElementById('settings-search')?.focus();
+    else return;
+    e.preventDefault();
   }
 </script>
 
-<div class="mx-auto flex max-w-5xl flex-col gap-4 px-4 pb-28 pt-6 sm:px-6">
-  <header class="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-    <div>
-      <div class="page-title"><PixelTitle text="設定" tag="h1" height={40} fit /></div>
-      <p class="text-sm text-ink-muted">保存時に即時反映。</p>
-    </div>
-    <div class="relative w-full sm:w-64">
-      <Search class="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-faint" />
-      <input
-        bind:value={query}
-        type="search"
-        placeholder="設定を検索"
-        aria-label="設定を検索"
-        class="w-full rounded-ml-sm border border-border bg-surface-elevated py-1.5 pl-8 pr-3 text-sm placeholder:text-ink-faint focus:border-accent/60 focus:outline-none"
-      />
+<svelte:window onkeydown={onKey} />
+
+<div class="cfg">
+  <header class="head">
+    <div class="page-title"><PixelTitle text="設定" tag="h1" height={46} fit /></div>
+    <span class="px-chip section-name" data-tone="amber" use:slant>{shown?.section.title ?? ''}</span>
+    <div class="search">
+      <Search class="icon" />
+      <input id="settings-search" bind:value={query} type="search" placeholder="設定を検索" aria-label="設定を検索" />
     </div>
   </header>
 
   {#if loadError}
-    <p class="rounded-ml border border-red-500/50 bg-red-500/10 p-3 text-sm break-words text-red-500">
-      設定の読込に失敗：{loadError}
-    </p>
+    <p class="px-win error">設定の読込に失敗：{loadError}</p>
   {:else if !draft || !defaults}
-    <p class="text-ink-faint">読込中…</p>
+    <p class="loading">読込中…</p>
+  {:else if visible.length === 0}
+    <p class="px-win empty">「{query}」：該当なし</p>
   {:else}
-    <div class="flex flex-col gap-4 md:flex-row md:items-start md:gap-8">
-      <!-- Section index: a sidebar on wide windows, a scrollable row on narrow ones. -->
-      <nav
-        aria-label="設定の項目"
-        class="scrollbar-minimal -mx-4 flex gap-1 overflow-x-auto px-4 md:sticky md:top-16 md:mx-0 md:w-44 md:shrink-0 md:flex-col md:overflow-visible md:px-0"
-      >
+    <div class="body">
+      <!-- 分類：斜めの階段状タブ（下段ほど左へ後退） -->
+      <nav aria-label="設定の分類" class="tabs scrollbar-minimal">
         {#each visible as { section }, i (section.id)}
-          <!-- 斜めの階段状タブ：下段ほど左へ後退 -->
           <button
-            class="px-chip section-tab shrink-0 text-left"
+            class="px-chip tab"
             style="--step: {visible.length - 1 - i}"
-            data-tone={current === section.id ? 'bone' : undefined}
-            aria-current={current === section.id ? 'true' : undefined}
+            data-tone={shown?.section.id === section.id ? 'bone' : undefined}
+            aria-current={shown?.section.id === section.id ? 'true' : undefined}
             use:slant
             onclick={() => jump(section.id)}
           >
@@ -197,54 +212,61 @@
         {/each}
       </nav>
 
-      <div class="flex min-w-0 flex-1 flex-col gap-6">
-        {#each visible as { section, fields } (section.id)}
-          <section id="section-{section.id}" class="scroll-mt-16">
-            <h2 class="text-base font-semibold">{section.title}</h2>
-            {#if section.description}
-              <p class="mt-0.5 text-sm text-ink-muted">{section.description}</p>
-            {/if}
-            {#if 'component' in section && section.component === 'data'}
-              <div class="mt-3"><DataLocations /></div>
-            {:else if 'component' in section}
-              <div class="mt-3 flex flex-col gap-3">
-                <LocalModels />
-                <OcrModels />
-                <AsrModels />
-              </div>
-            {:else}
+      <section class="main" id="section-{shown.section.id}" aria-label={shown.section.title}>
+        <div class="frame" aria-hidden="true"></div>
+        <div class="scroll scrollbar-minimal">
+          {#if 'component' in shown.section && shown.section.component === 'data'}
+            <DataLocations />
+          {:else if 'component' in shown.section}
+            <div class="flex flex-col gap-6">
+              <LocalModels />
+              <OcrModels />
+              <AsrModels />
+            </div>
+          {:else}
+            {#each shown.fields as field (field.path)}
               <div
-                class="mt-3 divide-y divide-border rounded-ml border border-border bg-surface-elevated px-4 shadow-ml"
+                class="row"
+                class:active={activePath === field.path}
+                data-row={field.path}
+                role="presentation"
+                onmouseenter={() => (activePath = field.path)}
+                onfocusin={() => (activePath = field.path)}
               >
-                {#each fields as field (field.path)}
-                  {#if field.kind === 'glossary'}
-                    <GlossaryEditor
-                      label={field.label}
-                      help={field.help}
-                      value={getPath(draft, field.path)}
-                      defaultLang={getPath(draft, 'subtitle.target_language') ?? 'ja'}
-                      onChange={(v) => update(field.path, v)}
-                    />
-                  {:else}
-                    <SettingField
-                      {field}
-                      value={getPath(draft, field.path)}
-                      defaultValue={getPath(defaults, field.path) ?? null}
-                      invalid={clashes.includes(field.path)}
-                      onChange={(v) => update(field.path, v)}
-                    />
-                  {/if}
-                {/each}
+                {#if activePath === field.path}
+                  <div class="band outer" use:slant aria-hidden="true"></div>
+                  <div class="band inner" use:slant aria-hidden="true"></div>
+                {/if}
+                {#if field.kind === 'glossary'}
+                  <GlossaryEditor
+                    label={field.label}
+                    help={field.help}
+                    value={getPath(draft, field.path)}
+                    defaultLang={getPath(draft, 'subtitle.target_language') ?? 'ja'}
+                    onChange={(v) => update(field.path, v)}
+                  />
+                {:else}
+                  <SettingField
+                    {field}
+                    compact
+                    value={getPath(draft, field.path)}
+                    defaultValue={getPath(defaults, field.path) ?? null}
+                    invalid={clashes.includes(field.path)}
+                    onChange={(v) => update(field.path, v)}
+                  />
+                {/if}
               </div>
-            {/if}
-          </section>
-        {:else}
-          <p class="rounded-ml border border-dashed border-border p-6 text-center text-sm text-ink-muted">
-            「{query}」：該当なし
-          </p>
-        {/each}
-      </div>
+            {/each}
+          {/if}
+        </div>
+      </section>
     </div>
+
+    <section class="px-win desc" aria-live="polite">
+      <span class="px-chip px-win-title" data-tone="amber" use:slant>説明</span>
+      <p>{explain}</p>
+    </section>
+    <p class="hint">↑↓項目 PgUp/PgDn分類 /検索</p>
   {/if}
 </div>
 
@@ -289,14 +311,142 @@
 {/if}
 
 <style>
-  .section-tab:not([data-tone]):hover {
+  .cfg {
+    position: relative;
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr) auto auto;
+    gap: 12px;
+    height: calc(100vh - var(--ml-nav-h, 64px));
+    padding: 12px 28px 8px 0;
+    box-sizing: border-box;
+  }
+  .head {
+    display: flex;
+    align-items: flex-start;
+    gap: 16px;
+  }
+  .head .page-title {
+    margin-left: -24px;
+  }
+  .section-name {
+    margin-top: 28px;
+  }
+  .search {
+    position: relative;
+    margin-left: auto;
+    margin-top: 20px;
+    width: 300px;
+  }
+  .search :global(.icon) {
+    position: absolute;
+    left: 10px;
+    top: 50%;
+    width: 24px;
+    height: 24px;
+    transform: translateY(-50%);
+    color: var(--ml-px-faint);
+  }
+  .search input {
+    width: 100%;
+    padding: 2px 10px 2px 44px;
+    background: var(--ml-px-black);
+    border: 2px solid var(--ml-px-dim);
+    color: var(--ml-px-cream);
+  }
+  .search input:focus {
+    border-color: var(--ml-px-amber);
+    outline: none;
+  }
+  .body {
+    display: grid;
+    grid-template-columns: 360px minmax(0, 1fr);
+    gap: 32px;
+    min-height: 0;
+  }
+  .tabs {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    overflow-y: auto;
+    padding: 4px 0;
+  }
+  .tab {
+    margin-left: calc(var(--step) * 6px + 12px);
+    margin-right: 16px;
+    white-space: nowrap;
+    line-height: 34px;
+    text-align: left;
+  }
+  .tab[data-tone] {
+    margin-right: -8px;
+  }
+  .tab:not([data-tone]):hover {
     background: var(--ml-px-dim);
     color: var(--ml-px-cream);
   }
-  @media (min-width: 768px) {
-    .section-tab {
-      margin-left: calc(var(--step) * 4px);
-      margin-right: calc((var(--step) * -4px) + 8px);
-    }
+  .main {
+    position: relative;
+    min-height: 0;
+  }
+  .frame {
+    position: absolute;
+    inset: 0 0 0 20px;
+    background: var(--ml-px-black);
+    border-top: 2px solid var(--ml-px-bone);
+    border-left: 2px solid var(--ml-px-bone);
+    border-right: 2px solid var(--ml-px-dim);
+    border-bottom: 2px solid var(--ml-px-dim);
+  }
+  .scroll {
+    position: relative;
+    height: 100%;
+    overflow-y: auto;
+    padding: 16px 28px 16px 60px;
+    box-sizing: border-box;
+  }
+  .row {
+    position: relative;
+    border-bottom: 2px dotted var(--ml-px-dim);
+  }
+  .row:last-child {
+    border-bottom: 0;
+  }
+  .band {
+    position: absolute;
+    pointer-events: none;
+  }
+  .band.outer {
+    inset: -6px -28px -4px -48px;
+    background: var(--ml-px-bone);
+  }
+  .band.inner {
+    inset: -2px -24px 0 -40px;
+    background: var(--ml-px-amber);
+  }
+  .row > :global(:not(.band)) {
+    position: relative;
+  }
+  .row.active :global(label),
+  .row.active :global(.value-text) {
+    color: var(--ml-px-black);
+  }
+  .desc {
+    margin-left: 52px;
+    padding-top: 26px;
+    min-height: 96px;
+    box-sizing: border-box;
+  }
+  .hint {
+    text-align: right;
+    color: var(--ml-px-faint);
+  }
+  .loading,
+  .error,
+  .empty {
+    margin-left: 28px;
+  }
+  .error {
+    color: var(--ml-px-red);
   }
 </style>
+

@@ -211,6 +211,53 @@ export class Pix {
   slab(x: number, y: number, w: number, h: number, k: number, c: Color) {
     for (let j = 0; j < h; j++) this.hl(x + Math.floor((h - 1 - j) * k), y + j, w, c);
   }
+
+  /** 斜めの枠線。 */
+  slabFrame(x: number, y: number, w: number, h: number, k: number, c: Color) {
+    for (let j = 0; j < h; j++) {
+      const o = Math.floor((h - 1 - j) * k);
+      if (j === 0 || j === h - 1) this.hl(x + o, y + j, w, c);
+      else {
+        this.px(x + o, y + j, c);
+        this.px(x + o + w - 1, y + j, c);
+      }
+    }
+  }
+
+  /** 斜めの窓：段影・本体・外枠・内枠。 */
+  slantWin(x: number, y: number, w: number, h: number, k: number, opt: { shadow?: Color; bg?: Color } = {}) {
+    if (opt.shadow !== undefined) this.slab(x + 5, y + 5, w, h, k, opt.shadow);
+    this.slab(x, y, w, h, k, opt.bg ?? 0);
+    this.slabFrame(x, y, w, h, k, 5);
+    this.slabFrame(x + 3, y + 2, w - 6, h - 4, k, 3);
+  }
+
+  /** 幅 w で折返す文字列。戻り値は次の行の y。maxLines 超過分は省略記号。 */
+  wrap(s: string, x: number, y: number, w: number, c: Color, lh = 18, maxLines = Infinity): number {
+    const lines: string[] = [];
+    let line = '';
+    for (const ch of s) {
+      // 行頭禁則：句読点・長音・閉じ括弧は前行へ追込み
+      const hang = /[、。，．ー・）」』！？]/.test(ch);
+      if (ch === '\n' || (this.textW(line + ch) > w && !hang)) {
+        lines.push(line);
+        line = ch === '\n' ? '' : ch;
+      } else line += ch;
+    }
+    if (line) lines.push(line);
+    const shown = lines.slice(0, maxLines);
+    if (lines.length > maxLines) shown[maxLines - 1] = this.fit(shown[maxLines - 1] + '…', w);
+    shown.forEach((l, i) => this.text(l, x, y + i * lh, c));
+    return y + shown.length * lh;
+  }
+
+  /** 幅 w に収まるよう末尾を省略。 */
+  fit(s: string, w: number): string {
+    if (this.textW(s) <= w) return s;
+    let t = s;
+    while (t.length > 1 && this.textW(t + '…') > w) t = t.slice(0, -1);
+    return t + '…';
+  }
 }
 
 /** 斜め縞の網点タイル。縞の周期とタイル寸法を一致させ、継ぎ目なしで敷詰め可能。 */

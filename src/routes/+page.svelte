@@ -25,10 +25,11 @@
   import ConfigIssues from '$lib/components/ConfigIssues.svelte';
   import { STATE_LABELS, engineRows, type EngineRow } from '$lib/engine-status';
   import type { Notice } from '$lib/ipc';
-  import MagicDial from '$lib/components/MagicDial.svelte';
-  import PixelTitle from '$lib/components/PixelTitle.svelte';
+  import HomeCanvas from '$lib/components/HomeCanvas.svelte';
   import { slant } from '$lib/pixel/slant';
   import type { DialItem } from '$lib/pixel/dial';
+  import type { HomeRegion } from '$lib/pixel/home';
+  import { listHistory } from '$lib/ipc';
 
   let lastError = $state<string | null>(null);
   let subtitleRunning = $state(false);
@@ -66,8 +67,10 @@
 
   onMount(async () => {
     getSettings().then(applySettings).catch(() => checkSetup());
-    window.addEventListener('focus', checkSetup);
-    unlisteners.push(() => window.removeEventListener('focus', checkSetup));
+    const refresh = () => (checkSetup(), loadRecent());
+    loadRecent();
+    window.addEventListener('focus', refresh);
+    unlisteners.push(() => window.removeEventListener('focus', refresh));
     listNotices()
       .then((n) => (notices = n))
       .catch(() => {});
@@ -158,8 +161,39 @@
   ] satisfies (DialItem & { desc: string; hotkey: string; run: () => unknown })[]);
 
   let selected = $state(0);
-  let bandEl = $state<HTMLElement | null>(null);
   const current = $derived(functions[selected]);
+
+  /** 最新の履歴 1 件（ホーム下部の「最近」）。 */
+  let recent = $state<{ text: string; time: string } | null>(null);
+  async function loadRecent() {
+    try {
+      const [e] = await listHistory({ limit: 1 });
+      if (!e) return (recent = null);
+      const d = new Date(e.created_at * 1000);
+      const text = (e.result_text || e.source_text || '').replace(/\s+/g, ' ').trim();
+      recent = { text: text || '（画像）', time: `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}` };
+    } catch {
+      recent = null;
+    }
+  }
+
+  const view = $derived({
+    items: functions,
+    hotkey: current.hotkey,
+    running: current.label === 'ライブ字幕' && subtitleRunning,
+    desc: current.desc,
+    preview: current.label === 'ライブ字幕' ? subtitlePreview : null,
+    error: lastError,
+    engines,
+    recent,
+    hint: '←→選択 Enter決定 1-5起動'
+  });
+
+  function onRegion(r: HomeRegion) {
+    if (r === 'go') activate(selected);
+    else if (r === 'engines') goto('/settings/#section-models');
+    else goto('/history/');
+  }
 
   function activate(i: number) {
     selected = i;
@@ -183,196 +217,68 @@
 <svelte:window onkeydown={onKey} />
 
 <main class="home">
-  <MagicDial items={functions} bind:selected anchor={bandEl} onactivate={activate} />
+  <HomeCanvas {view} bind:selected onactivate={activate} onregion={onRegion} />
 
-  <!-- 支援技術・キーボード向けの機能一覧（視覚表現は魔法陣） -->
+  <!-- 支援技術向けの機能一覧（視覚表現は魔法陣） -->
   <ul class="sr-only" aria-label="機能">
     {#each functions as f, i (f.label)}
-      <li><button onclick={() => activate(i)}>{i + 1}. {f.label}</button></li>
+      <li><button onclick={() => activate(i)}>{i + 1}. {f.label}：{f.desc}</button></li>
     {/each}
   </ul>
+  {#if lastError}<p class="sr-only" role="alert">{lastError}</p>{/if}
 
-  <div class="side">
-    <ConfigIssues />
-
-    {#each notices as n (n.id)}
-      <section class="px-win notice" role="alert">
-        <p class="min-w-0 flex-1 break-words">
-          {n.message}
-          {#if n.action}
-            <a href={n.action} class="link">設定を開く</a>
-          {/if}
-        </p>
-        <button class="close" title="閉じる" aria-label="通知を閉じる" onclick={() => dismissNotice(n.id).catch(() => {})}>
-          <X class="h-4 w-4" />
-        </button>
-      </section>
-    {/each}
-
-    {#if missing.length > 0}
-      <section class="px-win notice">
-        <p class="min-w-0 flex-1">初回セットアップ：{missing.join('・')}のダウンロードが必要。</p>
-        <button class="px-chip" data-tone="amber" use:slant onclick={() => goto('/settings/#section-models')}>モデル準備</button>
-      </section>
-    {/if}
-
-    <PixelTitle text={current.label} note={`${String(selected + 1).padStart(2, '0')}/${String(functions.length).padStart(2, '0')}`} bind:el={bandEl} />
-
-    <div class="chips">
-      {#if current.hotkey}<kbd class="px-chip" data-tone="bone" use:slant>{current.hotkey}</kbd>{/if}
-      <span class="px-chip" use:slant>直接 {selected + 1}</span>
-      {#if current.label === 'ライブ字幕' && subtitleRunning}<span class="px-chip live" use:slant>● 動作中</span>{/if}
+  <!-- 通知・初回セットアップ：左上へ重ねる窓（該当時のみ） -->
+  {#if notices.length > 0 || missing.length > 0}
+    <div class="alerts">
+      <ConfigIssues />
+      {#each notices as n (n.id)}
+        <section class="px-win notice" role="alert">
+          <p class="min-w-0 flex-1 break-words">
+            {n.message}
+            {#if n.action}<a href={n.action} class="link">設定を開く</a>{/if}
+          </p>
+          <button class="close" title="閉じる" aria-label="通知を閉じる" onclick={() => dismissNotice(n.id).catch(() => {})}>
+            <X class="h-4 w-4" />
+          </button>
+        </section>
+      {/each}
+      {#if missing.length > 0}
+        <section class="px-win notice">
+          <p class="min-w-0 flex-1">初回セットアップ：{missing.join('・')}のダウンロードが必要。</p>
+          <button class="px-chip" data-tone="amber" use:slant onclick={() => goto('/settings/#section-models')}>モデル準備</button>
+        </section>
+      {/if}
     </div>
-
-    <section class="px-win desc">
-      <p>{current.desc}</p>
-      {#if current.label === 'ライブ字幕' && subtitlePreview}
-        <p class="preview">{subtitlePreview}</p>
-      {/if}
-      {#if lastError}
-        <p class="error" role="alert">{lastError}</p>
-      {/if}
-      <div class="go">
-        <button class="go-btn" onclick={() => activate(selected)}>
-          ▶ Enter で{current.label === 'ライブ字幕' && subtitleRunning ? '停止' : '開始'}
-        </button>
-      </div>
-    </section>
-
-    {#if engines.length > 0}
-      <section class="px-win engines" aria-labelledby="engine-heading">
-        <h2 id="engine-heading" class="px-chip px-win-title" data-tone="amber" use:slant>エンジン</h2>
-        <ul>
-          {#each engines as row (row.id)}
-            <li>
-              <span class="label">{row.label}</span>
-              <span class="model" title={row.model}>{row.model}</span>
-              <span class="state" data-state={row.state}>{STATE_LABELS[row.state]}</span>
-            </li>
-          {/each}
-        </ul>
-        <a href="/settings/#section-models" class="link manage">モデル管理 ▶</a>
-      </section>
-    {/if}
-  </div>
-
-  <p class="hint">
-    ←→選択　Enter決定　1〜5直接起動{#if key('open_command_palette')}　{key('open_command_palette')} コマンド{/if}　翻訳先：{languageLabel(targetLanguage) || targetLanguage}
-  </p>
+  {:else}
+    <div class="alerts"><ConfigIssues /></div>
+  {/if}
 </main>
 
 <style>
   .home {
     position: relative;
-    height: calc(100vh - 46px);
-    min-height: 420px;
+    height: calc(100vh - var(--ml-nav-h, 64px));
+    min-height: 560px;
     overflow: hidden;
   }
-  .side {
+  .alerts {
     position: absolute;
-    top: 18px;
-    right: 16px;
-    bottom: 40px;
-    width: min(420px, 48%);
+    top: 12px;
+    left: 16px;
+    width: min(560px, 44%);
     display: flex;
     flex-direction: column;
-    gap: 14px;
-    overflow-y: auto;
-    padding: 6px 8px 8px 0;
-  }
-  .chips {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px;
-    margin-left: 12px;
-  }
-  .live {
-    color: var(--ml-px-green);
-  }
-  .desc {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    margin-left: 8px;
-  }
-  .desc .preview {
-    color: var(--ml-px-faint);
-    overflow: hidden;
-    display: -webkit-box;
-    -webkit-line-clamp: 2;
-    line-clamp: 2;
-    -webkit-box-orient: vertical;
-  }
-  .error {
-    color: var(--ml-px-red);
-    overflow-wrap: anywhere;
-  }
-  .go {
-    display: flex;
-    justify-content: flex-end;
-  }
-  .go-btn {
-    color: var(--ml-px-amber);
-  }
-  .go-btn:hover {
-    color: var(--ml-px-bone);
-  }
-  .engines {
-    margin-left: 16px;
-    padding-top: 20px;
-  }
-  .engines ul {
-    display: grid;
-    gap: 2px;
-  }
-  .engines li {
-    display: grid;
-    grid-template-columns: 6.5em minmax(0, 1fr) auto;
-    gap: 8px;
-  }
-  .engines .label {
-    color: var(--ml-px-mid);
-  }
-  .engines .model {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .state[data-state='ready'] {
-    color: var(--ml-px-green);
-  }
-  .state[data-state='missing'] {
-    color: var(--ml-px-red);
-  }
-  .state[data-state='downloading'],
-  .state[data-state='unset'] {
-    color: var(--ml-px-faint);
-  }
-  .manage {
-    display: block;
-    margin-top: 6px;
-    text-align: right;
+    gap: 12px;
   }
   .notice {
     display: flex;
     align-items: flex-start;
-    gap: 8px;
+    gap: 12px;
   }
   .close {
     color: var(--ml-px-faint);
   }
   .link {
     color: var(--ml-px-amber);
-  }
-  .link:hover {
-    color: var(--ml-px-bone);
-  }
-  .hint {
-    position: absolute;
-    right: 16px;
-    bottom: 10px;
-    color: var(--ml-px-faint);
-    font-size: 16px;
-    white-space: nowrap;
   }
 </style>

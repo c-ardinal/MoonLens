@@ -1,5 +1,6 @@
 /**
  * ホームの魔法陣メニュー：幾何計算（純関数）と描画。
+ * 寸法は UI 第5案のモック（論理 640×368、外周ルーン環 半径 158）を基準に比例配分。
  * 選択中の項目は常に右上（-54 度）へ回転し、見出し帯と接続。
  */
 import { type Color, Pix } from './pix';
@@ -8,7 +9,7 @@ import { ICONS, MINI_RUNES, RUNES, type IconName } from './glyphs';
 export interface DialItem {
   label: string;
   icon: IconName;
-  /** 未導入などで実行不可。破線枠と赤い × 印で表示。 */
+  /** 実行不可。破線枠と赤い × 印で表示。 */
   locked?: boolean;
 }
 
@@ -23,23 +24,22 @@ export interface DialGeometry {
 
 /** 選択項目の向き（度）。右上の見出し帯側。 */
 export const SELECTED_ANGLE = -54;
-export const NODE_HIT_RADIUS = 24;
-const CENTER_HIT_RADIUS = 34;
+/** 右側の情報欄の幅（論理画素）。 */
+export const SIDE_WIDTH = 310;
+export const NODE_HIT_RADIUS = 26;
+const CENTER_HIT_RADIUS = 38;
 
-/**
- * 論理解像度 w×h のうち、右側 reserve 画素を情報欄に確保した配置。
- * 魔法陣は左下へはみ出す前提の大きさ。
- */
-export function dialGeometry(w: number, h: number, count: number, selected: number, reserve = 440): DialGeometry {
+/** 論理解像度 w×h の配置。魔法陣は左下へはみ出す前提の大きさ。 */
+export function dialGeometry(w: number, h: number, count: number, selected: number, reserve = SIDE_WIDTH): DialGeometry {
   const free = Math.max(160, w - reserve);
-  const r = Math.round(Math.min(h * 0.47, free * 0.5));
-  const cx = Math.round(free * 0.48);
-  const cy = Math.round(h * 0.56);
+  const r = Math.round(Math.min(h * 0.43, free * 0.48));
+  const cx = Math.round(free * 0.53);
+  const cy = Math.round(h * 0.6);
   const step = 360 / Math.max(1, count);
+  const rn = r * 0.76;
   const nodes = Array.from({ length: count }, (_, i) => {
     const angle = SELECTED_ANGLE + (i - selected) * step;
     const t = (angle * Math.PI) / 180;
-    const rn = r * 0.72;
     return { x: Math.round(cx + rn * Math.cos(t)), y: Math.round(cy + rn * Math.sin(t)), angle };
   });
   return { cx, cy, r, nodes };
@@ -69,21 +69,20 @@ export function labelPlacement(angle: number): 'above' | 'below' | 'left' | 'rig
   return 'below';
 }
 
-function runeRing(p: Pix, cx: number, cy: number, r: number, set: readonly (readonly string[])[], c: Color, gap: number) {
-  const n = Math.max(8, Math.floor((2 * Math.PI * r) / gap));
+function runeRing(p: Pix, cx: number, cy: number, r: number, n: number, set: readonly (readonly string[])[], c: Color, offDeg = 0) {
   const w = set[0][0].length,
     h = set[0].length;
   for (let i = 0; i < n; i++) {
-    const t = (i / n) * Math.PI * 2 - Math.PI / 2;
+    const t = ((i / n) * 360 - 90 + offDeg) * (Math.PI / 180);
     p.icon(set[i % set.length], Math.round(cx + r * Math.cos(t) - w / 2), Math.round(cy + r * Math.sin(t) - h / 2), c);
   }
 }
 
-/** 斜めの名札（背景つき）。 */
-function chip(p: Pix, x: number, y: number, s: string, fg: Color, bg: Color) {
-  const w = p.textW(s) + 14;
-  p.slab(x, y, w, 19, 0.3, bg);
-  p.text(s, x + 9, y + 1, fg);
+/** 斜めの名札（背景つき）。戻り値は幅。 */
+export function chip(p: Pix, x: number, y: number, s: string, fg: Color, bg: Color, pad = 8, k = 0.3) {
+  const w = p.textW(s) + pad * 2;
+  p.slab(x, y, w, 19, k, bg);
+  p.text(s, x + pad + 3, y + 1, fg);
   return w;
 }
 
@@ -95,58 +94,55 @@ export interface DialState {
   anchor?: { x: number; y: number };
 }
 
-export function drawDial(p: Pix, s: DialState, reserve?: number) {
+export function drawDial(p: Pix, s: DialState, reserve = SIDE_WIDTH) {
   const geo = dialGeometry(p.w, p.h, s.items.length, s.selected, reserve);
   const { cx, cy, r } = geo;
-  p.clear();
+  const q = r / 158; // モック比
 
   // 外周：ルーン環と目盛り
-  p.fcircle(cx, cy, r + 10, 0);
-  p.circle(cx, cy, r + 9, 3, [1, 2]);
-  p.circle(cx, cy, r + 3, 3);
-  p.circle(cx, cy, r, 5);
-  p.circle(cx, cy, r - 1, 5);
-  runeRing(p, cx, cy, r - 10, RUNES, 5, 11);
-  p.circle(cx, cy, r - 20, 5);
-  p.circle(cx, cy, r - 23, 3);
-  const tick = r - 23;
+  p.fcircle(cx, cy, Math.round(r + 20 * q), 0);
+  p.circle(cx, cy, Math.round(r + 19 * q), 3, [1, 2]);
+  p.circle(cx, cy, Math.round(r + 13 * q), 3);
+  p.circle(cx, cy, Math.round(r + 10 * q), 5);
+  runeRing(p, cx, cy, r, Math.round(52 * q), RUNES, 5);
+  p.circle(cx, cy, Math.round(r - 10 * q), 5);
+  const tick = Math.round(r - 13 * q);
+  p.circle(cx, cy, tick, 3);
   for (let i = 0; i < 72; i++) {
     const t = ((i * 5 - 90) * Math.PI) / 180,
       l = i % 6 === 0 ? 6 : 2;
     p.line(cx + tick * Math.cos(t), cy + tick * Math.sin(t), cx + (tick - l) * Math.cos(t), cy + (tick - l) * Math.sin(t), i % 6 === 0 ? 5 : 3);
   }
 
-  // 五芒星（項目数 5 の場合）・多角形（その他）
+  // 五芒星（項目数 5）・多角形（その他）
   const N = geo.nodes;
   if (N.length === 5) [0, 2, 4, 1, 3, 0].reduce((a, b) => (p.line(N[a].x, N[a].y, N[b].x, N[b].y, 4), b));
   else N.forEach((n, i) => p.line(n.x, n.y, N[(i + 1) % N.length].x, N[(i + 1) % N.length].y, 4));
 
-  // 内周
-  const ri = Math.round(r * 0.43);
+  // 内周と小ルーン
+  const ri = Math.round(r * 0.456);
   p.circle(cx, cy, ri, 5);
   p.circle(cx, cy, ri - 3, 3);
-  runeRing(p, cx, cy, ri - 11, MINI_RUNES, 4, 7);
+  runeRing(p, cx, cy, ri - 11, 30, MINI_RUNES, 4, 6);
   p.circle(cx, cy, ri - 19, 3);
   // 星の谷間の紋章
   N.forEach((n, i) => {
     const t = ((n.angle + 180 / N.length) * Math.PI) / 180;
-    p.icon(RUNES[(i * 3) % RUNES.length], Math.round(cx + r * 0.56 * Math.cos(t) - 3), Math.round(cy + r * 0.56 * Math.sin(t) - 4), 4);
+    p.icon(RUNES[(i * 3) % RUNES.length], Math.round(cx + r * 0.595 * Math.cos(t) - 3), Math.round(cy + r * 0.595 * Math.sin(t) - 4), 4);
   });
 
   // 中心の決定
   const hc = s.hover === 'center';
-  p.diamond(cx, cy, 40, hc ? 9 : 5, 0);
-  p.diamond(cx, cy, 36, 3);
-  p.diamond(cx, cy, 34, 2);
-  p.text('決定', cx, cy - 19, hc ? 9 : 6, { align: 'center' });
-  p.text('Enter', cx, cy + 1, 4, { align: 'center' });
+  p.diamond(cx, cy, 38, hc ? 9 : 5, 0);
+  p.diamond(cx, cy, 34, 3);
+  p.text('決定', cx, cy - 22, 9, { align: 'center' });
+  p.text('Enter', cx, cy + 3, 4, { align: 'center' });
 
-  // 選択線：中心 → 選択ノード → 見出し帯
+  // 選択線：見出し帯へ 3 本の平行線、中心から破線
   const sel = N[s.selected];
   if (sel) {
-    p.line(cx + 28, cy - 28, sel.x - 16, sel.y + 16, 5, [3, 2]);
-    if (s.anchor)
-      for (let d = -2; d <= 2; d += 2) p.line(sel.x + d, sel.y - 4 + d, s.anchor.x + d, s.anchor.y + d, d === 0 ? 9 : 5);
+    if (s.anchor) for (let d = -2; d <= 2; d += 2) p.line(sel.x + d, sel.y - 4 + d, s.anchor.x + d, s.anchor.y + d, d === 0 ? 9 : 5);
+    p.line(cx + 26, cy - 26, sel.x - 14, sel.y + 14, 5, [3, 2]);
   }
 
   // ノード
@@ -156,19 +152,19 @@ export function drawDial(p: Pix, s: DialState, reserve?: number) {
       hov = s.hover === i,
       lock = !!item.locked;
     if (on) {
-      p.diamond(x, y, 32, 9, 1);
-      p.diamond(x, y, 27, 5, 5);
+      p.diamond(x, y, 30, 9, 1);
+      p.diamond(x, y, 25, 5, 5);
     } else {
-      p.diamond(x, y, 24, hov ? 9 : lock ? 3 : 5, hov ? 2 : 0, lock ? [2, 2] : undefined);
-      if (!lock) p.diamond(x, y, 20, 3);
+      p.diamond(x, y, 21, hov ? 9 : lock ? 3 : 5, hov ? 2 : 0, lock ? [2, 2] : undefined);
+      if (!lock) p.diamond(x, y, 17, 3);
     }
     p.icon(ICONS[item.icon], x - 8, y - 8, on ? 0 : lock ? 3 : hov ? 9 : 5, 2);
     if (on) return;
-    p.text(String(i + 1), x + 16, y - 34, hov ? 6 : 3);
-    const w = p.textW(item.label) + 14;
+    p.text(String(i + 1), x + 13, y - 30, hov ? 6 : 3);
+    const w = p.textW(item.label) + 16;
     const place = labelPlacement(angle);
-    let lx = place === 'left' ? x - 30 - w : place === 'right' ? x + 30 : Math.round(x - w / 2);
-    const ly = place === 'above' ? y - 50 : place === 'below' ? y + 29 : y - 9;
+    let lx = place === 'left' ? x - 24 - w : place === 'right' ? x + 24 : Math.round(x - w / 2);
+    const ly = place === 'above' ? y - 46 : place === 'below' ? y + 26 : y - 9;
     lx = Math.max(2, Math.min(p.w - w - 14, lx));
     chip(p, lx, ly, item.label, lock ? 3 : hov ? 0 : 5, hov ? 9 : 1);
     if (lock) {
