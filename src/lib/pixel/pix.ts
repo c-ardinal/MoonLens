@@ -251,12 +251,20 @@ export class Pix {
     return y + shown.length * lh;
   }
 
-  /** 幅 w に収まるよう末尾を省略。 */
+  /** 幅 w に収まるよう末尾を省略。長文も計測回数は対数（二分探索）。 */
   fit(s: string, w: number): string {
-    if (this.textW(s) <= w) return s;
-    let t = s;
-    while (t.length > 1 && this.textW(t + '…') > w) t = t.slice(0, -1);
-    return t + '…';
+    const chars = [...s];
+    // 1 文字は最低 4 ドット幅：w / 4 文字超は確実に超過のため先に切詰め
+    const cap = Math.min(chars.length, Math.ceil(w / 4) + 1);
+    if (cap === chars.length && this.textW(s) <= w) return s;
+    let lo = 1,
+      hi = cap; // lo：収まる最長（最低 1 文字）、hi：探索上限
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >> 1;
+      if (this.textW(chars.slice(0, mid).join('') + '…') <= w) lo = mid;
+      else hi = mid - 1;
+    }
+    return chars.slice(0, lo).join('') + '…';
   }
 }
 

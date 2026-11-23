@@ -183,7 +183,8 @@
     running: current.label === 'ライブ字幕' && subtitleRunning,
     desc: current.desc,
     preview: current.label === 'ライブ字幕' ? subtitlePreview : null,
-    error: lastError,
+    // 起動失敗の全文は上部の通知帯へ表示（魔法陣側は 1 行省略のため重複表示しない）
+    error: null,
     engines,
     recent,
     hint: `←→選択 Enter・1-5起動${key('open_command_palette') ? ` ${key('open_command_palette')}パレット` : ''}`
@@ -218,8 +219,7 @@
 
 <main class="home">
   <!-- 通知・初回セットアップ：魔法陣の上部へ帯状に配置（該当時のみ、重複なし） -->
-  {#if notices.length > 0 || missing.length > 0}
-    <div class="alerts">
+  <div class="alerts">
       <ConfigIssues />
       {#each notices as n (n.id)}
         <section class="px-win notice" role="alert">
@@ -238,10 +238,15 @@
           <button class="px-chip" data-tone="amber" use:slant onclick={() => goto('/settings/#section-models')}>モデル準備</button>
         </section>
       {/if}
+      {#if lastError}
+        <section class="px-win notice error" role="alert">
+          <p class="min-w-0 flex-1 break-words">{lastError}</p>
+          <button class="close" title="閉じる" aria-label="エラーを閉じる" onclick={() => (lastError = null)}>
+            <X class="h-4 w-4" />
+          </button>
+        </section>
+      {/if}
     </div>
-  {:else}
-    <div class="alerts"><ConfigIssues /></div>
-  {/if}
   <div class="stage">
     <HomeCanvas {view} bind:selected onactivate={activate} onregion={onRegion} />
   </div>
@@ -252,7 +257,6 @@
       <li><button onclick={() => activate(i)}>{i + 1}. {f.label}：{f.desc}</button></li>
     {/each}
   </ul>
-  {#if lastError}<p class="sr-only" role="alert">{lastError}</p>{/if}
 
 </main>
 
@@ -286,6 +290,9 @@
   }
   .close {
     color: var(--ml-px-faint);
+  }
+  .error p {
+    color: var(--ml-px-red);
   }
   .link {
     color: var(--ml-px-amber);
