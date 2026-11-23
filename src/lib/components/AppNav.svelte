@@ -44,6 +44,9 @@
   });
   onDestroy(() => unlisten?.());
 
+  /** タブの傾き：斜めの切抜き幅（上端 4px）を右余白内へ収め、文字との干渉を防止。 */
+  const TAB_K = 0.15;
+
   const active = (href: string) =>
     href === '/' ? page.url.pathname === '/' : page.url.pathname.startsWith(href);
 </script>
@@ -59,7 +62,7 @@
             aria-current={active(item.href) ? 'page' : undefined}
             class="px-chip"
             data-tone={active(item.href) ? 'bone' : undefined}
-            use:slant
+            use:slant={TAB_K}
           >
             {item.label}
           </a>
@@ -67,7 +70,7 @@
       {/each}
     </ul>
     {#if target}
-      <a href="/settings/" class="px-chip target" data-tone="amber" use:slant title="翻訳先言語：{target}（設定で変更）">{target}▶</a>
+      <a href="/settings/" class="px-chip target" data-tone="amber" use:slant={TAB_K} title="翻訳先言語：{target}（設定で変更）">{target}▶</a>
     {/if}
     <div class="ctls" data-tauri-drag-region>
       <button class="ctl" title="最小化" aria-label="最小化" onclick={minimize}>
@@ -96,7 +99,7 @@
     display: flex;
     align-items: center;
     height: 64px;
-    padding: 0 36px 0 16px;
+    padding: 0 22px 0 30px; /* 斜めの左端（上端ほど右へ後退）と文字の干渉防止 */
     background: var(--ml-px-amber);
     color: var(--ml-px-black);
     font-size: 32px;
@@ -114,7 +117,7 @@
     flex-shrink: 0;
   }
   .px-chip {
-    padding: 0 6px 0 14px;
+    padding: 0 8px 0 12px;
   }
   .px-chip:not([data-tone]) {
     color: var(--ml-px-mid);
