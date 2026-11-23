@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onDestroy, onMount } from 'svelte';
+  import { onDestroy, onMount, untrack } from 'svelte';
   import { Pix } from '$lib/pixel/pix';
   import { dialGeometry, hitTest } from '$lib/pixel/dial';
   import { drawHome, drawHomeMotion, homeDot, homeRegions, type HomeRegion, type HomeView } from '$lib/pixel/home';
@@ -112,7 +112,15 @@
       drawHomeMotion(low!, { items: view.items, selected, turn }, clock);
     };
     raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
+    return () => {
+      cancelAnimationFrame(raf);
+      // 演出途中の停止（推論開始など）：回転を完了状態へ確定し、表示と当り判定を一致
+      if (untrack(() => anim)) {
+        anim = null;
+        turn = undefined;
+        slide = 1;
+      }
+    };
   });
 
   function locate(e: MouseEvent): { dial: number | null; region: HomeRegion | null } {

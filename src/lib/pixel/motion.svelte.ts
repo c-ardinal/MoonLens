@@ -2,6 +2,7 @@
  * メインウィンドウの演出制御。推論中（字幕・ライブ翻訳・翻訳実行）と動き削減設定時は停止。
  * 停止状態は `<html data-motion>` へ反映し、CSS 演出も同期。
  */
+import { untrack } from 'svelte';
 import { onPinState, onSubtitle, subtitleState } from '$lib/ipc';
 
 const state = $state({ holds: 0, subtitle: false, pinned: false, reduced: false });
@@ -17,14 +18,17 @@ export const motion = {
   }
 };
 
-/** 推論区間の宣言。戻り値の関数で解除（重複呼出しは無視）。 */
+/**
+ * 推論区間の宣言。戻り値の関数で解除（重複呼出しは無視）。
+ * 計数の読み書きは追跡外：呼出し元の $effect が計数へ依存し再実行を繰返す事態を防止。
+ */
 export function holdMotion(): () => void {
-  state.holds++;
+  untrack(() => state.holds++);
   let done = false;
   return () => {
     if (done) return;
     done = true;
-    state.holds--;
+    untrack(() => state.holds--);
   };
 }
 
