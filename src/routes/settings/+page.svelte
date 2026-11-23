@@ -141,6 +141,13 @@
   /** 選択中の項目（選択帯と説明窓の対象）。 */
   let activePath = $state<string | null>(null);
   const activeField = $derived(shown?.fields.find((f) => f.path === activePath) ?? null);
+  const showingModels = $derived(
+    !!shown && 'component' in shown.section && shown.section.component !== 'data'
+  );
+  let modelsMounted = $state(false);
+  $effect(() => {
+    if (showingModels) modelsMounted = true;
+  });
   // 項目名の再掲は冗長：説明のない項目は分類の説明を表示
   const explain = $derived(activeField?.help ?? shown?.section.description ?? activeField?.label ?? '');
 
@@ -226,14 +233,18 @@
       <section class="main" id="section-{shown.section.id}" aria-label={shown.section.title}>
         <div class="frame" aria-hidden="true"></div>
         <div class="scroll scrollbar-minimal">
-          {#if 'component' in shown.section && shown.section.component === 'data'}
-            <DataLocations />
-          {:else if 'component' in shown.section}
-            <div class="flex flex-col gap-6">
+          <!-- モデル管理：一度表示後は分類切替でも保持（取得中の進捗・完了通知を継続） -->
+          {#if modelsMounted}
+            <div class="flex flex-col gap-6" style:display={showingModels ? null : "none"}>
               <LocalModels />
               <OcrModels />
               <AsrModels />
             </div>
+          {/if}
+          {#if 'component' in shown.section && shown.section.component === 'data'}
+            <DataLocations />
+          {:else if 'component' in shown.section}
+            <!-- モデル管理は上部で描画 -->
           {:else}
             {#each shown.fields as field (field.path)}
               <div
@@ -433,11 +444,12 @@
     pointer-events: none;
   }
   .band.outer {
-    inset: -6px -28px -4px -48px;
+    /* 枠（左 22px・右 2px の内側）へ収める：枠線との重複なし */
+    inset: -6px -24px -4px -36px;
     background: var(--ml-px-bone);
   }
   .band.inner {
-    inset: -2px -24px 0 -40px;
+    inset: -2px -20px 0 -30px;
     background: var(--ml-px-amber);
   }
   .row > :global(:not(.band)) {
