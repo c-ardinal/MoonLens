@@ -897,15 +897,25 @@ impl Pipeline {
         // The capture's text in reading order, including blocks served
         // from the cache or already in the target language: `whole` only
         // holds what this run requested, so a partly cached capture would
-        // copy and show only some of its paragraphs.
-        let all = bundle
-            .blocks
+        // copy and show only some of its paragraphs. When a requested
+        // block has no translation of its own (the batch reply could not
+        // be split and the per-block retries failed), keep the batch
+        // reply instead so no received text is lost.
+        let text = if pending
             .iter()
-            .filter_map(|b| b.translation.clone())
-            .collect::<Vec<_>>()
-            .join(layout::BLOCK_SEPARATOR);
+            .all(|&i| bundle.blocks[i].translation.is_some())
+        {
+            bundle
+                .blocks
+                .iter()
+                .filter_map(|b| b.translation.clone())
+                .collect::<Vec<_>>()
+                .join(layout::BLOCK_SEPARATOR)
+        } else {
+            whole
+        };
         bundle.result = TaskResult {
-            output: TaskOutput::Text(all),
+            output: TaskOutput::Text(text),
             latency_ms: started.elapsed().as_millis() as u64,
             fallback_reasons: reasons,
             ..first

@@ -61,23 +61,30 @@
     }
   }
 
-  function apply(r: CaptureFlowResult) {
+  /** Bumped when the lens moves or resizes: results of captures started
+   * before that belong to another spot and must not be painted. */
+  let geometry = 0;
+  /** `geometry` when the latest capture started. */
+  let captureGeometry = 0;
+
+  function apply(r: CaptureFlowResult, at = captureGeometry) {
     source = r.source_text;
     // No text found: show the empty state, not "(photo detected)".
     translation = 'Intent' in (r.result.output as object) ? '' : extractText(r.result);
     viaCloud = r.result.via_cloud;
     provider = r.result.used_provider;
     empty = !source?.trim() && !translation.trim();
-    blocks = r.blocks ?? [];
+    blocks = at === geometry ? (r.blocks ?? []) : [];
   }
 
   async function capture() {
     if (busy) return;
     busy = true;
     lastError = null;
+    const at = (captureGeometry = geometry);
     try {
       const r = (await invoke('capture_lens_now', { id })) as CaptureFlowResult;
-      apply(r);
+      apply(r, at);
     } catch (e) {
       lastError = errorText(e);
     } finally {
@@ -114,8 +121,12 @@
     // Boxes from the last capture no longer line up once the lens moves
     // or is resized; drop them until the next capture.
     try {
-      unlistenMove = await win.onMoved(() => (blocks = []));
+      unlistenMove = await win.onMoved(() => {
+        geometry++;
+        blocks = [];
+      });
       unlistenResize = await win.onResized(() => {
+        geometry++;
         blocks = [];
         dpr = window.devicePixelRatio || 1;
       });
