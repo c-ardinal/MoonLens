@@ -9,6 +9,7 @@
   context-aware engine reads it in context instead of blind.
 -->
 <script lang="ts">
+  import PixelTitle from '$lib/components/PixelTitle.svelte';
   import { onDestroy, onMount } from 'svelte';
   import { ArrowLeftRight, Check, Copy, Cpu, Cloud, Languages, Loader2, X } from 'lucide-svelte';
   import { getSettings, recordTranslation, runTranslate, type TaskResult } from '$lib/ipc';
@@ -269,7 +270,7 @@
 <main class="mx-auto flex max-w-5xl flex-col gap-4 px-4 py-6 sm:px-6">
   <header class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
     <div class="min-w-0">
-      <h1 class="text-xl font-semibold tracking-tight">テキスト翻訳</h1>
+      <div class="page-title"><PixelTitle text="テキスト翻訳" tag="h1" height={40} fit /></div>
       <p class="text-sm text-ink-muted">複数行は行単位で翻訳（前行を文脈に参照）</p>
     </div>
     <label class="inline-flex shrink-0 cursor-pointer items-center gap-2 text-sm" title="入力停止 0.6 秒後に翻訳">

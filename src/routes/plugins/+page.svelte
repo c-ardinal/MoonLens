@@ -1,4 +1,5 @@
 <script lang="ts">
+  import PixelTitle from '$lib/components/PixelTitle.svelte';
   import { onMount } from 'svelte';
   import { Puzzle, Shield, Check } from 'lucide-svelte';
   import {
@@ -79,7 +80,7 @@
 <main class="mx-auto flex max-w-4xl flex-col gap-4 px-4 py-6 sm:gap-6 sm:px-6">
   <header class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
     <div>
-      <h1 class="text-xl font-semibold tracking-tight">プラグイン</h1>
+      <div class="page-title"><PixelTitle text="プラグイン" tag="h1" height={40} fit /></div>
       <p class="text-sm text-ink-muted">拡張機能の有効化・権限確認。</p>
     </div>
     <div class="flex items-center gap-2">

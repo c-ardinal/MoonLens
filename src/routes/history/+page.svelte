@@ -1,4 +1,5 @@
 <script lang="ts">
+  import PixelTitle from '$lib/components/PixelTitle.svelte';
   import { onDestroy, onMount } from 'svelte';
   import { Search, Trash2, RefreshCw, Cloud, Cpu, Copy, Check } from 'lucide-svelte';
   import {
@@ -122,7 +123,7 @@
 <main class="mx-auto flex max-w-5xl flex-col gap-4 px-4 py-6 sm:px-6">
   <header class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
     <div>
-      <h1 class="text-xl font-semibold tracking-tight">履歴</h1>
+      <div class="page-title"><PixelTitle text="履歴" tag="h1" height={40} fit /></div>
       <p class="text-sm text-ink-muted">
         {#if loading}
           読込中…

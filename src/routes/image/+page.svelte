@@ -1,4 +1,5 @@
 <script lang="ts">
+  import PixelTitle from '$lib/components/PixelTitle.svelte';
   import { onDestroy, onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import { Check, Copy, Eye, EyeOff, FolderOpen, ImageIcon, Loader2 } from 'lucide-svelte';
@@ -229,7 +230,7 @@
 <main class="mx-auto flex max-w-6xl flex-col gap-4 px-4 py-6 sm:px-6">
   <header class="flex flex-wrap items-end justify-between gap-3">
     <div class="min-w-0">
-      <h1 class="text-xl font-semibold tracking-tight">画像翻訳</h1>
+      <div class="page-title"><PixelTitle text="画像翻訳" tag="h1" height={40} fit /></div>
       <p class="truncate text-sm text-ink-muted">
         {imageName || '画像ファイルの文字を認識・翻訳。全処理ローカル実行。'}
       </p>

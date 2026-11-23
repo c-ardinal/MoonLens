@@ -188,6 +188,8 @@ MoonLens 本体は [MIT License](LICENSE)。
 `THIRD_PARTY_LICENSES.html` としてインストーラーに同梱し、Releases にも添付
 （生成: `node scripts/third-party-licenses.mjs`、`cargo install cargo-about` が必要）。
 
+同梱書体 DotGothic16 は SIL Open Font License 1.1（全文：`static/fonts/DotGothic16-OFL.txt`）。
+
 アプリが取得するモデルは各ライセンスに準拠。
 
 | モデル | ライセンス |

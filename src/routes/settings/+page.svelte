@@ -1,4 +1,6 @@
 <script lang="ts">
+  import PixelTitle from '$lib/components/PixelTitle.svelte';
+  import { slant } from '$lib/pixel/slant';
   import { onDestroy, onMount, tick } from 'svelte';
   import { beforeNavigate } from '$app/navigation';
   import { Search } from 'lucide-svelte';
@@ -152,7 +154,7 @@
 <div class="mx-auto flex max-w-5xl flex-col gap-4 px-4 pb-28 pt-6 sm:px-6">
   <header class="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
     <div>
-      <h1 class="text-xl font-semibold tracking-tight">設定</h1>
+      <div class="page-title"><PixelTitle text="設定" tag="h1" height={40} fit /></div>
       <p class="text-sm text-ink-muted">保存時に即時反映。</p>
     </div>
     <div class="relative w-full sm:w-64">
@@ -180,11 +182,14 @@
         aria-label="設定の項目"
         class="scrollbar-minimal -mx-4 flex gap-1 overflow-x-auto px-4 md:sticky md:top-16 md:mx-0 md:w-44 md:shrink-0 md:flex-col md:overflow-visible md:px-0"
       >
-        {#each visible as { section } (section.id)}
+        {#each visible as { section }, i (section.id)}
+          <!-- 斜めの階段状タブ：下段ほど左へ後退 -->
           <button
-            class="shrink-0 rounded-ml-sm px-3 py-1.5 text-left text-sm transition {current === section.id
-              ? 'bg-accent-soft text-ink'
-              : 'text-ink-muted hover:bg-surface-muted hover:text-ink'}"
+            class="px-chip section-tab shrink-0 text-left"
+            style="--step: {visible.length - 1 - i}"
+            data-tone={current === section.id ? 'bone' : undefined}
+            aria-current={current === section.id ? 'true' : undefined}
+            use:slant
             onclick={() => jump(section.id)}
           >
             {section.title}
@@ -282,3 +287,16 @@
     </div>
   </div>
 {/if}
+
+<style>
+  .section-tab:not([data-tone]):hover {
+    background: var(--ml-px-dim);
+    color: var(--ml-px-cream);
+  }
+  @media (min-width: 768px) {
+    .section-tab {
+      margin-left: calc(var(--step) * 4px);
+      margin-right: calc((var(--step) * -4px) + 8px);
+    }
+  }
+</style>

@@ -1,7 +1,7 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
   import { onDestroy, onMount } from 'svelte';
-  import { AlertCircle, AlertTriangle, Camera, Cpu, Focus, Maximize, Mic, Square, X } from 'lucide-svelte';
+  import { X } from 'lucide-svelte';
   import {
     dismissNotice,
     getSettings,
@@ -25,6 +25,10 @@
   import ConfigIssues from '$lib/components/ConfigIssues.svelte';
   import { STATE_LABELS, engineRows, type EngineRow } from '$lib/engine-status';
   import type { Notice } from '$lib/ipc';
+  import MagicDial from '$lib/components/MagicDial.svelte';
+  import PixelTitle from '$lib/components/PixelTitle.svelte';
+  import { slant } from '$lib/pixel/slant';
+  import type { DialItem } from '$lib/pixel/dial';
 
   let lastError = $state<string | null>(null);
   let subtitleRunning = $state(false);
@@ -101,185 +105,286 @@
   }
 
   const key = (name: string) => (hotkeys[name] ? displayAccelerator(hotkeys[name]) : '');
+
+  async function toggleSubtitle() {
+    if (subtitleRunning) {
+      await stopSubtitle();
+      subtitleRunning = false;
+      subtitlePreview = null;
+    } else {
+      await startSubtitle();
+      subtitleRunning = true;
+    }
+  }
+
+  const asrReady = $derived(engines.find((e) => e.id === 'asr')?.state === 'ready');
+
+  /** 魔法陣の 5 機能。順序は数字キー（1〜5）と一致。 */
+  const functions = $derived([
+    {
+      label: '範囲翻訳',
+      icon: 'region',
+      desc: '範囲を静止し、原文位置へ訳文をオーバーレイ表示。',
+      hotkey: key('capture_region'),
+      run: () => startRegionSelection(false)
+    },
+    {
+      label: '全画面翻訳',
+      icon: 'full',
+      desc: '画面全体を静止し、原文位置へ訳文をオーバーレイ表示。',
+      hotkey: key('capture_window'),
+      run: () => startRegionSelection(true)
+    },
+    {
+      label: 'Lens',
+      icon: 'lens',
+      desc: '定位置の継続翻訳ウィンドウ。動画字幕・ゲーム画面向け。',
+      hotkey: '',
+      run: newLensWindow
+    },
+    {
+      label: 'ライブ字幕',
+      icon: 'mic',
+      desc: subtitleRunning ? '字幕表示中。Enter で停止。' : 'システム音声を認識・翻訳し、字幕表示。',
+      hotkey: key('toggle_subtitle'),
+      // 一覧取得前（engines 空）は施錠しない
+      locked: engines.length > 0 && !asrReady && !subtitleRunning,
+      run: toggleSubtitle
+    },
+    {
+      label: 'テキスト翻訳',
+      icon: 'text',
+      desc: '入力文の翻訳。用語集・文脈指定に対応。',
+      hotkey: '',
+      run: () => goto('/translate/')
+    }
+  ] satisfies (DialItem & { desc: string; hotkey: string; run: () => unknown })[]);
+
+  let selected = $state(0);
+  let bandEl = $state<HTMLElement | null>(null);
+  const current = $derived(functions[selected]);
+
+  function activate(i: number) {
+    selected = i;
+    const f = functions[i];
+    if (f.locked) {
+      lastError = '音声認識モデル未導入。モデル準備が必要。';
+      return;
+    }
+    attempt(f.run);
+  }
+
+  function onKey(e: KeyboardEvent) {
+    if (e.ctrlKey || e.altKey || e.metaKey || e.defaultPrevented) return;
+    const t = e.target as HTMLElement | null;
+    if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
+    const n = functions.length;
+    if (e.key === 'ArrowRight' || e.key === 'ArrowDown') selected = (selected + 1) % n;
+    else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') selected = (selected + n - 1) % n;
+    else if (e.key === 'Enter' && (!t || t === document.body)) activate(selected);
+    else if (/^[1-9]$/.test(e.key) && Number(e.key) <= n) activate(Number(e.key) - 1);
+    else return;
+    e.preventDefault();
+  }
 </script>
 
-<main class="mx-auto flex max-w-3xl flex-col gap-4 px-4 py-6 sm:gap-5 sm:px-6">
-  <header>
-    <h1 class="text-xl font-semibold tracking-tight">ホーム</h1>
-    <p class="text-sm text-ink-muted">
-      全処理ローカル実行／翻訳先：{languageLabel(targetLanguage) || targetLanguage}
-      <a href="/settings/" class="ml-1 text-accent underline-offset-2 hover:underline">変更</a>
-    </p>
-  </header>
+<svelte:window onkeydown={onKey} />
 
-  <ConfigIssues />
+<main class="home">
+  <MagicDial items={functions} bind:selected anchor={bandEl} onactivate={activate} />
 
-  {#each notices as n (n.id)}
-    <section
-      class="flex items-start gap-2 rounded-ml border border-amber-500/50 bg-amber-500/10 p-3 text-sm"
-      role="alert"
-    >
-      <AlertTriangle class="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
-      <p class="min-w-0 flex-1 break-words">
-        {n.message}
-        {#if n.action}
-          <a href={n.action} class="ml-1 text-accent underline-offset-2 hover:underline">設定を開く</a>
-        {/if}
-      </p>
-      <button
-        class="shrink-0 rounded-ml-sm p-0.5 text-ink-faint hover:text-ink"
-        title="閉じる"
-        aria-label="通知を閉じる"
-        onclick={() => dismissNotice(n.id).catch(() => {})}
-      >
-        <X class="h-4 w-4" />
-      </button>
-    </section>
-  {/each}
+  <!-- 支援技術・キーボード向けの機能一覧（視覚表現は魔法陣） -->
+  <ul class="sr-only" aria-label="機能">
+    {#each functions as f, i (f.label)}
+      <li><button onclick={() => activate(i)}>{i + 1}. {f.label}{f.locked ? '（未導入）' : ''}</button></li>
+    {/each}
+  </ul>
 
-  {#if missing.length > 0}
-    <section
-      class="flex flex-col gap-3 rounded-ml border border-accent/40 bg-accent-soft p-4 sm:flex-row sm:items-center sm:justify-between"
-    >
-      <div class="flex min-w-0 gap-2">
-        <AlertCircle class="mt-0.5 h-4 w-4 shrink-0 text-accent" />
-        <p class="text-sm">
-          初回セットアップ：{missing.join('・')}のダウンロードが必要。
-        </p>
-      </div>
-      <button
-        class="shrink-0 self-start rounded-ml-sm bg-accent px-3 py-1.5 text-sm font-medium text-white sm:self-auto"
-        onclick={() => goto('/settings/#section-models')}
-      >
-        モデル準備
-      </button>
-    </section>
-  {/if}
+  <div class="side">
+    <ConfigIssues />
 
-  <section class="rounded-ml border border-border bg-surface-elevated p-4 shadow-ml sm:p-5">
-    <h2 class="text-base font-semibold">画面翻訳</h2>
-    <p class="text-sm text-ink-muted">
-      画面を静止し、原文位置に訳文をオーバーレイ表示。全アプリでショートカット起動可能。
-    </p>
-    <div class="mt-4 grid gap-2 sm:grid-cols-2">
-      <button
-        class="flex items-center justify-between gap-3 rounded-ml-sm bg-accent px-4 py-2.5 text-left text-sm font-medium text-white shadow-ml transition hover:opacity-90"
-        onclick={() => attempt(() => startRegionSelection(false))}
-      >
-        <span class="flex items-center gap-2"><Camera class="h-4 w-4 shrink-0" />範囲翻訳</span>
-        {#if key('capture_region')}<kbd class="font-mono text-xs opacity-80">{key('capture_region')}</kbd>{/if}
-      </button>
-      <button
-        class="flex items-center justify-between gap-3 rounded-ml-sm border border-border bg-surface px-4 py-2.5 text-left text-sm font-medium transition hover:border-accent/60"
-        onclick={() => attempt(() => startRegionSelection(true))}
-      >
-        <span class="flex items-center gap-2"><Maximize class="h-4 w-4 shrink-0" />全画面翻訳</span>
-        {#if key('capture_window')}<kbd class="font-mono text-xs text-ink-faint">{key('capture_window')}</kbd>{/if}
-      </button>
-    </div>
-    <div class="mt-3 flex flex-col gap-2 border-t border-border pt-3 sm:flex-row sm:items-center sm:justify-between">
-      <p class="text-xs text-ink-muted">
-        Lens ウィンドウ：動画字幕・ゲーム画面など定位置の継続翻訳用。
-      </p>
-      <button
-        class="inline-flex shrink-0 items-center gap-2 self-start rounded-ml-sm border border-border bg-surface px-3 py-1.5 text-sm text-ink-muted transition hover:border-accent/60 hover:text-ink sm:self-auto"
-        onclick={() => attempt(newLensWindow)}
-      >
-        <Focus class="h-4 w-4" />
-        Lens ウィンドウ
-      </button>
-    </div>
-  </section>
-
-  <section class="rounded-ml border border-border bg-surface-elevated p-4 shadow-ml sm:p-5">
-    <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-      <div class="min-w-0">
-        <h2 class="flex flex-wrap items-center gap-2 text-base font-semibold">
-          ライブ字幕
-          {#if subtitleRunning}
-            <span
-              class="inline-flex items-center gap-1 rounded-full bg-accent-soft px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-accent"
-            >
-              <span class="block h-1.5 w-1.5 animate-pulse rounded-full bg-accent" aria-hidden="true"></span>
-              ON AIR
-            </span>
+    {#each notices as n (n.id)}
+      <section class="px-win notice" role="alert">
+        <p class="min-w-0 flex-1 break-words">
+          {n.message}
+          {#if n.action}
+            <a href={n.action} class="link">設定を開く</a>
           {/if}
-        </h2>
-        <p class="text-sm text-ink-muted">システム音声を認識・翻訳し、字幕表示。</p>
-        {#if subtitlePreview}
-          <p class="mt-2 line-clamp-2 text-xs break-words text-ink-faint">{subtitlePreview}</p>
+        </p>
+        <button class="close" title="閉じる" aria-label="通知を閉じる" onclick={() => dismissNotice(n.id).catch(() => {})}>
+          <X class="h-4 w-4" />
+        </button>
+      </section>
+    {/each}
+
+    {#if missing.length > 0}
+      <section class="px-win notice">
+        <p class="min-w-0 flex-1">初回セットアップ：{missing.join('・')}のダウンロードが必要。</p>
+        <button class="px-chip" data-tone="amber" use:slant onclick={() => goto('/settings/#section-models')}>モデル準備</button>
+      </section>
+    {/if}
+
+    <PixelTitle text={current.label} note={`${String(selected + 1).padStart(2, '0')}/${String(functions.length).padStart(2, '0')}`} bind:el={bandEl} />
+
+    <div class="chips">
+      {#if current.hotkey}<kbd class="px-chip" data-tone="bone" use:slant>{current.hotkey}</kbd>{/if}
+      <span class="px-chip" use:slant>直接 {selected + 1}</span>
+      {#if current.label === 'ライブ字幕' && subtitleRunning}<span class="px-chip live" use:slant>● 動作中</span>{/if}
+    </div>
+
+    <section class="px-win desc">
+      <p>{current.desc}</p>
+      {#if current.label === 'ライブ字幕' && subtitlePreview}
+        <p class="preview">{subtitlePreview}</p>
+      {/if}
+      {#if lastError}
+        <p class="error" role="alert">{lastError}</p>
+      {/if}
+      <div class="go">
+        {#if current.locked}
+          <a href="/settings/#section-models" class="link">モデル準備 ▶</a>
+        {:else}
+          <button class="go-btn" onclick={() => activate(selected)}>
+            ▶ Enter で{current.label === 'ライブ字幕' && subtitleRunning ? '停止' : '開始'}
+          </button>
         {/if}
       </div>
-      {#if subtitleRunning}
-        <button
-          class="inline-flex shrink-0 items-center gap-2 self-start rounded-ml-sm border border-red-500/60 bg-red-500/10 px-4 py-2 text-sm font-medium text-red-500"
-          onclick={() =>
-            attempt(async () => {
-              await stopSubtitle();
-              subtitleRunning = false;
-              subtitlePreview = null;
-            })}
-        >
-          <Square class="h-4 w-4" /> 停止
-        </button>
-      {:else}
-        <button
-          class="inline-flex shrink-0 items-center gap-2 self-start rounded-ml-sm border border-border bg-surface px-4 py-2 text-sm font-medium transition hover:border-accent/60"
-          onclick={() =>
-            attempt(async () => {
-              await startSubtitle();
-              subtitleRunning = true;
-            })}
-        >
-          <Mic class="h-4 w-4" /> 開始
-          {#if key('toggle_subtitle')}<kbd class="font-mono text-xs text-ink-faint">{key('toggle_subtitle')}</kbd>{/if}
-        </button>
-      {/if}
-    </div>
-  </section>
-
-  {#if engines.length > 0}
-    <section class="rounded-ml border border-border bg-surface-elevated p-4 shadow-ml sm:p-5" aria-labelledby="engine-heading">
-      <div class="flex items-center justify-between gap-2">
-        <h2 id="engine-heading" class="flex items-center gap-2 text-base font-semibold">
-          <Cpu class="h-4 w-4 shrink-0 text-ink-muted" />ローカルエンジン
-        </h2>
-        <a href="/settings/#section-models" class="text-sm text-accent underline-offset-2 hover:underline">モデル管理</a>
-      </div>
-      <ul class="mt-3 divide-y divide-border">
-        {#each engines as row (row.id)}
-          <li class="flex items-center gap-3 py-2 text-sm">
-            <span class="w-20 shrink-0 text-ink-muted">{row.label}</span>
-            <span class="min-w-0 flex-1 truncate {row.state === 'unset' ? 'text-ink-faint' : 'font-medium'}" title={row.model}>
-              {row.model}
-            </span>
-            <span class="inline-flex shrink-0 items-center gap-1.5 text-xs {row.state === 'ready' ? 'text-ink-muted' : row.state === 'missing' ? 'text-amber-600' : 'text-ink-faint'}">
-              <span
-                class="block h-2 w-2 rounded-full {row.state === 'ready'
-                  ? 'bg-emerald-500'
-                  : row.state === 'missing'
-                    ? 'bg-amber-500'
-                    : row.state === 'downloading'
-                      ? 'animate-pulse bg-accent'
-                      : 'bg-ink-faint/40'}"
-                aria-hidden="true"
-              ></span>
-              {STATE_LABELS[row.state]}
-            </span>
-          </li>
-        {/each}
-      </ul>
-      <p class="mt-2 text-xs text-ink-faint">推論は全てローカル実行。外部送信なし。</p>
     </section>
-  {/if}
 
-  {#if lastError}
-    <p class="rounded-ml border border-red-500/50 bg-red-500/10 p-3 text-sm break-words text-red-500" role="alert">
-      {lastError}
-    </p>
-  {/if}
+    {#if engines.length > 0}
+      <section class="px-win engines" aria-labelledby="engine-heading">
+        <h2 id="engine-heading" class="px-chip px-win-title" data-tone="amber" use:slant>エンジン</h2>
+        <ul>
+          {#each engines as row (row.id)}
+            <li>
+              <span class="label">{row.label}</span>
+              <span class="model" title={row.model}>{row.model}</span>
+              <span class="state" data-state={row.state}>{STATE_LABELS[row.state]}</span>
+            </li>
+          {/each}
+        </ul>
+        <a href="/settings/#section-models" class="link manage">モデル管理 ▶</a>
+      </section>
+    {/if}
+  </div>
 
-  <p class="text-xs text-ink-faint">
-    {#if key('open_command_palette')}<kbd class="font-mono">{key('open_command_palette')}</kbd>：コマンドパレット　{/if}ショートカット変更：<a href="/settings/#section-hotkeys" class="underline-offset-2 hover:underline">設定</a>
+  <p class="hint">
+    ←→選択　Enter決定　1〜5直接起動{#if key('open_command_palette')}　{key('open_command_palette')} コマンド{/if}　翻訳先：{languageLabel(targetLanguage) || targetLanguage}
   </p>
 </main>
+
+<style>
+  .home {
+    position: relative;
+    height: calc(100vh - 46px);
+    min-height: 420px;
+    overflow: hidden;
+  }
+  .side {
+    position: absolute;
+    top: 18px;
+    right: 16px;
+    bottom: 40px;
+    width: min(420px, 48%);
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    overflow-y: auto;
+    padding: 6px 8px 8px 0;
+  }
+  .chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-left: 12px;
+  }
+  .live {
+    color: var(--ml-px-green);
+  }
+  .desc {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-left: 8px;
+  }
+  .desc .preview {
+    color: var(--ml-px-faint);
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    -webkit-box-orient: vertical;
+  }
+  .error {
+    color: var(--ml-px-red);
+    overflow-wrap: anywhere;
+  }
+  .go {
+    display: flex;
+    justify-content: flex-end;
+  }
+  .go-btn {
+    color: var(--ml-px-amber);
+  }
+  .go-btn:hover {
+    color: var(--ml-px-bone);
+  }
+  .engines {
+    margin-left: 16px;
+    padding-top: 20px;
+  }
+  .engines ul {
+    display: grid;
+    gap: 2px;
+  }
+  .engines li {
+    display: grid;
+    grid-template-columns: 6.5em minmax(0, 1fr) auto;
+    gap: 8px;
+  }
+  .engines .label {
+    color: var(--ml-px-mid);
+  }
+  .engines .model {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .state[data-state='ready'] {
+    color: var(--ml-px-green);
+  }
+  .state[data-state='missing'] {
+    color: var(--ml-px-red);
+  }
+  .state[data-state='downloading'],
+  .state[data-state='unset'] {
+    color: var(--ml-px-faint);
+  }
+  .manage {
+    display: block;
+    margin-top: 6px;
+    text-align: right;
+  }
+  .notice {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+  }
+  .close {
+    color: var(--ml-px-faint);
+  }
+  .link {
+    color: var(--ml-px-amber);
+  }
+  .link:hover {
+    color: var(--ml-px-bone);
+  }
+  .hint {
+    position: absolute;
+    right: 16px;
+    bottom: 10px;
+    color: var(--ml-px-faint);
+    font-size: 16px;
+    white-space: nowrap;
+  }
+</style>

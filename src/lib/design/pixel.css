@@ -1,0 +1,204 @@
+/**
+ * ドット絵外観（メインウィンドウ専用、`data-skin='pixel'`）。
+ * 既存の設計トークンを差替え、全画面へ一括適用。
+ * 負荷対策：backdrop-filter・アニメーションなし。背景は起動時生成の静止画。
+ */
+
+@font-face {
+  font-family: 'DotGothic16';
+  src: url('/fonts/DotGothic16-Regular.woff2') format('woff2');
+  font-display: block;
+}
+
+:root[data-skin='pixel'] {
+  color-scheme: dark;
+  --ml-font-ui: 'DotGothic16', 'Yu Gothic UI', 'Hiragino Sans', monospace;
+  --ml-font-mono: 'DotGothic16', ui-monospace, monospace;
+
+  --ml-px-black: #0b0805;
+  --ml-px-brown: #1c1207;
+  --ml-px-dim: #3a2810;
+  --ml-px-faint: #8a5f24;
+  --ml-px-mid: #c98a2e;
+  --ml-px-amber: #ffb547;
+  --ml-px-cream: #ffe0a6;
+  --ml-px-bone: #fbfbf8;
+  --ml-px-red: #ff6a4a;
+  --ml-px-green: #d6ef8a;
+
+  --ml-surface: var(--ml-px-black);
+  --ml-surface-elevated: #140e07;
+  --ml-surface-muted: var(--ml-px-brown);
+  --ml-border: var(--ml-px-dim);
+  --ml-ink: var(--ml-px-cream);
+  --ml-ink-muted: var(--ml-px-mid);
+  --ml-ink-faint: var(--ml-px-faint);
+  --ml-accent: var(--ml-px-amber);
+  --ml-accent-soft: rgba(255, 181, 71, 0.2);
+
+  --ml-radius: 0;
+  --ml-radius-sm: 0;
+  --ml-shadow: 4px 4px 0 var(--ml-px-dim);
+  --ml-shadow-lg: 6px 6px 0 var(--ml-px-dim);
+}
+
+[data-skin='pixel'] body {
+  background: var(--ml-px-bg, none) 0 0 / 112px 560px repeat, var(--ml-px-black);
+  image-rendering: pixelated;
+  font-family: var(--ml-font-ui);
+  /* 単一ウェイトの書体：疑似太字・疑似斜体の滲みを防止 */
+  font-synthesis: none;
+  -webkit-font-smoothing: none;
+}
+
+/* 走査線：2px 周期（1 ドット行単位）の静止オーバーレイ */
+[data-skin='pixel'] body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  pointer-events: none;
+  background: repeating-linear-gradient(0deg, rgba(0, 0, 0, 0.16) 0 1px, transparent 1px 2px);
+}
+
+/* 文字は 16 ドット格子の整数倍へ統一（中間寸法の滲み防止） */
+[data-skin='pixel'] :is(.font-sans, .font-mono, kbd, code, input, textarea, select, button) {
+  font-family: var(--ml-font-ui);
+}
+[data-skin='pixel'] .text-sm,
+[data-skin='pixel'] .text-base {
+  font-size: 16px;
+  line-height: 24px;
+}
+[data-skin='pixel'] .text-xs,
+[data-skin='pixel'] .text-\[10px\],
+[data-skin='pixel'] .text-\[11px\] {
+  font-size: 12px;
+  line-height: 18px;
+}
+[data-skin='pixel'] :is(.text-lg, .text-xl) {
+  font-size: 24px;
+  line-height: 32px;
+}
+[data-skin='pixel'] :is(.font-semibold, .font-medium, .font-bold) {
+  font-weight: 400;
+}
+[data-skin='pixel'] .tracking-tight {
+  letter-spacing: 0;
+}
+
+/* 角丸なし・硬い段影 */
+[data-skin='pixel'] :is(.rounded-ml, .rounded-ml-sm, .rounded-md, .rounded-lg, .rounded, .rounded-full) {
+  border-radius: 0;
+}
+[data-skin='pixel'] .shadow-ml {
+  box-shadow: var(--ml-shadow);
+}
+[data-skin='pixel'] .shadow-ml-lg {
+  box-shadow: var(--ml-shadow-lg);
+}
+[data-skin='pixel'] :is(.backdrop-blur, .backdrop-blur-xl, .backdrop-blur-md) {
+  backdrop-filter: none;
+}
+
+/* ゲーム調の窓：外枠・隙間・内枠の二重枠 */
+[data-skin='pixel'] .rounded-ml.border:not([class*='border-dashed']) {
+  border: 2px solid var(--ml-px-amber);
+  box-shadow:
+    inset 0 0 0 2px var(--ml-px-black),
+    inset 0 0 0 4px var(--ml-px-dim),
+    4px 4px 0 var(--ml-px-dim);
+}
+
+/* 琥珀地の上の文字は黒（白文字の低コントラスト防止） */
+[data-skin='pixel'] .bg-accent {
+  color: var(--ml-px-black);
+}
+
+/* ベクター図標：補間なしの階段描画 */
+[data-skin='pixel'] svg {
+  shape-rendering: crispEdges;
+}
+
+[data-skin='pixel'] ::selection {
+  background: var(--ml-px-amber);
+  color: var(--ml-px-black);
+}
+[data-skin='pixel'] :focus-visible {
+  outline: 2px solid var(--ml-px-bone);
+  outline-offset: 2px;
+}
+[data-skin='pixel'] .scrollbar-minimal::-webkit-scrollbar-thumb,
+[data-skin='pixel'] ::-webkit-scrollbar-thumb {
+  background: var(--ml-px-faint);
+  border-radius: 0;
+}
+[data-skin='pixel'] ::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+  background: var(--ml-px-black);
+}
+
+/* ── 共通部品 ── */
+
+/** 斜めの見出し帯（use:slant と併用）。 */
+.px-band {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  padding: 4px 28px 4px 16px;
+  background: var(--ml-px-amber);
+  color: var(--ml-px-black);
+  font-size: 32px;
+  line-height: 40px;
+}
+.px-band-shadow {
+  display: inline-block;
+  background: var(--ml-px-bone);
+  padding: 0 0 6px 0;
+  margin-left: -8px;
+}
+
+/** 斜めの名札（use:slant と併用）。 */
+.px-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 1px 14px 1px 16px;
+  font-size: 16px;
+  line-height: 24px;
+  white-space: nowrap;
+  background: var(--ml-px-brown);
+  color: var(--ml-px-amber);
+}
+.px-chip[data-tone='bone'] {
+  background: var(--ml-px-bone);
+  color: var(--ml-px-black);
+}
+.px-chip[data-tone='amber'] {
+  background: var(--ml-px-amber);
+  color: var(--ml-px-black);
+}
+
+/** 二重枠の窓。 */
+.px-win {
+  position: relative;
+  background: var(--ml-px-black);
+  border: 2px solid var(--ml-px-amber);
+  box-shadow:
+    inset 0 0 0 2px var(--ml-px-black),
+    inset 0 0 0 4px var(--ml-px-dim),
+    4px 4px 0 var(--ml-px-dim);
+  padding: 14px 18px;
+}
+.px-win > .px-win-title {
+  position: absolute;
+  top: -14px;
+  left: 14px;
+}
+
+/** 各画面の見出し帯の幅。 */
+.page-title {
+  width: max-content;
+  margin: 0 0 6px -4px;
+}

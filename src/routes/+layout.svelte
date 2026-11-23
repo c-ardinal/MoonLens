@@ -5,6 +5,7 @@
   import { goto } from '$app/navigation';
   import { getSettings, onNavigate, onSettingsChanged } from '$lib/ipc';
   import { applyAppearance } from '$lib/appearance';
+  import { applyPixelSkin } from '$lib/pixel/skin';
   import MacOnboarding from '$lib/components/MacOnboarding.svelte';
   import AppNav from '$lib/components/AppNav.svelte';
   import CommandPalette from '$lib/components/CommandPalette.svelte';
@@ -16,6 +17,8 @@
   // chrome; only the main window's pages get the menu and palette.
   const MAIN_ROUTES = ['/', '/translate/', '/image/', '/settings/', '/history/', '/plugins/'];
   const isMain = $derived(MAIN_ROUTES.includes(page.url.pathname));
+  // ドット絵外観はメインウィンドウ限定。訳文表示のウィンドウは原文準拠。
+  $effect(() => applyPixelSkin(isMain));
 
   onMount(async () => {
     try {
