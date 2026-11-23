@@ -66,6 +66,7 @@ struct Run {
     tracker: Tracker,
     events: Arc<Mutex<Vec<LiveEvent>>>,
     geometry: Arc<Mutex<Geometry>>,
+    target: &'static str,
 }
 
 impl Run {
@@ -76,7 +77,7 @@ impl Run {
         let geometry_now = move || Some(*geo.lock());
         let env = TickEnv {
             pipeline: &self.pipeline,
-            target_language: "ja",
+            target_language: self.target,
             history_kind: "lens",
             emit: &emit,
             geometry_now: &geometry_now,
@@ -212,6 +213,7 @@ async fn lens_reads_continuously_and_retranslates_only_changes() {
         tracker: Tracker::new(),
         events: Arc::default(),
         geometry: Arc::new(Mutex::new([100, 100, 920, 880])),
+        target: "ja",
     };
     let wind = || screen("english0002", None);
     let rain = || screen("english0003", None);
@@ -330,5 +332,23 @@ async fn lens_reads_continuously_and_retranslates_only_changes() {
             }]
         ),
         "kept translations shown again at the new place: {ev:?}"
+    );
+
+    // 7. The target language changes with the screen unchanged: read and
+    //    translated again into the new language.
+    run.target = "zh";
+    let screen_now = || screen("english0002", Some("synth_title_body"));
+    let (t, _, _) = run.tick("7a target zh", screen_now()).await;
+    assert_eq!(
+        t,
+        Tick::Settling,
+        "a new target language is not 'unchanged'"
+    );
+    let (t, _, _) = run.tick("7b target zh", screen_now()).await;
+    assert!(requested(&t), "nothing cached in the new language");
+    let zh = translation_of(&t);
+    assert!(
+        !zh.contains("ました") && zh.contains("狐"),
+        "translated into Chinese, not the Japanese kept: {zh}"
     );
 }

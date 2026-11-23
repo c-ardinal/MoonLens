@@ -21,7 +21,10 @@ export type LiveEvent =
   | { kind: "clear" };
 
 /** Events of a continuously reading Lens window (`moonlens://lens-live`). */
-export type LensLiveEvent = LiveEvent | { kind: "error"; message: string };
+export type LensLiveEvent =
+  | LiveEvent
+  | { kind: "decoded"; text: string }
+  | { kind: "error"; message: string };
 
 /**
  * Source and translation of live blocks as plain text (the Lens text

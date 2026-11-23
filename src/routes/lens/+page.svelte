@@ -111,6 +111,15 @@
       translating = false;
       empty = true;
       lastError = null;
+    } else if (ev.kind === 'decoded') {
+      // QR code: shown as text (no boxes to place).
+      blocks = [];
+      hidden = new Set();
+      source = null;
+      translation = ev.text;
+      translating = false;
+      empty = false;
+      lastError = null;
     } else {
       translating = false;
       lastError = errorText(ev.message);

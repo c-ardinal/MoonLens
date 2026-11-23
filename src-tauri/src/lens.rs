@@ -584,6 +584,10 @@ async fn run_watch(
                     &cfg,
                 );
             }
+            Ok(Tick::Decoded { text }) => {
+                let cfg = settings.snapshot().clipboard.clone();
+                crate::clipboard::auto_copy(&app, crate::clipboard::Kind::Qr, &text, &cfg);
+            }
             Ok(_) => {}
             Err(message) => {
                 tracing::debug!("lens {id}: {message}");

@@ -41,7 +41,7 @@ use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize};
 use crate::{
     capture::{self, CaptureRect},
     pipeline::{LensBlock, Pipeline},
-    providers::Capability,
+    providers::{Capability, TaskOutput},
     settings::SettingsStore,
     user_error,
 };
@@ -101,6 +101,8 @@ pub enum LiveEvent {
     Stale { indices: Vec<usize> },
     /// Nothing to show (live translation stopped or the region is empty).
     Clear,
+    /// A QR code in the region was decoded; Lens windows show `text`.
+    Decoded { text: String },
     /// Reading or translating failed (`code|message`, see `user_error`).
     /// Lens windows show it; the live window ignores it.
     Error { message: String },
@@ -286,6 +288,8 @@ pub enum Tick {
     SameText,
     /// No text in the region.
     Empty,
+    /// A QR code was decoded (no text blocks).
+    Decoded { text: String },
     /// New text shown. `requested` is false when every block came from
     /// the cache or is already in the target language.
     Translated {
@@ -299,7 +303,8 @@ pub enum Tick {
 #[derive(Default)]
 struct Shown {
     thumb: Option<Thumb>,
-    /// Source text of the shown blocks, in order.
+    /// Target language and source text of the shown blocks (or the
+    /// decoded QR payload): what a new reading is compared with.
     text: Option<String>,
     blocks: Vec<LensBlock>,
     /// Indices already reported stale since the last `Blocks`.
@@ -363,7 +368,18 @@ impl Tracker {
             .map_or(true, |t| t.changed_share(&thumb, None) >= REGION_CHANGED);
         self.last_thumb = Some(thumb.clone());
         // Nothing changed since the last tick and nothing waits to settle.
-        if !changed && !force && self.pending_text.is_none() && self.shown.stale.is_empty() {
+        // The target language changed in settings: read and translate again.
+        let language_changed = self
+            .shown
+            .text
+            .as_deref()
+            .is_some_and(|k| k.split('\u{1}').next() != Some(env.target_language));
+        if !changed
+            && !force
+            && !language_changed
+            && self.pending_text.is_none()
+            && self.shown.stale.is_empty()
+        {
             return Ok(Tick::Unchanged);
         }
 
@@ -399,8 +415,20 @@ impl Tracker {
             return Ok(Tick::Moved);
         }
         let text = source_key(&bundle.blocks);
+        // A decoded QR code has no blocks; its payload is the reading.
+        let decoded = match (&bundle.result.output, bundle.blocks.is_empty()) {
+            (TaskOutput::Text(t), true) if !t.trim().is_empty() => Some(t.clone()),
+            _ => None,
+        };
+        // What decides "same as shown": the text read, and the language
+        // it is shown in (a changed target language translates again).
+        let key = format!(
+            "{}\u{1}{}",
+            env.target_language,
+            decoded.as_deref().map_or(text.as_str(), |d| d)
+        );
 
-        if self.shown.text.as_deref() == Some(text.as_str()) {
+        if self.shown.text.as_deref() == Some(key.as_str()) {
             // Same text as on screen (only the background changed, or
             // the region moved over the same text): show what was hidden
             // again, at the new positions.
@@ -423,9 +451,9 @@ impl Tracker {
 
         // New text: wait for it to read the same twice (text being typed
         // out), unless it has been changing for too long.
-        let settled = force || self.pending_text.as_deref() == Some(text.as_str());
+        let settled = force || self.pending_text.as_deref() == Some(key.as_str());
         if !settled && self.unsettled < SETTLE_LIMIT {
-            self.pending_text = Some(text);
+            self.pending_text = Some(key);
             self.unsettled += 1;
             return Ok(Tick::Settling);
         }
@@ -435,9 +463,13 @@ impl Tracker {
         if bundle.blocks.is_empty() {
             self.shown = Shown {
                 thumb: Some(thumb),
-                text: Some(text),
+                text: Some(key),
                 ..Shown::default()
             };
+            if let Some(text) = decoded {
+                (env.emit)(LiveEvent::Decoded { text: text.clone() });
+                return Ok(Tick::Decoded { text });
+            }
             (env.emit)(LiveEvent::Clear);
             return Ok(Tick::Empty);
         }
@@ -450,7 +482,7 @@ impl Tracker {
             bundle.needs_translation() && bundle.blocks.iter().any(|b| b.needs_request());
         self.shown = Shown {
             thumb: Some(thumb),
-            text: Some(text.clone()),
+            text: Some(key),
             blocks: bundle.blocks.clone(),
             stale: Vec::new(),
         };
