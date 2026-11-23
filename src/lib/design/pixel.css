@@ -1,7 +1,8 @@
 /**
  * ドット絵外観（メインウィンドウ専用、`data-skin='pixel'`）。
  * 既存の設計トークンを差替え、全画面へ一括適用。
- * 負荷対策：backdrop-filter・アニメーションなし。背景は起動時生成の静止画。
+ * 負荷対策：backdrop-filter なし。背景は起動時生成の網点タイルを 1 ドット単位で移動
+ * （合成処理のみ、再描画なし）。推論中・動き削減設定時は停止（data-motion='off'）。
  */
 
 @font-face {
@@ -45,12 +46,38 @@
 }
 
 [data-skin='pixel'] body {
-  background: var(--ml-px-bg, none) 0 0 / 112px 560px repeat, var(--ml-px-black);
+  background: var(--ml-px-black);
   image-rendering: pixelated;
   font-family: var(--ml-font-ui);
   /* 単一ウェイトの書体：疑似太字・疑似斜体の滲みを防止 */
   font-synthesis: none;
   -webkit-font-smoothing: none;
+}
+
+/* 背景の斜め縞：タイル 1 周期（112px）分を 2px 刻みで横移動し、継ぎ目なしで循環 */
+[data-skin='pixel'] body::before {
+  content: '';
+  position: fixed;
+  inset: 0 0 0 -112px;
+  z-index: -1;
+  pointer-events: none;
+  background: var(--ml-px-bg, none) 0 0 / 112px 560px repeat;
+  animation: px-drift 14s steps(56) infinite;
+  animation-play-state: paused;
+  will-change: transform;
+}
+:root[data-skin='pixel'][data-motion='on'] body::before {
+  animation-play-state: running;
+}
+@keyframes px-drift {
+  to {
+    transform: translateX(112px);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  [data-skin='pixel'] body::before {
+    animation: none;
+  }
 }
 
 /* 走査線：2px 周期（1 ドット行単位）の静止オーバーレイ */
@@ -90,7 +117,7 @@
 [data-skin='pixel'] .shadow-ml-lg {
   box-shadow: var(--ml-shadow-lg);
 }
-[data-skin='pixel'] :is(.backdrop-blur, .backdrop-blur-xl, .backdrop-blur-md) {
+[data-skin='pixel'] :is(.backdrop-blur, .backdrop-blur-sm, .backdrop-blur-md, .backdrop-blur-lg, .backdrop-blur-xl) {
   backdrop-filter: none;
 }
 
@@ -194,4 +221,108 @@
 .page-title {
   width: max-content;
   margin: 0 0 6px -4px;
+}
+
+/* ── 各画面の共通寸法（32px 文字前提） ── */
+
+/* 本文幅：画面間で統一（旧 UI の最大幅指定は 14px 文字前提のため解除） */
+[data-skin='pixel'] main:is(.max-w-4xl, .max-w-5xl, .max-w-6xl) {
+  max-width: none;
+  padding: 16px 40px 32px;
+}
+
+/* 図標：32px 文字に対し 16px は過小。24px（12 ドット）へ統一 */
+[data-skin='pixel'] svg:is(.h-5, .h-4, .h-3\.5, .h-3) {
+  width: 24px;
+  height: 24px;
+  flex-shrink: 0;
+}
+[data-skin='pixel'] input.pl-7 {
+  padding-left: 40px;
+}
+
+/* 切替スイッチ：角型の ON/OFF 枠（旧 UI の丸型を置換） */
+[data-skin='pixel'] input.peer.sr-only + .w-9 {
+  width: 64px;
+  height: 32px;
+  border-radius: 0;
+  background: var(--ml-px-brown);
+  box-shadow: inset 0 0 0 2px var(--ml-px-faint);
+}
+[data-skin='pixel'] input.peer.sr-only:checked + .w-9 {
+  background: var(--ml-px-amber);
+  box-shadow: none;
+}
+[data-skin='pixel'] input.peer.sr-only ~ .absolute.w-4 {
+  left: 4px;
+  top: 4px;
+  width: 24px;
+  height: 24px;
+  border-radius: 0;
+  background: var(--ml-px-faint);
+  box-shadow: none;
+  translate: 0 0;
+}
+[data-skin='pixel'] input.peer.sr-only:checked ~ .absolute.w-4 {
+  background: var(--ml-px-black);
+  translate: 32px 0;
+}
+[data-skin='pixel'] input.peer.sr-only:focus-visible + .w-9 {
+  outline: 2px solid var(--ml-px-bone);
+  outline-offset: 2px;
+}
+
+/* 1 行省略の文字：行高 36px では字形の下端が欠けるため余白を確保 */
+[data-skin='pixel'] .truncate {
+  line-height: 44px;
+}
+
+/* 入力・結果欄：画面の高さに追従（旧 UI の固定 12rem は 32px 文字で 4 行未満） */
+[data-skin='pixel'] .min-h-48 {
+  min-height: max(192px, calc(100vh - var(--ml-nav-h) - 400px));
+}
+[data-skin='pixel'] input.sm\:w-72 {
+  width: 380px;
+}
+
+/* スライダー：角型のつまみと 1 本線の溝（既定の丸型は 32px 文字に対し過小） */
+[data-skin='pixel'] input[type='range'] {
+  appearance: none;
+  height: 28px;
+  background: transparent;
+  cursor: pointer;
+}
+[data-skin='pixel'] input[type='range']::-webkit-slider-runnable-track {
+  height: 8px;
+  background: var(--ml-px-dim);
+}
+[data-skin='pixel'] input[type='range']::-webkit-slider-thumb {
+  appearance: none;
+  width: 16px;
+  height: 28px;
+  margin-top: -10px;
+  background: var(--ml-px-amber);
+  box-shadow: inset 0 0 0 2px var(--ml-px-black);
+}
+[data-skin='pixel'] input[type='range']::-moz-range-track {
+  height: 8px;
+  background: var(--ml-px-dim);
+}
+[data-skin='pixel'] input[type='range']::-moz-range-thumb {
+  width: 16px;
+  height: 28px;
+  border: 0;
+  border-radius: 0;
+  background: var(--ml-px-amber);
+}
+
+/* コマンドパレット：32px 文字で名称とショートカットが接触しない幅 */
+[data-skin='pixel'] .max-w-lg {
+  max-width: 760px;
+}
+[data-skin='pixel'] .max-h-80 {
+  max-height: min(60vh, 480px);
+}
+[data-skin='pixel'] .max-w-lg kbd {
+  margin-left: 24px;
 }

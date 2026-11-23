@@ -186,7 +186,7 @@
     error: lastError,
     engines,
     recent,
-    hint: '←→選択 Enter決定 1-5起動'
+    hint: `←→選択 Enter・1-5起動${key('open_command_palette') ? ` ${key('open_command_palette')}パレット` : ''}`
   });
 
   function onRegion(r: HomeRegion) {
@@ -217,17 +217,7 @@
 <svelte:window onkeydown={onKey} />
 
 <main class="home">
-  <HomeCanvas {view} bind:selected onactivate={activate} onregion={onRegion} />
-
-  <!-- 支援技術向けの機能一覧（視覚表現は魔法陣） -->
-  <ul class="sr-only" aria-label="機能">
-    {#each functions as f, i (f.label)}
-      <li><button onclick={() => activate(i)}>{i + 1}. {f.label}：{f.desc}</button></li>
-    {/each}
-  </ul>
-  {#if lastError}<p class="sr-only" role="alert">{lastError}</p>{/if}
-
-  <!-- 通知・初回セットアップ：左上へ重ねる窓（該当時のみ） -->
+  <!-- 通知・初回セットアップ：魔法陣の上部へ帯状に配置（該当時のみ、重複なし） -->
   {#if notices.length > 0 || missing.length > 0}
     <div class="alerts">
       <ConfigIssues />
@@ -235,7 +225,7 @@
         <section class="px-win notice" role="alert">
           <p class="min-w-0 flex-1 break-words">
             {n.message}
-            {#if n.action}<a href={n.action} class="link">設定を開く</a>{/if}
+            {#if n.action}<a href={n.action} class="link">設定▶</a>{/if}
           </p>
           <button class="close" title="閉じる" aria-label="通知を閉じる" onclick={() => dismissNotice(n.id).catch(() => {})}>
             <X class="h-4 w-4" />
@@ -252,28 +242,47 @@
   {:else}
     <div class="alerts"><ConfigIssues /></div>
   {/if}
+  <div class="stage">
+    <HomeCanvas {view} bind:selected onactivate={activate} onregion={onRegion} />
+  </div>
+
+  <!-- 支援技術向けの機能一覧（視覚表現は魔法陣） -->
+  <ul class="sr-only" aria-label="機能">
+    {#each functions as f, i (f.label)}
+      <li><button onclick={() => activate(i)}>{i + 1}. {f.label}：{f.desc}</button></li>
+    {/each}
+  </ul>
+  {#if lastError}<p class="sr-only" role="alert">{lastError}</p>{/if}
+
 </main>
 
 <style>
   .home {
-    position: relative;
-    height: calc(100vh - var(--ml-nav-h, 64px));
-    min-height: 560px;
-    overflow: hidden;
-  }
-  .alerts {
-    position: absolute;
-    top: 12px;
-    left: 16px;
-    width: min(560px, 44%);
     display: flex;
     flex-direction: column;
-    gap: 12px;
+    height: calc(100vh - var(--ml-nav-h, 64px));
+    overflow: hidden;
   }
+  .stage {
+    position: relative;
+    flex: 1;
+    min-height: 0;
+  }
+  .alerts {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 6px 40px 0;
+  }
+  .alerts:not(:has(> *)) {
+    display: none;
+  }
+  /* 1 行の帯（窓の上下余白を圧縮し、魔法陣の表示寸法を維持） */
   .notice {
     display: flex;
-    align-items: flex-start;
-    gap: 12px;
+    align-items: center;
+    gap: 16px;
+    padding: 2px 16px;
   }
   .close {
     color: var(--ml-px-faint);

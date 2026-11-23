@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { holdMotion } from '$lib/pixel/motion.svelte';
   import PixelTitle from '$lib/components/PixelTitle.svelte';
   import { onDestroy, onMount } from 'svelte';
   import { goto } from '$app/navigation';
@@ -37,6 +38,8 @@
   let blocks = $state<LensBlock[]>([]);
   let result = $state<CaptureFlowResult | null>(null);
   let busy = $state(false);
+  // 推論中はメインウィンドウの演出を停止
+  $effect(() => (busy ? holdMotion() : undefined));
   let phase = $state<'ocr' | 'translate'>('ocr');
   let error = $state<UiError | null>(null);
   let showOriginal = $state(false);

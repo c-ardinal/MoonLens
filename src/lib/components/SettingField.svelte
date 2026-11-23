@@ -104,7 +104,7 @@
           value={value ?? field.min}
           oninput={(e) => onChange(Number((e.currentTarget as HTMLInputElement).value))}
         />
-        <span class="w-24 text-right text-sm tabular-nums text-ink-muted">
+        <span class="value-text min-w-24 whitespace-nowrap text-right text-sm tabular-nums text-ink-muted">
           {#if field.zeroLabel && !value}
             {field.zeroLabel}
           {:else}
@@ -122,7 +122,7 @@
           value={value ?? 0}
           onchange={(e) => onChange(clamp(Number((e.currentTarget as HTMLInputElement).value)))}
         />
-        <span class="w-16 text-sm text-ink-muted">
+        <span class="value-text min-w-16 whitespace-nowrap text-sm text-ink-muted">
           {field.zeroLabel && !value ? field.zeroLabel : (field.unit ?? '')}
         </span>
       {/if}

@@ -87,7 +87,7 @@
   .bar {
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: 4px;
     height: 100%;
     padding-right: 8px;
   }
@@ -96,7 +96,7 @@
     display: flex;
     align-items: center;
     height: 64px;
-    padding: 0 48px 0 24px;
+    padding: 0 36px 0 16px;
     background: var(--ml-px-amber);
     color: var(--ml-px-black);
     font-size: 32px;
@@ -105,7 +105,7 @@
     display: flex;
     min-width: 0;
     flex: 1;
-    gap: 4px;
+    gap: 2px;
     overflow-x: auto;
     padding-left: 8px;
     scrollbar-width: none;
@@ -114,7 +114,7 @@
     flex-shrink: 0;
   }
   .px-chip {
-    padding: 0 10px 0 16px;
+    padding: 0 6px 0 14px;
   }
   .px-chip:not([data-tone]) {
     color: var(--ml-px-mid);

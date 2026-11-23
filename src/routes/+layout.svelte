@@ -6,6 +6,7 @@
   import { getSettings, onNavigate, onSettingsChanged } from '$lib/ipc';
   import { applyAppearance } from '$lib/appearance';
   import { applyPixelSkin } from '$lib/pixel/skin';
+  import { motion, watchMotion } from '$lib/pixel/motion.svelte';
   import MacOnboarding from '$lib/components/MacOnboarding.svelte';
   import AppNav from '$lib/components/AppNav.svelte';
   import CommandPalette from '$lib/components/CommandPalette.svelte';
@@ -19,6 +20,11 @@
   const isMain = $derived(MAIN_ROUTES.includes(page.url.pathname));
   // ドット絵外観はメインウィンドウ限定。訳文表示のウィンドウは原文準拠。
   $effect(() => applyPixelSkin(isMain));
+  // 演出：推論中・動き削減設定時は停止（CSS 側は data-motion で同期）
+  $effect(() => (isMain ? watchMotion() : undefined));
+  $effect(() => {
+    document.documentElement.dataset.motion = isMain && motion.on ? 'on' : 'off';
+  });
 
   onMount(async () => {
     try {

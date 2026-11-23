@@ -141,7 +141,8 @@
   /** 選択中の項目（選択帯と説明窓の対象）。 */
   let activePath = $state<string | null>(null);
   const activeField = $derived(shown?.fields.find((f) => f.path === activePath) ?? null);
-  const explain = $derived(activeField?.help ?? activeField?.label ?? shown?.section.description ?? '');
+  // 項目名の再掲は冗長：説明のない項目は分類の説明を表示
+  const explain = $derived(activeField?.help ?? shown?.section.description ?? activeField?.label ?? '');
 
   function jump(id: string) {
     current = id;
@@ -187,10 +188,10 @@
 
 <svelte:window onkeydown={onKey} />
 
-<div class="cfg">
+<div class="cfg" class:with-bar={changed.length > 0 || !!message}>
   <header class="head">
-    <div class="page-title"><PixelTitle text="設定" tag="h1" height={46} fit /></div>
-    <span class="px-chip section-name" data-tone="amber" use:slant>{shown?.section.title ?? ''}</span>
+    <div class="page-title"><PixelTitle text="設定" tag="h1" height={40} fit /></div>
+    <p class="hint">↑↓項目 PgUp/Dn分類 /検索</p>
     <div class="search">
       <Search class="icon" />
       <input id="settings-search" bind:value={query} type="search" placeholder="設定を検索" aria-label="設定を検索" />
@@ -221,6 +222,7 @@
         {/each}
       </nav>
 
+      <div class="right">
       <section class="main" id="section-{shown.section.id}" aria-label={shown.section.title}>
         <div class="frame" aria-hidden="true"></div>
         <div class="scroll scrollbar-minimal">
@@ -269,13 +271,13 @@
           {/if}
         </div>
       </section>
+      <!-- 説明窓：右列の下部（タブ列は全高を使用し、分類の見切れを防止） -->
+      <section class="px-win desc" aria-live="polite">
+        <span class="px-chip px-win-title" data-tone="amber" use:slant>説明</span>
+        <p>{explain}</p>
+      </section>
+      </div>
     </div>
-
-    <section class="px-win desc" aria-live="polite">
-      <span class="px-chip px-win-title" data-tone="amber" use:slant>説明</span>
-      <p>{explain}</p>
-    </section>
-    <p class="hint">↑↓項目 PgUp/PgDn分類 /検索</p>
   {/if}
 </div>
 
@@ -323,28 +325,26 @@
   .cfg {
     position: relative;
     display: grid;
-    grid-template-rows: auto minmax(0, 1fr) auto auto;
+    grid-template-rows: auto minmax(0, 1fr);
     gap: 12px;
     height: calc(100vh - var(--ml-nav-h, 64px));
-    padding: 12px 28px 8px 0;
+    padding: 12px 28px 8px 40px;
     box-sizing: border-box;
+  }
+  /* 保存バー（画面下端固定）表示中：説明窓との重複を回避 */
+  .cfg.with-bar {
+    padding-bottom: 76px;
   }
   .head {
     display: flex;
     align-items: flex-start;
     gap: 16px;
   }
-  .head .page-title {
-    margin-left: -24px;
-  }
-  .section-name {
-    margin-top: 28px;
-  }
   .search {
     position: relative;
-    margin-left: auto;
     margin-top: 20px;
-    width: 300px;
+    flex-shrink: 0;
+    width: clamp(240px, 22vw, 300px);
   }
   .search :global(.icon) {
     position: absolute;
@@ -368,19 +368,20 @@
   }
   .body {
     display: grid;
-    grid-template-columns: 360px minmax(0, 1fr);
-    gap: 32px;
+    grid-template-columns: 340px minmax(0, 1fr);
+    gap: 16px;
     min-height: 0;
   }
   .tabs {
     display: flex;
     flex-direction: column;
     gap: 0;
+    overflow-x: hidden;
     overflow-y: auto;
     padding: 4px 0;
   }
   .tab {
-    margin-left: calc(var(--step) * 6px + 12px);
+    margin-left: calc(var(--step) * 6px);
     margin-right: 16px;
     white-space: nowrap;
     line-height: 34px;
@@ -392,6 +393,12 @@
   .tab:not([data-tone]):hover {
     background: var(--ml-px-dim);
     color: var(--ml-px-cream);
+  }
+  .right {
+    display: grid;
+    grid-template-rows: minmax(0, 1fr) auto;
+    gap: 12px;
+    min-height: 0;
   }
   .main {
     position: relative;
@@ -409,6 +416,7 @@
   .scroll {
     position: relative;
     height: 100%;
+    overflow-x: hidden;
     overflow-y: auto;
     padding: 16px 28px 16px 60px;
     box-sizing: border-box;
@@ -439,15 +447,27 @@
   .row.active :global(.value-text) {
     color: var(--ml-px-black);
   }
+  /* 琥珀の帯上のスライダー：つまみ・溝を黒系へ反転 */
+  .row.active :global(input[type='range']::-webkit-slider-thumb) {
+    background: var(--ml-px-black);
+    box-shadow: none;
+  }
+  .row.active :global(input[type='range']::-webkit-slider-runnable-track) {
+    background: var(--ml-px-faint);
+  }
   .desc {
-    margin-left: 52px;
+    /* 見出し札（上へ 20px 突出）がタブ列と重ならない余白 */
+    margin: 20px 0 0 20px;
     padding-top: 26px;
-    min-height: 96px;
     box-sizing: border-box;
   }
   .hint {
-    text-align: right;
+    min-width: 0;
+    margin: 24px 0 0 auto;
+    overflow: hidden;
+    line-height: 44px;
     color: var(--ml-px-faint);
+    white-space: nowrap;
   }
   .loading,
   .error,

@@ -32,7 +32,8 @@
 
   function measure() {
     const dpr = window.devicePixelRatio || 1;
-    dot = Math.max(1, Math.round(2 * dpr)) / dpr;
+    // 端末画素の整数倍（最大 2 倍表示）。125% 表示は 2 端末画素 = 1.6 CSS px
+    dot = Math.max(1, Math.floor(2 * dpr + 1e-6)) / dpr;
     width = Math.floor(host.getBoundingClientRect().width / dot);
   }
 

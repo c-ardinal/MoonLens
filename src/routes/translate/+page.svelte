@@ -9,6 +9,7 @@
   context-aware engine reads it in context instead of blind.
 -->
 <script lang="ts">
+  import { holdMotion } from '$lib/pixel/motion.svelte';
   import PixelTitle from '$lib/components/PixelTitle.svelte';
   import { onDestroy, onMount } from 'svelte';
   import { ArrowLeftRight, Check, Copy, Cpu, Cloud, Languages, Loader2, X } from 'lucide-svelte';
@@ -31,6 +32,8 @@
   let inputText = $state('');
   let resultText = $state('');
   let translating = $state(false);
+  // 推論中はメインウィンドウの演出を停止
+  $effect(() => (translating ? holdMotion() : undefined));
   let error = $state<UiError | null>(null);
   let provider = $state<string | null>(null);
   let viaCloud = $state(false);

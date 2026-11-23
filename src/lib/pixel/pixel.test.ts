@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { slantPolygon } from './slant';
 import { SELECTED_ANGLE, dialGeometry, hitTest, labelPlacement } from './dial';
+import { homeDot } from './home';
 
 const points = (poly: string) =>
   poly
@@ -42,11 +43,13 @@ describe('dialGeometry', () => {
     }
   });
 
-  it('魔法陣は右側の情報欄と重複しない', () => {
-    // モック基準（論理 640×368、情報欄 310）：外周ルーン環は情報欄の手前
-    const g = dialGeometry(640, 368, 5, 0);
-    expect(g.r).toBe(158);
-    expect(g.cx + g.r).toBeLessThanOrEqual(640 - 310 + 10);
+  it('魔法陣の外周は右側の情報欄と重複しない', () => {
+    // 論理 640×368（既定）・560×348（最小）、情報欄 310：外周の外縁（r + 20q）が情報欄の手前
+    for (const [w, h] of [[640, 368], [560, 348], [960, 456]]) {
+      const g = dialGeometry(w, h, 5, 0);
+      expect(g.cx + g.r + (20 * g.r) / 158).toBeLessThanOrEqual(w - 310);
+      expect(g.cx - g.r - (20 * g.r) / 158).toBeGreaterThanOrEqual(0);
+    }
   });
 });
 
@@ -55,8 +58,8 @@ describe('hitTest', () => {
   it('ノード中心は該当項目', () => {
     g.nodes.forEach((n, i) => expect(hitTest(g, n.x + 3, n.y - 3)).toBe(i));
   });
-  it('中心は決定、余白は該当なし', () => {
-    expect(hitTest(g, g.cx, g.cy)).toBe('center');
+  it('中心・余白は該当なし（中心の決定は廃止、項目クリックで即起動）', () => {
+    expect(hitTest(g, g.cx, g.cy)).toBeNull();
     expect(hitTest(g, 2, 2)).toBeNull();
   });
 });
@@ -68,5 +71,21 @@ describe('labelPlacement', () => {
     expect(labelPlacement(60)).toBe('right');
     expect(labelPlacement(18)).toBe('below');
     expect(labelPlacement(162)).toBe('below');
+  });
+});
+
+describe('homeDot', () => {
+  it('既定寸法は 2 倍表示、拡大率 125% は 2 端末画素', () => {
+    expect(homeDot(1280, 736, 1)).toBe(2);
+    expect(homeDot(1280, 736, 1.25)).toBeCloseTo(1.6);
+    expect(homeDot(1280, 736, 2)).toBe(2);
+  });
+  it('最小寸法（1120×700）は 2 倍表示を維持', () => {
+    expect(homeDot(1120, 636, 1)).toBe(2);
+  });
+  it('高さ不足は端末画素単位で縮小（見切れ防止）', () => {
+    // 1920×1080・150% の画面（作業領域 1280×672 相当）
+    expect(homeDot(1280, 608, 1.5)).toBeCloseTo(2 / 1.5);
+    expect(homeDot(1000, 560, 1)).toBe(1);
   });
 });
