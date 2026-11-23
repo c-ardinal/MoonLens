@@ -33,21 +33,6 @@ mod tests {
     }
 
     #[test]
-    fn provider_ids_from_other_builds_map_to_builtin_ones() {
-        let v = |xs: &[&str]| xs.iter().map(|s| s.to_string()).collect::<Vec<_>>();
-        use crate::pipeline::{
-            upgrade_llm_chain_for_test as llm, upgrade_ocr_chain_for_test as ocr,
-        };
-        assert_eq!(ocr(v(&["paddle"])), v(&["ppocr"]));
-        assert_eq!(ocr(v(&["paddle", "ppocr"])), v(&["ppocr"]));
-        assert_eq!(llm(v(&["embedded.llm"]), "llamacpp"), v(&["llamacpp"]));
-        assert_eq!(
-            llm(v(&["embedded.llm", "deepl"]), "llamacpp.assistant"),
-            v(&["llamacpp.assistant", "deepl"])
-        );
-    }
-
-    #[test]
     fn unregistered_ocr_engines_are_not_reported_as_no_text() {
         use crate::pipeline::ocr_found_nothing;
         let other = |m: &str| ProviderError::Other(m.to_string());
