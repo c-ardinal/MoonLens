@@ -879,8 +879,18 @@ impl Pipeline {
             Some(&first.used_provider),
             first.via_cloud,
         );
+        // The capture's text in reading order, including blocks served
+        // from the cache or already in the target language: `whole` only
+        // holds what this run requested, so a partly cached capture would
+        // copy and show only some of its paragraphs.
+        let all = bundle
+            .blocks
+            .iter()
+            .filter_map(|b| b.translation.clone())
+            .collect::<Vec<_>>()
+            .join(layout::BLOCK_SEPARATOR);
         bundle.result = TaskResult {
-            output: TaskOutput::Text(whole),
+            output: TaskOutput::Text(all),
             latency_ms: started.elapsed().as_millis() as u64,
             fallback_reasons: reasons,
             ..first
