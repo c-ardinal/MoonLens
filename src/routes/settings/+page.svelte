@@ -1,8 +1,9 @@
 <script lang="ts">
   import PixelTitle from '$lib/components/PixelTitle.svelte';
   import { slant } from '$lib/pixel/slant';
-  import { onDestroy, onMount, tick } from 'svelte';
+  import { onDestroy, onMount, tick, untrack } from 'svelte';
   import { beforeNavigate } from '$app/navigation';
+  import { page } from '$app/state';
   import { Search } from 'lucide-svelte';
   import {
     getDefaultSettings,
@@ -147,6 +148,14 @@
     const s = visible.find((v) => v.section.id === id);
     activePath = s?.fields[0]?.path ?? null;
   }
+
+  // 表示中の設定画面へ /settings/#section-xxx で再遷移した場合も該当分類へ切替
+  // （選択ツールバーのモデル異常からの導線等。onMount は再実行されないため）
+  $effect(() => {
+    const target = page.url.hash.replace(/^#section-/, '');
+    // 依存はハッシュのみ（編集のたびに選択項目が先頭へ戻る事態を回避）
+    if (target && untrack(() => draft) && SECTIONS.some((x) => x.id === target)) untrack(() => jump(target));
+  });
 
   function moveRow(delta: number) {
     const fields = shown?.fields ?? [];
