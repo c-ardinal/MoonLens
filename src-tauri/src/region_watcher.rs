@@ -92,6 +92,9 @@ pub enum LiveEvent {
         /// Engine that translated the new blocks, once known.
         #[serde(skip_serializing_if = "Option::is_none")]
         provider: Option<String>,
+        /// The new translations came from a cloud provider.
+        #[serde(skip_serializing_if = "std::ops::Not::not")]
+        via_cloud: bool,
     },
     /// Hide these blocks (indices into the last `Blocks`): their source
     /// changed and a new reading is on its way.
@@ -389,6 +392,12 @@ impl Tracker {
             .analyze_capture(png)
             .await
             .map_err(|e| user_error::provider(&e, Capability::Ocr))?;
+        // The region moved while OCR ran: these boxes belong to the old
+        // place. Hide what is shown and read again once it holds still.
+        if let Some(now) = (env.geometry_now)().filter(|g| *g != frame.geometry) {
+            self.region_moved(now, env);
+            return Ok(Tick::Moved);
+        }
         let text = source_key(&bundle.blocks);
 
         if self.shown.text.as_deref() == Some(text.as_str()) {
@@ -406,6 +415,7 @@ impl Tracker {
                     blocks,
                     translating: false,
                     provider: None,
+                    via_cloud: false,
                 });
             }
             return Ok(Tick::SameText);
@@ -448,6 +458,7 @@ impl Tracker {
             blocks: bundle.blocks.clone(),
             translating: requested,
             provider: None,
+            via_cloud: false,
         });
         if requested {
             let result = env
@@ -463,6 +474,7 @@ impl Tracker {
                     blocks: bundle.blocks,
                     translating: false,
                     provider: None,
+                    via_cloud: false,
                 });
                 return Err(user_error::provider(&e, Capability::Translate));
             }
@@ -473,6 +485,7 @@ impl Tracker {
                     blocks: bundle.blocks.clone(),
                     translating: false,
                     provider: Some(bundle.result.used_provider.clone()),
+                    via_cloud: bundle.result.via_cloud,
                 });
             }
         }

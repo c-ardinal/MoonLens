@@ -14,6 +14,8 @@ export type LiveEvent =
       translating: boolean;
       /** Engine of the new translations, once known. */
       provider?: string;
+      /** The new translations came from a cloud provider. */
+      via_cloud?: boolean;
     }
   | { kind: "stale"; indices: number[] }
   | { kind: "clear" };

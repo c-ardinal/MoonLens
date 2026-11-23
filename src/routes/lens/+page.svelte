@@ -97,7 +97,10 @@
       translating = ev.translating;
       empty = false;
       lastError = null;
-      if (ev.provider) provider = ev.provider;
+      if (ev.provider) {
+        provider = ev.provider;
+        viaCloud = ev.via_cloud ?? false;
+      }
     } else if (ev.kind === 'stale') {
       hidden = new Set([...hidden, ...ev.indices]);
     } else if (ev.kind === 'clear') {
