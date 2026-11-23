@@ -53,8 +53,10 @@
     }
     if (bw < 40) return;
     const ph = h + 6;
-    const p = new Pix(canvas, bw, ph);
-    canvas.style.width = `${bw * dot}px`;
+    // 斜めの帯は上端ほど右へ (h-1)*K ずれるため、その分だけ描画領域を拡張（右端の切れ防止）
+    const pw = bw + Math.ceil((h - 1) * K) + 1;
+    const p = new Pix(canvas, pw, ph);
+    canvas.style.width = `${pw * dot}px`;
     canvas.style.height = `${ph * dot}px`;
     p.clear();
     p.slab(0, 6, bw - 10, h, K, 9); // 段影

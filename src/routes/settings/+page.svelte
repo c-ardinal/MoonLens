@@ -399,7 +399,7 @@
     text-align: left;
   }
   .tab[data-tone] {
-    margin-right: -8px;
+    margin-right: 0; /* 列内で完結：斜めの右端が切れない */
   }
   .tab:not([data-tone]):hover {
     background: var(--ml-px-dim);
