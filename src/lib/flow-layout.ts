@@ -193,7 +193,10 @@ export function flowLayout(text: string, o: FlowOptions): FlowResult {
         })
       };
     }
-    const pitch = o.height / Math.max(1, lines.length);
+    // Never tighter than a readable line height: if even the smallest
+    // font does not fit, the last lines run past the box (the renderer
+    // clips them) instead of overlapping.
+    const pitch = Math.max(o.height / Math.max(1, lines.length), fs * lh);
     return {
       fontSize: fs,
       overflow,

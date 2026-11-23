@@ -135,3 +135,13 @@ describe('flowLayout grow', () => {
     expect(grown.lines[0].width).toBe(60);
   });
 });
+
+describe('flowLayout overflow', () => {
+  it('keeps a readable pitch when nothing fits', () => {
+    const r = flowLayout('あ'.repeat(100), { width: 100, height: 20, rows: [], align: 'left', maxFont: 14, measure });
+    expect(r.fontSize).toBe(7);
+    for (const [a, b] of r.lines.slice(1).map((l, i) => [r.lines[i], l])) {
+      expect(b.top - a.top).toBeGreaterThanOrEqual(7 * 1.15 - 1e-9);
+    }
+  });
+});

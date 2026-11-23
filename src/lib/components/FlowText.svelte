@@ -84,6 +84,10 @@
   .flow {
     position: absolute;
     inset: 0;
+    /* Clip text that does not fit vertically; a label may still run
+       past the box to the right (grow). */
+    overflow-x: visible;
+    overflow-y: clip;
     font-family: var(--ml-font-ui);
   }
   .flow-line {
