@@ -565,6 +565,7 @@ impl Pipeline {
                     from_cache: false,
                     align: b.align,
                     bold,
+                    lines: b.lines.clone(),
                 }
             })
             .collect();
@@ -1023,6 +1024,10 @@ pub struct LensBlock {
     /// is drawn bold too.
     #[serde(default)]
     pub bold: bool,
+    /// Rects of the source text rows (`[x, y, w, h]`, captured-image
+    /// pixels), top to bottom. The overlay lays the translation over them.
+    #[serde(default)]
+    pub lines: Vec<[f32; 4]>,
 }
 
 impl LensBlock {

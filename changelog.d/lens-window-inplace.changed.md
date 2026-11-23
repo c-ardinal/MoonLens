@@ -1,0 +1,1 @@
+- The Lens window paints translations in place over the observed region; the text view is one click away in its header.

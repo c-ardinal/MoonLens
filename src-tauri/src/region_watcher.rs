@@ -525,6 +525,7 @@ mod tests {
             from_cache: false,
             align: Default::default(),
             bold: false,
+            lines: vec![],
         }
     }
 

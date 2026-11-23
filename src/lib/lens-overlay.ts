@@ -94,19 +94,24 @@ export function splitStreaming(text: string, n: number): (string | null)[] {
 }
 
 /**
- * Largest font size in [min, max] (0.5 px steps) for which `fits`
- * returns true, by binary search. Returns `min` if nothing fits.
+ * Room (image px) a single-row block may take to its right when its
+ * translation is longer than the source: up to its own width again
+ * (at least eight line heights),
+ * stopping short of the next block on the same row and of `limitRight`
+ * (the right edge of the captured area, in the blocks' coordinates).
+ * Multi-row blocks keep their width so paragraphs keep their margins.
  */
-export function fitFontSize(fits: (px: number) => boolean, min: number, max: number): number {
-  let lo = Math.round(min * 2);
-  let hi = Math.round(Math.max(min, max) * 2);
-  if (fits(hi / 2)) return hi / 2;
-  while (hi - lo > 1) {
-    const mid = (lo + hi) >> 1;
-    if (fits(mid / 2)) lo = mid;
-    else hi = mid;
-  }
-  return lo / 2;
+export function growRoom(blocks: LensBlock[], i: number, limitRight: number): number {
+  const b = blocks[i];
+  const [x, y, w, h] = b.bbox;
+  if ((b.lines?.length ?? 1) > 1 || w <= 0) return 0;
+  let right = Math.min(limitRight, x + w + Math.max(w, h * 8));
+  blocks.forEach((o, j) => {
+    const [ox, oy, ow, oh] = o.bbox;
+    if (j === i || ow <= 0) return;
+    if (ox >= x + w - 1 && oy < y + h && oy + oh > y) right = Math.min(right, ox - h * 0.4);
+  });
+  return Math.max(0, right - (x + w));
 }
 
 export const rgb = (c: [number, number, number] | null | undefined, fallback: string) =>

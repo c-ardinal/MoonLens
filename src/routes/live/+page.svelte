@@ -3,7 +3,7 @@
   import { listen, type UnlistenFn } from '@tauri-apps/api/event';
   import type { LensBlock } from '$lib/ipc';
   import { rgb } from '$lib/lens-overlay';
-  import { fit } from '$lib/fit';
+  import FlowText from '$lib/components/FlowText.svelte';
   import { liveBoxes, type LiveEvent } from '$lib/live';
 
   // Live translation window. It sits exactly over the pinned region,
@@ -41,11 +41,11 @@
     window.removeEventListener('resize', onResize);
   });
 
-  const boxes = $derived(liveBoxes(blocks, hidden, dpr));
+  const boxes = $derived(liveBoxes(blocks, hidden, dpr, window.innerWidth * dpr));
 </script>
 
 <div class="live" aria-hidden="true">
-  {#each boxes as { block: b, rect: r, pending } (r.key)}
+  {#each boxes as { block: b, rect: r, pending, grow } (r.key)}
     <div
       class="box"
       class:pending
@@ -54,11 +54,13 @@
              color: {rgb(b.colors?.foreground, '#111')};"
     >
       {#if b.translation != null}
-        <div class="fit" use:fit={{ text: b.translation, max: (b.line_height / dpr) * 0.92 }}>
-          <span class="fit-text" style="text-align: {b.align ?? 'left'}; font-weight: {b.bold ? 700 : 500}"
-            >{b.translation}</span
-          >
-        </div>
+        <FlowText
+          block={b}
+          text={b.translation}
+          scale={dpr}
+          {grow}
+          background={rgb(b.colors?.background, 'rgba(255,255,255,0.96)')}
+        />
       {/if}
     </div>
   {/each}
@@ -80,7 +82,6 @@
   }
   .box {
     position: absolute;
-    overflow: hidden;
     border-radius: 3px;
   }
   .box.pending {
@@ -106,22 +107,5 @@
     .box.pending {
       animation: none;
     }
-  }
-  .fit {
-    display: flex;
-    align-items: center;
-    width: 100%;
-    height: 100%;
-    padding: 0 2px;
-  }
-  .fit-text {
-    display: block;
-    width: 100%;
-    line-height: 1.18;
-    overflow-wrap: anywhere;
-    word-break: auto-phrase;
-    line-break: strict;
-    text-wrap: pretty;
-    font-family: var(--ml-font-ui);
   }
 </style>

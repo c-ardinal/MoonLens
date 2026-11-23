@@ -3,9 +3,11 @@
   import { invoke } from '@tauri-apps/api/core';
   import { listen, type UnlistenFn } from '@tauri-apps/api/event';
   import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
-  import { Camera, Pin, X, RefreshCw, Clipboard } from 'lucide-svelte';
+  import { Camera, X, RefreshCw, Clipboard, TextSelect } from 'lucide-svelte';
   import PrivacyBadge from '$lib/components/PrivacyBadge.svelte';
-  import type { CaptureFlowResult } from '$lib/ipc';
+  import FlowText from '$lib/components/FlowText.svelte';
+  import type { CaptureFlowResult, LensBlock } from '$lib/ipc';
+  import { blockCssRect, growRoom, rgb } from '$lib/lens-overlay';
   import { extractText } from '$lib/result';
   import { errorText } from '$lib/errors';
 
@@ -23,8 +25,18 @@
   /** The last capture ran but found no text in the region. */
   let empty = $state(false);
   let autoRefreshMs = $state(0);
+  /** Blocks of the last capture, painted in place over the region. */
+  let blocks = $state<LensBlock[]>([]);
+  /** Show the source / translation as text instead of in place. */
+  let textView = $state(false);
+  let dpr = $state(typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1);
+  const origin = { x: 0, y: 0, w: 0, h: 0 };
+  const placed = $derived(blocks.filter((b) => b.bbox[2] > 0 && b.bbox[3] > 0 && !b.same_language));
+  const inPlace = $derived(!textView && placed.length > 0);
   let headerEl: HTMLElement;
   let unlisten: UnlistenFn | undefined;
+  let unlistenMove: UnlistenFn | undefined;
+  let unlistenResize: UnlistenFn | undefined;
   let refreshTimer: ReturnType<typeof setInterval> | undefined;
   let reportedHeaderHeight = 0;
 
@@ -56,6 +68,7 @@
     viaCloud = r.result.via_cloud;
     provider = r.result.used_provider;
     empty = !source?.trim() && !translation.trim();
+    blocks = r.blocks ?? [];
   }
 
   async function capture() {
@@ -98,25 +111,43 @@
     unlisten = await listen<CaptureFlowResult>('moonlens://lens-result', (e) => apply(e.payload));
     const ro = new ResizeObserver(() => reportInsets());
     if (headerEl) ro.observe(headerEl);
+    // Boxes from the last capture no longer line up once the lens moves
+    // or is resized; drop them until the next capture.
+    try {
+      unlistenMove = await win.onMoved(() => (blocks = []));
+      unlistenResize = await win.onResized(() => {
+        blocks = [];
+        dpr = window.devicePixelRatio || 1;
+      });
+    } catch {
+      /* not running inside Tauri */
+    }
   });
 
   onDestroy(() => {
     unlisten?.();
+    unlistenMove?.();
+    unlistenResize?.();
     if (refreshTimer) clearInterval(refreshTimer);
   });
 </script>
 
 <main
-  class="pointer-events-auto flex h-screen flex-col overflow-hidden rounded-ml border border-border/70 bg-surface-elevated/70 shadow-ml-lg backdrop-blur-2xl backdrop-saturate-150"
+  class="pointer-events-auto flex h-screen flex-col overflow-hidden rounded-ml border border-border/70 shadow-ml-lg"
 >
   <header
     bind:this={headerEl}
     data-tauri-drag-region
-    class="flex select-none items-center justify-between gap-2 border-b border-border/60 px-3 py-2"
+    class="glass flex select-none items-center justify-between gap-2 border-b border-border/60 px-3 py-2"
   >
-    <span class="pointer-events-none text-[11px] font-mono text-ink-faint"
-      >{id.replace('lens-', '')}</span
-    >
+    <div class="flex items-center gap-2">
+      <span class="pointer-events-none text-[11px] font-mono text-ink-faint"
+        >{id.replace('lens-', '')}</span
+      >
+      {#if inPlace}
+        <PrivacyBadge {viaCloud} {provider} />
+      {/if}
+    </div>
     <div class="flex items-center gap-1">
       <label class="flex items-center gap-1 text-[11px] text-ink-muted">
         自動
@@ -139,6 +170,15 @@
         <RefreshCw class="h-4 w-4 {busy ? 'animate-spin' : ''}" />
       </button>
       <button
+        class="rounded-ml-sm p-1 text-ink-muted hover:bg-surface-muted disabled:opacity-40"
+        aria-pressed={textView}
+        disabled={placed.length === 0 && !textView}
+        onclick={() => (textView = !textView)}
+        title={textView ? '重畳表示' : 'テキスト表示'}
+      >
+        <TextSelect class="h-4 w-4 {textView ? 'text-accent' : ''}" />
+      </button>
+      <button
         class="rounded-ml-sm p-1 text-ink-muted hover:bg-surface-muted"
         onclick={copy}
         title="コピー"
@@ -155,7 +195,41 @@
     </div>
   </header>
 
-  <section class="flex-1 overflow-auto scrollbar-minimal p-3">
+  {#if inPlace}
+    <!-- In place over the observed region (Lens style). The region starts
+         right below the header, so block boxes map 1:1 (÷ dpr). -->
+    <section class="relative flex-1 overflow-hidden" aria-label="訳文">
+      {#each blocks as b, i (i)}
+        {#if b.bbox[2] > 0 && b.bbox[3] > 0 && !b.same_language}
+        {@const r = blockCssRect(b, origin, dpr)}
+        <div
+          class="lens-box absolute"
+          class:pending={b.translation == null}
+          style="left: {r.left}px; top: {r.top}px; width: {r.width}px; height: {r.height}px;
+                 background: {rgb(b.colors?.background, 'rgba(255,255,255,0.96)')};
+                 color: {rgb(b.colors?.foreground, '#111')};"
+          title={b.source}
+        >
+          {#if b.translation != null}
+            <FlowText
+              block={b}
+              text={b.translation}
+              scale={dpr}
+              grow={growRoom(blocks, i, window.innerWidth * dpr) / dpr}
+              background={rgb(b.colors?.background, 'rgba(255,255,255,0.96)')}
+            />
+          {/if}
+        </div>
+        {/if}
+      {/each}
+      {#if busy || lastError}
+        <div class="glass absolute bottom-2 right-2 rounded-ml-sm px-2 py-1 text-[11px]">
+          {#if lastError}<span class="text-red-500">{lastError}</span>{:else}処理中…{/if}
+        </div>
+      {/if}
+    </section>
+  {:else}
+  <section class="glass flex-1 overflow-auto scrollbar-minimal p-3">
     {#if !translation && !source && !lastError}
       <div class="flex h-full flex-col items-center justify-center gap-2 text-ink-muted">
         <Camera class="h-6 w-6 text-ink-faint" />
@@ -183,9 +257,22 @@
       {/if}
     {/if}
   </section>
+  {/if}
 </main>
 
 <style>
+  .glass {
+    background: color-mix(in oklab, var(--ml-surface-elevated) 70%, transparent);
+    backdrop-filter: blur(40px) saturate(1.5);
+    -webkit-backdrop-filter: blur(40px) saturate(1.5);
+  }
+  .lens-box {
+    border-radius: 3px;
+    user-select: text;
+  }
+  .lens-box.pending {
+    background-image: linear-gradient(100deg, transparent 30%, rgba(139, 92, 246, 0.18) 50%, transparent 70%) !important;
+  }
   :global(html),
   :global(body) {
     background: transparent;

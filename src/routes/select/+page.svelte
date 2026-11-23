@@ -31,13 +31,14 @@
     type TranslationProgress
   } from '$lib/ipc';
   import { extractText } from '$lib/result';
-  import { fit } from '$lib/fit';
+  import FlowText from '$lib/components/FlowText.svelte';
   import { errorText, parseError, type UiError } from '$lib/errors';
   import {
     LANGUAGES,
     allSameLanguage,
     applyStreaming,
     blockCssRect,
+    growRoom,
     dragRect,
     joinedText,
     languageLabel,
@@ -437,7 +438,7 @@
         {@const r = blockCssRect(b, crop, scale)}
         <div
           role="presentation"
-          class="block pointer-events-auto absolute overflow-hidden"
+          class="block pointer-events-auto absolute"
           class:pending={b.translation == null}
           style="left: {r.left - cropCss.left}px; top: {r.top - cropCss.top}px; width: {r.width}px; height: {r.height}px;
                  background: {rgb(b.colors?.background, 'rgba(255,255,255,0.96)')};
@@ -447,15 +448,13 @@
           title={b.source}
         >
           {#if b.translation != null}
-            <div
-              class="fit h-full w-full"
-              use:fit={{ text: b.translation, max: (b.line_height / scale) * 0.92 }}
-            >
-              <span
-                class="fit-text"
-                style="text-align: {b.align ?? 'left'}; font-weight: {b.bold ? 700 : 500}"
-              >{b.translation}</span>
-            </div>
+            <FlowText
+              block={b}
+              text={b.translation}
+              {scale}
+              grow={growRoom(blocks, i, crop.w) / scale}
+              background={rgb(b.colors?.background, 'rgba(255,255,255,0.96)')}
+            />
           {/if}
         </div>
       {/if}
@@ -644,26 +643,6 @@
     ) !important;
     background-size: 250% 100%;
     animation: scan 1.1s linear infinite;
-  }
-  .fit {
-    display: flex;
-    align-items: center;
-    padding: 0 2px;
-  }
-  .fit-text {
-    display: block;
-    width: 100%;
-    line-height: 1.18;
-    overflow-wrap: anywhere;
-    word-break: normal;
-    /* Japanese: break between phrases where the engine supports it
-       (Chromium / WebView2), and never start a line with small kana or
-       closing punctuation (kinsoku). */
-    word-break: auto-phrase;
-    line-break: strict;
-    text-wrap: pretty;
-    font-family: var(--ml-font-ui);
-    font-weight: 500;
   }
   .pill {
     border-radius: 999px;

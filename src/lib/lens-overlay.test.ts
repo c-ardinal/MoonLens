@@ -4,7 +4,7 @@ import {
   applyStreaming,
   blockCssRect,
   dragRect,
-  fitFontSize,
+  growRoom,
   joinedText,
   languageLabel,
   rgb,
@@ -81,14 +81,6 @@ describe('splitStreaming', () => {
 
   it('handles zero blocks', () => {
     expect(splitStreaming('x', 0)).toEqual([]);
-  });
-});
-
-describe('fitFontSize', () => {
-  it('finds the largest fitting size', () => {
-    expect(fitFontSize((px) => px <= 13.2, 6, 40)).toBe(13);
-    expect(fitFontSize(() => true, 6, 20)).toBe(20);
-    expect(fitFontSize(() => false, 6, 20)).toBe(6);
   });
 });
 
@@ -172,5 +164,22 @@ describe('target language', () => {
     expect(allSameLanguage([])).toBe(false);
     expect(allSameLanguage([block({ same_language: true })])).toBe(true);
     expect(allSameLanguage([block({ same_language: true }), block()])).toBe(false);
+  });
+});
+
+describe('growRoom', () => {
+  const b = (bbox: [number, number, number, number], lines = 1): LensBlock =>
+    block({ bbox, lines: Array.from({ length: lines }, () => bbox) });
+  it('lets a single-row label grow by its width, at least 8 line heights', () => {
+    expect(growRoom([b([10, 10, 300, 20])], 0, 1000)).toBe(300);
+    expect(growRoom([b([10, 10, 60, 20])], 0, 1000)).toBe(160);
+  });
+  it('stops before the next block on the same row and at the edge', () => {
+    const blocks = [b([10, 10, 60, 20]), b([100, 12, 50, 20])];
+    expect(growRoom(blocks, 0, 1000)).toBe(100 - 20 * 0.4 - 70);
+    expect(growRoom([b([10, 10, 60, 20])], 0, 90)).toBe(20);
+  });
+  it('keeps paragraphs at their width', () => {
+    expect(growRoom([b([10, 10, 300, 60], 3)], 0, 1000)).toBe(0);
   });
 });
