@@ -571,7 +571,7 @@ async fn run_watch(
             Ok(Tick::Translated {
                 source,
                 translation,
-                requested: true,
+                ..
             }) => {
                 // The clipboard policy of the regular capture flow, once
                 // per new text (not on every reading).

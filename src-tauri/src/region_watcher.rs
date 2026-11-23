@@ -475,6 +475,8 @@ impl Tracker {
                 ..Shown::default()
             };
             if let Some(text) = decoded {
+                // Take earlier boxes off (the live window shows no QR text).
+                (env.emit)(LiveEvent::Clear);
                 (env.emit)(LiveEvent::Decoded { text: text.clone() });
                 return Ok(Tick::Decoded { text });
             }
