@@ -120,7 +120,7 @@
     }
   }
 
-  /** 魔法陣の 5 機能。順序は数字キー（1〜5）と一致。 */
+  /** 魔法陣の 6 機能。順序は数字キー（1〜6）と一致。 */
   const functions = $derived([
     {
       label: '範囲翻訳',
@@ -157,6 +157,13 @@
       desc: '入力文の翻訳。用語集・文脈指定に対応。',
       hotkey: '',
       run: () => goto('/translate/')
+    },
+    {
+      label: '画像翻訳',
+      icon: 'image',
+      desc: '画像ファイルの文字を認識・翻訳。ドロップ・貼付に対応。',
+      hotkey: '',
+      run: () => goto('/image/')
     }
   ] satisfies (DialItem & { desc: string; hotkey: string; run: () => unknown })[]);
 
@@ -187,7 +194,7 @@
     error: null,
     engines,
     recent,
-    hint: `←→選択 Enter・1-5起動${key('open_command_palette') ? ` ${key('open_command_palette')}パレット` : ''}`
+    hint: `←→選択 Enter・1-6起動${key('open_command_palette') ? ` ${key('open_command_palette')}パレット` : ''}`
   });
 
   function onRegion(r: HomeRegion) {

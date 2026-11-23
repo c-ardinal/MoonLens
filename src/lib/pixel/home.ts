@@ -48,6 +48,9 @@ export interface HomeView {
 export type HomeRegion = 'go' | 'engines' | 'recent';
 export type Rect = { x: number; y: number; w: number; h: number };
 
+/** 情報欄の窓と右端の余白（見出し帯のみ右端まで延長する演出）。 */
+const RIGHT_MARGIN = 14;
+
 /** 右側の情報欄の縦位置。高さ不足時は上端の余白を圧縮。 */
 function column(h: number) {
   const top = Math.max(6, Math.min(32, h - (h >= HINT_MIN_H ? 337 : 311)));
@@ -56,12 +59,12 @@ function column(h: number) {
 
 /** 右側の情報欄の各領域（論理座標）。 */
 export function homeRegions(w: number, h: number): Record<HomeRegion, Rect> {
-  const dx = w - 640;
+  const mx = w - 640 - RIGHT_MARGIN;
   const c = column(h);
   return {
-    go: { x: dx + 480, y: c.desc + 42, w: 146, h: 22 },
-    engines: { x: dx + 342, y: c.engines, w: 290, h: 94 },
-    recent: { x: dx + 330, y: h - (h >= HINT_MIN_H ? 52 : 26), w: 310, h: 22 }
+    go: { x: mx + 480, y: c.desc + 42, w: 146, h: 22 },
+    engines: { x: mx + 342, y: c.engines, w: 284, h: 94 },
+    recent: { x: mx + 330, y: h - (h >= HINT_MIN_H ? 52 : 26), w: 306, h: 22 }
   };
 }
 
@@ -81,6 +84,7 @@ export function drawHomeMotion(p: Pix, v: Pick<HomeView, 'items' | 'selected' | 
 export function drawHome(p: Pix, v: HomeView) {
   const { w, h } = p;
   const dx = w - 640;
+  const mx = dx - RIGHT_MARGIN;
   const c = column(h);
   const R = homeRegions(w, h);
 
@@ -100,39 +104,39 @@ export function drawHome(p: Pix, v: HomeView) {
   p.text(total, w - 12, c.top + 22, 2, { align: 'right' });
 
   // 名札：ショートカット・動作状態
-  let x = dx + 324;
+  let x = mx + 324;
   if (v.hotkey) x += chip(p, x, c.chips, v.hotkey, 0, 9) + 4;
   if (v.running) chip(p, x, c.chips, '● 動作中', 8, 1);
 
   // 説明窓
-  p.slantWin(dx + 330, c.desc, 296, 70, 0.2, { shadow: 2 });
-  let ty = p.wrap(v.desc, dx + 352, c.desc + 10, 260, 6, 18, v.error || v.preview ? 1 : 2);
-  if (v.error) ty = p.wrap(v.error, dx + 352, ty, 260, 7, 18, 1);
-  else if (v.preview) p.wrap(v.preview, dx + 352, ty, 260, 3, 18, 1);
+  p.slantWin(mx + 330, c.desc, 296, 70, 0.2, { shadow: 2 });
+  let ty = p.wrap(v.desc, mx + 352, c.desc + 10, 260, 6, 18, v.error || v.preview ? 1 : 2);
+  if (v.error) ty = p.wrap(v.error, mx + 352, ty, 260, 7, 18, 1);
+  else if (v.preview) p.wrap(v.preview, mx + 352, ty, 260, 3, 18, 1);
   const go = `▶ Enter で${v.running ? '停止' : '開始'}`;
-  p.text(go, dx + 612, c.desc + 47, v.hot === 'go' ? 9 : 5, { align: 'right' });
+  p.text(go, mx + 612, c.desc + 47, v.hot === 'go' ? 9 : 5, { align: 'right' });
 
   // エンジン窓
   const E = R.engines;
-  p.slantWin(E.x, E.y + 8, 284, 86, 0.2, { shadow: 2 });
+  p.slantWin(E.x, E.y + 8, 278, 86, 0.2, { shadow: 2 });
   chip(p, E.x + 14, E.y, 'エンジン', 0, v.hot === 'engines' ? 9 : 5);
   v.engines.slice(0, 4).forEach((r, i) => {
     const [label, col] = STATE_TEXT[r.state];
     const y = E.y + 20 + i * 17;
     const lw = p.text(r.label, E.x + 26, y, 4) + 8;
-    p.text(p.fit(r.model, 190 - lw), E.x + 26 + lw, y, 5);
-    p.text(label, E.x + 268, y, col, { align: 'right' });
+    p.text(p.fit(r.model, 184 - lw), E.x + 26 + lw, y, 5);
+    p.text(label, E.x + 262, y, col, { align: 'right' });
   });
 
   // 最近の翻訳（下端基準）
   const Rr = R.recent;
-  p.slab(Rr.x, Rr.y, 320, 21, K, 1);
+  p.slab(Rr.x, Rr.y, 306, 21, K, 1);
   p.text('最近', Rr.x + 16, Rr.y + 2, 3);
   if (v.recent) {
-    p.text(p.fit(v.recent.text, 150), Rr.x + 54, Rr.y + 2, 6);
-    p.text(v.recent.time, Rr.x + 210, Rr.y + 2, 3);
+    p.text(p.fit(v.recent.text, 142), Rr.x + 54, Rr.y + 2, 6);
+    p.text(v.recent.time, Rr.x + 202, Rr.y + 2, 3);
   } else p.text('履歴なし', Rr.x + 54, Rr.y + 2, 3);
-  p.text('履歴▶', Rr.x + 266, Rr.y + 2, v.hot === 'recent' ? 9 : 5);
+  p.text('履歴▶', Rr.x + 254, Rr.y + 2, v.hot === 'recent' ? 9 : 5);
 
-  if (h >= HINT_MIN_H) p.text(p.fit(v.hint, 316), w - 14, h - 20, 3, { align: 'right' });
+  if (h >= HINT_MIN_H) p.text(p.fit(v.hint, 316), w - 4 - RIGHT_MARGIN, h - 20, 3, { align: 'right' });
 }

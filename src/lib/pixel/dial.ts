@@ -27,7 +27,7 @@ export interface DialGeometry {
 /** 選択項目の向き（度）。右上の見出し帯側。 */
 export const SELECTED_ANGLE = -54;
 /** 右側の情報欄の幅（論理画素）。 */
-export const SIDE_WIDTH = 310;
+export const SIDE_WIDTH = 324;
 export const NODE_HIT_RADIUS = 26;
 
 /**
@@ -71,6 +71,9 @@ export function labelPlacement(angle: number): 'above' | 'below' | 'left' | 'rig
   if (s > 0.5) return Math.cos(t) >= 0 ? 'right' : 'left';
   return 'below';
 }
+
+type Box = { x: number; y: number; w: number; h: number };
+const overlap = (a: Box, b: Box) => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
 
 function runeRing(p: Pix, cx: number, cy: number, r: number, n: number, set: readonly (readonly string[])[], c: Color, offDeg = 0) {
   const w = set[0][0].length,
@@ -174,9 +177,11 @@ export function drawDial(p: Pix, s: DialState, reserve = SIDE_WIDTH) {
     p.line(cx + tick * Math.cos(t), cy + tick * Math.sin(t), cx + (tick - l) * Math.cos(t), cy + (tick - l) * Math.sin(t), i % 6 === 0 ? 5 : 3);
   }
 
-  // 五芒星（項目数 5）・多角形（その他）
+  // 五芒星（項目数 5）・六芒星（6）・多角形（その他）
   const N = geo.nodes;
-  if (N.length === 5) [0, 2, 4, 1, 3, 0].reduce((a, b) => (p.line(N[a].x, N[a].y, N[b].x, N[b].y, 4), b));
+  const path = (ids: number[]) => ids.reduce((a, b) => (p.line(N[a].x, N[a].y, N[b].x, N[b].y, 4), b));
+  if (N.length === 5) path([0, 2, 4, 1, 3, 0]);
+  else if (N.length === 6) (path([0, 2, 4, 0]), path([1, 3, 5, 1]));
   else N.forEach((n, i) => p.line(n.x, n.y, N[(i + 1) % N.length].x, N[(i + 1) % N.length].y, 4));
 
   // 内周（小ルーンは動作層）
@@ -198,9 +203,15 @@ export function drawDial(p: Pix, s: DialState, reserve = SIDE_WIDTH) {
     p.line(cx + 40 * Math.cos(a), cy + 40 * Math.sin(a), sel.x - 34 * Math.cos(a), sel.y - 34 * Math.sin(a), 5, [3, 2]);
   }
 
-  // ノード
+  // ノード（本体を先に全描画、名札は重複回避の配置探索後に描画）
+  const boxes: Box[] = N.map((n, i) => {
+    const r = i === s.selected ? 31 : 22;
+    return { x: n.x - r, y: n.y - r, w: r * 2, h: r * 2 };
+  });
+  boxes.push({ x: cx - ri, y: cy - ri, w: ri * 2, h: ri * 2 }); // 内周・中心核
+  N.forEach((n, i) => i !== s.selected && boxes.push({ x: n.x + 13, y: n.y - 30, w: 10, h: 16 })); // 番号
   s.items.forEach((item, i) => {
-    const { x, y, angle } = N[i];
+    const { x, y } = N[i];
     const on = i === s.selected,
       hov = s.hover === i,
       lock = !!item.locked;
@@ -212,20 +223,31 @@ export function drawDial(p: Pix, s: DialState, reserve = SIDE_WIDTH) {
       if (!lock) p.diamond(x, y, 17, 3);
     }
     p.icon(ICONS[item.icon], x - 8, y - 8, on ? 0 : lock ? 3 : hov ? 9 : 5, 2);
-    if (on) return;
+  });
+  const limit = p.w - reserve + 6; // 情報欄へ食込まない右端
+  s.items.forEach((item, i) => {
+    if (i === s.selected) return;
+    const { x, y, angle } = N[i];
+    const hov = s.hover === i,
+      lock = !!item.locked;
     p.text(String(i + 1), x + 13, y - 30, hov ? 6 : 3);
-    const w = p.textW(item.label) + 16;
-    const place = labelPlacement(angle);
-    let lx = place === 'left' ? x - 24 - w : place === 'right' ? x + 24 : Math.round(x - w / 2);
-    let ly = place === 'above' ? y - 46 : place === 'below' ? y + 26 : y - 9;
-    lx = Math.max(2, Math.min(p.w - reserve - w + 6, lx)); // 情報欄へ食込まない
-    ly = Math.max(2, Math.min(p.h - 21, ly));
-    chip(p, lx, ly, item.label, lock ? 3 : hov ? 0 : 5, hov ? 9 : 1);
+    const w = p.textW(item.label) + 16 + (lock ? 16 : 0);
+    const at = (place: string): Box => {
+      const lx = place === 'left' ? x - 24 - w : place === 'right' ? x + 24 : Math.round(x - w / 2);
+      const ly = place === 'above' ? y - 46 : place === 'below' ? y + 26 : y - 9;
+      return { x: Math.max(2, Math.min(limit - w, lx)), y: Math.max(2, Math.min(p.h - 21, ly)), w, h: 19 };
+    };
+    // 既定の配置→下→上→左→右の順に、ノード・既存の名札と重ならない位置を採用
+    const order = [labelPlacement(angle), 'below', 'above', 'left', 'right'];
+    const hit = (b: Box) => boxes.some((o) => overlap(b, o));
+    const box = order.map(at).find((b) => !hit(b)) ?? at(order[0]);
+    boxes.push(box);
+    chip(p, box.x, box.y, item.label, lock ? 3 : hov ? 0 : 5, hov ? 9 : 1);
     if (lock) {
-      const ex = lx + w + 4;
-      p.rect(ex - 2, ly + 3, 13, 13, 0);
-      p.line(ex, ly + 5, ex + 8, ly + 13, 7);
-      p.line(ex + 8, ly + 5, ex, ly + 13, 7);
+      const ex = box.x + w - 12;
+      p.rect(ex - 2, box.y + 3, 13, 13, 0);
+      p.line(ex, box.y + 5, ex + 8, box.y + 13, 7);
+      p.line(ex + 8, box.y + 5, ex, box.y + 13, 7);
     }
   });
   return geo;

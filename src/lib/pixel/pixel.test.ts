@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { slantPolygon } from './slant';
-import { SELECTED_ANGLE, dialGeometry, hitTest, labelPlacement } from './dial';
+import { SELECTED_ANGLE, SIDE_WIDTH, dialGeometry, hitTest, labelPlacement } from './dial';
 import { homeDot } from './home';
 
 const points = (poly: string) =>
@@ -44,10 +44,10 @@ describe('dialGeometry', () => {
   });
 
   it('魔法陣の外周は右側の情報欄と重複しない', () => {
-    // 論理 640×368（既定）・560×348（最小）、情報欄 310：外周の外縁（r + 20q）が情報欄の手前
+    // 論理 640×368（既定）・560×348（最小）、情報欄 324：外周の外縁（r + 20q）が情報欄の手前
     for (const [w, h] of [[640, 368], [560, 348], [960, 456]]) {
       const g = dialGeometry(w, h, 5, 0);
-      expect(g.cx + g.r + (20 * g.r) / 158).toBeLessThanOrEqual(w - 310);
+      expect(g.cx + g.r + (20 * g.r) / 158).toBeLessThanOrEqual(w - SIDE_WIDTH);
       expect(g.cx - g.r - (20 * g.r) / 158).toBeGreaterThanOrEqual(0);
     }
   });

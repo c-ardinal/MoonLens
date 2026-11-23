@@ -2,6 +2,7 @@
   import { page } from '$app/state';
   import { Minus, X } from 'lucide-svelte';
   import { slant } from '$lib/pixel/slant';
+  import PixelLogo from './PixelLogo.svelte';
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import { onDestroy, onMount } from 'svelte';
   import { getSettings, hideMain, onSettingsChanged } from '$lib/ipc';
@@ -18,10 +19,9 @@
     }
   }
 
+  // 機能（翻訳・画像翻訳など）の入口はホームの魔法陣へ一本化。上部は画面単位の経路のみ
   const items = [
     { href: '/', label: 'ホーム' },
-    { href: '/translate/', label: '翻訳' },
-    { href: '/image/', label: '画像翻訳' },
     { href: '/history/', label: '履歴' },
     { href: '/plugins/', label: 'プラグイン' },
     { href: '/settings/', label: '設定' }
@@ -47,13 +47,15 @@
   /** タブの傾き：斜めの切抜き幅（上端 4px）を右余白内へ収め、文字との干渉を防止。 */
   const TAB_K = 0.15;
 
+  /** 翻訳・画像翻訳はホーム配下の機能画面：ホームを選択状態で表示。 */
+  const HOME_PATHS = ['/', '/translate/', '/image/'];
   const active = (href: string) =>
-    href === '/' ? page.url.pathname === '/' : page.url.pathname.startsWith(href);
+    href === '/' ? HOME_PATHS.includes(page.url.pathname) : page.url.pathname.startsWith(href);
 </script>
 
 <nav class="sticky top-0 z-30" aria-label="メインメニュー" data-tauri-drag-region>
   <div class="bar" data-tauri-drag-region>
-    <a href="/" class="logo" use:slant={0.4}>MOONLENS</a>
+    <a href="/" class="logo" aria-label="MoonLens ホーム"><PixelLogo /></a>
     <ul class="tabs" data-tauri-drag-region>
       {#each items as item (item.href)}
         <li>
@@ -96,13 +98,8 @@
   }
   .logo {
     align-self: flex-start;
-    display: flex;
-    align-items: center;
-    height: 64px;
-    padding: 0 22px 0 30px; /* 斜めの左端（上端ほど右へ後退）と文字の干渉防止 */
-    background: var(--ml-px-amber);
-    color: var(--ml-px-black);
-    font-size: 32px;
+    display: block;
+    flex-shrink: 0;
   }
   .tabs {
     display: flex;
