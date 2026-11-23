@@ -1,0 +1,2 @@
+- Settings: problems in `config.toml` (unknown keys, wrong types, invalid choices, out-of-range values, provider ids the running build does not register) are listed on the home screen with a proposed fix each; fixes apply individually or all at once, keeping a backup of the previous file.
+- Settings: keys and provider ids from older builds (e.g. `paddle`, `embedded.llm`) are upgraded automatically at start-up through declarative rules, with a notice and a backup.

@@ -20,9 +20,28 @@ mod tests {
     fn legacy_seeded_ocr_chain_is_upgraded_but_custom_chains_are_kept() {
         use crate::pipeline::upgrade_ocr_chain_for_test as up;
         let v = |xs: &[&str]| xs.iter().map(|s| s.to_string()).collect::<Vec<_>>();
-        assert_eq!(up(v(&["ocrs", "paddle"])), v(&["ppocr", "ocrs"]));
+        // Windows also gets the OS OCR engine between PP-OCR and ocrs.
+        let default = if cfg!(windows) {
+            v(&["ppocr", "windows", "ocrs"])
+        } else {
+            v(&["ppocr", "ocrs"])
+        };
+        assert_eq!(up(v(&["ocrs", "paddle"])), default);
+        assert_eq!(up(v(&["ppocr", "ocrs"])), default);
         assert_eq!(up(v(&["ocrs"])), v(&["ocrs"]));
         assert_eq!(up(v(&["plugin.x", "ocrs"])), v(&["plugin.x", "ocrs"]));
+    }
+
+    #[test]
+    fn unregistered_ocr_engines_are_not_reported_as_no_text() {
+        use crate::pipeline::ocr_found_nothing;
+        let other = |m: &str| ProviderError::Other(m.to_string());
+        assert!(!ocr_found_nothing(&other(
+            "all providers failed: paddle: not registered"
+        )));
+        assert!(ocr_found_nothing(&other(
+            "all providers failed: x: not registered; ppocr: low confidence result"
+        )));
     }
 
     #[test]

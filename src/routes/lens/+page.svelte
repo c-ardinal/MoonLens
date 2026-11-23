@@ -51,7 +51,8 @@
 
   function apply(r: CaptureFlowResult) {
     source = r.source_text;
-    translation = extractText(r.result);
+    // No text found: show the empty state, not "(photo detected)".
+    translation = 'Intent' in (r.result.output as object) ? '' : extractText(r.result);
     viaCloud = r.result.via_cloud;
     provider = r.result.used_provider;
     empty = !source?.trim() && !translation.trim();

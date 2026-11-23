@@ -25,6 +25,14 @@ on:
       - 'src-tauri/src/capture.rs'
       - 'src-tauri/src/lens.rs'
       - 'src-tauri/tests/lens_capture_windows.rs'
+      # Screen → OCR → translation on a real desktop (lens-e2e job).
+      - 'src-tauri/src/selector.rs'
+      - 'src-tauri/src/intent.rs'
+      - 'src-tauri/src/pipeline.rs'
+      - 'src-tauri/src/lib.rs'
+      - 'src-tauri/src/providers/ocr_*.rs'
+      - 'src-tauri/tests/lens_screen_windows_live.rs'
+      - 'src-tauri/examples/fetch_models.rs'
       - '.github/workflows/windows.yml'
   workflow_dispatch:
 
@@ -118,3 +126,126 @@ jobs:
       - name: Tests (src-tauri)
         working-directory: src-tauri
         run: cargo test --locked --no-fail-fast
+
+  # Real-desktop end-to-end check of what users see on Windows: fixture
+  # images shown on screen, read back through the app's capture paths,
+  # OCR'd by each engine and translated by the built-in model; then the
+  # release-mode app itself is started to check that it writes its log.
+  # Captures, report and log are uploaded as the `lens-e2e` artifact.
+  lens-e2e:
+    name: lens e2e (windows)
+    runs-on: windows-latest
+    timeout-minutes: 120
+    env:
+      # Release speed for OCR / llama.cpp without the shipping profile's
+      # full LTO link time.
+      CARGO_PROFILE_RELEASE_LTO: 'false'
+      CARGO_PROFILE_RELEASE_CODEGEN_UNITS: '16'
+      MOONLENS_E2E_OUT: ${{ github.workspace }}\e2e-out
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Vulkan SDK
+        uses: jakoch/install-vulkan-sdk-action@v1.8.1
+        with:
+          cache: true
+
+      - uses: ilammy/msvc-dev-cmd@v1
+      - name: Use Ninja for CMake
+        shell: bash
+        run: |
+          pip install ninja
+          echo "CMAKE_GENERATOR=Ninja" >> "$GITHUB_ENV"
+          echo "CARGO_TARGET_DIR=D:/t" >> "$GITHUB_ENV"
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          key: windows-e2e
+          save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/release' }}
+
+      - name: Allow long paths for git checkouts
+        shell: bash
+        run: git config --global core.longpaths true
+
+      - name: Point bindgen at LLVM
+        shell: bash
+        run: echo "LIBCLANG_PATH=C:\\Program Files\\LLVM\\bin" >> "$GITHUB_ENV"
+
+      # The real frontend, so the release app started below is the app
+      # users get (minus the installer).
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Frontend build
+        run: |
+          npm ci
+          npm run build
+
+      # Informational. WinRT types load only in Windows PowerShell 5.1.
+      - name: Report screen and OCR languages
+        continue-on-error: true
+        shell: powershell
+        run: |
+          Add-Type -AssemblyName System.Windows.Forms
+          [System.Windows.Forms.Screen]::AllScreens | Format-List DeviceName, Bounds, Primary
+          [Windows.Media.Ocr.OcrEngine, Windows.Foundation, ContentType = WindowsRuntime] | Out-Null
+          "OCR languages: " + (([Windows.Media.Ocr.OcrEngine]::AvailableRecognizerLanguages | ForEach-Object { $_.LanguageTag }) -join ', ')
+
+      - name: Cache models
+        uses: actions/cache@v4
+        with:
+          path: ~\AppData\Local\io.moonlens.app\models
+          key: moonlens-models-v1
+
+      - name: Download models
+        working-directory: src-tauri
+        run: cargo run --release --locked --example fetch_models
+
+      - name: Screen → OCR → translation
+        working-directory: src-tauri
+        run: cargo test --release --locked --test lens_screen_windows_live -- --ignored --nocapture
+
+      - name: Build the release app
+        if: always()
+        working-directory: src-tauri
+        run: cargo build --release --locked --bin moonlens
+
+      # The reporter's install wrote a 0-byte log. Start the GUI-subsystem
+      # release binary, let it warm up, and require a non-empty log with
+      # the start line.
+      - name: Release app writes its log
+        if: always()
+        shell: pwsh
+        run: |
+          $log = Join-Path $env:LOCALAPPDATA 'io.moonlens.app\logs\moonlens.log'
+          Remove-Item $log -ErrorAction SilentlyContinue
+          $p = Start-Process -FilePath 'D:\t\release\moonlens.exe' -PassThru
+          Start-Sleep -Seconds 45
+          Add-Type -AssemblyName System.Windows.Forms, System.Drawing
+          $b = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+          $bmp = New-Object System.Drawing.Bitmap $b.Width, $b.Height
+          [System.Drawing.Graphics]::FromImage($bmp).CopyFromScreen($b.Location, [System.Drawing.Point]::Empty, $b.Size)
+          New-Item -ItemType Directory -Force $env:MOONLENS_E2E_OUT | Out-Null
+          $bmp.Save((Join-Path $env:MOONLENS_E2E_OUT 'app-desktop.png'))
+          $alive = -not $p.HasExited
+          Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+          Start-Sleep -Seconds 2
+          if (Test-Path $log) { Copy-Item $log $env:MOONLENS_E2E_OUT }
+          "app still running after 45 s: $alive"
+          if (-not (Test-Path $log)) { throw "no log file at $log" }
+          $text = Get-Content $log -Raw
+          "log size: $((Get-Item $log).Length) bytes"
+          $text
+          if (-not $text -or $text -notmatch 'MoonLens .* start') { throw 'log is empty or lacks the start line' }
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lens-e2e
+          path: e2e-out
+          if-no-files-found: warn

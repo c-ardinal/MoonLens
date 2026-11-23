@@ -13,6 +13,8 @@ pub mod llm_models;
 pub mod model_store;
 pub mod ocr_ocrs;
 pub mod ocr_ppocr;
+#[cfg(windows)]
+pub mod ocr_windows;
 pub mod qr_rqrr;
 pub mod search_serpapi;
 pub mod translate_deepl;

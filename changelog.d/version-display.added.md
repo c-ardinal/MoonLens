@@ -1,0 +1,1 @@
+- Settings → Data shows the app version and build commit; the log records them at every start, plus each capture's size, brightness and OCR result.

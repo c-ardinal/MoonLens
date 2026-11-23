@@ -471,6 +471,22 @@ export const dismissNotice = (id: string) => safeInvoke<void>('dismiss_notice', 
 export const onNotices = (handler: (n: Notice[]) => void): Promise<UnlistenFn> =>
   listen<Notice[]>('moonlens://notices', (e) => handler(e.payload));
 
+/** A problem in config.toml with its proposed fix (settings::validate). */
+export interface ConfigIssue {
+  id: string;
+  /** Location as written in config.toml, e.g. "providers.ocr.chain[0]". */
+  path: string;
+  problem: string;
+  /** What the fix does; null when there is nothing safe to propose. */
+  fix_label: string | null;
+}
+
+export const listConfigIssues = () => safeInvoke<ConfigIssue[]>('list_config_issues', undefined, []);
+/** Apply the fixes of the given issues (all when empty); returns how many applied. */
+export const applyConfigFixes = (ids: string[]) => safeInvoke<number>('apply_config_fixes', { ids });
+export const onConfigIssues = (handler: (i: ConfigIssue[]) => void): Promise<UnlistenFn> =>
+  listen<ConfigIssue[]>('moonlens://config-issues', (e) => handler(e.payload));
+
 /** Show the main window on an in-app page (from the selector or a lens). */
 export const openMainRoute = (path: string) => safeInvoke<void>('open_main_route', { path });
 /** The backend asks the main window to navigate (tray, hotkeys). */
@@ -481,6 +497,8 @@ export const hideMain = () => safeInvoke<void>('hide_main');
 export const quitApp = () => safeInvoke<void>('quit_app');
 
 export interface DataLocations {
+  /** App version and build commit. */
+  version: string;
   config_dir: string;
   data_dir: string;
   models_dir: string;

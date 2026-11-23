@@ -1,0 +1,445 @@
+# config.toml written by a pre-release build (full copy of its defaults).
+# Fixture for settings::validate: old keys and provider ids.
+# MoonLens default configuration. Every setting has a default so partial
+# user overrides are safe. Delete any section you do not want to override.
+
+active_profile = "default"
+
+[appearance]
+theme = "system"
+accent = "#8B5CF6"
+density = "normal"
+ui_language = "ja"
+font_family_ui = "Inter Variable"
+font_family_mono = "JetBrains Mono"
+reduced_motion = false
+
+[hotkeys]
+capture_region = "CommandOrControl+Shift+Space"
+capture_window = "CommandOrControl+Shift+W"
+toggle_pin_overlay = "CommandOrControl+Shift+P"
+toggle_subtitle = "CommandOrControl+Shift+S"
+open_command_palette = "CommandOrControl+K"
+open_history = "CommandOrControl+Shift+H"
+reverse_image_search = "CommandOrControl+Shift+G"
+stop_all = "CommandOrControl+Alt+Escape"
+custom = {}
+
+[overlay]
+max_width_px = 480
+opacity = 0.92
+blur_px = 24
+saturation = 1.8
+font_size_px = 14
+line_height = 1.5
+follow_source = true
+position = "near_source"
+
+# Global default language pair used by every non-subtitle translation
+# surface (Lens cards, mini launcher, capture overlay re-translate). Set
+# `default_source_language = "auto"` to let the backend detect per-flow;
+# any ISO-style code (`en`, `zh`, `ko`, etc.) pins detection to that
+# language. `default_target_language` is the user's preferred output;
+# `ja` ships as the default because MoonLens leads with EN/multi → JA
+# but it can be changed freely without affecting subtitle workflow.
+[translation]
+default_source_language = "auto"
+default_target_language = "ja"
+
+[subtitle]
+source_language = "auto"
+target_language = "ja"
+model = "large-v3-turbo"
+fallback_model = "base"
+vad_aggressiveness = 2
+chunk_seconds = 3.0
+overlap_seconds = 0.5
+show_original = true
+font_size_px = 22
+
+[clipboard]
+auto_copy_translation = true
+auto_copy_source = false
+auto_copy_qr = true
+auto_copy_transcript = false
+
+[privacy]
+allow_cloud_globally = true
+show_privacy_indicator = true
+notify_on_fallback_to_cloud = true
+log_level = "info"
+redact_sensitive_in_logs = true
+
+[storage]
+keep_history = true
+retention_days = 90
+max_entries = 10000
+encrypt_at_rest = false
+save_capture_images = true
+
+[performance]
+streaming_debounce_ms = 50
+region_watcher_poll_ms = 250
+max_concurrent_tasks = 4
+cache_ttl_seconds = 3600
+use_gpu_if_available = true
+# Lens content-change auto-poll. The watcher fires a capture trigger every
+# `lens_auto_poll_ms` milliseconds so a stationary lens over video /
+# chat / subtitles still re-translates when the source text changes.
+# Hash-compare skips ticks with no change, so the only cost on static
+# sources is a brief mask + capture per tick. Set to 0 to disable.
+lens_auto_poll_ms = 1500
+
+# ---------------------------------------------------------------------------
+# Providers
+# Each task declares an ordered chain and fallback policy. Provider ids of the
+# form "vendor.model" or "plugin.<id>" are resolved at runtime against the
+# registered providers (built-in or loaded from plugins).
+#
+# Defaults are LOCAL-FIRST. Ollama, DeepL, Gemini and similar external
+# servers / cloud APIs are explicitly OPTIONAL. The user opts in by adding
+# their provider id to the chain in Settings → Providers; we never ship a
+# chain that depends on an external daemon being already running.
+# ---------------------------------------------------------------------------
+
+[providers]
+# Translation tier the router drives. Fresh installs get
+# `standard` (≈4.2 GB total: JA-Std+ + Edge E2B); users can
+# switch to `compact` (0.6 GB, EN↔JA only) or `quality`
+# (≈6.1 GB, Edge+ E4B for multilingual) from the settings UI.
+# Pinned here so the canonical default round-trips through the
+# settings migration as a no-op (the migration only derives a
+# tier when the field is genuinely absent — i.e. a pre-routing
+# user.toml from before this knob existed).
+user_tier = "standard"
+
+# Phase 29 glossary feature: when an OCR / audio batch has at least
+# `glossary_min_lines` source lines, MoonLens asks the translator
+# chain to extract a proper-noun + technical-term glossary upfront,
+# then injects it into every per-line translate so the same source
+# term renders the same way across the batch. Set to a very large
+# value (e.g. 4294967295) to disable the feature; set to 0 to
+# always run the glossary pass even on single-line lenses (rarely
+# useful, just adds ~300 ms upfront).
+glossary_min_lines = 5
+
+[providers.translate]
+# Local-first chain. The default ships with the in-process embedded
+# LLM runtime (`embedded.llm`) so a fresh install translates out
+# of the box without requiring the user to install Ollama, run a
+# separate daemon, or sign up for a cloud API. The first launch
+# downloads the GGUF model into `<app-data>/moonlens/models/` and
+# the provider transparently picks it up; until the download
+# completes, `embedded.llm` returns a "model not downloaded"
+# error and the chain falls through to whatever else the user
+# configured (or surfaces the missing-model CTA in the settings
+# UI). `ollama.gemma4` is kept as an opt-in fallback for users
+# who already run an Ollama daemon and prefer that path; cloud
+# providers are still gated behind `allow_cloud` / `allow_network`.
+chain = ["embedded.llm"]
+parallel_race = false
+fallback_on = ["timeout", "error", "offline"]
+# 16.x bumped from 30s to 180s. Embedded LLM inference on weak
+# hardware (4-8 GB RAM, no GPU) easily takes 30-90s per Lens line
+# at the Quality (7B) tier; with mistralrs serialising requests
+# on a single model instance, queue-waiting requests would hit
+# the old 30s deadline before they ever started compute. 180s
+# covers the practical worst case (7B on a 4-core CPU, single
+# paragraph block) so legitimately-slow translations succeed
+# instead of all-or-nothing failing.
+timeout_ms = 180000
+allow_cloud = false
+allow_network = false
+max_cost_per_request = 0.0
+sticky_session_ms = 30000
+
+# OCR chain. 2026-05-28: consolidated to a SINGLE local OCR engine —
+# `paddle` (PP-OCRv5 via oar-ocr). The OCR bench (iter1) measured it
+# at CER 0.005 (en) / 0.003 (en-ja) / 0.000 on english0001, vs `ocrs`
+# at 0.314 (en, Latin-only) and WinRT whose recognition accuracy was
+# never benchmarked and which in practice mis-reads small anti-aliased
+# screen text (`Please`→`PIease`, `from`→`f「om`) badly enough to make
+# the Compact translator echo the source instead of translating.
+# Unlike WinRT, oar-ocr is cross-platform (ONNX Runtime) and the same
+# engine on every OS. It requires the PP-OCRv5 ONNX models on disk
+# (downloaded on first run, like the embedded LLM); there is no WinRT
+# fallback because a fallback that mis-recognises is worse than a
+# clear "download the OCR model" prompt. Translation keeps its tiers
+# (Compact/Standard/Quality); OCR does not need tiers — one accurate
+# engine serves every capture.
+[providers.ocr]
+chain = ["paddle"]
+parallel_race = false
+fallback_on = ["low_confidence", "error"]
+# First OCR call after a cold start has to load ~60MB of rten models
+# from disk and initialise tensor allocators — that can take 5-8 s on
+# a fresh file-system cache. App startup spawns a preload task so the
+# first USER-FACING capture usually sees a warm engine, but this
+# timeout still has to cover the pathological case where the user
+# creates a lens immediately after launching.
+timeout_ms = 15000
+allow_cloud = false
+allow_network = false
+max_cost_per_request = 0.0
+sticky_session_ms = 0
+
+[providers.asr]
+# Empty by default; ASR is opt-in via Settings → Providers. Adding
+# `whisper_cpp.large_v3_turbo` requires the user to run a local
+# whisper.cpp HTTP server — that's a deployment choice, not an
+# install-time requirement.
+chain = []
+parallel_race = false
+fallback_on = ["error"]
+timeout_ms = 15000
+allow_cloud = false
+allow_network = false
+max_cost_per_request = 0.0
+sticky_session_ms = 0
+
+[providers.explain]
+chain = []
+parallel_race = false
+fallback_on = ["timeout", "error", "offline"]
+timeout_ms = 10000
+allow_cloud = false
+allow_network = false
+max_cost_per_request = 0.0
+sticky_session_ms = 60000
+
+[providers.summarize]
+chain = []
+parallel_race = false
+fallback_on = ["timeout", "error", "offline"]
+timeout_ms = 10000
+allow_cloud = false
+allow_network = false
+max_cost_per_request = 0.0
+sticky_session_ms = 60000
+
+[providers.reverse_image_search]
+# Browser handlers do not require an external server: they just open
+# the user's default browser to a search URL. They DO leak the image
+# URL outside the device though, so they remain disabled until the
+# user explicitly enables this feature.
+chain = []
+parallel_race = false
+fallback_on = ["error"]
+timeout_ms = 3000
+allow_cloud = false
+allow_network = true
+max_cost_per_request = 0.0
+sticky_session_ms = 0
+
+[providers.qr_handler]
+chain = ["rqrr"]
+parallel_race = false
+fallback_on = ["error"]
+timeout_ms = 1000
+allow_cloud = false
+allow_network = false
+max_cost_per_request = 0.0
+sticky_session_ms = 0
+
+[providers.intent_classifier]
+chain = ["builtin.heuristic"]
+parallel_race = false
+fallback_on = ["error"]
+timeout_ms = 500
+allow_cloud = false
+allow_network = false
+max_cost_per_request = 0.0
+sticky_session_ms = 0
+
+# ---------------------------------------------------------------------------
+# Per-provider configuration. Unknown keys are preserved verbatim so plugins
+# can declare their own settings without the core knowing the shape.
+# ---------------------------------------------------------------------------
+
+# Embedded local LLM. `model_path` is omitted by default so the
+# provider falls back to `<app-data>/moonlens/models/<file>.gguf`
+# (resolved at runtime by `Pipeline::set_app_data_dir`). Power
+# users can pin a specific GGUF by setting `model_path` to an
+# absolute path. `repo`/`filename_remote` describe the HuggingFace
+# coordinates the download IPC pulls from.
+#
+# 2026-05-09 default switched Gemma 3 1B → Qwen 2.5 1.5B-Instruct
+# for the Apache 2.0 redistribution win over Gemma's TOS paperwork.
+#
+# 2026-05-30 default switched off Qwen entirely → llm-jp 3 980M
+# Instruct3. Qwen was removed from the registry (Chinese-script
+# leakage + unnatural-translation bench rejections), so the bundled
+# default now points at the JA-specialised llm-jp 3 980M (still
+# Apache 2.0, decoder-only, mmnga's canonical Q4_K_M mirror — the
+# runtime `mistral.rs::GgufModelBuilder` is unchanged). This is the
+# bare fallback coordinate; the routed pipeline runs the user's
+# actual tier (Standard by default) via the Hy-MT2 / Gemma bridges.
+[providers.configs."embedded.llm"]
+repo = "mmnga/llm-jp-3-980m-instruct3-gguf"
+filename_remote = "llm-jp-3-980m-instruct3-Q4_K_M.gguf"
+license = "Apache-2.0"
+license_url = "https://huggingface.co/llm-jp/llm-jp-3-980m-instruct3/blob/main/LICENSE"
+# Streaming on by default. The runtime emits per-token deltas via
+# `Provider::run_streaming`, which the Lens line sinks consume to
+# render translation tokens live. Set false to receive the result
+# as a single chunk (useful for evaluator runs where partial state
+# is undesirable).
+stream = true
+# Sampling: aligned with the proven `ollama.gemma4` defaults
+# below. Earlier embedded-LLM defaults pinned `temperature = 0.0`
+# for determinism, but the Phase 27 Lens eval surfaced that greedy
+# decoding produced rigid translations on multi-line OCR input
+# (made-up words like "コヴォ" from `cover to cover`, mechanical
+# `paper`→`紙` instead of context-aware `新聞`). Matching the
+# Ollama path's `0.4 / 0.95` here restores idiomatic phrasing
+# without compromising stability — the few-shot examples below
+# pin the format, the temperature controls how creative the
+# model is allowed to be inside that format.
+#
+# Context budgets bumped to match Ollama too: a single Lens
+# paragraph (Rainbow Passage class, ~1400 source chars) already
+# tokenises near 1100 input tokens and produces a ~2500-token
+# Japanese translation. 4096 silently capped these mid-sentence;
+# 8192 / 4096 covers any single screen-paragraph with headroom.
+temperature = 0.4
+top_p = 0.95
+num_ctx = 8192
+num_predict = 4096
+
+[providers.configs."ollama.gemma4"]
+endpoint = "http://127.0.0.1:11434"
+# Default model changed 2026-04-20 from 7B to E2B (effective 2B MatFormer).
+# RTX 4080 warm first-token ~370ms vs seconds for 7B class. See
+# docs/benchmarks/2026-04-20-speed-feasibility.md.
+model = "gemma4:e2b"
+# 0.2 produced rigid word-for-word output; 0.4 lets Gemma pick
+# idiomatic rewordings without drifting semantically. Paired with the
+# system prompt below, the tradeoff favours natural phrasing.
+temperature = 0.4
+top_p = 0.95
+# Bumped 4096 → 8192: Lens's per-block translation model sends an
+# entire paragraph in a single /api/chat call, so the prefill
+# token count grows with paragraph length. The Rainbow Passage
+# (english0003) is ~1400 source chars (~1100 tokens) and yields
+# a ~2500-token Japanese translation; 4096 left no room and Ollama
+# rolled the prefill window mid-generation, truncating the output.
+# 8192 covers any single screen-paragraph cleanly while gemma4:e2b
+# still stays well within its 8 K supported context.
+num_ctx = 8192
+# Bumped 2048 → 4096 after a Lens user reported truncation on
+# english0003-class paragraphs (Rainbow Passage, ~1400 source
+# chars). Gemma's tokenizer averages 1.5-2 tokens per Japanese
+# glyph, so a 1500-char Japanese translation needs ~3000 tokens
+# of generation budget alone — 2048 silently capped Gemma
+# mid-sentence and the frontend committed the truncated string.
+# 4096 gives ample headroom for any single paragraph block while
+# fitting comfortably in the new 8 K num_ctx.
+num_predict = 4096
+# CRITICAL: Gemma 4 / Qwen 3 / DeepSeek have reasoning capability and
+# run a silent "thinking" pass that costs several seconds of first-token
+# latency. Translation does not benefit from reasoning — keep this off.
+think = false
+stream = true
+# System prompt engineered for natural, idiomatic output. The previous
+# `[1]` / `[2]` marker instructions were dropped when the card model
+# switched to block-level /api/chat translation: each block is now a
+# self-contained conversation turn, and distribution across per-line
+# cards happens post-hoc via char-proportional splitting, so the
+# prompt no longer needs to round-trip bracketed indices.
+system_prompt = "You are a professional translator. Render the user's text naturally and idiomatically in the target language — match the meaning, tone, and register a native reader would expect, not the word order of the source. Preserve newlines exactly. Output ONLY the translated text. Never include commentary, explanations, romanizations, alternative translations, notes in parentheses, surrounding quotes, or bracketed markers like `[1]` / `[2]`."
+# Few-shot examples bias Gemma4:e2b toward natural target-language
+# phrasing without pinning it to specific vocabulary. Examples are
+# delivered as real user/assistant turns via /api/chat, so the model
+# treats them as closed conversations (not as input to translate).
+# Three examples at different lengths cover: idiomatic counter words
+# (6さじ for scoopful portions, 5枚 for flat slices, 3つ for loose
+# items), omitted subjects ("三つの赤い袋に詰めてくれるでしょう" for
+# "scoop these things into three red bags"), and direct noun translation
+# (snow peas → スナップエンドウ, toy frog → カエルのおもちゃ).
+[[providers.configs."ollama.gemma4".examples]]
+source = "Please call Stella. Ask her to bring these things with her from the store: Six spoons of fresh snow peas, five thick slabs of blue cheese, and maybe a snack for her brother Bob."
+target = "ステラに電話してください。これらのものをお店で買ってきてもらうように頼んでください。新鮮なスナップエンドウを6さじ、厚切りのブルーチーズを5枚、それから弟のボブのおやつも。"
+[[providers.configs."ollama.gemma4".examples]]
+source = "We also need a small plastic snake and a big toy frog for the kids."
+target = "子供たちのために、小さなプラスチック製のヘビと大きなカエルのおもちゃも必要です。"
+[[providers.configs."ollama.gemma4".examples]]
+source = "She can scoop these things into three red bags, and we will go meet her Wednesday at the train station."
+target = "彼女はこれらを赤い袋3つに詰めてくれるでしょう。水曜日に駅で待ち合わせましょう。"
+
+[providers.configs.deepl]
+api_key_env = "DEEPL_API_KEY"
+endpoint = "https://api-free.deepl.com/v2/translate"
+formality = "default"
+
+[providers.configs.gemini]
+api_key_env = "GEMINI_API_KEY"
+model = "gemini-2.5-flash"
+temperature = 0.2
+
+[providers.configs."whisper_cpp.large_v3_turbo"]
+endpoint = "http://127.0.0.1:9002"
+model = "large-v3-turbo"
+threads = 4
+compute_type = "int8"
+
+[providers.configs.ocrs]
+detection_threshold = 0.4
+recognition_threshold = 0.5
+
+# Windows Media OCR: native Japanese / Chinese / Korean support
+# through the OS language packs. `language` is an optional BCP-47
+# tag — leave blank to use whatever the user's profile lists as
+# preferred. When the requested pack is missing the provider
+# returns LowConfidence so the chain falls through to `ocrs`.
+[providers.configs.windows]
+# `language` intentionally unset → WinRT falls through to
+# `TryCreateFromUserProfileLanguages`, which builds an engine
+# that recognises every language installed in the user's profile
+# (e.g. both English AND Japanese). Forcing `language = "ja"`
+# here made WinRT spawn a Japanese-only engine whose English word
+# bboxes were imprecise — mixed "出典：Wikipediaページ" lines then
+# returned a single Latin bbox spanning the whole row, and the
+# downstream card inpaint ate the surrounding Japanese even though
+# the skip filter correctly flagged it. The offline evaluator has
+# always called `run_ocr(.., None)` (profile default); pinning the
+# runtime to the same default keeps the two paths aligned.
+
+[providers.configs.paddle]
+# PaddleOCR PP-OCRv5 (in-process via `oar-ocr` + ONNX Runtime).
+# Phase 28 (2026-05-14): replaces the earlier sidecar-style
+# `endpoint = "http://127.0.0.1:9003"` placeholder. There is no
+# external HTTP service any more.
+#
+# `enable_korean` lazily loads PaddleOCR's `korean_PP-OCRv5_mobile_rec`
+# alongside the multilingual recogniser. At inference time, each
+# detected bbox is read by both rec models and the Korean output
+# wins iff it contains Hangul (best-of-two router from
+# docs/benchmarks/2026-05-14-ocr-bench-iter5.md). Costs about
+# 30 MB RAM and one extra rec session; cheap.
+enable_korean = true
+
+# GPU offload follows the global `performance.use_gpu_if_available`
+# toggle plus compile-time `paddleocr-directml` feature. There is no
+# per-provider `use_gpu` knob — flipping the global is the single
+# source of truth so users do not have to reason about which OCR
+# engine is wired where.
+
+[providers.configs."browser.google_images"]
+url_template = "https://www.google.com/searchbyimage?image_url={image_url}"
+
+[providers.configs."browser.bing"]
+url_template = "https://www.bing.com/images/search?view=detailv2&iss=sbi&q=imgurl:{image_url}"
+
+[providers.configs."browser.yandex"]
+url_template = "https://yandex.com/images/search?rpt=imageview&url={image_url}"
+
+# ---------------------------------------------------------------------------
+# Plugins. Enabled map is populated as users install plugins.
+# ---------------------------------------------------------------------------
+
+[plugins]
+auto_update_check = false
+require_signature = false
+trusted_publishers = []
+
+[plugins.enabled]

@@ -1,5 +1,9 @@
 //! Strongly-typed settings schema.
 //!
+//! Ranges (`#[schemars(range)]`) match the settings screen and are
+//! checked by `settings::validate` (hand-edited values only get a
+//! proposed fix; loading never fails on them).
+//!
 //! `#[derive(JsonSchema)]` powers the auto-generated settings UI on the
 //! frontend; `#[serde(default)]` lets partial user TOMLs merge cleanly over
 //! the embedded defaults.
@@ -121,11 +125,16 @@ impl Default for Hotkeys {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(default, deny_unknown_fields)]
 pub struct OverlaySettings {
+    #[schemars(range(min = 240, max = 480))]
     pub max_width_px: u32,
+    #[schemars(range(min = 0.5, max = 1.0))]
     pub opacity: f32,
+    #[schemars(range(min = 0, max = 40))]
     pub blur_px: u32,
     pub saturation: f32,
+    #[schemars(range(min = 10, max = 28))]
     pub font_size_px: u32,
+    #[schemars(range(min = 1.1, max = 2.0))]
     pub line_height: f32,
     pub follow_source: bool,
     pub auto_hide_ms: Option<u32>,
@@ -166,10 +175,14 @@ pub struct SubtitleSettings {
     pub target_language: String,
     pub model: String,
     pub fallback_model: String,
+    #[schemars(range(min = 0, max = 3))]
     pub vad_aggressiveness: u8,
+    #[schemars(range(min = 1.0, max = 10.0))]
     pub chunk_seconds: f32,
+    #[schemars(range(min = 0.0, max = 2.0))]
     pub overlap_seconds: f32,
     pub show_original: bool,
+    #[schemars(range(min = 14, max = 48))]
     pub font_size_px: u32,
 }
 
@@ -292,7 +305,9 @@ pub enum LogLevel {
 #[serde(default, deny_unknown_fields)]
 pub struct StorageSettings {
     pub keep_history: bool,
+    #[schemars(range(min = 0, max = 3650))]
     pub retention_days: u32,
+    #[schemars(range(min = 0, max = 1000000))]
     pub max_entries: u32,
     pub encrypt_at_rest: bool,
     pub save_capture_images: bool,
@@ -316,8 +331,11 @@ impl Default for StorageSettings {
 #[serde(default, deny_unknown_fields)]
 pub struct PerformanceSettings {
     pub streaming_debounce_ms: u32,
+    #[schemars(range(min = 100, max = 2000))]
     pub region_watcher_poll_ms: u32,
+    #[schemars(range(min = 1, max = 8))]
     pub max_concurrent_tasks: u32,
+    #[schemars(range(min = 0, max = 604800))]
     pub cache_ttl_seconds: u32,
     pub use_gpu_if_available: bool,
 }
@@ -362,6 +380,7 @@ pub struct TaskChain {
     pub chain: Vec<String>,
     pub parallel_race: bool,
     pub fallback_on: Vec<FallbackCondition>,
+    #[schemars(range(min = 100, max = 3600000))]
     pub timeout_ms: u32,
     pub allow_cloud: bool,
     pub allow_network: bool,

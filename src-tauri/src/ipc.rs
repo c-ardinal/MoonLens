@@ -1442,6 +1442,29 @@ pub async fn dismiss_notice(id: String) -> Result<(), String> {
     Ok(())
 }
 
+/// Problems found in config.toml, each with its proposed fix.
+#[tauri::command]
+pub async fn list_config_issues() -> Result<Vec<crate::settings::validate::Issue>, String> {
+    Ok(crate::settings::validate::list())
+}
+
+/// Apply the proposed fixes of the given issues (all when `ids` is
+/// empty). Returns how many changed config.toml.
+#[tauri::command]
+pub async fn apply_config_fixes(
+    ids: Vec<String>,
+    state: State<'_, AppState>,
+) -> Result<usize, String> {
+    let n = state
+        .settings
+        .apply_fixes(&ids)
+        .map_err(|e| crate::user_error::coded("error", format!("設定修正失敗：{e:#}")))?;
+    // A reload that left the settings unchanged does not broadcast;
+    // re-check the chains anyway.
+    state.pipeline.rebuild_providers();
+    Ok(n)
+}
+
 /// Open an `http(s)` link (a decoded QR code) in the default browser. Only
 /// ever called from a user click; nothing else is sent anywhere.
 #[tauri::command]
@@ -1489,6 +1512,8 @@ pub async fn quit_app(app: AppHandle) -> Result<(), String> {
 /// uninstall notes. Sizes are in bytes.
 #[derive(Serialize)]
 pub struct DataLocations {
+    /// App version and build commit.
+    pub version: String,
     pub config_dir: String,
     pub data_dir: String,
     pub models_dir: String,
@@ -1509,6 +1534,7 @@ pub async fn data_locations(app: AppHandle) -> Result<DataLocations, String> {
             .await
             .map_err(|e| e.to_string())?;
     Ok(DataLocations {
+        version: crate::build_version(),
         config_dir: config_dir.display().to_string(),
         data_dir: data_dir.display().to_string(),
         models_dir: models_dir.display().to_string(),

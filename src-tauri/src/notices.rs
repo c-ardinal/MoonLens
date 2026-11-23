@@ -63,8 +63,13 @@ pub fn list() -> Vec<Notice> {
 }
 
 fn emit() {
+    emit_event("moonlens://notices", list());
+}
+
+/// Send an app-wide event once the app is attached (no-op in tests).
+pub fn emit_event<S: Serialize + Clone>(event: &str, payload: S) {
     if let Some(app) = APP.get() {
-        let _ = app.emit("moonlens://notices", list());
+        let _ = app.emit(event, payload);
     }
 }
 

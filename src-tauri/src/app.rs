@@ -85,6 +85,8 @@ macro_rules! all_commands {
             ipc::clear_history,
             ipc::list_notices,
             ipc::dismiss_notice,
+            ipc::list_config_issues,
+            ipc::apply_config_fixes,
             ipc::open_external_url,
             ipc::open_main_route,
             ipc::hide_main,
@@ -124,6 +126,8 @@ pub fn build() -> Result<()> {
         // Must be the first plugin: a second launch hands over to the
         // running instance and exits before anything else starts.
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            // A second launch exits and hands over to this (older) process.
+            tracing::info!("second launch redirected to the running instance");
             show_main_window(app);
         }))
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())

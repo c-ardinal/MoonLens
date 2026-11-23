@@ -89,7 +89,8 @@ MoonLens の導入〜削除の各段階で発生するケースと、期待動�
 | C-5 | 「初期値に復元」 | 同梱の既定値（`default.toml`）を復元（以前は Rust 側の別定義） | 修正 | `get_default_settings` |
 | C-6 | 起動中に `config.toml` を手動編集し構文エラー | 直前の設定を維持し、ホームに通知 | 修正 | Xvfb：保存直後にホームへ通知表示 |
 | C-7 | 構文エラーの `config.toml` で起動 | 既定値で起動、元ファイルを `config.toml.broken-<時刻>` に退避、通知 | 修正 | `settings_file_roundtrip`、Xvfb |
-| C-8 | 一部の値のみ不正（型不一致・誤記） | 不正な値のみ無視し他は有効。退避と通知 | 修正 | `settings::store::tests::bad_values_are_dropped_one_by_one`（以前は全設定を既定値に初期化） |
+| C-8 | 一部の値のみ不正（型不一致・誤記・選択肢外・範囲外） | 不正な値のみ無視し他は有効。ホームに項目単位の警告と修正案（改名・補正・既定値復元・削除）。個別／全件修正、修正前のファイルは `config.toml.bak-<時刻>` に退避 | 修正 | `settings::validate::tests`、Xvfb（`docs/settings-validation.md`） |
+| C-13 | チェーンに未登録・機能非対応のプロバイダー識別子 | 登録済みプロバイダーから動的に判定。候補を添えて警告し、除外または既定値復元を提案（以前は「文字なし」等に誤分類） | 修正 | `chains_are_checked_against_registered_providers`、Xvfb |
 | C-9 | `config.toml` から一部セクションを削除 | 削除部分は同梱の既定値（以前は空チェーン等となり OCR が動作停止） | 修正 | `missing_sections_and_keys_come_from_default_toml` |
 | C-10 | 保存中のクラッシュ・電源断 | 一時ファイル経由の置換で、不完全な `config.toml` の残存を防止 | 修正 | `write_atomic` |
 | C-11 | 使用中モデルを削除 | 2 段階確認（「使用中。削除確定」）。削除後はホームの初回セットアップ案内が再表示 | 修正 | `LocalModels.svelte.test.ts` |
@@ -106,7 +107,8 @@ MoonLens の導入〜削除の各段階で発生するケースと、期待動�
 | U-5 | カタログ外の旧モデルファイル | モデル欄に「旧モデル・不要ファイル」として容量付きで表示、個別削除可 | 修正 | `llm_models::tests::orphans_are_model_files_the_catalog_does_not_own` |
 | U-6 | 履歴 DB のスキーマ変更 | `PRAGMA user_version` で版管理。新版の DB は読込せず退避・再作成（ダウングレード時） | 修正 | `storage::tests::newer_schema_is_refused` |
 | U-7 | 履歴 DB の破損 | 退避・再作成、通知。起動は継続（以前は起動失敗） | 修正 | `storage::tests::garbage_file_is_moved_aside_and_recreated` |
-| U-8 | ダウングレード（新版の設定を旧版で読む） | 旧版で未知の項目は無視、他は有効（本版以降） | 修正 | C-8 と同じ仕組み |
+| U-8 | ダウングレード（新版の設定を旧版で読む） | 旧版で未知の項目は無視、他は有効（本版以降）。未知の項目は警告に表示、修正（削除）は利用者の選択時のみ | 修正 | C-8 と同じ仕組み |
+| U-10 | 旧版の項目名・廃止項目・旧プロバイダー識別子（`paddle`、`embedded.llm` 等） | 宣言的規則（`settings/rules.rs`）で起動時に自動更新、退避と通知 | 修正 | `pre_release_file_is_upgraded_by_the_rules` |
 | U-9 | アプリ本体の更新確認 | 自動更新・更新確認なし（通信しない方針）。GitHub Releases から手動更新 | 既知 | 方針。必要なら任意設定として別途検討 |
 
 ## 6. アンインストール

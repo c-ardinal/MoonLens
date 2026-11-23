@@ -41,6 +41,35 @@ pub fn provider(e: &ProviderError, cap: Capability) -> String {
         ProviderError::Other(m) if m.contains("AVX2") => {
             coded("cpu_unsupported", "非対応 CPU（AVX2・FMA 必須）")
         }
+        ProviderError::Other(m)
+            if m.starts_with("all providers failed") && m.contains(": timeout") =>
+        {
+            coded(
+                "timeout",
+                match cap {
+                    Capability::Ocr => "文字認識の制限時間超過。範囲を縮小して再試行",
+                    _ => "制限時間超過。範囲を縮小して再試行",
+                },
+            )
+        }
+        ProviderError::Other(m)
+            if m.strip_prefix("all providers failed: ").is_some_and(|r| {
+                r.split("; ")
+                    .all(|reason| reason.ends_with(": not registered"))
+            }) =>
+        {
+            let ids: Vec<&str> = m["all providers failed: ".len()..]
+                .split("; ")
+                .map(|r| r.trim_end_matches(": not registered"))
+                .collect();
+            coded(
+                "error",
+                format!(
+                    "未対応プロバイダー：{}。設定のプロバイダー見直しが必要",
+                    ids.join("、")
+                ),
+            )
+        }
         ProviderError::Other(m) if m.starts_with("no provider configured") => {
             coded("error", "この機能のプロバイダー未設定")
         }
@@ -91,6 +120,15 @@ mod tests {
         );
         assert!(provider(&e, Capability::Ocr).starts_with("model_missing|OCR"));
         assert!(provider(&e, Capability::Explain).starts_with("model_missing|説明用"));
+    }
+
+    #[test]
+    fn unregistered_providers_name_the_ids() {
+        let e = ProviderError::Other("all providers failed: paddle: not registered".into());
+        assert_eq!(
+            provider(&e, Capability::Ocr),
+            "error|未対応プロバイダー：paddle。設定のプロバイダー見直しが必要"
+        );
     }
 
     #[test]

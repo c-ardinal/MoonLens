@@ -22,6 +22,7 @@
   import { displayAccelerator } from '$lib/hotkey';
   import { languageLabel } from '$lib/lens-overlay';
   import { errorText } from '$lib/errors';
+  import ConfigIssues from '$lib/components/ConfigIssues.svelte';
   import { STATE_LABELS, engineRows, type EngineRow } from '$lib/engine-status';
   import type { Notice } from '$lib/ipc';
 
@@ -110,6 +111,8 @@
       <a href="/settings/" class="ml-1 text-accent underline-offset-2 hover:underline">変更</a>
     </p>
   </header>
+
+  <ConfigIssues />
 
   {#each notices as n (n.id)}
     <section

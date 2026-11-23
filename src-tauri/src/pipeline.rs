@@ -95,15 +95,58 @@ pub struct Pipeline {
 /// characters) and left them untranslated.
 const LOCAL_TRANSLATE_MS_PER_CHAR: u64 = 40;
 
+/// `true` when an OCR chain error only says "no text here": every engine
+/// returned a low-confidence (empty) result or is not installed. Timeouts
+/// and engine errors are real failures and return `false`.
+pub fn ocr_found_nothing(e: &ProviderError) -> bool {
+    match e {
+        ProviderError::LowConfidence => true,
+        ProviderError::Other(msg) => msg.strip_prefix("all providers failed: ").is_some_and(|r| {
+            let low = ProviderError::LowConfidence.to_string();
+            // At least one engine must have run: a chain of unknown ids
+            // (e.g. a config written by another build) is a setup error.
+            r.split("; ").any(|reason| reason.ends_with(&low))
+                && r.split("; ").all(|reason| {
+                    reason.ends_with(&low)
+                        || reason.contains(": not installed")
+                        || reason.ends_with(": not registered")
+                })
+        }),
+        _ => false,
+    }
+}
+
+/// Time local OCR gets per megapixel on top of the chain timeout floor.
+/// A full 3840x2160 frame (8.3 MP) on a slower CPU needs more than the
+/// default 5 s, and a timeout there used to read as "no text".
+const LOCAL_OCR_MS_PER_MEGAPIXEL: u64 = 1500;
+
+/// Width and height from a PNG header, without decoding the image.
+fn png_dimensions(png: &[u8]) -> Option<(u32, u32)> {
+    if png.len() < 24 || &png[..8] != b"\x89PNG\r\n\x1a\n" || &png[12..16] != b"IHDR" {
+        return None;
+    }
+    let w = u32::from_be_bytes(png[16..20].try_into().ok()?);
+    let h = u32::from_be_bytes(png[20..24].try_into().ok()?);
+    Some((w, h))
+}
+
 /// Timeout for one provider call. Local translation scales with the
-/// text length (generation time grows with it); everything else, and
-/// any cloud provider, keeps the chain's fixed timeout.
+/// text length (generation time grows with it), local OCR with the image
+/// area; everything else, and any cloud provider, keeps the chain's
+/// fixed timeout.
 pub fn effective_timeout(chain_ms: u32, input: &TaskInput, is_local: bool) -> Duration {
     let floor = u64::from(chain_ms);
     let ms = match input {
         TaskInput::Translate { text, .. } if is_local => {
             floor.max(text.chars().count() as u64 * LOCAL_TRANSLATE_MS_PER_CHAR)
         }
+        TaskInput::Ocr { image_png, .. } if is_local => match png_dimensions(image_png) {
+            Some((w, h)) => {
+                floor.max(u64::from(w) * u64::from(h) * LOCAL_OCR_MS_PER_MEGAPIXEL / 1_000_000)
+            }
+            None => floor,
+        },
         _ => floor,
     };
     Duration::from_millis(ms)
@@ -190,27 +233,43 @@ impl Pipeline {
         // still gets a provider with default settings. Without this, a
         // user config that omits e.g. `[providers.configs.rqrr]` (the
         // shipped default does) silently disabled QR decoding.
-        let p = &s.providers;
+        // Chains as `run` sees them, so ids added by the upgrades
+        // (e.g. Windows OCR, renamed ids) get registered too.
         for id in [
-            &p.translate,
-            &p.ocr,
-            &p.asr,
-            &p.explain,
-            &p.summarize,
-            &p.reverse_image_search,
-            &p.qr_handler,
-            &p.intent_classifier,
+            Capability::Translate,
+            Capability::Ocr,
+            Capability::Asr,
+            Capability::Explain,
+            Capability::Summarize,
+            Capability::ReverseImageSearch,
+            Capability::QrHandler,
+            Capability::IntentClassifier,
         ]
-        .iter()
-        .flat_map(|c| c.chain.iter())
+        .into_iter()
+        .flat_map(|cap| pick_chain(&s, cap).chain)
         {
-            if map.contains_key(id) {
+            if map.contains_key(&id) {
                 continue;
             }
-            if let Some(h) = builtin_provider(id, &empty, sink.as_ref(), use_gpu, &opts) {
-                map.insert(id.clone(), h);
+            if let Some(h) = builtin_provider(&id, &empty, sink.as_ref(), use_gpu, &opts) {
+                map.insert(id, h);
             }
         }
+        // Report chain entries the running build cannot serve (an id from
+        // an older version, a disabled plugin, a typo).
+        let mut registered: HashMap<String, Vec<Capability>> = map
+            .iter()
+            .map(|(id, h)| (id.clone(), h.capabilities().to_vec()))
+            .collect();
+        // Served inside the pipeline, not by a registered provider.
+        registered
+            .entry(BUILTIN_INTENT_ID.to_string())
+            .or_default()
+            .push(Capability::IntentClassifier);
+        crate::settings::validate::publish(
+            crate::settings::validate::Source::Providers,
+            crate::settings::validate::check_providers(&s, &registered),
+        );
         *self.providers.write() = map;
     }
 
@@ -390,7 +449,15 @@ impl Pipeline {
         // override through the `intent_classifier` chain in future work.
         let img =
             image::load_from_memory(&image_png).map_err(|e| ProviderError::Other(e.to_string()))?;
-        let intent = intent::classify(&img);
+        let stats = intent::image_stats(&img);
+        let intent = stats.map_or(Intent::Unknown, intent::classify_stats);
+        tracing::info!(
+            "capture {}x{}: luma mean {:.1} std {:.1}, intent {intent:?}",
+            img.width(),
+            img.height(),
+            stats.map_or(0.0, |s| s.mean),
+            stats.map_or(0.0, |s| s.std),
+        );
 
         // 1) Try QR — decoding is almost free and short-circuits the rest.
         if let Ok(res) = self
@@ -437,11 +504,34 @@ impl Pipeline {
         let lines: Vec<OcrLine> = match ocr_res {
             Ok(TaskResult {
                 output: TaskOutput::Ocr { lines },
+                used_provider,
+                latency_ms,
+                fallback_reasons,
                 ..
-            }) => lines,
+            }) => {
+                tracing::info!(
+                    "OCR: {} lines via {used_provider} in {latency_ms} ms (fallbacks {fallback_reasons:?})",
+                    lines.len()
+                );
+                lines
+            }
+            Ok(other) => {
+                tracing::warn!("OCR returned unexpected output: {:?}", other.output);
+                vec![]
+            }
             // No OCR engine at all: "no text found" would be a lie.
             Err(e @ ProviderError::NotInstalled(_)) => return Err(e),
-            _ => vec![],
+            // Every engine ran and found nothing: a real "no text".
+            Err(e) if ocr_found_nothing(&e) => {
+                tracing::info!("OCR found no text: {e}");
+                vec![]
+            }
+            // Timeout or engine failure: report it instead of claiming
+            // the region has no text.
+            Err(e) => {
+                tracing::warn!("OCR failed: {e}");
+                return Err(e);
+            }
         };
         let text_blocks = layout::group_lines(&lines);
         let ocr_text = layout::join_blocks(&text_blocks);
@@ -461,7 +551,7 @@ impl Pipeline {
                 result: TaskResult {
                     task: "capture".into(),
                     output: TaskOutput::Intent(intent),
-                    used_provider: "builtin.heuristic".into(),
+                    used_provider: BUILTIN_INTENT_ID.into(),
                     via_cloud: false,
                     latency_ms: 0,
                     fallback_reasons: vec![],
@@ -1008,6 +1098,10 @@ fn builtin_provider(
         id if id.starts_with("whisper_cpp.") => Arc::new(WhisperCppProvider::new(id, cfg)),
         "ocrs" => Arc::new(OcrsProvider::new(id, cfg)),
         "ppocr" => Arc::new(crate::providers::ocr_ppocr::PpOcrProvider::new(id, cfg)),
+        #[cfg(windows)]
+        "windows" => Arc::new(crate::providers::ocr_windows::WindowsOcrProvider::new(
+            id, cfg,
+        )),
         "rqrr" => Arc::new(RqrrProvider::new(id, cfg)),
         id if id.starts_with("browser.") => Arc::new(BrowserSearchProvider::new(id, cfg)),
         _ => return None,
@@ -1024,12 +1118,22 @@ fn upgrade_ocr_chain(mut chain: TaskChain) -> TaskChain {
     if chain.chain == LEGACY_DEFAULT_OCR_CHAIN {
         chain.chain = DEFAULT_OCR_CHAIN.iter().map(|s| s.to_string()).collect();
     }
+    // Windows: the OS's own OCR engine backs up PP-OCR before the
+    // Latin-only ocrs, for configs still on the default chain.
+    if cfg!(windows) && chain.chain == DEFAULT_OCR_CHAIN {
+        chain.chain = ["ppocr", "windows", "ocrs"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+    }
     chain
 }
 
 /// Built-in llama.cpp provider running the translation model
 /// (PLaMo 3 Translate by default).
 pub const LOCAL_LLM_ID: &str = "llamacpp";
+/// Intent classifier built into the pipeline (no provider object).
+pub const BUILTIN_INTENT_ID: &str = "builtin.heuristic";
 /// Built-in llama.cpp provider running the general model used for
 /// explain / summarize (Gemma 4 by default).
 pub const LOCAL_ASSIST_ID: &str = "llamacpp.assistant";

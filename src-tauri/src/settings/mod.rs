@@ -10,10 +10,12 @@
 
 pub mod migrate;
 pub mod profiles;
+pub mod rules;
 pub mod schema;
 pub mod store;
 #[cfg(test)]
 mod tests;
+pub mod validate;
 pub mod watcher;
 
 pub use schema::Settings;
