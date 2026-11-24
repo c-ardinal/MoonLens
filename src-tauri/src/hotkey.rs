@@ -61,6 +61,20 @@ pub fn register_all(
         },
     );
 
+    // Window translation: mouse through the windows / operate them.
+    let app_o = app.clone();
+    bind(
+        shortcut_mgr,
+        &mut failed,
+        s.hotkeys.toggle_window_operate.as_str(),
+        move |_a, _s, e| {
+            if matches!(e.state(), ShortcutState::Pressed) {
+                let state = app_o.state::<AppState>();
+                crate::lens::toggle_operate(&app_o, &state.lenses);
+            }
+        },
+    );
+
     // Subtitle: toggle the live subtitle service.
     let app_s = app.clone();
     let subtitle_s = subtitle.clone();

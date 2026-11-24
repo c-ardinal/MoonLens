@@ -17,6 +17,7 @@ reduced_motion = false
 capture_region = "CommandOrControl+Shift+Space"
 capture_window = "CommandOrControl+Shift+W"
 toggle_pin_overlay = "CommandOrControl+Shift+P"
+toggle_window_operate = "CommandOrControl+Shift+E"
 toggle_subtitle = "CommandOrControl+Shift+S"
 open_command_palette = "CommandOrControl+K"
 open_history = "CommandOrControl+Shift+H"

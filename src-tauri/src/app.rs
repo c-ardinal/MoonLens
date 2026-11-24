@@ -68,6 +68,7 @@ macro_rules! all_commands {
             ipc::open_lens,
             ipc::set_lens_language,
             ipc::set_lens_interactive,
+            ipc::set_lens_operate,
             ipc::close_lens_window,
             ipc::list_lens_windows,
             ipc::set_lens_insets,

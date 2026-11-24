@@ -7,6 +7,8 @@
     Languages,
     Maximize2,
     Minimize2,
+    MousePointerBan,
+    MousePointerClick,
     Radio,
     RefreshCw,
     TextSelect,
@@ -29,6 +31,8 @@
     busy = false,
     compact = false,
     maximized = false,
+    operate = false,
+    operateKey = '',
     oncontinuous,
     onrefresh,
     onoriginal,
@@ -37,6 +41,7 @@
     ontext,
     onexplain,
     onmaximize,
+    onoperate,
     onclose
   }: {
     continuous: boolean;
@@ -50,6 +55,10 @@
     compact?: boolean;
     /** 窓が最大化中（全画面翻訳）。 */
     maximized?: boolean;
+    /** 操作モード（訳文の選択・コピー可）。false は透過モード（クリックは背面へ）。 */
+    operate?: boolean;
+    /** 操作モード切替のショートカット表記（title へ併記）。 */
+    operateKey?: string;
     oncontinuous: () => void;
     /** 再取得。省略時は非表示（静止画上では範囲の再選択で代替）。 */
     onrefresh?: () => void;
@@ -60,6 +69,8 @@
     onexplain: () => void;
     /** 最大化／元のサイズ。省略時は非表示。 */
     onmaximize?: () => void;
+    /** 透過／操作モードの切替。省略時は非表示。 */
+    onoperate?: () => void;
     onclose: () => void;
   } = $props();
 
@@ -81,6 +92,20 @@
   >
     <Radio class="h-4 w-4" /><span class="lb">常時</span>
   </button>
+  {#if onoperate}
+    <button
+      class="tb"
+      aria-pressed={operate}
+      onclick={onoperate}
+      title={(operate
+        ? '操作モード：訳文の選択・コピー可（クリックで透過モードへ）'
+        : '透過モード：窓上のクリックは背面へ（クリックで操作モードへ）') + (operateKey ? ` (${operateKey})` : '')}
+    >
+      {#if operate}<MousePointerClick class="h-4 w-4" />{:else}<MousePointerBan class="h-4 w-4" />{/if}<span
+        class="lb">{operate ? '操作' : '透過'}</span
+      >
+    </button>
+  {/if}
   {#if onrefresh}
     <button class="tb" onclick={onrefresh} disabled={busy} title="再取得">
       <RefreshCw class="h-4 w-4 {busy ? 'animate-spin' : ''}" /><span class="lb">再取得</span>

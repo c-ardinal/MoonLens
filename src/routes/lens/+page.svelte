@@ -12,6 +12,7 @@
     listLensWindows,
     runExplain,
     setLensInteractive,
+    setLensOperate,
     setLensLanguage,
     type CaptureFlowResult,
     type LensBlock
@@ -20,6 +21,7 @@
   import { liveBoxes, liveText, type LensLiveEvent } from '$lib/live';
   import { extractText } from '$lib/result';
   import { errorText } from '$lib/errors';
+  import { displayAccelerator } from '$lib/hotkey';
 
   // Window translation, continuous. The window sits over the observed
   // range: the header above it can be dragged, the edges and the corner
@@ -198,10 +200,19 @@
     if (!continuous) translating = false;
   });
 
-  // The text view covers the body with controls: it takes the mouse then.
+  /** Operate mode: the body takes the mouse, so the translation can be
+   * selected and copied. Off (default): clicks go to the app underneath.
+   * The text view has controls of its own, so it takes the mouse too. */
+  let operate = $state(false);
+  let operateKey = $state('');
   $effect(() => {
-    setLensInteractive(id, showText).catch(() => {});
+    setLensInteractive(id, operate || showText).catch(() => {});
   });
+  function setOperate(on: boolean) {
+    operate = on;
+    setLensOperate(id, on).catch(() => {});
+    if (!on) window.getSelection()?.removeAllRanges();
+  }
 
   /** Maximized: the window translates the whole screen. */
   let maximized = $state(false);
@@ -244,6 +255,8 @@
       .then(([lenses, s]: [{ id: string; target_language: string | null }[], any]) => {
         targetLanguage =
           lenses.find((l) => l.id === id)?.target_language ?? s?.subtitle?.target_language ?? 'ja';
+        const k = s?.hotkeys?.toggle_window_operate;
+        operateKey = k ? displayAccelerator(k) : '';
       })
       .catch(() => {});
     try {
@@ -253,6 +266,8 @@
       unlisteners.push(
         await win.listen<CaptureFlowResult>('moonlens://lens-result', (e) => apply(e.payload))
       );
+      // Operate-mode hotkey (all windows at once).
+      unlisteners.push(await win.listen<boolean>('moonlens://lens-operate', (e) => setOperate(e.payload)));
       unlisteners.push(
         await win.listen<LensLiveEvent>('moonlens://lens-live', (e) => {
           if (continuous) applyLive(e.payload);
@@ -329,6 +344,9 @@
       {hasText}
       busy={busy || translating}
       oncontinuous={() => (continuous = !continuous)}
+      {operate}
+      {operateKey}
+      onoperate={() => setOperate(!operate)}
       onrefresh={refresh}
       onoriginal={() => (showOriginal = !showOriginal)}
       onlanguage={changeLanguage}
@@ -342,7 +360,7 @@
   </header>
 
   <!-- The observed range. Transparent; the mouse passes through it. -->
-  <section class="body" aria-label="訳文">
+  <section class="body" class:operate aria-label="訳文">
     {#if !showOriginal}
       {#each boxes as b (b.rect.key)}
         <div
@@ -454,9 +472,18 @@
     /* Marks the range without covering it. */
     box-shadow: inset 0 0 0 2px rgba(139, 92, 246, 0.6);
   }
+  /* 操作モード：枠を琥珀色へ変更し、訳文を選択可能化 */
+  .body.operate {
+    box-shadow: inset 0 0 0 2px rgba(245, 158, 11, 0.85);
+  }
   .box {
     position: absolute;
     border-radius: 3px;
+  }
+  .body.operate .box {
+    user-select: text;
+    -webkit-user-select: text;
+    cursor: text;
   }
   .box.pending {
     background-image: linear-gradient(100deg, transparent 30%, rgba(139, 92, 246, 0.18) 50%, transparent 70%) !important;
