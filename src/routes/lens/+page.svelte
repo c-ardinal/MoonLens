@@ -12,6 +12,7 @@
     listLensWindows,
     runExplain,
     setLensInteractive,
+    setLensOperate,
     setLensLanguage,
     type CaptureFlowResult,
     type LensBlock
@@ -209,6 +210,7 @@
   });
   function setOperate(on: boolean) {
     operate = on;
+    setLensOperate(id, on).catch(() => {});
     if (!on) window.getSelection()?.removeAllRanges();
   }
 

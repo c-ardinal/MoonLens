@@ -272,6 +272,7 @@ export const openLens = (rect: CaptureFlowRect | null = null, targetLanguage?: s
   safeInvoke<string>('open_lens', { rect, targetLanguage: targetLanguage ?? null });
 export const setLensLanguage = (id: string, targetLanguage: string | null) =>
   safeInvoke<void>('set_lens_language', { id, targetLanguage });
+export const setLensOperate = (id: string, on: boolean) => safeInvoke<void>('set_lens_operate', { id, on });
 export const setLensInteractive = (id: string, on: boolean) =>
   safeInvoke<void>('set_lens_interactive', { id, on });
 

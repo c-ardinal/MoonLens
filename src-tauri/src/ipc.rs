@@ -1176,8 +1176,20 @@ pub async fn set_lens_language(
     Ok(())
 }
 
-/// The lens renderer shows controls over its body (text view): let the
-/// body take the mouse instead of passing it through.
+/// A lens window's operate mode as the user set it (for the operate
+/// hotkey, which flips all windows).
+#[tauri::command]
+pub async fn set_lens_operate(
+    id: String,
+    on: bool,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    state.lenses.set_operate(&id, on);
+    Ok(())
+}
+
+/// Whether a lens window's body takes the mouse (operate mode or the
+/// text view) instead of letting it through.
 #[tauri::command]
 pub async fn set_lens_interactive(
     id: String,

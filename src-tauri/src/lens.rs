@@ -390,6 +390,9 @@ struct LensEntry {
     /// The renderer shows controls over the body (text view): the body
     /// takes the mouse too.
     interactive: bool,
+    /// Operate mode as the user set it (button or hotkey). Separate from
+    /// `interactive`, which the text view also turns on.
+    operate: bool,
 }
 
 /// Where a lens opens: the range to observe and the language to show.
@@ -457,6 +460,7 @@ impl LensRegistry {
                 watch: None,
                 target_language,
                 interactive: false,
+                operate: false,
             },
         ));
     }
@@ -486,9 +490,16 @@ impl LensRegistry {
         }
     }
 
-    /// Whether any lens takes the mouse over its body.
-    pub fn any_interactive(&self) -> bool {
-        self.entries.lock().iter().any(|(_, e)| e.interactive)
+    /// Record a lens's operate mode (see [`toggle_operate`]).
+    pub fn set_operate(&self, id: &str, on: bool) {
+        if let Some((_, e)) = self.entries.lock().iter_mut().find(|(i, _)| i == id) {
+            e.operate = on;
+        }
+    }
+
+    /// Whether any lens is in operate mode.
+    pub fn any_operate(&self) -> bool {
+        self.entries.lock().iter().any(|(_, e)| e.operate)
     }
 
     /// `None` for a lens that is gone.
@@ -662,12 +673,14 @@ pub fn toggle(app: &AppHandle, registry: &LensRegistryHandle) -> bool {
     false
 }
 
-/// Operate-mode hotkey: when any window takes the mouse, let it through
-/// on all of them again; otherwise let every window take it (to select
-/// and copy translations). Each window applies the mode itself
-/// ([`LENS_OPERATE_EVENT`]). Returns the new mode.
+/// Operate-mode hotkey: when any window is in operate mode, switch all of
+/// them back to letting the mouse through; otherwise put every window in
+/// operate mode (to select and copy translations). Each window applies
+/// the mode itself ([`LENS_OPERATE_EVENT`]) and reports the resulting
+/// mouse handling (which an open text view also affects). Returns the
+/// new mode.
 pub fn toggle_operate(app: &AppHandle, registry: &LensRegistryHandle) -> bool {
-    let operate = !registry.any_interactive();
+    let operate = !registry.any_operate();
     for d in registry.list() {
         let _ = app.emit_to(
             tauri::EventTarget::WebviewWindow {
@@ -677,7 +690,7 @@ pub fn toggle_operate(app: &AppHandle, registry: &LensRegistryHandle) -> bool {
             operate,
         );
         // Right away, so a second press in quick succession sees it.
-        registry.set_interactive(&d.id, operate);
+        registry.set_operate(&d.id, operate);
     }
     operate
 }
@@ -1147,10 +1160,14 @@ mod tests {
         assert_eq!(r.list()[1].target_language.as_deref(), Some("ko"));
         // Every window lets the mouse through until it is operated.
         assert_eq!(r.interactive("a"), Some(false));
-        assert!(!r.any_interactive());
+        assert!(!r.any_operate());
+        // The text view takes the mouse without being operate mode.
         r.set_interactive("a", true);
         assert_eq!(r.interactive("a"), Some(true));
-        assert!(r.any_interactive());
+        assert!(!r.any_operate());
+        r.set_operate("b", true);
+        assert!(r.any_operate());
+        assert_eq!(r.interactive("b"), Some(false));
         // Gone: the click-through loop stops.
         r.untrack("a");
         assert_eq!(r.interactive("a"), None);
