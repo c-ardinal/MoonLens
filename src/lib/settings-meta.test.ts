@@ -5,6 +5,7 @@ import {
   changedPaths,
   duplicateHotkeys,
   fieldMatches,
+  GROUPS,
   getPath,
   schemaDefault,
   SECTIONS,
@@ -45,6 +46,11 @@ describe('settings-meta', () => {
     const paths = allFields().map((f) => f.path);
     expect(new Set(paths).size).toBe(paths.length);
     expect(new Set(SECTIONS.map((s) => s.id)).size).toBe(SECTIONS.length);
+  });
+
+  it('puts every section in exactly one group', () => {
+    const listed = GROUPS.flatMap((g) => g.sections);
+    expect(listed.sort()).toEqual(SECTIONS.map((s) => s.id).sort());
   });
 
   it('gets and sets nested values without mutating the input', () => {

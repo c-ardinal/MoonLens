@@ -36,14 +36,22 @@ export type Field =
 export type Section =
   | { id: string; title: string; description?: string; fields: Field[] }
   /** A section rendered by a dedicated component. */
-  | { id: string; title: string; description?: string; component: 'models' | 'data' };
+  | { id: string; title: string; description?: string; component: SectionComponent };
+
+export type SectionComponent = 'llm-translate' | 'llm-assist' | 'ocr' | 'asr' | 'data';
+
+/**
+ * 大分類（左の一覧）。各分類は SECTIONS の小分類（右枠上部のタブ）を束ねる。
+ * 小分類が 1 個の分類はタブ非表示。
+ */
+export type Group = { id: string; title: string; sections: string[] };
 
 const LANGUAGE_OPTIONS: Option[] = LANGUAGES.map((l) => ({ value: l.code, label: l.label }));
 
 export const SECTIONS: Section[] = [
   {
     id: 'translation',
-    title: '翻訳',
+    title: '基本',
     description: 'ウィンドウ翻訳・音声翻訳の共通設定。',
     fields: [
       {
@@ -63,7 +71,14 @@ export const SECTIONS: Section[] = [
           { value: 'polite', label: '敬体（です・ます）' },
           { value: 'plain', label: '常体（だ・である）' }
         ]
-      },
+      }
+    ]
+  },
+  {
+    id: 'glossary',
+    title: '用語集',
+    description: '原文中の用語を指定の訳語に固定。',
+    fields: [
       {
         kind: 'glossary',
         path: 'translation.glossary',
@@ -74,9 +89,27 @@ export const SECTIONS: Section[] = [
   },
   {
     id: 'models',
-    title: 'モデル',
-    description: '全モデルをローカル保存・ローカル実行。',
-    component: 'models'
+    title: '翻訳',
+    description: '翻訳用モデル。推奨：PLaMo 3 Translate。',
+    component: 'llm-translate'
+  },
+  {
+    id: 'model-assist',
+    title: '説明・要約',
+    description: '説明・要約用モデル。推奨：Gemma 4。',
+    component: 'llm-assist'
+  },
+  {
+    id: 'model-ocr',
+    title: '文字認識',
+    description: '画面上の文字認識（OCR）用モデル。',
+    component: 'ocr'
+  },
+  {
+    id: 'model-asr',
+    title: '音声認識',
+    description: '音声翻訳用の音声認識モデル。',
+    component: 'asr'
   },
   {
     id: 'hotkeys',
@@ -177,7 +210,7 @@ export const SECTIONS: Section[] = [
   },
   {
     id: 'popup',
-    title: '訳文ポップアップ',
+    title: 'ポップアップ',
     description: '結果表示用の小型ウィンドウの外観。',
     fields: [
       {
@@ -245,8 +278,8 @@ export const SECTIONS: Section[] = [
   },
   {
     id: 'clipboard',
-    title: 'クリップボード',
-    description: '結果の自動コピー。',
+    title: '自動コピー',
+    description: '結果をクリップボードへ自動コピー。',
     fields: [
       { kind: 'toggle', path: 'clipboard.auto_copy_translation', label: '訳文' },
       {
@@ -292,6 +325,7 @@ export const SECTIONS: Section[] = [
   {
     id: 'appearance',
     title: '外観',
+    description: 'メインウィンドウの外観。',
     fields: [
       {
         kind: 'select',
@@ -325,6 +359,7 @@ export const SECTIONS: Section[] = [
   {
     id: 'performance',
     title: 'パフォーマンス',
+    description: '翻訳処理の速度・負荷。',
     fields: [
       {
         kind: 'toggle',
@@ -358,12 +393,13 @@ export const SECTIONS: Section[] = [
   {
     id: 'data',
     title: 'データ',
-    description: '保存先と使用容量。アンインストール時の削除対象。',
+    description: '保存先と使用容量。完全削除：アンインストール後、各保存先を削除。',
     component: 'data'
   },
   {
     id: 'advanced',
     title: '詳細',
+    description: '不具合調査用の設定。',
     fields: [
       {
         kind: 'select',
@@ -381,6 +417,20 @@ export const SECTIONS: Section[] = [
     ]
   }
 ];
+
+export const GROUPS: Group[] = [
+  { id: 'translation', title: '翻訳', sections: ['translation', 'glossary', 'pin', 'popup'] },
+  { id: 'subtitle', title: '音声翻訳', sections: ['subtitle'] },
+  { id: 'models', title: 'モデル', sections: ['models', 'model-assist', 'model-ocr', 'model-asr'] },
+  { id: 'output', title: '結果', sections: ['history', 'clipboard'] },
+  { id: 'hotkeys', title: 'ショートカット', sections: ['hotkeys'] },
+  { id: 'system', title: 'システム', sections: ['appearance', 'performance', 'data', 'advanced'] }
+];
+
+/** 小分類の所属する大分類。 */
+export function groupOf(sectionId: string): Group | undefined {
+  return GROUPS.find((g) => g.sections.includes(sectionId));
+}
 
 /* ------------------------------ value helpers ----------------------------- */
 
@@ -407,7 +457,8 @@ export function allFields(): Field[] {
 export function fieldMatches(field: Field, section: Section, query: string): boolean {
   const q = query.trim().toLowerCase();
   if (!q) return true;
-  const hay = [field.label, field.help ?? '', section.title, field.path].join(' ').toLowerCase();
+  const group = groupOf(section.id)?.title ?? '';
+  const hay = [field.label, field.help ?? '', section.title, group, field.path].join(' ').toLowerCase();
   return q.split(/\s+/).every((t) => hay.includes(t));
 }
 

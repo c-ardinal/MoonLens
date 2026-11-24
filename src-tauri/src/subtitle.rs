@@ -211,7 +211,7 @@ impl SubtitleService {
                 Err(coded) => coded,
             };
             let (code, message) = failure.split_once('|').unwrap_or(("error", &failure));
-            let route = (code == "model_missing").then_some("/settings/#section-models");
+            let route = (code == "model_missing").then_some("/settings/#section-model-asr");
             crate::notices::push(NOTICE, format!("ライブ字幕：{message}"), route);
             crate::app::route_main(&app, route.unwrap_or("/"));
         });

@@ -47,7 +47,6 @@ describe('<AsrModels>', () => {
     // Sizes under a gigabyte read in MB.
     expect(getByText(/181 MB/)).toBeInTheDocument();
     expect(getByText('再開')).toBeInTheDocument();
-    expect(getByText('/data/whisper')).toBeInTheDocument();
   });
 
   it('puts the first downloaded model to work', async () => {
@@ -55,7 +54,7 @@ describe('<AsrModels>', () => {
     ipc.installAsrModel.mockResolvedValue('/data/whisper/ggml-b.bin');
     ipc.selectAsrModel.mockResolvedValue(undefined);
     const { findByText } = render(AsrModels);
-    await fireEvent.click(await findByText('ダウンロード'));
+    await fireEvent.click(await findByText('取得'));
     await waitFor(() => expect(ipc.installAsrModel).toHaveBeenCalledWith('b'));
     await waitFor(() => expect(ipc.selectAsrModel).toHaveBeenCalledWith('b'));
   });
@@ -78,7 +77,7 @@ describe('<AsrModels>', () => {
     ipc.listAsrModels.mockResolvedValue({ selected: 'x', dir: '', models: [model('x')] });
     ipc.installAsrModel.mockRejectedValue('disk_full|空き容量不足：必要 1.4 GB／空き 1.0 GB');
     const { findByText, getByText } = render(AsrModels);
-    await fireEvent.click(await findByText('ダウンロード'));
+    await fireEvent.click(await findByText('取得'));
     await waitFor(() =>
       expect(getByText('空き容量不足：必要 1.4 GB／空き 1.0 GB')).toBeInTheDocument()
     );

@@ -53,7 +53,7 @@
   <!-- 設定画面：操作部は固定幅の右寄せ列（行間で左右端を統一） -->
   <div class={compact ? 'ctl' : 'flex min-w-0 shrink-0 items-center gap-2 sm:max-w-[55%]'}>
     {#if field.kind === 'toggle' && compact}
-      <!-- ON／OFF の斜め名札（チェックボックスは支援技術向けに保持） -->
+      <!-- ON／OFF の矩形札（チェックボックスは支援技術向けに保持） -->
       <label class="toggle-chips">
         <input
           {id}
@@ -181,7 +181,6 @@
   .tc {
     padding: 0 12px;
     color: var(--ml-px-faint, currentColor);
-    clip-path: polygon(8px 0, 100% 0, calc(100% - 8px) 100%, 0 100%);
   }
   .tc.on {
     background: var(--ml-px-black, #000);

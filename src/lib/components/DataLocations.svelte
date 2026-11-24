@@ -1,55 +1,90 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { dataLocations, type DataLocations } from '$lib/ipc';
+  import { Trash2 } from 'lucide-svelte';
+  import {
+    dataLocations,
+    deleteOrphanLlmFile,
+    listOrphanLlmFiles,
+    type DataLocations,
+    type OrphanFile
+  } from '$lib/ipc';
   import { errorText } from '$lib/errors';
+  import SettingRow from './SettingRow.svelte';
 
   let info = $state<DataLocations | null>(null);
+  /** Model files no current catalog entry owns (older versions). */
+  let orphans = $state<OrphanFile[]>([]);
   let error = $state<string | null>(null);
 
   const size = (n: number) =>
     n >= 1_073_741_824 ? `${(n / 1_073_741_824).toFixed(1)} GB` : `${(n / 1_048_576).toFixed(1)} MB`;
 
-  onMount(async () => {
+  /** 保存先の行：パスは説明窓へ表示（行内は項目名と容量のみ）。 */
+  const places = $derived(
+    info
+      ? [
+          { id: 'models', label: 'モデル', value: size(info.models_bytes), path: info.models_dir },
+          { id: 'data', label: '履歴・拡張機能', value: size(info.data_bytes), path: info.data_dir },
+          { id: 'config', label: '設定ファイル', value: '', path: info.config_dir },
+          ...(info.log_dir
+            ? [{ id: 'log', label: 'ログ', value: '不具合報告時に添付', path: info.log_dir }]
+            : [])
+        ]
+      : []
+  );
+
+  async function refresh() {
     try {
-      info = await dataLocations();
+      [info, orphans] = await Promise.all([dataLocations(), listOrphanLlmFiles()]);
     } catch (e) {
       error = errorText(e);
     }
-  });
+  }
+
+  onMount(refresh);
+
+  async function removeOrphan(name: string) {
+    error = null;
+    try {
+      await deleteOrphanLlmFile(name);
+    } catch (e) {
+      error = errorText(e);
+    }
+    await refresh();
+  }
 </script>
 
-<section class="rounded-ml border border-border bg-surface-elevated p-4 shadow-ml sm:p-5">
-  {#if error}
-    <p class="text-xs break-words text-red-500">{error}</p>
-  {:else if !info}
-    <p class="text-sm text-ink-faint">読込中…</p>
-  {:else}
-    <dl class="grid gap-3 text-sm">
-      <div>
-        <dt class="font-medium">バージョン</dt>
-        <dd class="text-xs text-ink-faint"><code class="font-mono">{info.version}</code></dd>
+{#if info}
+  <SettingRow id="data:version" help="バージョン：{info.version}">
+    <div class="srow">
+      <span class="row-label">バージョン</span>
+      <span class="row-ctl"><span class="row-value">{info.version}</span></span>
+    </div>
+  </SettingRow>
+  {#each places as p (p.id)}
+    <SettingRow id="data:{p.id}" help="保存先：{p.path}">
+      <div class="srow">
+        <span class="row-label">{p.label}</span>
+        <span class="row-ctl"><span class="row-value">{p.value}</span></span>
       </div>
-      <div>
-        <dt class="font-medium">モデル <span class="font-normal text-ink-muted">{size(info.models_bytes)}</span></dt>
-        <dd class="text-xs break-all text-ink-faint"><code class="font-mono">{info.models_dir}</code></dd>
+    </SettingRow>
+  {/each}
+  {#each orphans as o (o.name)}
+    <SettingRow id="data:orphan:{o.name}" help="旧版のモデル（現行版で未使用）。削除で容量を解放。{o.name}">
+      <div class="srow">
+        <span class="row-label" title={o.name}>旧モデル：{o.name}</span>
+        <span class="row-ctl">
+          <span class="row-value">{size(o.size)}</span>
+          <button class="sbtn icon" title="削除" aria-label="{o.name} を削除" onclick={() => removeOrphan(o.name)}>
+            <Trash2 class="h-4 w-4" />
+          </button>
+        </span>
       </div>
-      <div>
-        <dt class="font-medium">履歴・プラグイン <span class="font-normal text-ink-muted">{size(info.data_bytes)}</span></dt>
-        <dd class="text-xs break-all text-ink-faint"><code class="font-mono">{info.data_dir}</code></dd>
-      </div>
-      <div>
-        <dt class="font-medium">設定ファイル</dt>
-        <dd class="text-xs break-all text-ink-faint"><code class="font-mono">{info.config_dir}</code></dd>
-      </div>
-      {#if info.log_dir}
-        <div>
-          <dt class="font-medium">ログ <span class="font-normal text-ink-muted">不具合報告時に添付</span></dt>
-          <dd class="text-xs break-all text-ink-faint"><code class="font-mono">{info.log_dir}</code></dd>
-        </div>
-      {/if}
-    </dl>
-    <p class="mt-3 text-xs text-ink-muted">
-      完全削除：アンインストール後、上記フォルダーを削除。
-    </p>
-  {/if}
-</section>
+    </SettingRow>
+  {/each}
+{:else if !error}
+  <p class="srow"><span class="row-label">読込中…</span></p>
+{/if}
+{#if error}
+  <div class="srow error"><p class="row-label">{error}</p></div>
+{/if}

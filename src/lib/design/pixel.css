@@ -337,3 +337,89 @@
 [data-skin='pixel'] .max-w-lg kbd {
   margin-left: 24px;
 }
+
+/* ── 設定画面の行（モデル・データ）：項目名＋右寄せの値・操作 ── */
+.srow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 60px;
+  padding: 6px 0;
+}
+.srow .row-label {
+  flex: 1;
+  min-width: 0;
+  color: var(--ml-px-cream);
+  line-height: 40px;
+  overflow-wrap: anywhere;
+}
+.srow .row-ctl {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.srow .row-value {
+  color: var(--ml-px-mid);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.srow.error .row-label {
+  color: var(--ml-px-red);
+}
+/** 行内の操作ボタン（矩形）。 */
+.sbtn {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 6px;
+  height: 44px;
+  padding: 0 14px;
+  border: 2px solid var(--ml-px-dim);
+  background: var(--ml-px-black);
+  color: var(--ml-px-mid);
+  white-space: nowrap;
+}
+.sbtn:hover {
+  border-color: var(--ml-px-faint);
+  color: var(--ml-px-cream);
+}
+.sbtn.icon {
+  width: 44px;
+  justify-content: center;
+  padding: 0;
+}
+.sbtn.danger,
+.sbtn.icon:hover {
+  border-color: var(--ml-px-red);
+  color: var(--ml-px-red);
+}
+.sbtn:disabled {
+  opacity: 0.4;
+}
+/** 状態札（使用中・導入済み等）：矩形。 */
+.stag {
+  padding: 0 10px;
+  background: var(--ml-px-bone);
+  color: var(--ml-px-black);
+  line-height: 40px;
+  white-space: nowrap;
+}
+.stag.off {
+  background: var(--ml-px-dim);
+  color: var(--ml-px-cream);
+}
+/** 取得中の進捗線（行の下端）。 */
+.sprogress {
+  position: absolute;
+  inset: auto 0 -2px 0;
+  height: 4px;
+  background: var(--ml-px-dim);
+}
+.sprogress > span {
+  display: block;
+  height: 100%;
+  background: var(--ml-px-cream);
+}
