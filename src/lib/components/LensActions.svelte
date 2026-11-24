@@ -5,7 +5,8 @@
   /**
    * ウィンドウ翻訳の共通操作列。範囲選択画面（静止画上の単発翻訳）とウィンドウ翻訳窓（常時翻訳）で
    * 同一の項目・順序・表記を使用。配色は親要素の CSS 変数（--la-hover・--la-pressed）で指定。
-   * compact：アイコンのみ（狭い窓向け、項目名は title へ表示）。
+   * compact：アイコンのみ（狭い窓向け、項目名は title へ表示）。幅不足時は横スクロール（ホイール対応）、
+   * 「閉じる」は右端へ固定。
    */
   let {
     continuous,
@@ -44,9 +45,17 @@
     onexplain: () => void;
     onclose: () => void;
   } = $props();
+
+  /** compact 時の縦ホイールを横スクロールへ変換（幅不足で隠れた項目へ到達）。 */
+  function wheel(e: WheelEvent) {
+    const el = e.currentTarget as HTMLElement;
+    if (!compact || el.scrollWidth <= el.clientWidth || Math.abs(e.deltaX) > Math.abs(e.deltaY)) return;
+    el.scrollLeft += e.deltaY;
+    e.preventDefault();
+  }
 </script>
 
-<div class="la" class:compact role="group" aria-label="ウィンドウ翻訳の操作">
+<div class="la" class:compact role="group" aria-label="ウィンドウ翻訳の操作" onwheel={wheel}>
   <button
     class="tb"
     aria-pressed={continuous}
@@ -94,7 +103,7 @@
   <button class="tb" disabled={!hasText} onclick={onexplain} title="内容説明">
     <Languages class="h-4 w-4" /><span class="lb">説明</span>
   </button>
-  <button class="tb" onclick={onclose} title="閉じる (Esc)"><X class="h-4 w-4" /></button>
+  <button class="tb close" onclick={onclose} title="閉じる (Esc)"><X class="h-4 w-4" /></button>
 </div>
 
 <style>
@@ -105,6 +114,21 @@
   }
   .la.compact {
     gap: 1px;
+    min-width: 0;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .la.compact::-webkit-scrollbar {
+    display: none;
+  }
+  .la.compact .tb {
+    flex: none;
+  }
+  /* 幅不足時も「閉じる」は常時表示 */
+  .la.compact .close {
+    position: sticky;
+    right: 0;
+    background: var(--la-bg, #18181c);
   }
   .tb {
     display: inline-flex;

@@ -93,6 +93,8 @@
     empty = !source?.trim() && !translation.trim();
     blocks = at === geometry ? (r.blocks ?? []) : [];
     hidden = new Set();
+    // QR code etc.: no boxes to place, so it is shown as text.
+    if (!blocks.length && translation.trim()) showText = true;
   }
 
   /** Continuous reading (`moonlens://lens-live`). */
@@ -299,7 +301,7 @@
 
 <main class="lens">
   <header bind:this={headerEl} data-tauri-drag-region class="bar">
-    <div class="pointer-events-none flex min-w-0 items-center gap-2" data-tauri-drag-region>
+    <div class="lead pointer-events-none flex min-w-0 items-center gap-2" data-tauri-drag-region>
       <span class="title">ウィンドウ翻訳</span>
       {#if hasText}
         <PrivacyBadge {viaCloud} {provider} />
@@ -415,6 +417,14 @@
     user-select: none;
     --la-hover: rgba(255, 255, 255, 0.12);
     --la-pressed: rgba(139, 92, 246, 0.45);
+    --la-bg: rgb(24, 24, 28);
+    container-type: inline-size;
+  }
+  /* 狭い範囲：見出しを省略し操作列へ幅を譲渡 */
+  @container (max-width: 300px) {
+    .lead {
+      display: none;
+    }
   }
   .title {
     font-size: 11px;
