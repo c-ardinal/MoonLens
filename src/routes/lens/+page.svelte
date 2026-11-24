@@ -8,6 +8,7 @@
   import FlowText from '$lib/components/FlowText.svelte';
   import type { CaptureFlowResult, LensBlock } from '$lib/ipc';
   import { blockCssRect, growRoom, rgb } from '$lib/lens-overlay';
+  import { liveText, type LensLiveEvent } from '$lib/live';
   import { extractText } from '$lib/result';
   import { errorText } from '$lib/errors';
 
@@ -24,20 +25,27 @@
   let lastError = $state<string | null>(null);
   /** The last capture ran but found no text in the region. */
   let empty = $state(false);
-  let autoRefreshMs = $state(0);
+  /** Read the region continuously and re-translate on change (default). */
+  let continuous = $state(true);
+  /** Continuous reading: new text is with the model. */
+  let translating = $state(false);
   /** Blocks of the last capture, painted in place over the region. */
   let blocks = $state<LensBlock[]>([]);
+  /** Blocks whose source changed or moved away; hidden until re-read. */
+  let hidden = $state<Set<number>>(new Set());
   /** Show the source / translation as text instead of in place. */
   let textView = $state(false);
   let dpr = $state(typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1);
   const origin = { x: 0, y: 0, w: 0, h: 0 };
+  /** Blocks painted over the region (hidden ones keep their place, so a
+   * re-read does not flip the lens to the text view meanwhile). */
   const placed = $derived(blocks.filter((b) => b.bbox[2] > 0 && b.bbox[3] > 0 && !b.same_language));
   const inPlace = $derived(!textView && placed.length > 0);
   let headerEl: HTMLElement;
   let unlisten: UnlistenFn | undefined;
+  let unlistenLive: UnlistenFn | undefined;
   let unlistenMove: UnlistenFn | undefined;
   let unlistenResize: UnlistenFn | undefined;
-  let refreshTimer: ReturnType<typeof setInterval> | undefined;
   let reportedHeaderHeight = 0;
 
   const win = getCurrentWebviewWindow();
@@ -75,10 +83,59 @@
     provider = r.result.used_provider;
     empty = !source?.trim() && !translation.trim();
     blocks = at === geometry ? (r.blocks ?? []) : [];
+    hidden = new Set();
+  }
+
+  /** Continuous reading (`moonlens://lens-live`). */
+  function applyLive(ev: LensLiveEvent) {
+    if (ev.kind === 'blocks') {
+      const t = liveText(ev.blocks);
+      blocks = ev.blocks;
+      hidden = new Set();
+      source = t.source;
+      translation = t.translation;
+      translating = ev.translating;
+      empty = false;
+      lastError = null;
+      if (ev.provider) {
+        provider = ev.provider;
+        viaCloud = ev.via_cloud ?? false;
+      }
+    } else if (ev.kind === 'stale') {
+      hidden = new Set([...hidden, ...ev.indices]);
+    } else if (ev.kind === 'clear') {
+      blocks = [];
+      hidden = new Set();
+      source = null;
+      translation = '';
+      translating = false;
+      empty = true;
+      lastError = null;
+    } else if (ev.kind === 'decoded') {
+      // QR code: shown as text (no boxes to place).
+      blocks = [];
+      hidden = new Set();
+      source = null;
+      translation = ev.text;
+      translating = false;
+      empty = false;
+      lastError = null;
+    } else {
+      translating = false;
+      lastError = errorText(ev.message);
+    }
   }
 
   async function capture() {
     if (busy) return;
+    // Continuous: ask the reader to read now (also when nothing changed).
+    if (continuous) {
+      try {
+        if (await invoke<boolean>('refresh_lens', { id })) return;
+      } catch {
+        /* fall back to a one-off capture */
+      }
+    }
     busy = true;
     lastError = null;
     const at = (captureGeometry = geometry);
@@ -101,35 +158,49 @@
   }
 
   $effect(() => {
-    // Reset the interval whenever the user changes autoRefreshMs.
-    if (refreshTimer) clearInterval(refreshTimer);
-    if (autoRefreshMs > 0) {
-      refreshTimer = setInterval(() => capture(), autoRefreshMs);
-      invoke('set_lens_auto_refresh', { id, ms: autoRefreshMs }).catch(() => {});
-    } else {
-      invoke('set_lens_auto_refresh', { id, ms: null }).catch(() => {});
-    }
+    invoke('set_lens_continuous', { id, on: continuous }).catch(() => {});
+    if (!continuous) translating = false;
   });
+
+  /** Last window position / size, to ignore move events that move nothing. */
+  let lastPos = '';
+  let lastSize = '';
+  function moved(key: string, prev: string): boolean {
+    if (key === prev) return false;
+    geometry++;
+    // Boxes no longer line up: hide them until the region is read again.
+    hidden = new Set(blocks.map((_, i) => i));
+    // Have the reader look now: it waits for the lens to hold still, and
+    // shows the boxes again even if the move turns out to be none.
+    if (continuous) invoke('refresh_lens', { id }).catch(() => {});
+    return true;
+  }
 
   onMount(async () => {
     reportInsets();
-    // Listen for the pipeline result in case the backend drives a capture
-    // (e.g. from auto-refresh rules we add later).
+    // One-off captures (continuous reading off) also arrive here.
     unlisten = await listen<CaptureFlowResult>('moonlens://lens-result', (e) => apply(e.payload));
+    unlistenLive = await listen<LensLiveEvent>('moonlens://lens-live', (e) => {
+      if (continuous) applyLive(e.payload);
+    });
     const ro = new ResizeObserver(() => reportInsets());
     if (headerEl) ro.observe(headerEl);
     // Boxes from the last capture no longer line up once the lens moves
-    // or is resized; drop them until the next capture.
+    // or is resized; hide them until the next reading.
     try {
-      unlistenMove = await win.onMoved(() => {
-        geometry++;
-        blocks = [];
+      unlistenMove = await win.onMoved(({ payload: p }) => {
+        const key = `${p.x},${p.y}`;
+        if (moved(key, lastPos)) lastPos = key;
       });
-      unlistenResize = await win.onResized(() => {
-        geometry++;
-        blocks = [];
+      unlistenResize = await win.onResized(({ payload: p }) => {
+        const key = `${p.width}x${p.height}`;
+        if (moved(key, lastSize)) lastSize = key;
         dpr = window.devicePixelRatio || 1;
       });
+      const pos = await win.outerPosition();
+      const size = await win.innerSize();
+      lastPos = `${pos.x},${pos.y}`;
+      lastSize = `${size.width}x${size.height}`;
     } catch {
       /* not running inside Tauri */
     }
@@ -137,9 +208,10 @@
 
   onDestroy(() => {
     unlisten?.();
+    unlistenLive?.();
     unlistenMove?.();
     unlistenResize?.();
-    if (refreshTimer) clearInterval(refreshTimer);
+    invoke('set_lens_continuous', { id, on: false }).catch(() => {});
   });
 </script>
 
@@ -160,25 +232,23 @@
       {/if}
     </div>
     <div class="flex items-center gap-1">
-      <label class="flex items-center gap-1 text-[11px] text-ink-muted">
-        自動
-        <select
-          bind:value={autoRefreshMs}
-          class="rounded-ml-sm border border-border bg-surface px-1 py-0.5 text-[11px]"
-        >
-          <option value={0}>OFF</option>
-          <option value={1500}>1.5s</option>
-          <option value={3000}>3s</option>
-          <option value={10000}>10s</option>
-        </select>
-      </label>
+      <button
+        class="rounded-ml-sm px-1.5 py-0.5 text-[11px] hover:bg-surface-muted {continuous
+          ? 'text-accent'
+          : 'text-ink-muted'}"
+        aria-pressed={continuous}
+        onclick={() => (continuous = !continuous)}
+        title={continuous ? '常時翻訳：ON（画面変化時に再翻訳）' : '常時翻訳：OFF（手動のみ）'}
+      >
+        常時
+      </button>
       <button
         class="rounded-ml-sm p-1 text-ink-muted hover:bg-surface-muted"
         onclick={capture}
         disabled={busy}
         title="再キャプチャ"
       >
-        <RefreshCw class="h-4 w-4 {busy ? 'animate-spin' : ''}" />
+        <RefreshCw class="h-4 w-4 {busy || translating ? 'animate-spin' : ''}" />
       </button>
       <button
         class="rounded-ml-sm p-1 text-ink-muted hover:bg-surface-muted disabled:opacity-40"
@@ -211,7 +281,7 @@
          right below the header, so block boxes map 1:1 (÷ dpr). -->
     <section class="relative flex-1 overflow-hidden" aria-label="訳文">
       {#each blocks as b, i (i)}
-        {#if b.bbox[2] > 0 && b.bbox[3] > 0 && !b.same_language}
+        {#if !hidden.has(i) && b.bbox[2] > 0 && b.bbox[3] > 0 && !b.same_language}
         {@const r = blockCssRect(b, origin, dpr)}
         <div
           class="lens-box absolute"
@@ -233,7 +303,7 @@
         </div>
         {/if}
       {/each}
-      {#if busy || lastError}
+      {#if busy || translating || lastError}
         <div class="glass absolute bottom-2 right-2 rounded-ml-sm px-2 py-1 text-[11px]">
           {#if lastError}<span class="text-red-500">{lastError}</span>{:else}処理中…{/if}
         </div>
@@ -246,7 +316,12 @@
         <Camera class="h-6 w-6 text-ink-faint" />
         {#if empty}
           <p class="text-sm">範囲内に文字なし</p>
-          <p class="text-xs text-ink-faint">位置・サイズ調整後、再キャプチャ ↻</p>
+          <p class="text-xs text-ink-faint">
+            {continuous ? '文字の表示時に自動翻訳' : '位置・サイズ調整後、再キャプチャ ↻'}
+          </p>
+        {:else if continuous}
+          <p class="text-sm">対象範囲に配置</p>
+          <p class="text-xs text-ink-faint">画面変化時に自動再翻訳</p>
         {:else}
           <p class="text-sm">対象範囲に配置して再キャプチャ ↻</p>
         {/if}
@@ -254,7 +329,7 @@
     {:else}
       <div class="mb-2 flex items-center justify-between">
         <PrivacyBadge {viaCloud} {provider} />
-        {#if busy}
+        {#if busy || translating}
           <span class="text-[11px] text-ink-faint">処理中…</span>
         {/if}
       </div>

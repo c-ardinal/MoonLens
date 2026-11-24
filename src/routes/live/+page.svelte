@@ -22,7 +22,7 @@
       hidden = new Set();
     } else if (ev.kind === 'stale') {
       hidden = new Set([...hidden, ...ev.indices]);
-    } else {
+    } else if (ev.kind === 'clear') {
       blocks = [];
       hidden = new Set();
     }

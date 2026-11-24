@@ -425,7 +425,8 @@ export interface LensDescriptor {
   id: string;
   title: string;
   insets: { top: number; bottom: number; left: number; right: number };
-  auto_refresh_ms: number | null;
+  /** Reads the region continuously (re-translates on change). */
+  continuous: boolean;
 }
 
 export const newLensWindow = () => safeInvoke<string>('new_lens_window');

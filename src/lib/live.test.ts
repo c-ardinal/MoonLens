@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { liveBoxes } from "./live";
+import { liveBoxes, liveText } from "./live";
 import type { LensBlock } from "./ipc";
 
 const block = (over: Partial<LensBlock> = {}): LensBlock => ({
@@ -37,5 +37,19 @@ describe("liveBoxes", () => {
   it("marks blocks without a translation as pending", () => {
     const [b] = liveBoxes([block({ translation: null })], new Set(), 1);
     expect(b.pending).toBe(true);
+  });
+});
+
+describe("liveText", () => {
+  it("joins source and translation, keeps same-language text, skips pending", () => {
+    const blocks = [
+      block({ source: " Hello ", translation: "こんにちは" }),
+      block({ source: "東京", translation: null, same_language: true }),
+      block({ source: "World", translation: null }),
+    ];
+    expect(liveText(blocks)).toEqual({
+      source: "Hello\n\n東京\n\nWorld",
+      translation: "こんにちは\n\n東京",
+    });
   });
 });

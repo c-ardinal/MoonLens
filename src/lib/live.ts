@@ -8,9 +8,45 @@ import type { LensBlock } from "./ipc";
 import { blockCssRect, growRoom, type CssRect } from "./lens-overlay";
 
 export type LiveEvent =
-  | { kind: "blocks"; blocks: LensBlock[]; translating: boolean }
+  | {
+      kind: "blocks";
+      blocks: LensBlock[];
+      translating: boolean;
+      /** Engine of the new translations, once known. */
+      provider?: string;
+      /** The new translations came from a cloud provider. */
+      via_cloud?: boolean;
+    }
   | { kind: "stale"; indices: number[] }
   | { kind: "clear" };
+
+/** Events of a continuously reading Lens window (`moonlens://lens-live`). */
+export type LensLiveEvent =
+  | LiveEvent
+  | { kind: "decoded"; text: string }
+  | { kind: "error"; message: string };
+
+/**
+ * Source and translation of live blocks as plain text (the Lens text
+ * view and copy button). Blocks already in the target language show
+ * their source; blocks still with the model are left out.
+ */
+export function liveText(blocks: LensBlock[]): {
+  source: string;
+  translation: string;
+} {
+  const join = (xs: string[]) =>
+    xs
+      .map((x) => x.trim())
+      .filter(Boolean)
+      .join("\n\n");
+  return {
+    source: join(blocks.map((b) => b.source)),
+    translation: join(
+      blocks.map((b) => b.translation ?? (b.same_language ? b.source : "")),
+    ),
+  };
+}
 
 export interface LiveBox {
   block: LensBlock;

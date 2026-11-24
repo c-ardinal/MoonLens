@@ -22,6 +22,9 @@
 //! 4. Blocks seen before come from the translation cache and are shown
 //!    immediately; only new paragraphs go to the model.
 //!
+//! Steps 1–4 live in [`Tracker`], which Lens windows run too (see
+//! `lens::set_continuous`).
+//!
 //! The live window is excluded from screen capture (Windows / macOS), so
 //! the watcher reads the original text under it. Where that is not
 //! supported (Linux) the window is hidden for the duration of a capture.
@@ -38,7 +41,9 @@ use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize};
 use crate::{
     capture::{self, CaptureRect},
     pipeline::{LensBlock, Pipeline},
+    providers::{Capability, TaskOutput},
     settings::SettingsStore,
+    user_error,
 };
 
 /// Label of the live translation window (see `tauri.conf.json`).
@@ -84,12 +89,23 @@ pub enum LiveEvent {
     Blocks {
         blocks: Vec<LensBlock>,
         translating: bool,
+        /// Engine that translated the new blocks, once known.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        provider: Option<String>,
+        /// The new translations came from a cloud provider.
+        #[serde(skip_serializing_if = "std::ops::Not::not")]
+        via_cloud: bool,
     },
     /// Hide these blocks (indices into the last `Blocks`): their source
     /// changed and a new reading is on its way.
     Stale { indices: Vec<usize> },
     /// Nothing to show (live translation stopped or the region is empty).
     Clear,
+    /// A QR code in the region was decoded; Lens windows show `text`.
+    Decoded { text: String },
+    /// Reading or translating failed (`code|message`, see `user_error`).
+    /// Lens windows show it; the live window ignores it.
+    Error { message: String },
 }
 
 #[derive(Default)]
@@ -235,15 +251,303 @@ async fn capture_under_window(app: &AppHandle, rect: CaptureRect) -> Option<Dyna
     image
 }
 
-/// What the watcher has on screen.
+/// Region geometry in screen pixels (`[x, y, w, h]`). A different value
+/// means the region moved or was resized.
+pub type Geometry = [i32; 4];
+
+/// One reading of a watched region.
+pub struct Frame {
+    pub image: DynamicImage,
+    pub geometry: Geometry,
+}
+
+/// What the caller supplies to [`Tracker::tick`].
+pub struct TickEnv<'a> {
+    pub pipeline: &'a Pipeline,
+    pub target_language: &'a str,
+    /// History kind of new translations (`pipeline::history_kind`).
+    pub history_kind: &'a str,
+    pub emit: &'a (dyn Fn(LiveEvent) + Send + Sync),
+    /// Region geometry now. A translation finished after the region moved
+    /// is not shown at the old place; the next tick shows it at the new.
+    pub geometry_now: &'a (dyn Fn() -> Option<Geometry> + Send + Sync),
+}
+
+/// Result of one [`Tracker::tick`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Tick {
+    /// Pixels unchanged: no OCR, no translation.
+    Unchanged,
+    /// The region moved or was resized: shown blocks hidden, reading
+    /// waits until it holds still.
+    Moved,
+    /// New text read once; waiting for the same reading again.
+    Settling,
+    /// Same text as shown (only pixels around it changed): translations
+    /// kept, nothing sent to the model.
+    SameText,
+    /// No text in the region.
+    Empty,
+    /// A QR code was decoded (no text blocks).
+    Decoded { text: String },
+    /// New text shown. `requested` is false when every block came from
+    /// the cache or is already in the target language.
+    Translated {
+        source: String,
+        translation: String,
+        requested: bool,
+    },
+}
+
+/// What the tracker has on screen.
 #[derive(Default)]
 struct Shown {
     thumb: Option<Thumb>,
-    /// Source text of the shown blocks, in order.
+    /// Target language and source text of the shown blocks (or the
+    /// decoded QR payload): what a new reading is compared with.
     text: Option<String>,
     blocks: Vec<LensBlock>,
     /// Indices already reported stale since the last `Blocks`.
     stale: Vec<usize>,
+}
+
+/// Change-driven reading of one screen region, shared by live
+/// translation and Lens windows. Feed it a [`Frame`] per tick; it runs
+/// OCR only when pixels change and translates only text not shown yet
+/// (see the module docs for the steps).
+#[derive(Default)]
+pub struct Tracker {
+    shown: Shown,
+    /// Last frame read, and the text OCR found in it while waiting for
+    /// the text to settle.
+    last_thumb: Option<Thumb>,
+    last_geometry: Option<Geometry>,
+    pending_text: Option<String>,
+    unsettled: u32,
+}
+
+impl Tracker {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// The region moved or was resized: hide every shown block (their
+    /// boxes no longer line up) and wait for it to hold still.
+    pub fn region_moved(&mut self, geometry: Geometry, env: &TickEnv<'_>) {
+        self.last_geometry = Some(geometry);
+        self.last_thumb = None;
+        self.pending_text = None;
+        self.unsettled = 0;
+        let newly: Vec<usize> = (0..self.shown.blocks.len())
+            .filter(|i| !self.shown.stale.contains(i))
+            .collect();
+        if !newly.is_empty() {
+            self.shown.stale.extend(&newly);
+            (env.emit)(LiveEvent::Stale { indices: newly });
+        }
+    }
+
+    /// Process one reading. `force` reads and shows the region even when
+    /// nothing changed and skips the wait for text to settle (a manual
+    /// refresh).
+    pub async fn tick(
+        &mut self,
+        frame: Frame,
+        force: bool,
+        env: &TickEnv<'_>,
+    ) -> Result<Tick, String> {
+        if self.last_geometry.is_some_and(|g| g != frame.geometry) {
+            self.region_moved(frame.geometry, env);
+            return Ok(Tick::Moved);
+        }
+        self.last_geometry = Some(frame.geometry);
+        let thumb = Thumb::of(&frame.image);
+        let changed = self
+            .last_thumb
+            .as_ref()
+            .map_or(true, |t| t.changed_share(&thumb, None) >= REGION_CHANGED);
+        self.last_thumb = Some(thumb.clone());
+        // Nothing changed since the last tick and nothing waits to settle.
+        // The target language changed in settings: read and translate again.
+        let language_changed = self
+            .shown
+            .text
+            .as_deref()
+            .is_some_and(|k| k.split('\u{1}').next() != Some(env.target_language));
+        if !changed
+            && !force
+            && !language_changed
+            && self.pending_text.is_none()
+            && self.shown.stale.is_empty()
+        {
+            return Ok(Tick::Unchanged);
+        }
+
+        // Hide translations whose source area changed, before OCR.
+        if let Some(base) = &self.shown.thumb {
+            let newly: Vec<usize> = self
+                .shown
+                .blocks
+                .iter()
+                .enumerate()
+                .filter(|(i, b)| {
+                    !self.shown.stale.contains(i)
+                        && base.changed_share(&thumb, Some(b.bbox)) >= BLOCK_CHANGED
+                })
+                .map(|(i, _)| i)
+                .collect();
+            if !newly.is_empty() {
+                self.shown.stale.extend(&newly);
+                (env.emit)(LiveEvent::Stale { indices: newly });
+            }
+        }
+
+        let png = capture::png_bytes(&frame.image).map_err(|e| e.to_string())?;
+        let mut bundle = env
+            .pipeline
+            .analyze_capture(png)
+            .await
+            .map_err(|e| user_error::provider(&e, Capability::Ocr))?;
+        // The region moved while OCR ran: these boxes belong to the old
+        // place. Hide what is shown and read again once it holds still.
+        if let Some(now) = (env.geometry_now)().filter(|g| *g != frame.geometry) {
+            self.region_moved(now, env);
+            return Ok(Tick::Moved);
+        }
+        let text = source_key(&bundle.blocks);
+        // A decoded QR code has no blocks; its payload is the reading.
+        let decoded = match (&bundle.result.output, bundle.blocks.is_empty()) {
+            (TaskOutput::Text(t), true) if !t.trim().is_empty() => Some(t.clone()),
+            _ => None,
+        };
+        // What decides "same as shown": the text read, and the language
+        // it is shown in (a changed target language translates again).
+        let key = format!(
+            "{}\u{1}{}",
+            env.target_language,
+            decoded.as_deref().map_or(text.as_str(), |d| d)
+        );
+
+        // A refresh retries blocks left untranslated (a failed request).
+        let incomplete = self
+            .shown
+            .blocks
+            .iter()
+            .any(|b| !b.same_language && b.translation.is_none());
+        if self.shown.text.as_deref() == Some(key.as_str()) && !(force && incomplete) {
+            // Same text as on screen (only the background changed, or
+            // the region moved over the same text): show what was hidden
+            // again, at the new positions.
+            self.pending_text = None;
+            self.unsettled = 0;
+            self.shown.thumb = Some(thumb);
+            if let (Some(text), true) = (&decoded, force) {
+                (env.emit)(LiveEvent::Decoded { text: text.clone() });
+            } else if !self.shown.stale.is_empty() || force {
+                self.shown.stale.clear();
+                let blocks = carry_translations(&self.shown.blocks, bundle.blocks);
+                self.shown.blocks = blocks.clone();
+                (env.emit)(LiveEvent::Blocks {
+                    blocks,
+                    translating: false,
+                    provider: None,
+                    via_cloud: false,
+                });
+            }
+            return Ok(Tick::SameText);
+        }
+
+        // New text: wait for it to read the same twice (text being typed
+        // out), unless it has been changing for too long.
+        let settled = force || self.pending_text.as_deref() == Some(key.as_str());
+        if !settled && self.unsettled < SETTLE_LIMIT {
+            self.pending_text = Some(key);
+            self.unsettled += 1;
+            return Ok(Tick::Settling);
+        }
+        self.pending_text = None;
+        self.unsettled = 0;
+
+        if bundle.blocks.is_empty() {
+            self.shown = Shown {
+                thumb: Some(thumb),
+                text: Some(key),
+                ..Shown::default()
+            };
+            if let Some(text) = decoded {
+                // Take earlier boxes off (the live window shows no QR text).
+                (env.emit)(LiveEvent::Clear);
+                (env.emit)(LiveEvent::Decoded { text: text.clone() });
+                return Ok(Tick::Decoded { text });
+            }
+            (env.emit)(LiveEvent::Clear);
+            return Ok(Tick::Empty);
+        }
+
+        // Cached and same-language blocks are ready now; show them while
+        // the rest is translated.
+        env.pipeline
+            .prepare_translation(&mut bundle, env.target_language);
+        let requested =
+            bundle.needs_translation() && bundle.blocks.iter().any(|b| b.needs_request());
+        self.shown = Shown {
+            thumb: Some(thumb),
+            text: Some(key),
+            blocks: bundle.blocks.clone(),
+            stale: Vec::new(),
+        };
+        (env.emit)(LiveEvent::Blocks {
+            blocks: bundle.blocks.clone(),
+            translating: requested,
+            provider: None,
+            via_cloud: false,
+        });
+        if requested {
+            let result = env
+                .pipeline
+                .translate_capture_as(&mut bundle, env.target_language, None, env.history_kind)
+                .await;
+            self.shown.blocks = bundle.blocks.clone();
+            if let Err(e) = result {
+                // Keep what is readable; the text is tried again once it
+                // changes or on a manual refresh.
+                self.shown.text = None;
+                (env.emit)(LiveEvent::Blocks {
+                    blocks: bundle.blocks,
+                    translating: false,
+                    provider: None,
+                    via_cloud: false,
+                });
+                return Err(user_error::provider(&e, Capability::Translate));
+            }
+            // The region moved while the model ran: the boxes belong to
+            // the old place. The next tick shows them at the new one.
+            if (env.geometry_now)() == Some(frame.geometry) {
+                (env.emit)(LiveEvent::Blocks {
+                    blocks: bundle.blocks.clone(),
+                    translating: false,
+                    provider: Some(bundle.result.used_provider.clone()),
+                    via_cloud: bundle.result.via_cloud,
+                });
+            }
+        }
+        let translation = bundle
+            .blocks
+            .iter()
+            .map(|b| {
+                b.translation
+                    .as_deref()
+                    .unwrap_or(if b.same_language { &b.source } else { "" })
+                    .trim()
+            })
+            .collect::<Vec<_>>()
+            .join("\n\n");
+        Ok(Tick::Translated {
+            source: text,
+            translation,
+            requested,
+        })
+    }
 }
 
 async fn run_watch(
@@ -253,12 +557,19 @@ async fn run_watch(
     target: WatchTarget,
     stop: Arc<tokio::sync::Notify>,
 ) {
-    let mut shown = Shown::default();
-    // Last frame read, and the text OCR found in it while waiting for the
-    // text to settle.
-    let mut last_thumb: Option<Thumb> = None;
-    let mut pending_text: Option<String> = None;
-    let mut unsettled: u32 = 0;
+    let mut tracker = Tracker::new();
+    let geometry = [
+        target.rect.x,
+        target.rect.y,
+        target.rect.w as i32,
+        target.rect.h as i32,
+    ];
+    let emit_app = app.clone();
+    let emit = move |ev: LiveEvent| {
+        let _ = emit_app.emit_to(LIVE_WINDOW, LIVE_EVENT, ev);
+    };
+    let geometry_now = move || Some(geometry);
+    let mut first = true;
     loop {
         let snap = settings.snapshot();
         if !snap.overlay.follow_source {
@@ -272,140 +583,27 @@ async fn run_watch(
         drop(snap);
 
         // The first reading happens at once; later ones every interval.
-        if last_thumb.is_some() {
+        if !first {
             tokio::select! {
                 _ = stop.notified() => break,
                 _ = tokio::time::sleep(Duration::from_millis(interval)) => {}
             }
         }
+        first = false;
 
         let Some(image) = capture_under_window(&app, target.rect).await else {
             continue;
         };
-        let thumb = Thumb::of(&image);
-        let moved = last_thumb
-            .as_ref()
-            .map_or(true, |t| t.changed_share(&thumb, None) >= REGION_CHANGED);
-        last_thumb = Some(thumb.clone());
-        // Nothing moved since the last tick and nothing waits to settle.
-        if !moved && pending_text.is_none() {
-            continue;
-        }
-
-        // Hide translations whose source area changed, before OCR.
-        if let Some(base) = &shown.thumb {
-            let newly: Vec<usize> = shown
-                .blocks
-                .iter()
-                .enumerate()
-                .filter(|(i, b)| {
-                    !shown.stale.contains(i)
-                        && base.changed_share(&thumb, Some(b.bbox)) >= BLOCK_CHANGED
-                })
-                .map(|(i, _)| i)
-                .collect();
-            if !newly.is_empty() {
-                shown.stale.extend(&newly);
-                let _ = app.emit_to(LIVE_WINDOW, LIVE_EVENT, LiveEvent::Stale { indices: newly });
-            }
-        }
-
-        let Ok(png) = capture::png_bytes(&image) else {
-            continue;
+        let env = TickEnv {
+            pipeline: &pipeline,
+            target_language: &target_language,
+            history_kind: crate::pipeline::history_kind::LIVE,
+            emit: &emit,
+            geometry_now: &geometry_now,
         };
-        let mut bundle = match pipeline.analyze_capture(png).await {
-            Ok(b) => b,
-            Err(e) => {
-                tracing::debug!("live OCR: {e}");
-                continue;
-            }
-        };
-        let text = source_key(&bundle.blocks);
-
-        if shown.text.as_deref() == Some(text.as_str()) {
-            // Same text as on screen (only the background changed):
-            // show what was hidden again, at the new positions.
-            pending_text = None;
-            unsettled = 0;
-            shown.thumb = Some(thumb);
-            if !shown.stale.is_empty() {
-                shown.stale.clear();
-                let blocks = carry_translations(&shown.blocks, bundle.blocks);
-                shown.blocks = blocks.clone();
-                let _ = app.emit_to(
-                    LIVE_WINDOW,
-                    LIVE_EVENT,
-                    LiveEvent::Blocks {
-                        blocks,
-                        translating: false,
-                    },
-                );
-            }
-            continue;
+        if let Err(e) = tracker.tick(Frame { image, geometry }, false, &env).await {
+            tracing::debug!("live translation: {e}");
         }
-
-        // New text: wait for it to read the same twice (text being typed
-        // out), unless it has been changing for too long.
-        let settled = pending_text.as_deref() == Some(text.as_str());
-        if !settled && unsettled < SETTLE_LIMIT {
-            pending_text = Some(text);
-            unsettled += 1;
-            continue;
-        }
-        pending_text = None;
-        unsettled = 0;
-
-        if bundle.blocks.is_empty() {
-            shown = Shown {
-                thumb: Some(thumb),
-                text: Some(text),
-                ..Shown::default()
-            };
-            let _ = app.emit_to(LIVE_WINDOW, LIVE_EVENT, LiveEvent::Clear);
-            continue;
-        }
-
-        // Cached and same-language blocks are ready now; show them while
-        // the rest is translated.
-        pipeline.prepare_translation(&mut bundle, &target_language);
-        let translating = bundle.needs_translation();
-        shown = Shown {
-            thumb: Some(thumb),
-            text: Some(text),
-            blocks: bundle.blocks.clone(),
-            stale: Vec::new(),
-        };
-        let _ = app.emit_to(
-            LIVE_WINDOW,
-            LIVE_EVENT,
-            LiveEvent::Blocks {
-                blocks: bundle.blocks.clone(),
-                translating,
-            },
-        );
-        if !translating {
-            continue;
-        }
-        if let Err(e) = pipeline
-            .translate_capture_as(
-                &mut bundle,
-                &target_language,
-                None,
-                crate::pipeline::history_kind::LIVE,
-            )
-            .await
-        {
-            tracing::warn!("live translation: {e}");
-        }
-        shown.blocks = bundle.blocks.clone();
-        let _ = app.emit_to(
-            LIVE_WINDOW,
-            LIVE_EVENT,
-            LiveEvent::Blocks {
-                blocks: bundle.blocks,
-                translating: false,
-            },
-        );
     }
     // Live translation was switched off in settings.
     hide_live_window(&app);
