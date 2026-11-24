@@ -308,7 +308,7 @@
     </label>
     <button
       type="button"
-      class="rounded-ml-sm border border-border bg-surface p-2 text-ink-muted transition hover:border-accent/60 hover:text-ink"
+      class="inline-flex h-12 w-12 shrink-0 items-center justify-center rounded-ml-sm border border-border bg-surface text-ink-muted transition hover:border-accent/60 hover:text-ink"
       title="言語入替"
       aria-label="言語入替"
       onclick={swap}
@@ -332,7 +332,7 @@
   <div class="grid gap-3 sm:grid-cols-2">
     <section class="flex min-w-0 flex-col rounded-ml border border-border bg-surface-elevated shadow-ml">
       <textarea
-        class="min-h-48 w-full flex-1 resize-y rounded-t-ml bg-transparent p-3 text-sm leading-relaxed outline-none"
+        class="min-h-48 w-full flex-1 resize-none rounded-t-ml bg-transparent p-3 text-sm leading-relaxed outline-none"
         placeholder="翻訳対象の文章（Ctrl+Enter で翻訳）"
         aria-label="翻訳元テキスト"
         spellcheck="false"
@@ -343,7 +343,7 @@
         }}
         onkeydown={onKeyDown}
       ></textarea>
-      <div class="flex items-center justify-between gap-2 h-12 border-t border-border px-3">
+      <div class="flex items-center justify-between gap-2 h-14 border-t border-border px-3">
         <span class="text-xs tabular-nums {overLimit ? 'text-red-500' : 'text-ink-faint'}">
           {charCount.toLocaleString()} / {MAX_CHARS.toLocaleString()}{overLimit ? '（文字数超過）' : ''}
         </span>
@@ -361,7 +361,7 @@
           {/if}
           <button
             type="button"
-            class="inline-flex items-center gap-1.5 rounded-ml-sm bg-accent px-3 py-1.5 text-sm font-medium text-white transition disabled:opacity-50"
+            class="inline-flex items-center gap-1.5 rounded-ml-sm border border-accent bg-accent px-3 py-1.5 text-sm font-medium text-white transition disabled:opacity-50"
             disabled={!canTranslate}
             onclick={() => void translate()}
           >
@@ -397,7 +397,7 @@
           <p class="text-ink-faint">{translating ? '翻訳中…' : '翻訳結果'}</p>
         {/if}
       </div>
-      <div class="flex items-center justify-between gap-2 h-12 border-t border-border px-3">
+      <div class="flex items-center justify-between gap-2 h-14 border-t border-border px-3">
         <span class="flex min-w-0 items-center gap-1 truncate font-mono text-xs text-ink-faint">
           {#if provider}
             {#if viaCloud}

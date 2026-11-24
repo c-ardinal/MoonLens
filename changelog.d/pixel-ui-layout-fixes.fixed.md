@@ -1,0 +1,1 @@
+- Main window: fixed overlapping, clipped and misaligned elements in the pixel UI (engine status text overlapping the state column on the home screen, history and plugin pages overflowing the window, settings controls with uneven widths and edges, scroll position carried over between settings categories, purple accent leaking into the amber palette).

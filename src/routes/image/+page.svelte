@@ -238,7 +238,8 @@
         {imageName || '画像ファイルの文字を認識・翻訳。全処理ローカル実行。'}
       </p>
     </div>
-    <div class="flex flex-wrap items-center gap-2">
+    <!-- 操作部：折返し時も右寄せ（他画面の見出し行と統一） -->
+    <div class="ml-auto flex flex-wrap items-center justify-end gap-2">
       <label class="flex items-center gap-1.5 text-sm text-ink-muted">
         訳文
         <select
@@ -270,7 +271,7 @@
         </button>
       {/if}
       <button
-        class="inline-flex items-center gap-1.5 rounded-ml-sm bg-accent px-3 py-1.5 text-sm font-medium text-white shadow-ml transition hover:opacity-90"
+        class="inline-flex items-center gap-1.5 rounded-ml-sm border border-accent bg-accent px-3 py-1.5 text-sm font-medium text-white shadow-ml transition hover:opacity-90"
         onclick={() => fileInput?.click()}
       >
         <FolderOpen class="h-4 w-4" />ファイルを開く
