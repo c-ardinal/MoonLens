@@ -152,6 +152,8 @@
   const explain = $derived(activeField?.help ?? shown?.section.description ?? activeField?.label ?? '');
 
   function jump(id: string) {
+    // 分類切替時は先頭から表示（前の分類のスクロール位置を持越さない）
+    if (id !== current) document.querySelector('.cfg .scroll')?.scrollTo({ top: 0 });
     current = id;
     const s = visible.find((v) => v.section.id === id);
     activePath = s?.fields[0]?.path ?? null;
@@ -293,42 +295,27 @@
 </div>
 
 {#if changed.length > 0 || message}
-  <div class="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-surface-elevated/95 backdrop-blur-xl">
-    <div class="mx-auto flex max-w-5xl flex-wrap items-center justify-between gap-2 px-4 py-3 sm:px-6">
-      <p
-        class="min-w-0 flex-1 text-sm break-words {message?.kind === 'error'
-          ? 'text-red-500'
-          : 'text-ink-muted'}"
-        role="status"
-      >
-        {#if message && changed.length === 0}
-          {message.text}
-        {:else}
-          未保存の変更：{changed.length} 件
-          {#if clashes.length > 0}<br /><span class="text-red-500">ショートカット重複あり。重複の解消が必要</span>{/if}
-          {#if message?.kind === 'error'}<br />{message.text}{/if}
-        {/if}
-      </p>
-      {#if changed.length > 0}
-        <div class="flex shrink-0 gap-2">
-          <button
-            class="rounded-ml-sm border border-border bg-surface px-3 py-1.5 text-sm text-ink-muted hover:text-ink"
-            onclick={revert}
-          >
-            破棄
-          </button>
-          <button
-            class="rounded-ml-sm bg-accent px-4 py-1.5 text-sm font-medium text-white disabled:opacity-40"
-            onclick={save}
-            disabled={saving || clashes.length > 0}
-          >
-            {saving ? '保存中…' : '保存'}
-          </button>
-        </div>
+  <!-- 保存バー：画面下端固定。本文と同じ左右余白で整列 -->
+  <div class="savebar">
+    <p class="msg" class:error={message?.kind === 'error'} role="status">
+      {#if message && changed.length === 0}
+        {message.text}
       {:else}
-        <button class="shrink-0 text-sm text-ink-faint hover:text-ink" onclick={() => (message = null)}>閉じる</button>
+        未保存の変更：{changed.length} 件
+        {#if clashes.length > 0}<br /><span class="error">ショートカット重複あり。重複の解消が必要</span>{/if}
+        {#if message?.kind === 'error'}<br />{message.text}{/if}
       {/if}
-    </div>
+    </p>
+    {#if changed.length > 0}
+      <div class="actions">
+        <button class="px-btn" onclick={revert}>破棄</button>
+        <button class="px-btn primary" onclick={save} disabled={saving || clashes.length > 0}>
+          {saving ? '保存中…' : '保存'}
+        </button>
+      </div>
+    {:else}
+      <button class="px-btn" onclick={() => (message = null)}>閉じる</button>
+    {/if}
   </div>
 {/if}
 
@@ -480,6 +467,67 @@
     line-height: 44px;
     color: var(--ml-px-faint);
     white-space: nowrap;
+  }
+  .savebar {
+    position: fixed;
+    inset: auto 0 0 0;
+    z-index: 40;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    min-height: 64px;
+    padding: 6px 28px 6px 40px;
+    box-sizing: border-box;
+    background: var(--ml-px-black);
+    border-top: 2px solid var(--ml-px-amber);
+  }
+  .savebar .msg {
+    min-width: 0;
+    flex: 1;
+    color: var(--ml-px-mid);
+    overflow-wrap: anywhere;
+  }
+  .savebar .error {
+    color: var(--ml-px-red);
+  }
+  .savebar .actions {
+    display: flex;
+    flex-shrink: 0;
+    gap: 8px;
+  }
+  .px-btn {
+    flex-shrink: 0;
+    height: 48px;
+    padding: 0 16px;
+    border: 2px solid var(--ml-px-dim);
+    background: var(--ml-px-black);
+    color: var(--ml-px-mid);
+  }
+  .px-btn:hover {
+    color: var(--ml-px-cream);
+    border-color: var(--ml-px-faint);
+  }
+  .px-btn.primary {
+    border-color: var(--ml-px-amber);
+    background: var(--ml-px-amber);
+    color: var(--ml-px-black);
+  }
+  .px-btn:disabled {
+    opacity: 0.4;
+  }
+  /* 枠内の部品（モデル管理・データ）：外枠と二重化する独自の窓枠を解除 */
+  .scroll :global(section.rounded-ml.border) {
+    padding: 0 0 20px;
+    border: 0;
+    border-bottom: 2px dotted var(--ml-px-dim);
+    border-radius: 0;
+    background: none;
+    box-shadow: none;
+  }
+  .scroll :global(section.rounded-ml.border:last-child) {
+    padding-bottom: 0;
+    border-bottom: 0;
   }
   .loading,
   .error,

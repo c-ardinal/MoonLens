@@ -50,7 +50,8 @@
       <p class="mt-0.5 text-xs leading-relaxed text-ink-muted">{field.help}</p>
     {/if}
   </div>
-  <div class="flex min-w-0 shrink-0 items-center gap-2 sm:max-w-[55%]">
+  <!-- 設定画面：操作部は固定幅の右寄せ列（行間で左右端を統一） -->
+  <div class={compact ? 'ctl' : 'flex min-w-0 shrink-0 items-center gap-2 sm:max-w-[55%]'}>
     {#if field.kind === 'toggle' && compact}
       <!-- ON／OFF の斜め名札（チェックボックスは支援技術向けに保持） -->
       <label class="toggle-chips">
@@ -140,7 +141,7 @@
     {/if}
     <button
       type="button"
-      class="rounded-ml-sm p-1 text-ink-faint transition hover:bg-surface-muted hover:text-ink {isDefault
+      class="reset rounded-ml-sm p-1 text-ink-faint transition hover:bg-surface-muted hover:text-ink {isDefault
         ? 'invisible'
         : ''}"
       title="初期値に復元"
@@ -153,6 +154,25 @@
 </div>
 
 <style>
+  .ctl {
+    display: flex;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+    width: clamp(290px, 45%, 440px);
+    min-width: 0;
+  }
+  .ctl select,
+  .ctl > :global(button:not(.reset)) {
+    flex: 1;
+    min-width: 0;
+  }
+  .ctl input[type='range'] {
+    flex: 1;
+    width: auto;
+    min-width: 0;
+  }
   .toggle-chips {
     display: inline-flex;
     gap: 6px;

@@ -120,17 +120,13 @@
   }
 </script>
 
-<main class="mx-auto flex max-w-5xl flex-col gap-4 px-4 py-6 sm:px-6">
+<!-- 画面高へ固定：一覧・詳細は各自でスクロール（画面全体のはみ出し防止） -->
+<main class="history mx-auto flex max-w-5xl flex-col gap-4 px-4 py-6 sm:px-6">
   <header class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
     <div>
       <div class="page-title"><PixelTitle text="履歴" tag="h1" height={40} fit /></div>
-      <p class="text-sm text-ink-muted">
-        {#if loading}
-          読込中…
-        {:else}
-          {entries.length} 件
-        {/if}
-      </p>
+      <!-- 件数は種別タブ「全件」に表示済み -->
+      {#if loading}<p class="text-sm text-ink-muted">読込中…</p>{/if}
     </div>
     <div class="flex min-w-0 items-center gap-2">
       <div class="relative min-w-0 flex-1 sm:flex-none">
@@ -206,9 +202,9 @@
       {/each}
     </div>
 
-    <div class="grid min-h-0 gap-3 sm:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
+    <div class="grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)] gap-3 sm:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
       <ul
-        class="scrollbar-minimal flex max-h-[60vh] flex-col gap-1.5 overflow-y-auto sm:max-h-[calc(100vh-15rem)]"
+        class="scrollbar-minimal flex min-h-0 flex-col gap-1.5 overflow-y-auto"
         aria-label="履歴一覧"
       >
         {#if visible.length === 0}
@@ -239,7 +235,7 @@
 
       {#if current}
         <section
-          class="flex min-w-0 flex-col rounded-ml border border-border bg-surface-elevated shadow-ml sm:max-h-[calc(100vh-15rem)]"
+          class="flex min-h-0 min-w-0 flex-col rounded-ml border border-border bg-surface-elevated shadow-ml"
           aria-label="履歴詳細"
         >
           <div class="flex flex-wrap items-center gap-2 border-b border-border px-4 py-3 text-xs text-ink-faint">
@@ -307,7 +303,7 @@
     onclick={() => (confirmClear = false)}
   >
     <div
-      class="w-full max-w-sm rounded-ml border border-border bg-surface-elevated p-5 shadow-ml-lg"
+      class="w-full max-w-md rounded-ml border border-border bg-surface-elevated p-5 shadow-ml-lg"
       role="dialog"
       aria-modal="true"
       tabindex="-1"
@@ -333,3 +329,9 @@
     </div>
   </div>
 {/if}
+
+<style>
+  .history {
+    height: calc(100vh - var(--ml-nav-h, 64px));
+  }
+</style>

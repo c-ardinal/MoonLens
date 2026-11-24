@@ -37,7 +37,7 @@
     </div>
     <button
       type="button"
-      class="inline-flex shrink-0 items-center gap-1 rounded-ml-sm border border-border bg-surface px-2.5 py-1 text-sm text-ink-muted hover:text-ink"
+      class="mr-10 inline-flex shrink-0 items-center gap-1 rounded-ml-sm border border-border bg-surface px-2.5 py-1 text-sm text-ink-muted hover:text-ink"
       onclick={add}
     >
       <Plus class="h-3.5 w-3.5" />追加

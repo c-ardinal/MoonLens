@@ -50,6 +50,9 @@ export type Rect = { x: number; y: number; w: number; h: number };
 
 /** 情報欄の窓と右端の余白（見出し帯のみ右端まで延長する演出）。 */
 const RIGHT_MARGIN = 14;
+/** 情報欄（名札・説明窓・エンジン窓・最近の翻訳）の共通の左端と幅（mx 基準）。 */
+const COL_X = 330;
+const COL_W = 296;
 
 /** 右側の情報欄の縦位置。高さ不足時は上端の余白を圧縮。 */
 function column(h: number) {
@@ -63,8 +66,8 @@ export function homeRegions(w: number, h: number): Record<HomeRegion, Rect> {
   const c = column(h);
   return {
     go: { x: mx + 480, y: c.desc + 42, w: 146, h: 22 },
-    engines: { x: mx + 342, y: c.engines, w: 284, h: 94 },
-    recent: { x: mx + 330, y: h - (h >= HINT_MIN_H ? 52 : 26), w: 306, h: 22 }
+    engines: { x: mx + COL_X, y: c.engines, w: COL_W, h: 94 },
+    recent: { x: mx + COL_X, y: h - (h >= HINT_MIN_H ? 52 : 26), w: COL_W, h: 22 }
   };
 }
 
@@ -104,12 +107,12 @@ export function drawHome(p: Pix, v: HomeView) {
   p.text(total, w - 12, c.top + 22, 2, { align: 'right' });
 
   // 名札：ショートカット・動作状態
-  let x = mx + 324;
+  let x = mx + COL_X;
   if (v.hotkey) x += chip(p, x, c.chips, v.hotkey, 0, 9) + 4;
   if (v.running) chip(p, x, c.chips, '● 動作中', 8, 1);
 
   // 説明窓
-  p.slantWin(mx + 330, c.desc, 296, 70, 0.2, { shadow: 2 });
+  p.slantWin(mx + COL_X, c.desc, COL_W, 70, 0.2, { shadow: 2 });
   let ty = p.wrap(v.desc, mx + 352, c.desc + 10, 260, 6, 18, v.error || v.preview ? 1 : 2);
   if (v.error) ty = p.wrap(v.error, mx + 352, ty, 260, 7, 18, 1);
   else if (v.preview) p.wrap(v.preview, mx + 352, ty, 260, 3, 18, 1);
@@ -118,25 +121,35 @@ export function drawHome(p: Pix, v: HomeView) {
 
   // エンジン窓
   const E = R.engines;
-  p.slantWin(E.x, E.y + 8, 278, 86, 0.2, { shadow: 2 });
+  p.slantWin(E.x, E.y + 8, E.w, 86, 0.2, { shadow: 2 });
   chip(p, E.x + 14, E.y, 'エンジン', 0, v.hot === 'engines' ? 9 : 5);
-  v.engines.slice(0, 4).forEach((r, i) => {
+  // 種別・モデル・状態の 3 列：列頭を行間で統一し、モデル名は状態列の手前で省略
+  const rows = v.engines.slice(0, 4);
+  const labelW = Math.max(0, ...rows.map((r) => p.textW(r.label)));
+  const stateW = Math.max(0, ...rows.map((r) => p.textW(STATE_TEXT[r.state][0])));
+  const modelX = E.x + 22 + labelW + 8;
+  const stateR = E.x + E.w - 10;
+  rows.forEach((r, i) => {
     const [label, col] = STATE_TEXT[r.state];
     const y = E.y + 20 + i * 17;
-    const lw = p.text(r.label, E.x + 26, y, 4) + 8;
-    p.text(p.fit(r.model, 184 - lw), E.x + 26 + lw, y, 5);
-    p.text(label, E.x + 262, y, col, { align: 'right' });
+    p.text(r.label, E.x + 22, y, 4);
+    p.text(p.fit(r.model, stateR - stateW - 8 - modelX), modelX, y, 5);
+    p.text(label, stateR, y, col, { align: 'right' });
   });
 
   // 最近の翻訳（下端基準）
   const Rr = R.recent;
-  p.slab(Rr.x, Rr.y, 306, 21, K, 1);
+  p.slab(Rr.x, Rr.y, Rr.w, 21, K, 1);
   p.text('最近', Rr.x + 16, Rr.y + 2, 3);
+  // 右端から「履歴▶」・時刻の順に右寄せ、本文は残りの幅で省略
+  const linkR = Rr.x + Rr.w - 4;
+  const linkW = p.text('履歴▶', linkR, Rr.y + 2, v.hot === 'recent' ? 9 : 5, { align: 'right' });
   if (v.recent) {
-    p.text(p.fit(v.recent.text, 142), Rr.x + 54, Rr.y + 2, 6);
-    p.text(v.recent.time, Rr.x + 202, Rr.y + 2, 3);
+    const timeR = linkR - linkW - 12;
+    const timeW = p.text(v.recent.time, timeR, Rr.y + 2, 3, { align: 'right' });
+    p.text(p.fit(v.recent.text, timeR - timeW - 12 - (Rr.x + 54)), Rr.x + 54, Rr.y + 2, 6);
   } else p.text('履歴なし', Rr.x + 54, Rr.y + 2, 3);
-  p.text('履歴▶', Rr.x + 254, Rr.y + 2, v.hot === 'recent' ? 9 : 5);
 
-  if (h >= HINT_MIN_H) p.text(p.fit(v.hint, 316), w - 4 - RIGHT_MARGIN, h - 20, 3, { align: 'right' });
+  // 案内行：情報欄の右端（説明窓の右下角）へ揃える
+  if (h >= HINT_MIN_H) p.text(p.fit(v.hint, COL_W + 20), mx + COL_X + COL_W, h - 20, 3, { align: 'right' });
 }

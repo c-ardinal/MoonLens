@@ -34,8 +34,9 @@
   --ml-ink: var(--ml-px-cream);
   --ml-ink-muted: var(--ml-px-mid);
   --ml-ink-faint: var(--ml-px-faint);
-  --ml-accent: var(--ml-px-amber);
-  --ml-accent-soft: rgba(255, 181, 71, 0.2);
+  /* 外観設定のアクセントカラー（root の style 指定）より優先：配色は琥珀へ固定 */
+  --ml-accent: var(--ml-px-amber) !important;
+  --ml-accent-soft: rgba(255, 181, 71, 0.2) !important;
 
   --ml-radius: 0;
   --ml-radius-sm: 0;
@@ -270,6 +271,16 @@
 [data-skin='pixel'] input.peer.sr-only:focus-visible + .w-9 {
   outline: 2px solid var(--ml-px-bone);
   outline-offset: 2px;
+}
+
+/* 選択欄：高さを入力欄・ボタン（48px）へ統一、文字と矢印の重複を回避 */
+[data-skin='pixel'] select {
+  height: 48px;
+  padding-top: 0;
+  padding-bottom: 0;
+  padding-right: 32px;
+  line-height: 44px;
+  text-overflow: ellipsis;
 }
 
 /* 1 行省略の文字：行高 36px では字形の下端が欠けるため余白を確保 */

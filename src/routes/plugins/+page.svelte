@@ -77,7 +77,8 @@
   }
 </script>
 
-<main class="mx-auto flex max-w-4xl flex-col gap-4 px-4 py-6 sm:gap-6 sm:px-6">
+<!-- 画面高へ固定：一覧のみスクロール（画面全体のはみ出し防止） -->
+<main class="plugins mx-auto flex max-w-4xl flex-col gap-4 px-4 py-6 sm:gap-6 sm:px-6">
   <header class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
     <div>
       <div class="page-title"><PixelTitle text="プラグイン" tag="h1" height={40} fit /></div>
@@ -95,7 +96,7 @@
         </button>
       {/if}
       <button
-        class="rounded-ml-sm bg-accent px-3 py-1.5 text-sm font-medium text-white disabled:opacity-40"
+        class="rounded-ml-sm border border-accent bg-accent px-3 py-1.5 text-sm font-medium text-white disabled:opacity-40"
         onclick={install}
         disabled={installing}
       >
@@ -170,7 +171,8 @@
       に配置。
     </div>
   {:else}
-    <ul class="flex flex-col gap-3">
+    <!-- 下・右の余白：窓の段影（4px）を見切れさせない -->
+    <ul class="scrollbar-minimal flex min-h-0 flex-col gap-3 overflow-y-auto pr-1 pb-1">
       {#each plugins as p}
         <li
           class="flex items-start justify-between gap-4 rounded-ml border border-border bg-surface-elevated p-4 shadow-ml"
@@ -221,3 +223,12 @@
     </ul>
   {/if}
 </main>
+
+<style>
+  .plugins {
+    height: calc(100vh - var(--ml-nav-h, 64px));
+  }
+  .plugins > ul > li {
+    flex-shrink: 0;
+  }
+</style>
