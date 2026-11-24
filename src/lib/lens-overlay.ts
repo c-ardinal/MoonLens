@@ -3,7 +3,15 @@
  * overlay. Kept free of DOM / Tauri so they can be unit tested.
  */
 
-import type { FrameRect, LensBlock } from './ipc';
+import type { LensBlock } from './ipc';
+
+/** Rect in image pixels (e.g. the part of an image shown on screen). */
+export interface FrameRect {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
 
 export interface CssRect {
   left: number;

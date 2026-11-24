@@ -119,7 +119,7 @@ While an rc is live:
 
 - Download the artefact matching your host from the pre-release.
 - Walk through the main flows: ⌘⇧Space capture → OCR → translate,
-  Lens window, Pin overlay, live subtitles, plugin install, settings
+  window-translation windows (several, moved / resized / maximized), live subtitles, plugin install, settings
   hot-reload.
 - File any issue against the matching `rc.N` label / milestone.
 

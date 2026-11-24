@@ -13,7 +13,7 @@
     onHotkey,
     onSettingsChanged,
     onSubtitle,
-    startRegionSelection,
+    openLens,
     startSubtitle,
     stopSubtitle,
     subtitleState
@@ -125,9 +125,9 @@
       label: 'ウィンドウ',
       title: 'ウィンドウ翻訳',
       icon: 'region',
-      desc: 'ドラッグ：範囲、クリック：全画面。常時 ON で画面変化へ追従。',
+      desc: '窓の背面を常時翻訳。複数配置・任意サイズ、最大化で全画面。',
       hotkey: key('capture_region'),
-      run: () => startRegionSelection(false)
+      run: () => openLens()
     },
     {
       label: '画像',

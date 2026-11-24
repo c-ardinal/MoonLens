@@ -131,6 +131,22 @@ pub mod geometry {
         }
     }
 
+    /// Top-left corner for a `size` window whose header point `grab`
+    /// (offset from its corner) sits under the pointer, kept inside
+    /// `monitor`.
+    pub fn window_at_pointer(
+        monitor: LensOuterRect,
+        size: (u32, u32),
+        pointer: (i32, i32),
+        grab: (i32, i32),
+    ) -> (i32, i32) {
+        let clamp = |v: i32, lo: i32, len: u32, w: u32| v.min(lo + len as i32 - w as i32).max(lo);
+        (
+            clamp(pointer.0 - grab.0, monitor.x, monitor.w, size.0),
+            clamp(pointer.1 - grab.1, monitor.y, monitor.h, size.1),
+        )
+    }
+
     /// Whether a pointer at (`px`, `py`) should reach the lens window
     /// rather than the app underneath: on the header, on the resize band
     /// along the edges (including the frame outside the client area) or
@@ -400,11 +416,6 @@ impl Watch {
 #[derive(Default)]
 pub struct LensRegistry {
     entries: Mutex<Vec<(String, LensEntry)>>,
-    /// Range of the most recent one-off translation, for the toggle
-    /// hotkey ("keep translating what I just translated").
-    last: Mutex<Option<Placement>>,
-    /// Lens the toggle hotkey opened, closed by the next press.
-    toggled: Mutex<Option<String>>,
 }
 
 impl LensRegistry {
@@ -418,7 +429,7 @@ impl LensRegistry {
             .iter()
             .map(|(id, e)| LensDescriptor {
                 id: id.clone(),
-                title: format!("Lens {}", short(id)),
+                title: format!("ウィンドウ翻訳 {}", short(id)),
                 insets: e.insets,
                 continuous: e.watch.is_some(),
                 target_language: e.target_language.clone(),
@@ -451,15 +462,6 @@ impl LensRegistry {
     /// Whether any lens reads continuously.
     pub fn any_continuous(&self) -> bool {
         self.entries.lock().iter().any(|(_, e)| e.watch.is_some())
-    }
-
-    /// Remember the range of a one-off translation for [`toggle`].
-    pub fn remember(&self, placement: Placement) {
-        *self.last.lock() = Some(placement);
-    }
-
-    pub fn last(&self) -> Option<Placement> {
-        self.last.lock().clone()
     }
 
     pub fn target_language(&self, id: &str) -> Option<String> {
@@ -577,16 +579,18 @@ pub fn create(
         // has faded the window out, so the grab read the lens itself
         // (its own Japanese placeholder) and nothing got translated.
         .content_protected(EXCLUDED_FROM_CAPTURE)
-        .visible(placement.is_none())
+        .visible(false)
         .build()
         .context("create lens window")?;
     let target_language = placement.as_ref().and_then(|p| p.target_language.clone());
-    if let Some(p) = &placement {
-        if let Err(e) = place(&win, &p.rect) {
-            tracing::warn!("placing lens window: {e:#}");
-        }
-        win.show().ok();
+    let placed = match &placement {
+        Some(p) => place(&win, &p.rect),
+        None => place_at_pointer(app, &win),
+    };
+    if let Err(e) = placed {
+        tracing::warn!("placing lens window: {e:#}");
     }
+    win.show().ok();
     let _ = win.set_always_on_top(true);
     registry.track_with(id.clone(), target_language);
     tauri::async_runtime::spawn(run_passthrough(app.clone(), registry.clone(), id.clone()));
@@ -624,26 +628,64 @@ fn place(win: &WebviewWindow, rect: &CaptureRect) -> Result<()> {
     Ok(())
 }
 
-/// Toggle hotkey: close the lens it opened, or open one over the range
-/// translated last. Returns the new state, `None` when nothing was
-/// translated yet.
-pub fn toggle(app: &AppHandle, registry: &LensRegistryHandle) -> Option<bool> {
-    let open = registry.toggled.lock().take();
-    if let Some(id) = open.filter(|id| registry.insets(id).is_some()) {
-        let _ = close(app, registry, &id);
-        return Some(false);
-    }
-    let placement = registry.last()?;
-    match create(app, registry, Some(placement)) {
-        Ok(id) => {
-            *registry.toggled.lock() = Some(id);
-            Some(true)
-        }
-        Err(e) => {
+/// Open one more window-translation window under the mouse pointer,
+/// off the caller's thread (tray, hotkeys).
+pub fn open_new(app: &AppHandle) {
+    let app = app.clone();
+    let main = app.clone();
+    let _ = main.run_on_main_thread(move || {
+        let state = app.state::<crate::app::AppState>();
+        if let Err(e) = create(&app, &state.lenses, None) {
             tracing::warn!("opening lens window: {e:#}");
-            None
         }
+    });
+}
+
+/// Toggle hotkey: open a window when there is none, otherwise close them
+/// all. Returns whether a window is open afterwards.
+pub fn toggle(app: &AppHandle, registry: &LensRegistryHandle) -> bool {
+    let ids: Vec<String> = registry.list().into_iter().map(|d| d.id).collect();
+    if ids.is_empty() {
+        open_new(app);
+        return true;
     }
+    for id in ids {
+        let _ = close(app, registry, &id);
+    }
+    false
+}
+
+/// Put a new window's header under the mouse pointer (default size),
+/// kept on the pointer's monitor.
+fn place_at_pointer(app: &AppHandle, win: &WebviewWindow) -> Result<()> {
+    let Some((px, py)) = pointer_position(app) else {
+        return Ok(());
+    };
+    let monitor = win.available_monitors()?.into_iter().find(|m| {
+        let (p, s) = (m.position(), m.size());
+        px >= p.x && py >= p.y && px < p.x + s.width as i32 && py < p.y + s.height as i32
+    });
+    let Some(m) = monitor else {
+        return Ok(());
+    };
+    let size = win.outer_size()?;
+    let scale = m.scale_factor();
+    let want = geometry::window_at_pointer(
+        geometry::LensOuterRect {
+            x: m.position().x,
+            y: m.position().y,
+            w: m.size().width,
+            h: m.size().height,
+        },
+        (size.width, size.height),
+        (px, py),
+        (
+            (40.0 * scale) as i32,
+            (HEADER_CSS as f64 * scale / 2.0) as i32,
+        ),
+    );
+    win.set_position(PhysicalPosition::new(want.0, want.1))?;
+    Ok(())
 }
 
 /// Let the mouse through the lens body to the app underneath, but keep
@@ -1086,23 +1128,33 @@ mod tests {
     }
 
     #[test]
-    fn the_last_range_is_remembered_for_the_toggle() {
-        let r = new_registry_for_test();
-        assert!(r.last().is_none());
-        let rect = CaptureRect {
-            monitor_index: 1,
-            x: 10,
-            y: 20,
-            w: 300,
-            h: 100,
+    fn a_new_window_opens_under_the_pointer_inside_the_monitor() {
+        let m = geometry::LensOuterRect {
+            x: 0,
+            y: 0,
+            w: 1920,
+            h: 1080,
         };
-        r.remember(Placement {
-            rect,
-            target_language: Some("ja".into()),
-        });
-        let last = r.last().unwrap();
-        assert_eq!((last.rect.monitor_index, last.rect.w), (1, 300));
-        assert_eq!(last.target_language.as_deref(), Some("ja"));
+        assert_eq!(
+            geometry::window_at_pointer(m, (460, 320), (500, 400), (40, 17)),
+            (460, 383)
+        );
+        // Near the bottom-right corner: pushed back onto the monitor.
+        assert_eq!(
+            geometry::window_at_pointer(m, (460, 320), (1910, 1070), (40, 17)),
+            (1460, 760)
+        );
+        // Second monitor to the left (negative origin).
+        let left = geometry::LensOuterRect {
+            x: -1280,
+            y: 0,
+            w: 1280,
+            h: 1024,
+        };
+        assert_eq!(
+            geometry::window_at_pointer(left, (460, 320), (-1275, 5), (40, 17)),
+            (-1280, 0)
+        );
     }
 
     #[test]

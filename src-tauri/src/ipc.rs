@@ -17,7 +17,6 @@ use crate::{
         asr_local::LOCAL_ASR_ID, llm_models, model_store, ocr_ocrs, whisper_models, Capability,
         TaskInput,
     },
-    selector,
     settings::schema::Settings,
     user_error,
 };
@@ -373,70 +372,6 @@ fn apply_clipboard_policy(app: &AppHandle, state: &AppState, bundle: &CaptureFlo
     }
 }
 
-/// Send the selector's frozen frame (PNG) as a raw binary response.
-#[tauri::command]
-pub async fn get_frozen_frame() -> Result<tauri::ipc::Response, String> {
-    let frame = selector::frame().ok_or("no frozen frame")?;
-    Ok(tauri::ipc::Response::new(frame.png.clone()))
-}
-
-/// Process a selection on the frozen frame (`None` = whole frame),
-/// translating into `target_language` (default: the configured target).
-///
-/// Emits `moonlens://selector-analysis` with the positioned, not yet
-/// translated blocks as soon as OCR finishes, so the selector can mask
-/// the source text while translation streams in, then returns the
-/// final bundle.
-#[tauri::command]
-pub async fn process_frozen_selection(
-    rect: Option<selector::FrameRect>,
-    target_language: Option<String>,
-    app: AppHandle,
-    state: State<'_, AppState>,
-) -> Result<CaptureFlowResult, String> {
-    let (png, r, monitor_index) = tokio::task::spawn_blocking(move || selector::take_crop(rect))
-        .await
-        .map_err(|e| e.to_string())?
-        .map_err(|e| e.to_string())?;
-    let mut bundle = state
-        .pipeline
-        .analyze_capture(png)
-        .await
-        .map_err(|e| user_error::provider(&e, Capability::Ocr))?;
-    bundle.source_rect = Some(crate::pipeline::CaptureFlowRect {
-        monitor_index,
-        x: r.x as i32,
-        y: r.y as i32,
-        w: r.w,
-        h: r.h,
-    });
-    state.lenses.remember(lens::Placement {
-        rect: CaptureRect {
-            monitor_index,
-            x: r.x as i32,
-            y: r.y as i32,
-            w: r.w,
-            h: r.h,
-        },
-        target_language: clean_language(target_language.clone()),
-    });
-    if bundle.needs_translation() {
-        // The selector remembers the language last picked in its toolbar;
-        // otherwise use the configured target.
-        let target = target_language
-            .map(|t| t.trim().to_string())
-            .filter(|t| !t.is_empty())
-            .unwrap_or_else(|| state.settings.snapshot().subtitle.target_language.clone());
-        state.pipeline.prepare_translation(&mut bundle, &target);
-        selector::remember_analysis(&bundle);
-        app.emit_to("selector", "moonlens://selector-analysis", &bundle)
-            .ok();
-        translate_for_selector(&app, &state, &mut bundle, &target).await?;
-    }
-    apply_clipboard_policy(&app, &state, &bundle);
-    Ok(bundle)
-}
-
 /// [`crate::pipeline::Pipeline::run_capture_flow`] with errors worded for
 /// the step that failed (OCR vs translation).
 async fn capture_flow(
@@ -457,52 +392,6 @@ async fn capture_flow(
     Ok(bundle)
 }
 
-/// Translate the selection currently shown in the selector into another
-/// language (the toolbar's language switch). Reuses the OCR result, so
-/// only the translation runs again. Emits `moonlens://selector-analysis`
-/// first so the overlay can reset and stream like a fresh selection.
-#[tauri::command]
-pub async fn retranslate_selection(
-    target_language: String,
-    app: AppHandle,
-    state: State<'_, AppState>,
-) -> Result<CaptureFlowResult, String> {
-    let target = target_language.trim();
-    if target.is_empty() {
-        return Err("target language is empty".into());
-    }
-    let mut bundle =
-        selector::last_analysis().ok_or("nothing to translate; select a region first")?;
-    state.pipeline.prepare_translation(&mut bundle, target);
-    app.emit_to("selector", "moonlens://selector-analysis", &bundle)
-        .ok();
-    translate_for_selector(&app, &state, &mut bundle, target).await?;
-    apply_clipboard_policy(&app, &state, &bundle);
-    Ok(bundle)
-}
-
-/// Translate the selector's blocks, telling the selector before each
-/// request which blocks are done and which ones the next request streams
-/// into (`moonlens://selector-progress`).
-async fn translate_for_selector(
-    app: &AppHandle,
-    state: &State<'_, AppState>,
-    bundle: &mut CaptureFlowResult,
-    target: &str,
-) -> Result<(), String> {
-    let emitter = app.clone();
-    let progress = move |p: &crate::pipeline::TranslationProgress| {
-        emitter
-            .emit_to("selector", "moonlens://selector-progress", p)
-            .ok();
-    };
-    state
-        .pipeline
-        .translate_capture_with_progress(bundle, target, Some(&progress))
-        .await
-        .map_err(|e| user_error::provider(&e, Capability::Translate))
-}
-
 /// Events of one "translate an image file" run, sent to the window that
 /// asked (`moonlens://image-analysis` / `moonlens://image-progress`).
 /// `run` echoes the caller's id so a page can drop events of a run it
@@ -520,7 +409,7 @@ struct ImageRunEvent<T: serde::Serialize> {
 /// and optionally `target` (target language, default: settings).
 ///
 /// Emits the positioned, untranslated blocks right after OCR and a
-/// progress event before each translation request, like the selector,
+/// progress event before each translation request,
 /// then returns the final bundle. Nothing is copied to the clipboard.
 #[tauri::command]
 pub async fn translate_image(
@@ -626,26 +515,6 @@ fn is_image_path(p: &std::path::Path) -> bool {
             )
         })
         .unwrap_or(false)
-}
-
-/// Close the selector and drop the frozen frame.
-#[tauri::command]
-pub async fn close_selector(app: AppHandle) -> Result<(), String> {
-    selector::hide(&app).map_err(|e| e.to_string())?;
-    restore_main_after_selection(&app);
-    Ok(())
-}
-
-/// Set when a selection was started from a button in the main window,
-/// which hides itself so it is not frozen into the frame. Closing the
-/// selector brings it back; a selection started by hotkey leaves the
-/// main window as it was.
-static RESTORE_MAIN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-
-fn restore_main_after_selection(app: &AppHandle) {
-    if RESTORE_MAIN.swap(false, std::sync::atomic::Ordering::SeqCst) {
-        crate::app::show_main_window(app);
-    }
 }
 
 #[derive(serde::Serialize, Clone)]
@@ -1134,31 +1003,6 @@ pub async fn clear_history(state: State<'_, AppState>) -> Result<usize, String> 
 }
 
 #[tauri::command]
-pub async fn start_region_selection(app: AppHandle, full: Option<bool>) -> Result<(), String> {
-    // Started from a button in the main window: get the window out of the
-    // way first, or it would be frozen into the frame being translated.
-    if let Some(main) = app.get_webview_window("main") {
-        if main.is_visible().unwrap_or(false) {
-            main.hide().ok();
-            RESTORE_MAIN.store(true, std::sync::atomic::Ordering::SeqCst);
-            tokio::time::sleep(std::time::Duration::from_millis(250)).await;
-        }
-    }
-    let full = full.unwrap_or(false);
-    tokio::task::spawn_blocking(move || selector::show_with(&app, full))
-        .await
-        .map_err(|e| e.to_string())?
-        .map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-pub async fn cancel_region_selection(app: AppHandle) -> Result<(), String> {
-    selector::hide(&app).map_err(|e| e.to_string())?;
-    restore_main_after_selection(&app);
-    Ok(())
-}
-
-#[tauri::command]
 pub async fn toggle_subtitle(app: AppHandle, state: State<'_, AppState>) -> Result<bool, String> {
     if state.subtitle.is_running() {
         state.subtitle.stop(&app).map_err(|e| e.to_string())?;
@@ -1283,8 +1127,8 @@ fn platform_label(os: &str) -> &'static str {
 }
 
 /// Open a window-translation window. With `rect` (monitor-relative
-/// physical pixels, as in a selector result) its body covers that range;
-/// without, it opens at a default spot. `target_language` defaults to the
+/// physical pixels) its body covers that range; without, it opens
+/// under the mouse pointer. `target_language` defaults to the
 /// configured target.
 #[tauri::command]
 pub async fn open_lens(
@@ -1303,10 +1147,6 @@ pub async fn open_lens(
         },
         target_language: clean_language(target_language.clone()),
     });
-    // The toggle hotkey reopens this range later.
-    if let Some(p) = &placement {
-        state.lenses.remember(p.clone());
-    }
     // Window creation must not run on the IPC worker on Windows (it
     // deadlocks with the event loop); hand it to the main thread.
     let (tx, rx) = tokio::sync::oneshot::channel();
@@ -1542,7 +1382,7 @@ pub async fn open_external_url(url: String, app: AppHandle) -> Result<(), String
 }
 
 /// Show the main window on an in-app page, e.g. the model downloads from
-/// the selector's "モデル準備" button.
+/// the "モデル準備" button.
 #[tauri::command]
 pub async fn open_main_route(path: String, app: AppHandle) -> Result<(), String> {
     if !path.starts_with('/') || path.contains("//") {

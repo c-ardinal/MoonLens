@@ -86,20 +86,14 @@ export const SECTIONS: Section[] = [
       {
         kind: 'hotkey',
         path: 'hotkeys.capture_region',
-        label: 'ウィンドウ翻訳（範囲）',
-        help: '画面を静止し、ドラッグ範囲を翻訳。'
-      },
-      {
-        kind: 'hotkey',
-        path: 'hotkeys.capture_window',
-        label: 'ウィンドウ翻訳（全画面）',
-        help: 'カーソル位置のディスプレイ全体を翻訳。'
+        label: 'ウィンドウ翻訳',
+        help: 'マウス位置へウィンドウ翻訳の窓を追加。'
       },
       {
         kind: 'hotkey',
         path: 'hotkeys.toggle_pin_overlay',
-        label: '常時翻訳 開始／終了',
-        help: '直前の翻訳範囲を常時翻訳。画面変化時に自動再翻訳。'
+        label: 'ウィンドウ翻訳 表示／全終了',
+        help: '窓なし：窓を表示。窓あり：全窓を終了。'
       },
       { kind: 'hotkey', path: 'hotkeys.toggle_subtitle', label: '音声翻訳 開始／停止' },
       { kind: 'hotkey', path: 'hotkeys.open_command_palette', label: 'コマンドパレット' },

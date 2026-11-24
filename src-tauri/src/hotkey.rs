@@ -2,9 +2,8 @@
 //!
 //! Bindings are re-registered whenever settings change so rebind is
 //! immediate. Each shortcut either emits a UI intent (the
-//! `moonlens://hotkey` event with an action name payload) or — for the
-//! capture shortcut — directly drives the full pipeline and pushes
-//! overlay events.
+//! `moonlens://hotkey` event with an action name payload) or acts
+//! directly (window translation, subtitles).
 
 use std::sync::Arc;
 
@@ -13,12 +12,7 @@ use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
 use crate::{
-    app::AppState,
-    overlay::{self, OverlayEvent},
-    pipeline::Pipeline,
-    selector,
-    settings::SettingsStore,
-    subtitle::SubtitleService,
+    app::AppState, pipeline::Pipeline, settings::SettingsStore, subtitle::SubtitleService,
 };
 
 /// Notice id for shortcuts that could not be registered.
@@ -37,9 +31,9 @@ pub fn register_all(
     // with it: register each one independently and report the failures.
     let mut failed: Vec<String> = Vec::new();
 
-    // Capture: freeze the monitor under the cursor and open the
-    // selector on it; the renderer processes the selection in place.
-    // Screen capture blocks for ~100 ms, so keep it off the event loop.
+    // Window translation: open one more window under the mouse pointer.
+    // (`capture_window` is no longer bound: a maximized window is the
+    // full-screen translation.)
     let app_c = app.clone();
     bind(
         shortcut_mgr,
@@ -47,40 +41,22 @@ pub fn register_all(
         s.hotkeys.capture_region.as_str(),
         move |_app, _sc, event| {
             if matches!(event.state(), ShortcutState::Pressed) {
-                open_selector(&app_c, false);
+                crate::lens::open_new(&app_c);
             }
         },
     );
 
-    // Capture window: same frozen-frame selector, but the whole monitor
-    // is translated immediately (window translation of the full screen).
-    let app_w = app.clone();
-    bind(
-        shortcut_mgr,
-        &mut failed,
-        s.hotkeys.capture_window.as_str(),
-        move |_a, _s, e| {
-            if matches!(e.state(), ShortcutState::Pressed) {
-                open_selector(&app_w, true);
-            }
-        },
-    );
-
-    // Continuous window translation of the last range: toggle.
+    // Window translation: open a window when there is none, otherwise
+    // close them all.
     let app_p = app.clone();
     bind(
         shortcut_mgr,
         &mut failed,
         s.hotkeys.toggle_pin_overlay.as_str(),
         move |_a, _s, e| {
-            if !matches!(e.state(), ShortcutState::Pressed) {
-                return;
-            }
-            // Keep translating the range translated last (a continuous
-            // window-translation window over it), or close that window.
-            let state = app_p.state::<AppState>();
-            if crate::lens::toggle(&app_p, &state.lenses).is_none() {
-                let _ = app_p.emit("moonlens://hotkey", "toggle_pin_overlay_empty");
+            if matches!(e.state(), ShortcutState::Pressed) {
+                let state = app_p.state::<AppState>();
+                crate::lens::toggle(&app_p, &state.lenses);
             }
         },
     );
@@ -185,24 +161,6 @@ fn bind<R, F>(
         tracing::warn!("hotkey {accel} not registered: {e}");
         failed.push(accel.to_string());
     }
-}
-
-/// Open the frozen-frame selector without blocking the caller.
-pub fn open_selector(app: &AppHandle, auto_full: bool) {
-    let app = app.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        if let Err(e) = selector::show_with(&app, auto_full) {
-            tracing::error!("selector show failed: {e:?}");
-            overlay::show_centered(&app).ok();
-            overlay::emit(
-                &app,
-                OverlayEvent::Error {
-                    message: format!("画面キャプチャ失敗：{e}"),
-                },
-            )
-            .ok();
-        }
-    });
 }
 
 /// Convenience re-registration triggered from the settings save command.

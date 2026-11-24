@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onDestroy, onMount, tick } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
-  import { listen, type UnlistenFn } from '@tauri-apps/api/event';
+  import type { UnlistenFn } from '@tauri-apps/api/event';
   import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
   import { X } from 'lucide-svelte';
   import PrivacyBadge from '$lib/components/PrivacyBadge.svelte';
@@ -203,6 +203,12 @@
     setLensInteractive(id, showText).catch(() => {});
   });
 
+  /** Maximized: the window translates the whole screen. */
+  let maximized = $state(false);
+  function toggleMaximize() {
+    win.toggleMaximize().catch(() => {});
+  }
+
   function startResize(e: PointerEvent) {
     if (e.button !== 0) return;
     e.preventDefault();
@@ -241,12 +247,14 @@
       })
       .catch(() => {});
     try {
+      // Only this window's events: with several windows open, the global
+      // `listen` would also paint the other windows' results here.
       // One-off captures (continuous reading off) also arrive here.
       unlisteners.push(
-        await listen<CaptureFlowResult>('moonlens://lens-result', (e) => apply(e.payload))
+        await win.listen<CaptureFlowResult>('moonlens://lens-result', (e) => apply(e.payload))
       );
       unlisteners.push(
-        await listen<LensLiveEvent>('moonlens://lens-live', (e) => {
+        await win.listen<LensLiveEvent>('moonlens://lens-live', (e) => {
           if (continuous) applyLive(e.payload);
         })
       );
@@ -268,6 +276,10 @@
           const key = `${p.width}x${p.height}`;
           if (moved(key, lastSize)) lastSize = key;
           dpr = window.devicePixelRatio || 1;
+          win
+            .isMaximized()
+            .then((m) => (maximized = m))
+            .catch(() => {});
         })
       );
       const pos = await win.outerPosition();
@@ -323,6 +335,8 @@
       oncopy={copy}
       ontext={() => (showText = !showText)}
       onexplain={explain}
+      {maximized}
+      onmaximize={toggleMaximize}
       onclose={close}
     />
   </header>
@@ -384,7 +398,9 @@
       <div class="status" class:error={!!lastError}>{status}</div>
     {/if}
     <!-- Resize grip (also clickable while the body lets the mouse through). -->
-    <div class="grip" role="presentation" title="サイズ変更" onpointerdown={startResize}></div>
+    {#if !maximized}
+      <div class="grip" role="presentation" title="サイズ変更" onpointerdown={startResize}></div>
+    {/if}
   </section>
 </main>
 
