@@ -63,7 +63,7 @@ describe('<LocalModels>', () => {
     });
     ipc.selectLlmModel.mockResolvedValue(undefined);
     const { findByText, queryByText, getByText } = render(LocalModels, { role: 'assistant' });
-    expect(await findByText('Model c')).toBeInTheDocument();
+    expect(await findByText('Model d')).toBeInTheDocument();
     // PLaMo cannot assist.
     expect(queryByText('Model a')).not.toBeInTheDocument();
     await fireEvent.click(getByText('使用'));
@@ -83,6 +83,24 @@ describe('<LocalModels>', () => {
     await fireEvent.click(await findByText('取得'));
     await waitFor(() => expect(ipc.installLlmModel).toHaveBeenCalledWith('a'));
     await waitFor(() => expect(ipc.selectLlmModel).toHaveBeenCalledWith('a', 'translate'));
+  });
+});
+
+describe('<LocalModels> shared state', () => {
+  it('shows a model downloaded in one panel as installed in the other', async () => {
+    const before = { selected: 'a', assistant: 'x', dir: '', models: [model('a', { installed: true, style: 'pfml3' }), model('c')] };
+    const after = { ...before, assistant: 'c', models: [before.models[0], model('c', { installed: true })] };
+    ipc.listLlmModels.mockResolvedValue(before);
+    ipc.installLlmModel.mockImplementation(async () => {
+      ipc.listLlmModels.mockResolvedValue(after);
+      return '/d/c.gguf';
+    });
+    ipc.selectLlmModel.mockResolvedValue(undefined);
+    const tr = render(LocalModels, { role: 'translate' });
+    const as = render(LocalModels, { role: 'assistant' });
+    await fireEvent.click(await tr.findByText('取得'));
+    await waitFor(() => expect(as.getByText('使用中')).toBeInTheDocument());
+    expect(as.queryByText('中止')).not.toBeInTheDocument();
   });
 });
 

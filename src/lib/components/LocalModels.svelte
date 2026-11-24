@@ -4,15 +4,11 @@
   import {
     cancelLlmDownload,
     deleteLlmModel,
-    installLlmModel,
-    listLlmModels,
-    onLlmProgress,
     selectLlmModel,
     type LlmModel,
-    type LlmModels,
-    type LlmProgress,
     type LlmRole
   } from '$lib/ipc';
+  import { llmModels } from '$lib/llm-models.svelte';
   import { errorText } from '$lib/errors';
   import SettingRow from './SettingRow.svelte';
 
@@ -22,13 +18,13 @@
   }
   let { role = 'translate' }: Props = $props();
 
-  let data = $state<LlmModels>({ selected: '', assistant: '', dir: '', models: [] });
-  let progress = $state<Record<string, LlmProgress>>({});
-  let busy = $state<Record<string, boolean>>({});
+  const store = llmModels;
+  const data = $derived(store.data);
+  const progress = $derived(store.progress);
+  const busy = $derived(store.busy);
   let error = $state<string | null>(null);
   /** Model whose delete button was pressed once (asks to confirm). */
   let confirmDelete = $state<string | null>(null);
-  let unlisten: (() => void) | undefined;
 
   const gb = (n: number) => `${(n / 1_073_741_824).toFixed(1)} GB`;
   /** 説明・要約は汎用（チャット形式）モデルのみ対応。 */
@@ -41,42 +37,24 @@
 
   async function refresh() {
     try {
-      data = await listLlmModels();
+      await store.refresh();
     } catch (e) {
       error = errorText(e);
     }
   }
 
   onMount(async () => {
+    await store.attach();
     await refresh();
-    unlisten = await onLlmProgress((p) => {
-      progress = { ...progress, [p.id]: p };
-    });
   });
-  onDestroy(() => unlisten?.());
+  onDestroy(() => store.detach());
 
   async function download(id: string) {
     error = null;
-    busy = { ...busy, [id]: true };
     try {
-      await installLlmModel(id);
-      // Put a freshly downloaded model to work when its role has no
-      // usable model yet.
-      const m = data.models.find((x) => x.id === id);
-      const installed = (sel: string) => data.models.find((x) => x.id === sel)?.installed;
-      if ((m?.style === 'pfml3' || role === 'translate') && !installed(data.selected)) {
-        await selectLlmModel(id, 'translate');
-      }
-      if (m?.style === 'chat_template' && !installed(data.assistant)) {
-        await selectLlmModel(id, 'assistant');
-      }
+      await store.download(id, role);
     } catch (e) {
       if (!String(e).includes('cancelled')) error = errorText(e);
-    } finally {
-      busy = { ...busy, [id]: false };
-      const { [id]: _done, ...rest } = progress;
-      progress = rest;
-      await refresh();
     }
   }
 
