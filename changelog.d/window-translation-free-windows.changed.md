@@ -1,0 +1,2 @@
+- Window translation no longer opens a region selector. Pressing it (home, hotkey, tray, palette) opens a window-translation window under the mouse pointer, and each press adds another. Each window translates what is under it, wherever it is placed and however it is sized. A range is just a placed window; a maximized window (new maximize button) translates the whole screen.
+- The "toggle" hotkey now opens a window when none is open and closes all windows otherwise. The separate full-screen hotkey is gone.

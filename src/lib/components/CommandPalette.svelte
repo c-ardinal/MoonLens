@@ -8,7 +8,6 @@
     Home,
     Image as ImageIcon,
     Languages,
-    Maximize,
     Settings as SettingsIcon,
     Mic,
     MicOff,
@@ -18,7 +17,7 @@
     getSettings,
     onHotkey,
     quitApp,
-    startRegionSelection,
+    openLens,
     startSubtitle,
     stopSubtitle,
     subtitleState
@@ -41,9 +40,9 @@
   let hotkeys = $state<Record<string, string>>({});
   let error = $state<string | null>(null);
 
-  async function runCapture(full: boolean) {
+  async function openWindow() {
     open = false;
-    await startRegionSelection(full);
+    await openLens();
   }
 
   async function toggleSub() {
@@ -62,17 +61,10 @@
   const commands: Command[] = $derived([
     {
       id: 'capture',
-      label: 'ウィンドウ翻訳（範囲）',
+      label: 'ウィンドウ翻訳',
       hint: hint('capture_region'),
       icon: Camera,
-      run: () => runCapture(false)
-    },
-    {
-      id: 'capture-full',
-      label: 'ウィンドウ翻訳（全画面）',
-      hint: hint('capture_window'),
-      icon: Maximize,
-      run: () => runCapture(true)
+      run: openWindow
     },
     {
       id: 'subtitle',

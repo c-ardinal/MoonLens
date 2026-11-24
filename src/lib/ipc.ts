@@ -65,7 +65,7 @@ export interface LensBlock {
   lines?: [number, number, number, number][];
 }
 
-/** Sent before each translation request of a capture (`moonlens://selector-progress`). */
+/** Sent before each translation request of a capture (`moonlens://image-progress`). */
 export interface TranslationProgress {
   /** Blocks with the translations finished so far. */
   blocks: LensBlock[];
@@ -86,22 +86,6 @@ export interface CaptureFlowResult {
   source_language?: string | null;
   /** Language the blocks were translated into. */
   target_language?: string | null;
-}
-
-/** Selection on the selector's frozen frame, in frame pixels. */
-export interface FrameRect {
-  x: number;
-  y: number;
-  w: number;
-  h: number;
-}
-
-export interface FrameReady {
-  width: number;
-  height: number;
-  auto_full: boolean;
-  /** Monitor the frame shows (for continuous window translation). */
-  monitor_index: number;
 }
 
 export type OverlayEvent =
@@ -257,9 +241,6 @@ export const onAsrProgress = (handler: (p: LlmProgress) => void): Promise<Unlist
 export const showMain = () => safeInvoke<void>('show_main');
 export const hideOverlay = () => safeInvoke<void>('hide_overlay');
 
-/** PNG bytes of the frame the selector froze when it opened. */
-export const getFrozenFrame = () => safeInvoke<ArrayBuffer>('get_frozen_frame');
-
 /** Events of one image translation run carry the caller's run id. */
 export type ImageRunEvent<T> = T & { run: number };
 
@@ -284,22 +265,9 @@ export const onImageAnalysis = (handler: (e: ImageRunEvent<CaptureFlowResult>) =
   listen<ImageRunEvent<CaptureFlowResult>>('moonlens://image-analysis', (e) => handler(e.payload));
 export const onImageProgress = (handler: (e: ImageRunEvent<TranslationProgress>) => void) =>
   listen<ImageRunEvent<TranslationProgress>>('moonlens://image-progress', (e) => handler(e.payload));
-/** OCR + translate a selection of the frozen frame (null = whole frame). */
-export const processFrozenSelection = (rect: FrameRect | null, targetLanguage?: string | null) =>
-  safeInvoke<CaptureFlowResult>('process_frozen_selection', {
-    rect,
-    targetLanguage: targetLanguage ?? null
-  });
-export const retranslateSelection = (targetLanguage: string) =>
-  safeInvoke<CaptureFlowResult>('retranslate_selection', { targetLanguage });
-export const closeSelector = () => safeInvoke<void>('close_selector');
-/** Open the window-translation selector (hides the main window first). */
-export const startRegionSelection = (full = false) =>
-  safeInvoke<void>('start_region_selection', { full });
-
-/** Continuous window translation: open a window-translation window whose
- * body covers `rect` (or a default spot); `targetLanguage` defaults to the
- * configured target. Resolves to the window id. */
+/** Open a window-translation window whose body covers `rect` (or under
+ * the mouse pointer); `targetLanguage` defaults to the configured target.
+ * Resolves to the window id. */
 export const openLens = (rect: CaptureFlowRect | null = null, targetLanguage?: string | null) =>
   safeInvoke<string>('open_lens', { rect, targetLanguage: targetLanguage ?? null });
 export const setLensLanguage = (id: string, targetLanguage: string | null) =>
@@ -497,7 +465,7 @@ export const applyConfigFixes = (ids: string[]) => safeInvoke<number>('apply_con
 export const onConfigIssues = (handler: (i: ConfigIssue[]) => void): Promise<UnlistenFn> =>
   listen<ConfigIssue[]>('moonlens://config-issues', (e) => handler(e.payload));
 
-/** Show the main window on an in-app page (from the selector or a lens). */
+/** Show the main window on an in-app page (from a window-translation window). */
 export const openMainRoute = (path: string) => safeInvoke<void>('open_main_route', { path });
 /** The backend asks the main window to navigate (tray, hotkeys). */
 export const onNavigate = (handler: (path: string) => void): Promise<UnlistenFn> =>

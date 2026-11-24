@@ -74,12 +74,13 @@ describe('settings-meta', () => {
         capture_region: 'CommandOrControl+Shift+Space',
         capture_window: 'CommandOrControl+Shift+W',
         toggle_pin_overlay: '',
-        toggle_subtitle: 'Shift+CommandOrControl+W',
+        toggle_subtitle: 'Shift+CommandOrControl+Space',
         open_command_palette: 'CommandOrControl+K',
-        open_history: ''
+        open_history: 'Shift+CommandOrControl+W'
       }
     };
-    expect(duplicateHotkeys(base).sort()).toEqual(['hotkeys.capture_window', 'hotkeys.toggle_subtitle']);
+    // capture_window is no longer bound, so it clashes with nothing.
+    expect(duplicateHotkeys(base).sort()).toEqual(['hotkeys.capture_region', 'hotkeys.toggle_subtitle']);
     // Empty (disabled) bindings never clash.
     expect(duplicateHotkeys(setPath(base, 'hotkeys.toggle_subtitle', ''))).toEqual([]);
   });

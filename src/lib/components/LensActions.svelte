@@ -1,10 +1,21 @@
 <script lang="ts">
-  import { ChevronDown, ClipboardCopy, Eye, EyeOff, Languages, Radio, RefreshCw, TextSelect, X } from 'lucide-svelte';
+  import {
+    ChevronDown,
+    ClipboardCopy,
+    Eye,
+    EyeOff,
+    Languages,
+    Maximize2,
+    Minimize2,
+    Radio,
+    RefreshCw,
+    TextSelect,
+    X
+  } from 'lucide-svelte';
   import { LANGUAGES, languageLabel } from '$lib/lens-overlay';
 
   /**
-   * ウィンドウ翻訳の共通操作列。範囲選択画面（静止画上の単発翻訳）とウィンドウ翻訳窓（常時翻訳）で
-   * 同一の項目・順序・表記を使用。配色は親要素の CSS 変数（--la-hover・--la-pressed）で指定。
+   * ウィンドウ翻訳の窓の操作列。配色は親要素の CSS 変数（--la-hover・--la-pressed）で指定。
    * compact：アイコンのみ（狭い窓向け、項目名は title へ表示）。幅不足時は横スクロール（ホイール対応）、
    * 「閉じる」は右端へ固定。
    */
@@ -17,6 +28,7 @@
     hasText = true,
     busy = false,
     compact = false,
+    maximized = false,
     oncontinuous,
     onrefresh,
     onoriginal,
@@ -24,6 +36,7 @@
     oncopy,
     ontext,
     onexplain,
+    onmaximize,
     onclose
   }: {
     continuous: boolean;
@@ -35,6 +48,8 @@
     hasText?: boolean;
     busy?: boolean;
     compact?: boolean;
+    /** 窓が最大化中（全画面翻訳）。 */
+    maximized?: boolean;
     oncontinuous: () => void;
     /** 再取得。省略時は非表示（静止画上では範囲の再選択で代替）。 */
     onrefresh?: () => void;
@@ -43,6 +58,8 @@
     oncopy: () => void;
     ontext: () => void;
     onexplain: () => void;
+    /** 最大化／元のサイズ。省略時は非表示。 */
+    onmaximize?: () => void;
     onclose: () => void;
   } = $props();
 
@@ -103,6 +120,17 @@
   <button class="tb" disabled={!hasText} onclick={onexplain} title="内容説明">
     <Languages class="h-4 w-4" /><span class="lb">説明</span>
   </button>
+  {#if onmaximize}
+    <button
+      class="tb"
+      onclick={onmaximize}
+      title={maximized ? '元のサイズ' : '最大化（全画面翻訳）'}
+    >
+      {#if maximized}<Minimize2 class="h-4 w-4" />{:else}<Maximize2 class="h-4 w-4" />{/if}<span class="lb"
+        >{maximized ? '元のサイズ' : '最大化'}</span
+      >
+    </button>
+  {/if}
   <button class="tb close" onclick={onclose} title="閉じる (Esc)"><X class="h-4 w-4" /></button>
 </div>
 

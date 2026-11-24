@@ -94,8 +94,13 @@ pub enum Density {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(default, deny_unknown_fields)]
 pub struct Hotkeys {
+    /// Open one more window-translation window under the mouse pointer.
     pub capture_region: String,
+    /// Unused (the full-screen selector is gone: a maximized window
+    /// translates the whole screen); kept so existing configs still load.
     pub capture_window: String,
+    /// Window translation: open a window when there is none, otherwise
+    /// close them all.
     pub toggle_pin_overlay: String,
     pub toggle_subtitle: String,
     pub open_command_palette: String,

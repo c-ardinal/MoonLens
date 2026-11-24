@@ -40,12 +40,8 @@ macro_rules! all_commands {
             ipc::run_reverse_image_search,
             ipc::capture_region_cmd,
             ipc::capture_and_process,
-            ipc::get_frozen_frame,
-            ipc::process_frozen_selection,
             ipc::translate_image,
             ipc::read_image_file,
-            ipc::retranslate_selection,
-            ipc::close_selector,
             ipc::install_ocr_models,
             ipc::ocr_models_status,
             ipc::list_llm_models,
@@ -60,8 +56,6 @@ macro_rules! all_commands {
             ipc::select_asr_model,
             ipc::show_main,
             ipc::hide_overlay,
-            ipc::start_region_selection,
-            ipc::cancel_region_selection,
             ipc::toggle_subtitle,
             ipc::subtitle_state,
             ipc::stop_subtitle,
@@ -252,14 +246,7 @@ pub fn build() -> Result<()> {
 
 fn build_tray(app: &AppHandle) -> Result<()> {
     let open = MenuItem::with_id(app, "open", "MoonLens 表示", true, None::<&str>)?;
-    let capture = MenuItem::with_id(app, "capture", "ウィンドウ翻訳（範囲）", true, None::<&str>)?;
-    let full = MenuItem::with_id(
-        app,
-        "capture_full",
-        "ウィンドウ翻訳（全画面）",
-        true,
-        None::<&str>,
-    )?;
+    let capture = MenuItem::with_id(app, "capture", "ウィンドウ翻訳", true, None::<&str>)?;
     let subtitle = MenuItem::with_id(app, "subtitle", "音声翻訳 開始／停止", true, None::<&str>)?;
     let plugins = MenuItem::with_id(app, "plugins", "プラグイン", true, None::<&str>)?;
     let history = MenuItem::with_id(app, "history", "履歴", true, None::<&str>)?;
@@ -268,9 +255,7 @@ fn build_tray(app: &AppHandle) -> Result<()> {
 
     let menu = Menu::with_items(
         app,
-        &[
-            &open, &capture, &full, &subtitle, &plugins, &history, &sep, &quit,
-        ],
+        &[&open, &capture, &subtitle, &plugins, &history, &sep, &quit],
     )?;
 
     TrayIconBuilder::with_id("moonlens-tray")
@@ -283,8 +268,7 @@ fn build_tray(app: &AppHandle) -> Result<()> {
         }))
         .on_menu_event(move |app, event| match event.id.as_ref() {
             "open" => show_main_window(app),
-            "capture" => hotkey::open_selector(app, false),
-            "capture_full" => hotkey::open_selector(app, true),
+            "capture" => crate::lens::open_new(app),
             "subtitle" => {
                 let state = app.state::<AppState>();
                 state.subtitle.toggle_checked(app);

@@ -1,0 +1,1 @@
+- With several window-translation windows open, each window showed the other windows' translations as well. Each window now shows only its own.

@@ -53,19 +53,6 @@
         "focus": false,
         "visible": false,
         "url": "/subtitle"
-      },
-      {
-        "label": "selector",
-        "title": "MoonLens Selector",
-        "decorations": false,
-        "transparent": true,
-        "alwaysOnTop": true,
-        "skipTaskbar": true,
-        "resizable": false,
-        "focus": true,
-        "visible": false,
-        "fullscreen": false,
-        "url": "/select"
       }
     ],
     "security": {
