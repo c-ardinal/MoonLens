@@ -1,7 +1,7 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
   import { onDestroy, onMount } from 'svelte';
-  import { AlertCircle, AlertTriangle, Camera, Cpu, Focus, Maximize, Mic, Square, X } from 'lucide-svelte';
+  import { X } from 'lucide-svelte';
   import {
     dismissNotice,
     getSettings,
@@ -25,6 +25,11 @@
   import ConfigIssues from '$lib/components/ConfigIssues.svelte';
   import { STATE_LABELS, engineRows, type EngineRow } from '$lib/engine-status';
   import type { Notice } from '$lib/ipc';
+  import HomeCanvas from '$lib/components/HomeCanvas.svelte';
+  import { slant } from '$lib/pixel/slant';
+  import type { DialItem } from '$lib/pixel/dial';
+  import type { HomeRegion } from '$lib/pixel/home';
+  import { listHistory } from '$lib/ipc';
 
   let lastError = $state<string | null>(null);
   let subtitleRunning = $state(false);
@@ -62,8 +67,10 @@
 
   onMount(async () => {
     getSettings().then(applySettings).catch(() => checkSetup());
-    window.addEventListener('focus', checkSetup);
-    unlisteners.push(() => window.removeEventListener('focus', checkSetup));
+    const refresh = () => (checkSetup(), loadRecent());
+    loadRecent();
+    window.addEventListener('focus', refresh);
+    unlisteners.push(() => window.removeEventListener('focus', refresh));
     listNotices()
       .then((n) => (notices = n))
       .catch(() => {});
@@ -101,185 +108,200 @@
   }
 
   const key = (name: string) => (hotkeys[name] ? displayAccelerator(hotkeys[name]) : '');
+
+  async function toggleSubtitle() {
+    if (subtitleRunning) {
+      await stopSubtitle();
+      subtitleRunning = false;
+      subtitlePreview = null;
+    } else {
+      await startSubtitle();
+      subtitleRunning = true;
+    }
+  }
+
+  /** 魔法陣の 6 機能。順序は数字キー（1〜6）と一致。 */
+  const functions = $derived([
+    {
+      label: '範囲翻訳',
+      icon: 'region',
+      desc: '範囲を静止し、原文位置へ訳文をオーバーレイ表示。',
+      hotkey: key('capture_region'),
+      run: () => startRegionSelection(false)
+    },
+    {
+      label: '全画面翻訳',
+      icon: 'full',
+      desc: '画面全体を静止し、原文位置へ訳文をオーバーレイ表示。',
+      hotkey: key('capture_window'),
+      run: () => startRegionSelection(true)
+    },
+    {
+      label: 'Lens',
+      icon: 'lens',
+      desc: '定位置の継続翻訳ウィンドウ。動画字幕・ゲーム画面向け。',
+      hotkey: '',
+      run: newLensWindow
+    },
+    {
+      label: 'ライブ字幕',
+      icon: 'mic',
+      desc: subtitleRunning ? '字幕表示中。Enter で停止。' : 'システム音声を認識・翻訳し、字幕表示。',
+      hotkey: key('toggle_subtitle'),
+      // 施錠なし：外部 whisper.cpp サーバー・ASR プラグインも有効なため、可否判定は本体側
+      run: toggleSubtitle
+    },
+    {
+      label: 'テキスト翻訳',
+      icon: 'text',
+      desc: '入力文の翻訳。用語集・文脈指定に対応。',
+      hotkey: '',
+      run: () => goto('/translate/')
+    },
+    {
+      label: '画像翻訳',
+      icon: 'image',
+      desc: '画像ファイルの文字を認識・翻訳。ドロップ・貼付に対応。',
+      hotkey: '',
+      run: () => goto('/image/')
+    }
+  ] satisfies (DialItem & { desc: string; hotkey: string; run: () => unknown })[]);
+
+  let selected = $state(0);
+  const current = $derived(functions[selected]);
+
+  /** 最新の履歴 1 件（ホーム下部の「最近」）。 */
+  let recent = $state<{ text: string; time: string } | null>(null);
+  async function loadRecent() {
+    try {
+      const [e] = await listHistory({ limit: 1 });
+      if (!e) return (recent = null);
+      const d = new Date(e.created_at * 1000);
+      const text = (e.result_text || e.source_text || '').replace(/\s+/g, ' ').trim();
+      recent = { text: text || '（画像）', time: `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}` };
+    } catch {
+      recent = null;
+    }
+  }
+
+  const view = $derived({
+    items: functions,
+    hotkey: current.hotkey,
+    running: current.label === 'ライブ字幕' && subtitleRunning,
+    desc: current.desc,
+    preview: current.label === 'ライブ字幕' ? subtitlePreview : null,
+    // 起動失敗の全文は上部の通知帯へ表示（魔法陣側は 1 行省略のため重複表示しない）
+    error: null,
+    engines,
+    recent,
+    hint: `←→選択 Enter・1-6起動${key('open_command_palette') ? ` ${key('open_command_palette')}パレット` : ''}`
+  });
+
+  function onRegion(r: HomeRegion) {
+    if (r === 'go') activate(selected);
+    else if (r === 'engines') goto('/settings/#section-models');
+    else goto('/history/');
+  }
+
+  function activate(i: number) {
+    selected = i;
+    attempt(functions[i].run);
+  }
+
+  function onKey(e: KeyboardEvent) {
+    if (e.ctrlKey || e.altKey || e.metaKey || e.defaultPrevented) return;
+    const t = e.target as HTMLElement | null;
+    if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
+    const n = functions.length;
+    if (e.key === 'ArrowRight' || e.key === 'ArrowDown') selected = (selected + 1) % n;
+    else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') selected = (selected + n - 1) % n;
+    else if (e.key === 'Enter' && (!t || t === document.body)) activate(selected);
+    else if (/^[1-9]$/.test(e.key) && Number(e.key) <= n) activate(Number(e.key) - 1);
+    else return;
+    e.preventDefault();
+  }
 </script>
 
-<main class="mx-auto flex max-w-3xl flex-col gap-4 px-4 py-6 sm:gap-5 sm:px-6">
-  <header>
-    <h1 class="text-xl font-semibold tracking-tight">ホーム</h1>
-    <p class="text-sm text-ink-muted">
-      全処理ローカル実行／翻訳先：{languageLabel(targetLanguage) || targetLanguage}
-      <a href="/settings/" class="ml-1 text-accent underline-offset-2 hover:underline">変更</a>
-    </p>
-  </header>
+<svelte:window onkeydown={onKey} />
 
-  <ConfigIssues />
-
-  {#each notices as n (n.id)}
-    <section
-      class="flex items-start gap-2 rounded-ml border border-amber-500/50 bg-amber-500/10 p-3 text-sm"
-      role="alert"
-    >
-      <AlertTriangle class="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
-      <p class="min-w-0 flex-1 break-words">
-        {n.message}
-        {#if n.action}
-          <a href={n.action} class="ml-1 text-accent underline-offset-2 hover:underline">設定を開く</a>
-        {/if}
-      </p>
-      <button
-        class="shrink-0 rounded-ml-sm p-0.5 text-ink-faint hover:text-ink"
-        title="閉じる"
-        aria-label="通知を閉じる"
-        onclick={() => dismissNotice(n.id).catch(() => {})}
-      >
-        <X class="h-4 w-4" />
-      </button>
-    </section>
-  {/each}
-
-  {#if missing.length > 0}
-    <section
-      class="flex flex-col gap-3 rounded-ml border border-accent/40 bg-accent-soft p-4 sm:flex-row sm:items-center sm:justify-between"
-    >
-      <div class="flex min-w-0 gap-2">
-        <AlertCircle class="mt-0.5 h-4 w-4 shrink-0 text-accent" />
-        <p class="text-sm">
-          初回セットアップ：{missing.join('・')}のダウンロードが必要。
-        </p>
-      </div>
-      <button
-        class="shrink-0 self-start rounded-ml-sm bg-accent px-3 py-1.5 text-sm font-medium text-white sm:self-auto"
-        onclick={() => goto('/settings/#section-models')}
-      >
-        モデル準備
-      </button>
-    </section>
-  {/if}
-
-  <section class="rounded-ml border border-border bg-surface-elevated p-4 shadow-ml sm:p-5">
-    <h2 class="text-base font-semibold">画面翻訳</h2>
-    <p class="text-sm text-ink-muted">
-      画面を静止し、原文位置に訳文をオーバーレイ表示。全アプリでショートカット起動可能。
-    </p>
-    <div class="mt-4 grid gap-2 sm:grid-cols-2">
-      <button
-        class="flex items-center justify-between gap-3 rounded-ml-sm bg-accent px-4 py-2.5 text-left text-sm font-medium text-white shadow-ml transition hover:opacity-90"
-        onclick={() => attempt(() => startRegionSelection(false))}
-      >
-        <span class="flex items-center gap-2"><Camera class="h-4 w-4 shrink-0" />範囲翻訳</span>
-        {#if key('capture_region')}<kbd class="font-mono text-xs opacity-80">{key('capture_region')}</kbd>{/if}
-      </button>
-      <button
-        class="flex items-center justify-between gap-3 rounded-ml-sm border border-border bg-surface px-4 py-2.5 text-left text-sm font-medium transition hover:border-accent/60"
-        onclick={() => attempt(() => startRegionSelection(true))}
-      >
-        <span class="flex items-center gap-2"><Maximize class="h-4 w-4 shrink-0" />全画面翻訳</span>
-        {#if key('capture_window')}<kbd class="font-mono text-xs text-ink-faint">{key('capture_window')}</kbd>{/if}
-      </button>
-    </div>
-    <div class="mt-3 flex flex-col gap-2 border-t border-border pt-3 sm:flex-row sm:items-center sm:justify-between">
-      <p class="text-xs text-ink-muted">
-        Lens ウィンドウ：動画字幕・ゲーム画面など定位置の継続翻訳用。
-      </p>
-      <button
-        class="inline-flex shrink-0 items-center gap-2 self-start rounded-ml-sm border border-border bg-surface px-3 py-1.5 text-sm text-ink-muted transition hover:border-accent/60 hover:text-ink sm:self-auto"
-        onclick={() => attempt(newLensWindow)}
-      >
-        <Focus class="h-4 w-4" />
-        Lens ウィンドウ
-      </button>
-    </div>
-  </section>
-
-  <section class="rounded-ml border border-border bg-surface-elevated p-4 shadow-ml sm:p-5">
-    <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-      <div class="min-w-0">
-        <h2 class="flex flex-wrap items-center gap-2 text-base font-semibold">
-          ライブ字幕
-          {#if subtitleRunning}
-            <span
-              class="inline-flex items-center gap-1 rounded-full bg-accent-soft px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-accent"
-            >
-              <span class="block h-1.5 w-1.5 animate-pulse rounded-full bg-accent" aria-hidden="true"></span>
-              ON AIR
-            </span>
-          {/if}
-        </h2>
-        <p class="text-sm text-ink-muted">システム音声を認識・翻訳し、字幕表示。</p>
-        {#if subtitlePreview}
-          <p class="mt-2 line-clamp-2 text-xs break-words text-ink-faint">{subtitlePreview}</p>
-        {/if}
-      </div>
-      {#if subtitleRunning}
-        <button
-          class="inline-flex shrink-0 items-center gap-2 self-start rounded-ml-sm border border-red-500/60 bg-red-500/10 px-4 py-2 text-sm font-medium text-red-500"
-          onclick={() =>
-            attempt(async () => {
-              await stopSubtitle();
-              subtitleRunning = false;
-              subtitlePreview = null;
-            })}
-        >
-          <Square class="h-4 w-4" /> 停止
-        </button>
-      {:else}
-        <button
-          class="inline-flex shrink-0 items-center gap-2 self-start rounded-ml-sm border border-border bg-surface px-4 py-2 text-sm font-medium transition hover:border-accent/60"
-          onclick={() =>
-            attempt(async () => {
-              await startSubtitle();
-              subtitleRunning = true;
-            })}
-        >
-          <Mic class="h-4 w-4" /> 開始
-          {#if key('toggle_subtitle')}<kbd class="font-mono text-xs text-ink-faint">{key('toggle_subtitle')}</kbd>{/if}
-        </button>
+<main class="home">
+  <!-- 通知・初回セットアップ：魔法陣の上部へ帯状に配置（該当時のみ、重複なし） -->
+  <div class="alerts">
+      <ConfigIssues />
+      {#each notices as n (n.id)}
+        <section class="px-win notice" role="alert">
+          <p class="min-w-0 flex-1 break-words">
+            {n.message}
+            {#if n.action}<a href={n.action} class="link">設定▶</a>{/if}
+          </p>
+          <button class="close" title="閉じる" aria-label="通知を閉じる" onclick={() => dismissNotice(n.id).catch(() => {})}>
+            <X class="h-4 w-4" />
+          </button>
+        </section>
+      {/each}
+      {#if missing.length > 0}
+        <section class="px-win notice">
+          <p class="min-w-0 flex-1">初回セットアップ：{missing.join('・')}のダウンロードが必要。</p>
+          <button class="px-chip" data-tone="amber" use:slant onclick={() => goto('/settings/#section-models')}>モデル準備</button>
+        </section>
+      {/if}
+      {#if lastError}
+        <section class="px-win notice error" role="alert">
+          <p class="min-w-0 flex-1 break-words">{lastError}</p>
+          <button class="close" title="閉じる" aria-label="エラーを閉じる" onclick={() => (lastError = null)}>
+            <X class="h-4 w-4" />
+          </button>
+        </section>
       {/if}
     </div>
-  </section>
+  <div class="stage">
+    <HomeCanvas {view} bind:selected onactivate={activate} onregion={onRegion} />
+  </div>
 
-  {#if engines.length > 0}
-    <section class="rounded-ml border border-border bg-surface-elevated p-4 shadow-ml sm:p-5" aria-labelledby="engine-heading">
-      <div class="flex items-center justify-between gap-2">
-        <h2 id="engine-heading" class="flex items-center gap-2 text-base font-semibold">
-          <Cpu class="h-4 w-4 shrink-0 text-ink-muted" />ローカルエンジン
-        </h2>
-        <a href="/settings/#section-models" class="text-sm text-accent underline-offset-2 hover:underline">モデル管理</a>
-      </div>
-      <ul class="mt-3 divide-y divide-border">
-        {#each engines as row (row.id)}
-          <li class="flex items-center gap-3 py-2 text-sm">
-            <span class="w-20 shrink-0 text-ink-muted">{row.label}</span>
-            <span class="min-w-0 flex-1 truncate {row.state === 'unset' ? 'text-ink-faint' : 'font-medium'}" title={row.model}>
-              {row.model}
-            </span>
-            <span class="inline-flex shrink-0 items-center gap-1.5 text-xs {row.state === 'ready' ? 'text-ink-muted' : row.state === 'missing' ? 'text-amber-600' : 'text-ink-faint'}">
-              <span
-                class="block h-2 w-2 rounded-full {row.state === 'ready'
-                  ? 'bg-emerald-500'
-                  : row.state === 'missing'
-                    ? 'bg-amber-500'
-                    : row.state === 'downloading'
-                      ? 'animate-pulse bg-accent'
-                      : 'bg-ink-faint/40'}"
-                aria-hidden="true"
-              ></span>
-              {STATE_LABELS[row.state]}
-            </span>
-          </li>
-        {/each}
-      </ul>
-      <p class="mt-2 text-xs text-ink-faint">推論は全てローカル実行。外部送信なし。</p>
-    </section>
-  {/if}
+  <!-- 支援技術向けの機能一覧（視覚表現は魔法陣） -->
+  <ul class="sr-only" aria-label="機能">
+    {#each functions as f, i (f.label)}
+      <li><button onclick={() => activate(i)}>{i + 1}. {f.label}：{f.desc}</button></li>
+    {/each}
+  </ul>
 
-  {#if lastError}
-    <p class="rounded-ml border border-red-500/50 bg-red-500/10 p-3 text-sm break-words text-red-500" role="alert">
-      {lastError}
-    </p>
-  {/if}
-
-  <p class="text-xs text-ink-faint">
-    {#if key('open_command_palette')}<kbd class="font-mono">{key('open_command_palette')}</kbd>：コマンドパレット　{/if}ショートカット変更：<a href="/settings/#section-hotkeys" class="underline-offset-2 hover:underline">設定</a>
-  </p>
 </main>
+
+<style>
+  .home {
+    display: flex;
+    flex-direction: column;
+    height: calc(100vh - var(--ml-nav-h, 64px));
+    overflow: hidden;
+  }
+  .stage {
+    position: relative;
+    flex: 1;
+    min-height: 0;
+  }
+  .alerts {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 6px 40px 0;
+  }
+  .alerts:not(:has(> *)) {
+    display: none;
+  }
+  /* 1 行の帯（窓の上下余白を圧縮し、魔法陣の表示寸法を維持） */
+  .notice {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 2px 16px;
+  }
+  .close {
+    color: var(--ml-px-faint);
+  }
+  .error p {
+    color: var(--ml-px-red);
+  }
+  .link {
+    color: var(--ml-px-amber);
+  }
+</style>

@@ -7,6 +7,7 @@
 
 const SYMBOLS: Record<string, string> = {
   CommandOrControl: '⌘',
+  CmdOrCtrl: '⌘',
   Cmd: '⌘',
   Command: '⌘',
   Control: '⌃',
@@ -31,6 +32,7 @@ const SYMBOLS: Record<string, string> = {
 /** Names used on Windows / Linux, where ⌘-style symbols mean nothing. */
 const PC_NAMES: Record<string, string> = {
   CommandOrControl: 'Ctrl',
+  CmdOrCtrl: 'Ctrl',
   Cmd: 'Ctrl',
   Command: 'Ctrl',
   Control: 'Ctrl',

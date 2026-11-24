@@ -105,7 +105,7 @@
 {#if show}
   <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-6">
     <div
-      class="w-full max-w-xl rounded-ml border border-border bg-surface-elevated p-6 shadow-ml-lg"
+      class="max-h-full w-full max-w-xl overflow-y-auto rounded-ml border border-border bg-surface-elevated p-6 shadow-ml-lg"
       role="dialog"
       aria-modal="true"
     >

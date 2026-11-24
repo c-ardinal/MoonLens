@@ -9,9 +9,11 @@
     defaultValue?: any;
     /** The value clashes with another field (e.g. a duplicate shortcut). */
     invalid?: boolean;
+    /** 設定画面の行表示：説明文は外部の説明窓へ委譲し、1 行で表示。 */
+    compact?: boolean;
     onChange: (v: any) => void;
   }
-  let { field, value, defaultValue, invalid = false, onChange }: Props = $props();
+  let { field, value, defaultValue, invalid = false, compact = false, onChange }: Props = $props();
 
   const id = $derived(`f-${field.path.replace(/\./g, '-')}`);
   // f32 defaults arrive as 0.9200000166893005; null and missing are the same.
@@ -35,17 +37,34 @@
   }
 </script>
 
-<div class="flex flex-col gap-2 py-3 sm:flex-row sm:items-center sm:justify-between sm:gap-6">
+<div
+  class={compact
+    ? 'flex min-h-[60px] items-center justify-between gap-6 py-2'
+    : 'flex flex-col gap-2 py-3 sm:flex-row sm:items-center sm:justify-between sm:gap-6'}
+>
   <div class="min-w-0 flex-1">
     <label for={id} class="text-sm font-medium {invalid ? 'text-red-500' : 'text-ink'}">
       {field.label}{#if invalid}<span class="ml-2 text-xs font-normal">重複</span>{/if}
     </label>
-    {#if field.help}
+    {#if field.help && !compact}
       <p class="mt-0.5 text-xs leading-relaxed text-ink-muted">{field.help}</p>
     {/if}
   </div>
   <div class="flex min-w-0 shrink-0 items-center gap-2 sm:max-w-[55%]">
-    {#if field.kind === 'toggle'}
+    {#if field.kind === 'toggle' && compact}
+      <!-- ON／OFF の斜め名札（チェックボックスは支援技術向けに保持） -->
+      <label class="toggle-chips">
+        <input
+          {id}
+          type="checkbox"
+          class="sr-only"
+          checked={!!value}
+          onchange={(e) => onChange((e.currentTarget as HTMLInputElement).checked)}
+        />
+        <span class="tc" class:on={!!value}>ON</span>
+        <span class="tc" class:on={!value}>OFF</span>
+      </label>
+    {:else if field.kind === 'toggle'}
       <label class="relative inline-flex cursor-pointer items-center">
         <input
           {id}
@@ -85,7 +104,7 @@
           value={value ?? field.min}
           oninput={(e) => onChange(Number((e.currentTarget as HTMLInputElement).value))}
         />
-        <span class="w-24 text-right text-sm tabular-nums text-ink-muted">
+        <span class="value-text min-w-24 whitespace-nowrap text-right text-sm tabular-nums text-ink-muted">
           {#if field.zeroLabel && !value}
             {field.zeroLabel}
           {:else}
@@ -103,7 +122,7 @@
           value={value ?? 0}
           onchange={(e) => onChange(clamp(Number((e.currentTarget as HTMLInputElement).value)))}
         />
-        <span class="w-16 text-sm text-ink-muted">
+        <span class="value-text min-w-16 whitespace-nowrap text-sm text-ink-muted">
           {field.zeroLabel && !value ? field.zeroLabel : (field.unit ?? '')}
         </span>
       {/if}
@@ -132,3 +151,24 @@
     </button>
   </div>
 </div>
+
+<style>
+  .toggle-chips {
+    display: inline-flex;
+    gap: 6px;
+    cursor: pointer;
+  }
+  .tc {
+    padding: 0 12px;
+    color: var(--ml-px-faint, currentColor);
+    clip-path: polygon(8px 0, 100% 0, calc(100% - 8px) 100%, 0 100%);
+  }
+  .tc.on {
+    background: var(--ml-px-black, #000);
+    color: var(--ml-px-amber, currentColor);
+  }
+  .toggle-chips:focus-within .tc.on {
+    outline: 2px solid var(--ml-px-bone, currentColor);
+    outline-offset: -2px;
+  }
+</style>
