@@ -1,26 +1,16 @@
 <script lang="ts">
   import { onDestroy, onMount, tick } from 'svelte';
   import { listen, type UnlistenFn } from '@tauri-apps/api/event';
-  import {
-    ClipboardCopy,
-    Eye,
-    EyeOff,
-    ExternalLink,
-    Languages,
-    QrCode,
-    Radio,
-    Sparkles,
-    TextSelect,
-    X
-  } from 'lucide-svelte';
+  import { ClipboardCopy, ExternalLink, QrCode, Radio, Sparkles, X } from 'lucide-svelte';
   import PrivacyBadge from '$lib/components/PrivacyBadge.svelte';
+  import LensActions from '$lib/components/LensActions.svelte';
   import {
     closeSelector,
     getFrozenFrame,
     onOverlay,
     openExternalUrl,
+    openLens,
     openMainRoute,
-    pinOverlay,
     processFrozenSelection,
     retranslateSelection,
     runExplain,
@@ -34,7 +24,6 @@
   import FlowText from '$lib/components/FlowText.svelte';
   import { errorText, parseError, type UiError } from '$lib/errors';
   import {
-    LANGUAGES,
     allSameLanguage,
     applyStreaming,
     blockCssRect,
@@ -49,10 +38,12 @@
     type CssRect
   } from '$lib/lens-overlay';
 
-  // Lens-style selector. When it opens, the backend has already frozen the
-  // monitor under the cursor; we show that frame, let the user drag (or
-  // click for the whole screen), and paint translations in place over the
-  // frozen image. A new drag starts over; Esc closes.
+  // Window translation. When it opens, the backend has already frozen the
+  // monitor under the cursor; we show that frame, let the user drag (a
+  // range) or click (the whole screen), and paint translations in place
+  // over the frozen image. With 常時 on, the target opens as a continuous
+  // window-translation window over the live screen instead. A new drag
+  // starts over; Esc closes.
 
   type Phase = 'loading' | 'select' | 'processing' | 'result' | 'error';
 
@@ -74,7 +65,7 @@
   let failure = $state<UiError | null>(null);
   let notice = $state('');
   let explanation = $state<string | null>(null);
-  let pinned = $state(false);
+  let monitorIndex = 0;
   let streamed = '';
   /** Blocks as of the latest progress event; streamed text is laid over them. */
   let streamBase: LensBlock[] = [];
@@ -97,6 +88,26 @@
     }
   }
 
+  // 常時: a selection becomes a continuous window translation at once.
+  // Remembered per machine like the language.
+  const CONTINUOUS_KEY = 'moonlens.selector.continuous';
+  let continuous = $state(readContinuous());
+  function readContinuous(): boolean {
+    try {
+      return localStorage.getItem(CONTINUOUS_KEY) === '1';
+    } catch {
+      return false;
+    }
+  }
+  function toggleContinuous() {
+    continuous = !continuous;
+    try {
+      localStorage.setItem(CONTINUOUS_KEY, continuous ? '1' : '0');
+    } catch {
+      /* storage unavailable: keep the choice for this session only */
+    }
+  }
+
   const unlisteners: UnlistenFn[] = [];
 
   async function loadFrame(ready: FrameReady) {
@@ -108,6 +119,7 @@
       frameUrl = URL.createObjectURL(new Blob([buf], { type: 'image/png' }));
       frameW = ready.width;
       frameH = ready.height;
+      monitorIndex = ready.monitor_index ?? 0;
       phase = 'select';
       if (ready.auto_full) await run(null);
     } catch (e) {
@@ -127,7 +139,6 @@
     failure = null;
     notice = '';
     explanation = null;
-    pinned = false;
     streamed = '';
   }
 
@@ -143,6 +154,10 @@
   }
 
   async function run(css: CssRect | null) {
+    if (continuous && phase === 'select') {
+      const r = css ? toFrameRect(css, scale) : { x: 0, y: 0, w: frameW, h: frameH };
+      return keepTranslating({ monitor_index: monitorIndex, ...r });
+    }
     const id = ++runId;
     const full = { left: 0, top: 0, width: vw, height: vh };
     selection = css ?? full;
@@ -228,6 +243,8 @@
     await run(r);
   }
 
+  const onclose = () => close();
+
   async function close() {
     reset();
     phase = 'loading';
@@ -240,6 +257,9 @@
     if (e.key === 'Escape') {
       e.preventDefault();
       close();
+    } else if (e.key === 'Tab' && phase === 'select') {
+      e.preventDefault();
+      toggleContinuous();
     } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'c' && phase === 'result') {
       // Copy the user's text selection if any, else everything.
       if (!window.getSelection()?.toString()) {
@@ -285,16 +305,18 @@
     }
   }
 
-  /** Live translation: keep translating the selection in place on the
-   * live screen as it changes, and get out of the way. */
-  async function pin() {
-    if (!result?.source_rect) return;
+  /** 常時: keep translating `rect` in place on the live screen as it
+   * changes (a window-translation window over it), and get out of the way. */
+  async function keepTranslating(rect = result?.source_rect) {
+    if (!rect) return;
+    // Language shown now; none picked yet: the configured target.
+    const lang = result?.target_language ?? chosenLang;
     try {
-      await pinOverlay(result.source_rect, targetLang);
-      pinned = true;
+      // Close first: the window must not open under the frozen frame.
       await close();
+      await openLens(rect, lang);
     } catch (e) {
-      flash(errorText(e), 3000);
+      fail(e);
     }
   }
 
@@ -464,8 +486,23 @@
 
   <!-- Hint pill. -->
   {#if phase === 'select' && !drag}
-    <div class="pill pointer-events-none absolute inset-x-0 top-6 mx-auto w-fit">
-      ドラッグ：範囲翻訳 · クリック：全画面翻訳 · Esc：終了
+    <div
+      class="pill absolute inset-x-0 top-6 mx-auto flex w-fit items-center gap-3"
+      role="toolbar"
+      tabindex="-1"
+      onpointerdown={(e) => e.stopPropagation()}
+      onpointerup={(e) => e.stopPropagation()}
+    >
+      <span>ドラッグ：範囲 · クリック：全画面</span>
+      <button
+        class="mode"
+        aria-pressed={continuous}
+        onclick={toggleContinuous}
+        title="常時翻訳：画面変化へ追従して再翻訳（Tab で切替）"
+      >
+        <Radio class="inline h-3.5 w-3.5" />常時 {continuous ? 'ON' : 'OFF'}
+      </button>
+      <span>Esc：終了</span>
     </div>
   {:else if phase === 'processing'}
     <div class="pill pointer-events-none absolute inset-x-0 top-6 mx-auto w-fit">
@@ -502,41 +539,26 @@
         {#if result}
           <PrivacyBadge viaCloud={result.result.via_cloud} provider={result.result.used_provider} />
         {/if}
-        <button
-          class="tb"
-          aria-pressed={showOriginal}
-          onclick={() => (showOriginal = !showOriginal)}
-          title="原文／訳文の切替"
-        >
-          {#if showOriginal}<Eye class="h-4 w-4" />訳文{:else}<EyeOff class="h-4 w-4" />原文{/if}
-        </button>
-        <label class="tb lang" title="翻訳先言語">
-          <span class="opacity-70">{languageLabel(result?.source_language) || '自動'} →</span>
-          <select
-            style="width: calc({languageLabel(targetLang).length}em + 22px)"
-            value={targetLang}
-            onchange={(e) => changeLanguage((e.currentTarget as HTMLSelectElement).value)}
-          >
-            {#if !LANGUAGES.some((l) => l.code === targetLang)}
-              <option value={targetLang}>{languageLabel(targetLang)}</option>
-            {/if}
-            {#each LANGUAGES as l (l.code)}
-              <option value={l.code}>{l.label}</option>
-            {/each}
-          </select>
-        </label>
-        <button class="tb" onclick={copyAll} title="コピー (Ctrl+C)"><ClipboardCopy class="h-4 w-4" />コピー</button>
-        <button class="tb" aria-pressed={showPanel} onclick={() => (showPanel = !showPanel)} title="テキスト表示">
-          <TextSelect class="h-4 w-4" />テキスト
-        </button>
-        <button class="tb" onclick={explain} title="内容説明"><Languages class="h-4 w-4" />説明</button>
-        <button class="tb" onclick={pin} disabled={pinned} title="ライブ翻訳：画面変化へ追従して継続翻訳（停止はライブ翻訳切替ショートカット）">
-          <Radio class="h-4 w-4" />ライブ
-        </button>
+        <LensActions
+          continuous={false}
+          {showOriginal}
+          showText={showPanel}
+          sourceLanguage={result?.source_language}
+          targetLanguage={targetLang}
+          oncontinuous={() => keepTranslating()}
+          onoriginal={() => (showOriginal = !showOriginal)}
+          onlanguage={changeLanguage}
+          oncopy={copyAll}
+          ontext={() => (showPanel = !showPanel)}
+          onexplain={explain}
+          {onclose}
+        />
       {:else}
         <span class="px-2 text-sm">{notice}</span>
       {/if}
-      <button class="tb" onclick={close} title="閉じる (Esc)"><X class="h-4 w-4" /></button>
+      {#if !(phase === 'result' && result?.intent !== 'qr' && blocks.length > 0)}
+        <button class="tb" onclick={close} title="閉じる (Esc)"><X class="h-4 w-4" /></button>
+      {/if}
     </div>
   {/if}
 
@@ -656,6 +678,17 @@
   .toolbar {
     z-index: 20;
   }
+  .mode {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    border-radius: 999px;
+    padding: 2px 10px;
+    background: rgba(255, 255, 255, 0.1);
+  }
+  .mode[aria-pressed='true'] {
+    background: rgba(139, 92, 246, 0.55);
+  }
   .panel {
     z-index: 10;
   }
@@ -685,20 +718,6 @@
   }
   .tb:hover:not(:disabled) {
     background: rgba(255, 255, 255, 0.1);
-  }
-  .tb[aria-pressed='true'] {
-    background: rgba(139, 92, 246, 0.35);
-  }
-  .lang select {
-    background: transparent;
-    color: inherit;
-    border: none;
-    outline: none;
-    font: inherit;
-    cursor: pointer;
-  }
-  .lang select option {
-    color: #111;
   }
   .tb:disabled {
     opacity: 0.4;

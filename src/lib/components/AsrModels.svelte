@@ -87,7 +87,7 @@
 
 <section class="rounded-ml border border-border bg-surface-elevated p-4 shadow-ml sm:p-5">
   <h3 class="text-base font-semibold">音声認識モデル</h3>
-  <p class="text-sm text-ink-muted">ライブ字幕用。内蔵エンジンでローカル実行（外部サーバー不要）。</p>
+  <p class="text-sm text-ink-muted">音声翻訳用。内蔵エンジンでローカル実行（外部サーバー不要）。</p>
 
   <ul class="mt-3 flex flex-col gap-2">
     {#each data.models as m (m.id)}

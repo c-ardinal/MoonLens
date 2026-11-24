@@ -100,6 +100,8 @@ export interface FrameReady {
   width: number;
   height: number;
   auto_full: boolean;
+  /** Monitor the frame shows (for continuous window translation). */
+  monitor_index: number;
 }
 
 export type OverlayEvent =
@@ -168,9 +170,9 @@ export const ocrModelsStatus = () =>
 export const onSettingsChanged = (handler: (s: Settings) => void): Promise<UnlistenFn> =>
   listen<Settings>('moonlens://settings-changed', (e) => handler(e.payload));
 
-/** Pin state changed from the pin hotkey. */
-export const onPinState = (handler: (pinned: boolean) => void): Promise<UnlistenFn> =>
-  listen<boolean>('moonlens://pin-state', (e) => handler(e.payload));
+/** Whether any window-translation window reads its range continuously. */
+export const onLensActive = (handler: (active: boolean) => void): Promise<UnlistenFn> =>
+  listen<boolean>('moonlens://lens-active', (e) => handler(e.payload));
 
 /** A GGUF model the built-in translation engine can run. */
 export interface LlmModel {
@@ -291,15 +293,19 @@ export const processFrozenSelection = (rect: FrameRect | null, targetLanguage?: 
 export const retranslateSelection = (targetLanguage: string) =>
   safeInvoke<CaptureFlowResult>('retranslate_selection', { targetLanguage });
 export const closeSelector = () => safeInvoke<void>('close_selector');
-/** Open the Lens selector (hides the main window first). */
+/** Open the window-translation selector (hides the main window first). */
 export const startRegionSelection = (full = false) =>
   safeInvoke<void>('start_region_selection', { full });
 
-/** Live translation of `args` (translations painted in place on the live
- * screen); `targetLanguage` defaults to the configured target. */
-export const pinOverlay = (args: CaptureFlowRect, targetLanguage?: string | null) =>
-  safeInvoke<void>('pin_overlay', { args, targetLanguage: targetLanguage ?? null });
-export const unpinOverlay = () => safeInvoke<void>('unpin_overlay');
+/** Continuous window translation: open a window-translation window whose
+ * body covers `rect` (or a default spot); `targetLanguage` defaults to the
+ * configured target. Resolves to the window id. */
+export const openLens = (rect: CaptureFlowRect | null = null, targetLanguage?: string | null) =>
+  safeInvoke<string>('open_lens', { rect, targetLanguage: targetLanguage ?? null });
+export const setLensLanguage = (id: string, targetLanguage: string | null) =>
+  safeInvoke<void>('set_lens_language', { id, targetLanguage });
+export const setLensInteractive = (id: string, on: boolean) =>
+  safeInvoke<void>('set_lens_interactive', { id, on });
 
 export const runTranslate = (args: {
   text: string;
@@ -427,9 +433,10 @@ export interface LensDescriptor {
   insets: { top: number; bottom: number; left: number; right: number };
   /** Reads the region continuously (re-translates on change). */
   continuous: boolean;
+  /** Language it translates into; null = the configured target. */
+  target_language: string | null;
 }
 
-export const newLensWindow = () => safeInvoke<string>('new_lens_window');
 export const closeLensWindow = (id: string) => safeInvoke<void>('close_lens_window', { id });
 export const listLensWindows = () =>
   safeInvoke<LensDescriptor[]>('list_lens_windows', undefined, []);

@@ -1,9 +1,9 @@
 /**
- * メインウィンドウの演出制御。推論中（字幕・ライブ翻訳・翻訳実行）と動き削減設定時は停止。
+ * メインウィンドウの演出制御。推論中（音声翻訳・常時ウィンドウ翻訳・翻訳実行）と動き削減設定時は停止。
  * 停止状態は `<html data-motion>` へ反映し、CSS 演出も同期。
  */
 import { untrack } from 'svelte';
-import { onPinState, onSubtitle, subtitleState } from '$lib/ipc';
+import { onLensActive, onSubtitle, subtitleState } from '$lib/ipc';
 
 const state = $state({ holds: 0, subtitle: false, pinned: false, reduced: false });
 
@@ -32,7 +32,7 @@ export function holdMotion(): () => void {
   };
 }
 
-/** 動き削減設定・字幕・ライブ翻訳の状態監視を開始。戻り値で終了。 */
+/** 動き削減設定・音声翻訳・常時ウィンドウ翻訳の状態監視を開始。戻り値で終了。 */
 export function watchMotion(root: HTMLElement = document.documentElement): () => void {
   const mq = matchMedia('(prefers-reduced-motion: reduce)');
   const sync = () => (state.reduced = mq.matches || root.dataset.reducedMotion === 'true');
@@ -48,7 +48,7 @@ export function watchMotion(root: HTMLElement = document.documentElement): () =>
         else if (e.kind === 'stopped') state.subtitle = false;
       })
     ),
-    Promise.resolve().then(() => onPinState((pinned) => (state.pinned = pinned)))
+    Promise.resolve().then(() => onLensActive((active) => (state.pinned = active)))
   ];
   stops.forEach((s) => s.catch(() => {}));
   subtitleState()

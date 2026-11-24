@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Copy, Sparkles, Languages, Pin, ExternalLink } from 'lucide-svelte';
+  import { Copy, Sparkles, Languages, Radio, ExternalLink } from 'lucide-svelte';
   import type { Intent } from '$lib/ipc';
 
   export type ActionId =
@@ -25,7 +25,7 @@
     translate: { id: 'translate', label: '翻訳', icon: Languages },
     copy: { id: 'copy', label: 'コピー', icon: Copy },
     explain: { id: 'explain', label: '説明', icon: Sparkles },
-    pin: { id: 'pin', label: 'ピン', icon: Pin },
+    pin: { id: 'pin', label: '常時', icon: Radio },
     open_url: { id: 'open_url', label: 'URL を開く', icon: ExternalLink }
   };
 

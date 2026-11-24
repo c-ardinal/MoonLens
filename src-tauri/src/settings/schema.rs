@@ -136,6 +136,8 @@ pub struct OverlaySettings {
     pub font_size_px: u32,
     #[schemars(range(min = 1.1, max = 2.0))]
     pub line_height: f32,
+    /// Unused since live translation became continuous window
+    /// translation (kept so existing config files still load).
     pub follow_source: bool,
     pub auto_hide_ms: Option<u32>,
     pub position: OverlayPosition,

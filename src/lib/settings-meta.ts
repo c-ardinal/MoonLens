@@ -44,13 +44,13 @@ export const SECTIONS: Section[] = [
   {
     id: 'translation',
     title: '翻訳',
-    description: '画面翻訳・ライブ字幕の共通設定。',
+    description: 'ウィンドウ翻訳・音声翻訳の共通設定。',
     fields: [
       {
         kind: 'select',
         path: 'subtitle.target_language',
         label: '翻訳先言語',
-        help: '画面翻訳・ライブ字幕に共通。範囲選択ツールバーでも一時変更可能。',
+        help: 'ウィンドウ翻訳・音声翻訳に共通。ウィンドウ翻訳のツールバーでも一時変更可能。',
         options: LANGUAGE_OPTIONS
       },
       {
@@ -86,29 +86,29 @@ export const SECTIONS: Section[] = [
       {
         kind: 'hotkey',
         path: 'hotkeys.capture_region',
-        label: '範囲翻訳',
+        label: 'ウィンドウ翻訳（範囲）',
         help: '画面を静止し、ドラッグ範囲を翻訳。'
       },
       {
         kind: 'hotkey',
         path: 'hotkeys.capture_window',
-        label: '全画面翻訳',
+        label: 'ウィンドウ翻訳（全画面）',
         help: 'カーソル位置のディスプレイ全体を翻訳。'
       },
       {
         kind: 'hotkey',
         path: 'hotkeys.toggle_pin_overlay',
-        label: 'ライブ翻訳切替',
-        help: '直前の翻訳範囲を監視し、変化時に自動再翻訳。'
+        label: '常時翻訳 開始／終了',
+        help: '直前の翻訳範囲を常時翻訳。画面変化時に自動再翻訳。'
       },
-      { kind: 'hotkey', path: 'hotkeys.toggle_subtitle', label: 'ライブ字幕 開始／停止' },
+      { kind: 'hotkey', path: 'hotkeys.toggle_subtitle', label: '音声翻訳 開始／停止' },
       { kind: 'hotkey', path: 'hotkeys.open_command_palette', label: 'コマンドパレット' },
       { kind: 'hotkey', path: 'hotkeys.open_history', label: '履歴表示' }
     ]
   },
   {
     id: 'subtitle',
-    title: 'ライブ字幕',
+    title: '音声翻訳',
     description: 'システム音声を認識・翻訳し、字幕表示。',
     fields: [
       {
@@ -159,15 +159,9 @@ export const SECTIONS: Section[] = [
   },
   {
     id: 'pin',
-    title: 'ライブ翻訳',
-    description: '選択範囲へ訳文を重畳表示し、画面変化へ追従して再翻訳。',
+    title: '常時翻訳',
+    description: 'ウィンドウ翻訳の常時モード。画面変化へ追従して再翻訳。',
     fields: [
-      {
-        kind: 'toggle',
-        path: 'overlay.follow_source',
-        label: 'ライブ翻訳',
-        help: 'オフ時はライブ翻訳を停止。'
-      },
       {
         kind: 'number',
         path: 'performance.region_watcher_poll_ms',
@@ -184,7 +178,7 @@ export const SECTIONS: Section[] = [
   {
     id: 'popup',
     title: '訳文ポップアップ',
-    description: 'ピン留め結果等を表示する小型ウィンドウの外観。',
+    description: '結果表示用の小型ウィンドウの外観。',
     fields: [
       {
         kind: 'number',
@@ -239,7 +233,7 @@ export const SECTIONS: Section[] = [
         kind: 'number',
         path: 'overlay.auto_hide_ms',
         label: '自動非表示',
-        help: '表示後、指定時間で非表示。ピン留め中・ホバー中は無効。0：無効。',
+        help: '表示後、指定時間で非表示。ホバー中は無効。0：無効。',
         min: 0,
         max: 30000,
         step: 500,
@@ -262,7 +256,7 @@ export const SECTIONS: Section[] = [
         help: '訳文と併用時は訳文を優先。'
       },
       { kind: 'toggle', path: 'clipboard.auto_copy_qr', label: 'QR コード内容' },
-      { kind: 'toggle', path: 'clipboard.auto_copy_transcript', label: 'ライブ字幕の認識結果' }
+      { kind: 'toggle', path: 'clipboard.auto_copy_transcript', label: '音声翻訳の認識結果' }
     ]
   },
   {

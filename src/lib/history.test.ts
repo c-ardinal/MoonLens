@@ -25,23 +25,22 @@ const rows = [
 ];
 
 describe('history filter', () => {
-  it('treats legacy "translate" rows as screen translations', () => {
-    expect(filterOf('translate')).toBe('screen');
-    expect(kindLabel('translate')).toBe('画面翻訳');
+  it('treats legacy "translate" rows as window translations', () => {
+    expect(filterOf('translate')).toBe('window');
+    expect(kindLabel('translate')).toBe('ウィンドウ翻訳');
   });
 
   it('filters by kind', () => {
     expect(applyFilter(rows, 'all')).toHaveLength(8);
-    expect(applyFilter(rows, 'screen').map((e) => e.id)).toEqual([1, 2]);
-    expect(applyFilter(rows, 'lens').map((e) => e.id)).toEqual([3]);
-    expect(applyFilter(rows, 'live').map((e) => e.id)).toEqual([4]);
+    // One-off, continuous and pre-merge live rows share the window tab.
+    expect(applyFilter(rows, 'window').map((e) => e.id)).toEqual([1, 2, 3, 4]);
     expect(applyFilter(rows, 'image').map((e) => e.id)).toEqual([8]);
     expect(applyFilter(rows, 'text').map((e) => e.id)).toEqual([5]);
     expect(applyFilter(rows, 'qr').map((e) => e.id)).toEqual([6]);
   });
 
   it('counts rows per filter; uncovered kinds count only in "all"', () => {
-    expect(countByFilter(rows)).toEqual({ all: 8, screen: 2, lens: 1, live: 1, image: 1, text: 1, qr: 1 });
+    expect(countByFilter(rows)).toEqual({ all: 8, window: 4, image: 1, text: 1, qr: 1 });
   });
 
   it('shows unknown kinds as is', () => {
@@ -55,7 +54,7 @@ describe('nextSelection', () => {
     expect(nextSelection(rows, 3)).toBe(3);
   });
   it('falls back to the first visible row', () => {
-    expect(nextSelection(applyFilter(rows, 'lens'), 1)).toBe(3);
+    expect(nextSelection(applyFilter(rows, 'image'), 1)).toBe(8);
     expect(nextSelection(rows, null)).toBe(1);
   });
   it('is null for an empty list', () => {

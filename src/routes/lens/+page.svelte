@@ -3,14 +3,29 @@
   import { invoke } from '@tauri-apps/api/core';
   import { listen, type UnlistenFn } from '@tauri-apps/api/event';
   import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
-  import { Camera, X, RefreshCw, Clipboard, TextSelect } from 'lucide-svelte';
+  import { X } from 'lucide-svelte';
   import PrivacyBadge from '$lib/components/PrivacyBadge.svelte';
   import FlowText from '$lib/components/FlowText.svelte';
-  import type { CaptureFlowResult, LensBlock } from '$lib/ipc';
-  import { blockCssRect, growRoom, rgb } from '$lib/lens-overlay';
-  import { liveText, type LensLiveEvent } from '$lib/live';
+  import LensActions from '$lib/components/LensActions.svelte';
+  import {
+    getSettings,
+    listLensWindows,
+    runExplain,
+    setLensInteractive,
+    setLensLanguage,
+    type CaptureFlowResult,
+    type LensBlock
+  } from '$lib/ipc';
+  import { joinedText, languageLabel, rgb } from '$lib/lens-overlay';
+  import { liveBoxes, liveText, type LensLiveEvent } from '$lib/live';
   import { extractText } from '$lib/result';
   import { errorText } from '$lib/errors';
+
+  // Window translation, continuous. The window sits over the observed
+  // range: the header above it can be dragged, the edges and the corner
+  // grip resize it, and the body lets the mouse through to the app
+  // underneath (the backend switches that by pointer position). Shows the
+  // translations in place over the range, or as text in the text view.
 
   const params = new URLSearchParams(
     typeof window !== 'undefined' ? window.location.search : ''
@@ -23,29 +38,28 @@
   let provider = $state('');
   let busy = $state(false);
   let lastError = $state<string | null>(null);
-  /** The last capture ran but found no text in the region. */
+  /** The last reading found no text in the range. */
   let empty = $state(false);
-  /** Read the region continuously and re-translate on change (default). */
+  /** Read the range continuously and re-translate on change (default). */
   let continuous = $state(true);
   /** Continuous reading: new text is with the model. */
   let translating = $state(false);
-  /** Blocks of the last capture, painted in place over the region. */
+  /** Blocks of the last reading, painted in place over the range. */
   let blocks = $state<LensBlock[]>([]);
   /** Blocks whose source changed or moved away; hidden until re-read. */
   let hidden = $state<Set<number>>(new Set());
-  /** Show the source / translation as text instead of in place. */
-  let textView = $state(false);
+  /** Show the original (translations off) / the text view. */
+  let showOriginal = $state(false);
+  let showText = $state(false);
+  let explanation = $state<string | null>(null);
+  let sourceLanguage = $state<string | null>(null);
+  let targetLanguage = $state('ja');
   let dpr = $state(typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1);
-  const origin = { x: 0, y: 0, w: 0, h: 0 };
-  /** Blocks painted over the region (hidden ones keep their place, so a
-   * re-read does not flip the lens to the text view meanwhile). */
-  const placed = $derived(blocks.filter((b) => b.bbox[2] > 0 && b.bbox[3] > 0 && !b.same_language));
-  const inPlace = $derived(!textView && placed.length > 0);
+  let vw = $state(typeof window !== 'undefined' ? window.innerWidth : 0);
+  const boxes = $derived(liveBoxes(blocks, hidden, dpr, vw * dpr));
+  const hasText = $derived(!!(source?.trim() || translation.trim()));
   let headerEl: HTMLElement;
-  let unlisten: UnlistenFn | undefined;
-  let unlistenLive: UnlistenFn | undefined;
-  let unlistenMove: UnlistenFn | undefined;
-  let unlistenResize: UnlistenFn | undefined;
+  const unlisteners: (UnlistenFn | undefined)[] = [];
   let reportedHeaderHeight = 0;
 
   const win = getCurrentWebviewWindow();
@@ -57,13 +71,7 @@
     if (top === reportedHeaderHeight) return;
     reportedHeaderHeight = top;
     try {
-      await invoke('set_lens_insets', {
-        id,
-        top,
-        bottom: 0,
-        left: 0,
-        right: 0
-      });
+      await invoke('set_lens_insets', { id, top, bottom: 0, left: 0, right: 0 });
     } catch {
       /* Tauri may not be ready in dev */
     }
@@ -81,6 +89,7 @@
     translation = 'Intent' in (r.result.output as object) ? '' : extractText(r.result);
     viaCloud = r.result.via_cloud;
     provider = r.result.used_provider;
+    sourceLanguage = r.source_language ?? null;
     empty = !source?.trim() && !translation.trim();
     blocks = at === geometry ? (r.blocks ?? []) : [];
     hidden = new Set();
@@ -112,7 +121,7 @@
       empty = true;
       lastError = null;
     } else if (ev.kind === 'decoded') {
-      // QR code: shown as text (no boxes to place).
+      // QR code: no boxes to place, so it is shown as text.
       blocks = [];
       hidden = new Set();
       source = null;
@@ -120,13 +129,14 @@
       translating = false;
       empty = false;
       lastError = null;
+      showText = true;
     } else {
       translating = false;
       lastError = errorText(ev.message);
     }
   }
 
-  async function capture() {
+  async function refresh() {
     if (busy) return;
     // Continuous: ask the reader to read now (also when nothing changed).
     if (continuous) {
@@ -154,7 +164,31 @@
   }
 
   function copy() {
-    if (translation) navigator.clipboard.writeText(translation).catch(() => {});
+    const text = showOriginal ? (source ?? '') : translation;
+    if (text) navigator.clipboard.writeText(text).catch(() => {});
+  }
+
+  async function changeLanguage(code: string) {
+    if (code === targetLanguage) return;
+    targetLanguage = code;
+    await setLensLanguage(id, code).catch(() => {});
+    // One-off mode: nothing re-reads on its own.
+    if (!continuous) refresh();
+  }
+
+  async function explain() {
+    const src = source?.trim() || joinedText(blocks, 'source');
+    if (!src) return;
+    showText = true;
+    explanation = '説明を生成中…';
+    try {
+      const r = await runExplain(
+        `次のテキストの内容を${languageLabel(targetLanguage) || '日本語'}で簡潔に説明してください:\n\n${src}`
+      );
+      explanation = extractText(r);
+    } catch (e) {
+      explanation = `説明の生成に失敗：${errorText(e)}`;
+    }
   }
 
   $effect(() => {
@@ -162,13 +196,24 @@
     if (!continuous) translating = false;
   });
 
+  // The text view covers the body with controls: it takes the mouse then.
+  $effect(() => {
+    setLensInteractive(id, showText).catch(() => {});
+  });
+
+  function startResize(e: PointerEvent) {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    win.startResizeDragging('SouthEast').catch(() => {});
+  }
+
   /** Last window position / size, to ignore move events that move nothing. */
   let lastPos = '';
   let lastSize = '';
   function moved(key: string, prev: string): boolean {
     if (key === prev) return false;
     geometry++;
-    // Boxes no longer line up: hide them until the region is read again.
+    // Boxes no longer line up: hide them until the range is read again.
     hidden = new Set(blocks.map((_, i) => i));
     // Have the reader look now: it waits for the lens to hold still, and
     // shows the boxes again even if the move turns out to be none.
@@ -178,25 +223,51 @@
 
   onMount(async () => {
     reportInsets();
-    // One-off captures (continuous reading off) also arrive here.
-    unlisten = await listen<CaptureFlowResult>('moonlens://lens-result', (e) => apply(e.payload));
-    unlistenLive = await listen<LensLiveEvent>('moonlens://lens-live', (e) => {
-      if (continuous) applyLive(e.payload);
-    });
+    const onResize = () => (vw = window.innerWidth);
+    window.addEventListener('resize', onResize);
+    unlisteners.push(() => window.removeEventListener('resize', onResize));
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') close();
+    };
+    window.addEventListener('keydown', onKey);
+    unlisteners.push(() => window.removeEventListener('keydown', onKey));
+    // Language: the one this lens was opened with, else the configured one.
+    Promise.all([listLensWindows(), getSettings()])
+      .then(([lenses, s]: [{ id: string; target_language: string | null }[], any]) => {
+        targetLanguage =
+          lenses.find((l) => l.id === id)?.target_language ?? s?.subtitle?.target_language ?? 'ja';
+      })
+      .catch(() => {});
+    try {
+      // One-off captures (continuous reading off) also arrive here.
+      unlisteners.push(
+        await listen<CaptureFlowResult>('moonlens://lens-result', (e) => apply(e.payload))
+      );
+      unlisteners.push(
+        await listen<LensLiveEvent>('moonlens://lens-live', (e) => {
+          if (continuous) applyLive(e.payload);
+        })
+      );
+    } catch {
+      /* not running inside Tauri */
+    }
     const ro = new ResizeObserver(() => reportInsets());
     if (headerEl) ro.observe(headerEl);
-    // Boxes from the last capture no longer line up once the lens moves
-    // or is resized; hide them until the next reading.
+    unlisteners.push(() => ro.disconnect());
     try {
-      unlistenMove = await win.onMoved(({ payload: p }) => {
-        const key = `${p.x},${p.y}`;
-        if (moved(key, lastPos)) lastPos = key;
-      });
-      unlistenResize = await win.onResized(({ payload: p }) => {
-        const key = `${p.width}x${p.height}`;
-        if (moved(key, lastSize)) lastSize = key;
-        dpr = window.devicePixelRatio || 1;
-      });
+      unlisteners.push(
+        await win.onMoved(({ payload: p }) => {
+          const key = `${p.x},${p.y}`;
+          if (moved(key, lastPos)) lastPos = key;
+        })
+      );
+      unlisteners.push(
+        await win.onResized(({ payload: p }) => {
+          const key = `${p.width}x${p.height}`;
+          if (moved(key, lastSize)) lastSize = key;
+          dpr = window.devicePixelRatio || 1;
+        })
+      );
       const pos = await win.outerPosition();
       const size = await win.innerSize();
       lastPos = `${pos.x},${pos.y}`;
@@ -207,161 +278,201 @@
   });
 
   onDestroy(() => {
-    unlisten?.();
-    unlistenLive?.();
-    unlistenMove?.();
-    unlistenResize?.();
+    unlisteners.forEach((u) => u?.());
     invoke('set_lens_continuous', { id, on: false }).catch(() => {});
   });
+
+  const status = $derived(
+    lastError
+      ? lastError
+      : busy || translating
+        ? '処理中…'
+        : empty
+          ? '範囲内に文字なし'
+          : !hasText
+            ? continuous
+              ? '画面変化時に自動翻訳'
+              : '再取得で翻訳'
+            : null
+  );
 </script>
 
-<main
-  class="pointer-events-auto flex h-screen flex-col overflow-hidden rounded-ml border border-border/70 shadow-ml-lg"
->
-  <header
-    bind:this={headerEl}
-    data-tauri-drag-region
-    class="glass flex select-none items-center justify-between gap-2 border-b border-border/60 px-3 py-2"
-  >
-    <div class="flex items-center gap-2">
-      <span class="pointer-events-none text-[11px] font-mono text-ink-faint"
-        >{id.replace('lens-', '')}</span
-      >
-      {#if inPlace}
+<main class="lens">
+  <header bind:this={headerEl} data-tauri-drag-region class="bar">
+    <div class="pointer-events-none flex min-w-0 items-center gap-2" data-tauri-drag-region>
+      <span class="title">ウィンドウ翻訳</span>
+      {#if hasText}
         <PrivacyBadge {viaCloud} {provider} />
       {/if}
     </div>
-    <div class="flex items-center gap-1">
-      <button
-        class="rounded-ml-sm px-1.5 py-0.5 text-[11px] hover:bg-surface-muted {continuous
-          ? 'text-accent'
-          : 'text-ink-muted'}"
-        aria-pressed={continuous}
-        onclick={() => (continuous = !continuous)}
-        title={continuous ? '常時翻訳：ON（画面変化時に再翻訳）' : '常時翻訳：OFF（手動のみ）'}
-      >
-        常時
-      </button>
-      <button
-        class="rounded-ml-sm p-1 text-ink-muted hover:bg-surface-muted"
-        onclick={capture}
-        disabled={busy}
-        title="再キャプチャ"
-      >
-        <RefreshCw class="h-4 w-4 {busy || translating ? 'animate-spin' : ''}" />
-      </button>
-      <button
-        class="rounded-ml-sm p-1 text-ink-muted hover:bg-surface-muted disabled:opacity-40"
-        aria-pressed={textView}
-        disabled={placed.length === 0 && !textView}
-        onclick={() => (textView = !textView)}
-        title={textView ? '重畳表示' : 'テキスト表示'}
-      >
-        <TextSelect class="h-4 w-4 {textView ? 'text-accent' : ''}" />
-      </button>
-      <button
-        class="rounded-ml-sm p-1 text-ink-muted hover:bg-surface-muted"
-        onclick={copy}
-        title="コピー"
-      >
-        <Clipboard class="h-4 w-4" />
-      </button>
-      <button
-        class="rounded-ml-sm p-1 text-ink-muted hover:bg-surface-muted"
-        onclick={close}
-        title="閉じる"
-      >
-        <X class="h-4 w-4" />
-      </button>
-    </div>
+    <LensActions
+      compact
+      {continuous}
+      {showOriginal}
+      {showText}
+      {sourceLanguage}
+      {targetLanguage}
+      {hasText}
+      busy={busy || translating}
+      oncontinuous={() => (continuous = !continuous)}
+      onrefresh={refresh}
+      onoriginal={() => (showOriginal = !showOriginal)}
+      onlanguage={changeLanguage}
+      oncopy={copy}
+      ontext={() => (showText = !showText)}
+      onexplain={explain}
+      onclose={close}
+    />
   </header>
 
-  {#if inPlace}
-    <!-- In place over the observed region (Lens style). The region starts
-         right below the header, so block boxes map 1:1 (÷ dpr). -->
-    <section class="relative flex-1 overflow-hidden" aria-label="訳文">
-      {#each blocks as b, i (i)}
-        {#if !hidden.has(i) && b.bbox[2] > 0 && b.bbox[3] > 0 && !b.same_language}
-        {@const r = blockCssRect(b, origin, dpr)}
+  <!-- The observed range. Transparent; the mouse passes through it. -->
+  <section class="body" aria-label="訳文">
+    {#if !showOriginal}
+      {#each boxes as b (b.rect.key)}
         <div
-          class="lens-box absolute"
-          class:pending={b.translation == null}
-          style="left: {r.left}px; top: {r.top}px; width: {r.width}px; height: {r.height}px;
-                 background: {rgb(b.colors?.background, 'rgba(255,255,255,0.96)')};
-                 color: {rgb(b.colors?.foreground, '#111')};"
-          title={b.source}
+          class="box"
+          class:pending={b.pending}
+          style="left: {b.rect.left}px; top: {b.rect.top}px; width: {b.rect.width}px; height: {b.rect.height}px;
+                 background: {rgb(b.block.colors?.background, 'rgba(255,255,255,0.96)')};
+                 color: {rgb(b.block.colors?.foreground, '#111')};"
         >
-          {#if b.translation != null}
+          {#if !b.pending}
             <FlowText
-              block={b}
-              text={b.translation}
+              block={b.block}
+              text={b.block.translation ?? ''}
               scale={dpr}
-              grow={growRoom(blocks, i, window.innerWidth * dpr) / dpr}
-              background={rgb(b.colors?.background, 'rgba(255,255,255,0.96)')}
+              grow={b.grow}
+              background={rgb(b.block.colors?.background, 'rgba(255,255,255,0.96)')}
             />
           {/if}
         </div>
-        {/if}
       {/each}
-      {#if busy || translating || lastError}
-        <div class="glass absolute bottom-2 right-2 rounded-ml-sm px-2 py-1 text-[11px]">
-          {#if lastError}<span class="text-red-500">{lastError}</span>{:else}処理中…{/if}
-        </div>
-      {/if}
-    </section>
-  {:else}
-  <section class="glass flex-1 overflow-auto scrollbar-minimal p-3">
-    {#if !translation && !source && !lastError}
-      <div class="flex h-full flex-col items-center justify-center gap-2 text-ink-muted">
-        <Camera class="h-6 w-6 text-ink-faint" />
-        {#if empty}
-          <p class="text-sm">範囲内に文字なし</p>
-          <p class="text-xs text-ink-faint">
-            {continuous ? '文字の表示時に自動翻訳' : '位置・サイズ調整後、再キャプチャ ↻'}
-          </p>
-        {:else if continuous}
-          <p class="text-sm">対象範囲に配置</p>
-          <p class="text-xs text-ink-faint">画面変化時に自動再翻訳</p>
-        {:else}
-          <p class="text-sm">対象範囲に配置して再キャプチャ ↻</p>
-        {/if}
-      </div>
-    {:else}
-      <div class="mb-2 flex items-center justify-between">
-        <PrivacyBadge {viaCloud} {provider} />
-        {#if busy || translating}
-          <span class="text-[11px] text-ink-faint">処理中…</span>
-        {/if}
-      </div>
-      {#if source}
-        <p class="font-mono text-[11px] leading-relaxed text-ink-faint">{source}</p>
-        <hr class="my-2 border-border/60" />
-      {/if}
-      <p class="whitespace-pre-wrap text-sm leading-relaxed">{translation}</p>
-      {#if lastError}
-        <p class="mt-2 text-xs text-red-500">{lastError}</p>
-      {/if}
     {/if}
+
+    {#if showText}
+      <aside class="panel" aria-label="テキスト">
+        <header class="flex items-center justify-between px-3 py-1.5">
+          <span class="text-xs font-medium">テキスト</span>
+          <button class="close" onclick={() => (showText = false)} title="閉じる"><X class="h-3.5 w-3.5" /></button>
+        </header>
+        <div class="flex-1 select-text overflow-auto px-3 pb-3 text-sm leading-relaxed">
+          {#if explanation}
+            <section class="mb-3 whitespace-pre-wrap rounded-md bg-white/5 p-2">{explanation}</section>
+          {/if}
+          {#if blocks.length > 0}
+            {#each blocks as b, i (i)}
+              {#if b.same_language}
+                <p class="mb-3 whitespace-pre-wrap">{b.source}</p>
+              {:else}
+                <p class="mb-1 whitespace-pre-wrap">{b.translation ?? '（翻訳中）'}</p>
+                <p class="mb-3 whitespace-pre-wrap text-xs opacity-60">{b.source}</p>
+              {/if}
+            {/each}
+          {:else if hasText}
+            <p class="whitespace-pre-wrap">{translation}</p>
+            {#if source}<p class="mt-1 whitespace-pre-wrap text-xs opacity-60">{source}</p>{/if}
+          {:else}
+            <p class="opacity-60">文字なし</p>
+          {/if}
+        </div>
+      </aside>
+    {/if}
+
+    {#if status}
+      <div class="status" class:error={!!lastError}>{status}</div>
+    {/if}
+    <!-- Resize grip (also clickable while the body lets the mouse through). -->
+    <div class="grip" role="presentation" title="サイズ変更" onpointerdown={startResize}></div>
   </section>
-  {/if}
 </main>
 
 <style>
-  .glass {
-    background: color-mix(in oklab, var(--ml-surface-elevated) 70%, transparent);
-    backdrop-filter: blur(40px) saturate(1.5);
-    -webkit-backdrop-filter: blur(40px) saturate(1.5);
-  }
-  .lens-box {
-    border-radius: 3px;
-    user-select: text;
-  }
-  .lens-box.pending {
-    background-image: linear-gradient(100deg, transparent 30%, rgba(139, 92, 246, 0.18) 50%, transparent 70%) !important;
-  }
   :global(html),
   :global(body) {
     background: transparent;
     margin: 0;
+  }
+  .lens {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    overflow: hidden;
+    color: #f4f4f5;
+  }
+  /* Fixed height: the backend puts this header right above the range
+     (lens::HEADER_CSS). */
+  .bar {
+    box-sizing: border-box;
+    height: 34px;
+    flex: none;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 0 4px 0 10px;
+    background: rgba(24, 24, 28, 0.92);
+    border-radius: 8px 8px 0 0;
+    user-select: none;
+    --la-hover: rgba(255, 255, 255, 0.12);
+    --la-pressed: rgba(139, 92, 246, 0.45);
+  }
+  .title {
+    font-size: 11px;
+    opacity: 0.75;
+    white-space: nowrap;
+  }
+  .body {
+    position: relative;
+    flex: 1;
+    overflow: hidden;
+    /* Marks the range without covering it. */
+    box-shadow: inset 0 0 0 2px rgba(139, 92, 246, 0.6);
+  }
+  .box {
+    position: absolute;
+    border-radius: 3px;
+  }
+  .box.pending {
+    background-image: linear-gradient(100deg, transparent 30%, rgba(139, 92, 246, 0.18) 50%, transparent 70%) !important;
+  }
+  .panel {
+    position: absolute;
+    inset: 6px 6px 6px auto;
+    width: min(360px, calc(100% - 12px));
+    display: flex;
+    flex-direction: column;
+    border-radius: 10px;
+    background: rgba(24, 24, 28, 0.94);
+    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.4);
+  }
+  .close {
+    border-radius: 6px;
+    padding: 2px;
+  }
+  .close:hover {
+    background: rgba(255, 255, 255, 0.12);
+  }
+  .status {
+    position: absolute;
+    left: 6px;
+    bottom: 6px;
+    max-width: calc(100% - 40px);
+    border-radius: 6px;
+    padding: 2px 8px;
+    font-size: 11px;
+    background: rgba(24, 24, 28, 0.85);
+  }
+  .status.error {
+    color: #fca5a5;
+  }
+  .grip {
+    position: absolute;
+    right: 0;
+    bottom: 0;
+    width: 18px;
+    height: 18px;
+    cursor: nwse-resize;
+    background: linear-gradient(135deg, transparent 50%, rgba(139, 92, 246, 0.85) 50%);
+    border-bottom-right-radius: 2px;
   }
 </style>

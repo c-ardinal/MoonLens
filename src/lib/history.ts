@@ -3,35 +3,35 @@
  *
  * `kind` values come from `pipeline::history_kind` in the backend. Rows
  * written before those existed use `translate` for every translation, so
- * they count as screen translations.
+ * they count as window translations. One-off (`capture`) and continuous
+ * (`lens`, and `live` from before the two were merged) window
+ * translations share one tab.
  */
 import type { HistoryEntry } from './ipc';
 
-export type HistoryFilter = 'all' | 'screen' | 'lens' | 'live' | 'image' | 'text' | 'qr';
+export type HistoryFilter = 'all' | 'window' | 'image' | 'text' | 'qr';
 
 export const HISTORY_FILTERS: { value: HistoryFilter; label: string }[] = [
   { value: 'all', label: '全件' },
-  { value: 'screen', label: '画面' },
-  { value: 'lens', label: 'Lens' },
-  { value: 'live', label: 'ライブ' },
+  { value: 'window', label: 'ウィンドウ' },
   { value: 'image', label: '画像' },
   { value: 'text', label: 'テキスト' },
   { value: 'qr', label: 'QR' }
 ];
 
 const KIND_LABELS: Record<string, string> = {
-  capture: '画面翻訳',
-  translate: '画面翻訳',
-  lens: 'Lens',
-  live: 'ライブ翻訳',
+  capture: 'ウィンドウ翻訳',
+  translate: 'ウィンドウ翻訳',
+  lens: 'ウィンドウ翻訳（常時）',
+  live: 'ウィンドウ翻訳（常時）',
   image: '画像翻訳',
   text: 'テキスト翻訳',
   qr: 'QR コード',
   ocr: '文字認識',
   explain: '説明',
   summarize: '要約',
-  transcript: '字幕',
-  asr: '字幕'
+  transcript: '音声翻訳',
+  asr: '音声翻訳'
 };
 
 /** Display label for a history row's kind (unknown kinds as is). */
@@ -44,9 +44,9 @@ export function filterOf(kind: string): Exclude<HistoryFilter, 'all'> | null {
   switch (kind) {
     case 'capture':
     case 'translate':
-      return 'screen';
     case 'lens':
     case 'live':
+      return 'window';
     case 'image':
     case 'text':
     case 'qr':
@@ -65,9 +65,7 @@ export function applyFilter(entries: HistoryEntry[], filter: HistoryFilter): His
 export function countByFilter(entries: HistoryEntry[]): Record<HistoryFilter, number> {
   const counts: Record<HistoryFilter, number> = {
     all: entries.length,
-    screen: 0,
-    lens: 0,
-    live: 0,
+    window: 0,
     image: 0,
     text: 0,
     qr: 0

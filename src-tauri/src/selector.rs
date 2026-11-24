@@ -1,4 +1,4 @@
-//! Region selection on a frozen frame (Lens-style).
+//! Window translation: target selection on a frozen frame.
 //!
 //! When the capture hotkey fires we screenshot the monitor under the
 //! cursor *first*, then show the full-screen `selector` webview with that
@@ -45,6 +45,9 @@ pub struct FrameReady {
     /// When true the selector should immediately process the whole frame
     /// (the "capture window" hotkey) instead of waiting for a drag.
     pub auto_full: bool,
+    /// Monitor the frame shows, for turning a selection into a
+    /// continuous window translation over the live screen.
+    pub monitor_index: usize,
 }
 
 /// Selection rect in frozen-frame pixels.
@@ -107,6 +110,7 @@ pub fn show_with(app: &AppHandle, auto_full: bool) -> Result<()> {
         width: image.width(),
         height: image.height(),
         auto_full,
+        monitor_index: index,
     };
     *LAST_ANALYSIS.lock() = None;
     *FROZEN.lock() = Some(Arc::new(FrozenFrame {

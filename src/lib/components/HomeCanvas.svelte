@@ -1,15 +1,17 @@
 <script lang="ts">
   import { onDestroy, onMount, untrack } from 'svelte';
   import { Pix } from '$lib/pixel/pix';
-  import { dialGeometry, hitTest } from '$lib/pixel/dial';
+  import { ROTORS, dialGeometry, drawRotor, hitTest, rotorSize } from '$lib/pixel/dial';
   import { drawHome, drawHomeMotion, homeDot, homeRegions, type HomeRegion, type HomeView } from '$lib/pixel/home';
   import { motion } from '$lib/pixel/motion.svelte';
 
   /**
-   * ホーム画面の描画層。2 枚の Canvas を重ねる構成。
-   * - 下層（動作層）：ルーン環の回転・光点・波紋・中心核。12 fps で再描画（文字処理なし）。
+   * ホーム画面の描画層。Canvas を重ねる構成。
+   * - 下層（動作層）：光点・波紋・中心核。12 fps で再描画（文字処理なし）。
+   * - 中層（回転体）：ルーン環・中心核の正方形。寸法変化時のみ描画し、CSS で等速回転（ドット単位の段差なし）。
    * - 上層（静止層）：文字・枠・ノード。状態変化時と選択切替の演出中のみ再描画。
    * 推論中・動き削減設定時・非表示時は演出を停止し、静止画のみ描画。
+   * 選択切替：クリック・キー操作に加え、ホイールと魔法陣のドラッグ（回転）にも対応。
    */
   let {
     view,
@@ -28,6 +30,7 @@
 
   let under: HTMLCanvasElement;
   let canvas: HTMLCanvasElement;
+  const rotorEls: HTMLCanvasElement[] = [];
   let host: HTMLDivElement;
   let top: Pix | null = null;
   let low: Pix | null = null;
@@ -89,6 +92,25 @@
     if (!motion.on || anim) drawHomeMotion(low!, { items: view.items, selected, turn }, clock);
   });
 
+  // 回転体：寸法の変化時のみ描画・配置。回転自体は CSS（等速・線形）
+  const ring = $derived(size.w >= 200 && size.h >= 200 ? dialGeometry(size.w, size.h, view.items.length, 0) : null);
+  $effect(() => {
+    if (!ring || !fontsReady) return;
+    ROTORS.forEach((o, i) => {
+      const el = rotorEls[i];
+      if (!el) return;
+      const n = rotorSize(o.id, ring.r);
+      drawRotor(new Pix(el, n, n), o.id, ring.r);
+      const half = (n - 1) / 2;
+      Object.assign(el.style, {
+        left: `${(ring.cx - half) * dot}px`,
+        top: `${(ring.cy - half) * dot}px`,
+        width: `${n * dot}px`,
+        height: `${n * dot}px`
+      });
+    });
+  });
+
   // 動作層のループ（12 fps）。停止条件では解除
   $effect(() => {
     if (!motion.on || !fontsReady) return;
@@ -139,6 +161,8 @@
     if (l.region !== hot) hot = l.region;
   }
   function onClick(e: MouseEvent) {
+    // ドラッグ回転の終了直後のクリックは無視
+    if (dragged) return void (dragged = false);
     const l = locate(e);
     if (l.region) return onregion(l.region);
     if (l.dial === null) return;
@@ -148,13 +172,98 @@
     onactivate(l.dial);
   }
 
+  /** 選択を d 個移動（ホイール）。 */
+  function step(d: number) {
+    const n = view.items.length;
+    selected = (((selected + d) % n) + n) % n;
+  }
+
+  // ホイール：1 ノッチ（累積 60）で 1 項目、連続入力は 140 ms 間隔
+  let wheelAcc = 0;
+  let wheelAt = 0;
+  function onWheel(e: WheelEvent) {
+    e.preventDefault();
+    wheelAcc += Math.abs(e.deltaY) >= Math.abs(e.deltaX) ? e.deltaY : e.deltaX;
+    const now = performance.now();
+    if (Math.abs(wheelAcc) < 60 || now - wheelAt < 140) return;
+    wheelAt = now;
+    step(Math.sign(wheelAcc));
+    wheelAcc = 0;
+  }
+
+  // ドラッグ：魔法陣の中心まわりの回転角へ追従し、離した位置の最寄り項目を選択
+  let drag = $state<{ base: number; last: number; total: number } | null>(null);
+  let dragged = $state(false);
+  let dragRaf = 0;
+  const DRAG_START_DEG = 6;
+  function pointerAngle(e: PointerEvent): number | null {
+    if (!top) return null;
+    const r = canvas.getBoundingClientRect();
+    const x = (e.clientX - r.left) / dot,
+      y = (e.clientY - r.top) / dot;
+    const g = dialGeometry(top.w, top.h, view.items.length, selected);
+    const d = Math.hypot(x - g.cx, y - g.cy);
+    if (d < 20 || d > g.r + 24) return null;
+    return (Math.atan2(y - g.cy, x - g.cx) * 180) / Math.PI;
+  }
+  function onDown(e: PointerEvent) {
+    if (e.button !== 0 || locate(e).region) return;
+    const a = pointerAngle(e);
+    if (a === null) return;
+    drag = { base: anim ? anim.to : selected, last: a, total: 0 };
+    dragged = false;
+  }
+  function onDragMove(e: PointerEvent) {
+    if (!drag) return;
+    const a = pointerAngle(e) ?? drag.last;
+    let d = a - drag.last;
+    if (d > 180) d -= 360;
+    if (d < -180) d += 360;
+    drag.last = a;
+    drag.total += d;
+    if (!dragged && Math.abs(drag.total) < DRAG_START_DEG) return;
+    if (!dragged) {
+      dragged = true;
+      anim = null;
+      canvas.setPointerCapture(e.pointerId);
+    }
+    const t = drag.base - drag.total / (360 / view.items.length);
+    if (!dragRaf)
+      dragRaf = requestAnimationFrame(() => {
+        dragRaf = 0;
+        turn = t;
+        slide = 1;
+      });
+  }
+  function onUp(e: PointerEvent) {
+    if (!drag) return;
+    const was = drag;
+    drag = null;
+    if (!dragged) return;
+    cancelAnimationFrame(dragRaf);
+    dragRaf = 0;
+    if (canvas.hasPointerCapture(e.pointerId)) canvas.releasePointerCapture(e.pointerId);
+    const n = view.items.length;
+    const from = was.base - was.total / (360 / n);
+    const to = Math.round(from);
+    const idx = ((to % n) + n) % n;
+    shown = idx;
+    selected = idx;
+    if (motion.on && Math.abs(to - from) > 0.01) {
+      turn = from;
+      anim = { from, to, start: performance.now() };
+    } else {
+      turn = undefined;
+    }
+  }
+
   onMount(() => {
     measure();
     ro = new ResizeObserver(measure);
     ro.observe(host);
     Promise.all([
       document.fonts?.load('16px DotGothic16'),
-      document.fonts?.load("700 44px 'BIZ UDGothic','Yu Gothic UI','Hiragino Sans','Noto Sans JP',sans-serif", '範囲全画面翻訳')
+      document.fonts?.load("700 44px 'BIZ UDGothic','Yu Gothic UI','Hiragino Sans','Noto Sans JP',sans-serif", 'ウィンドウ画像テキスト音声翻訳')
     ])
       .catch(() => {})
       .finally(() => (fontsReady = true));
@@ -165,13 +274,27 @@
 <div class="home-canvas" bind:this={host}>
   <!-- 視覚表現。操作はキーボード（←→・Enter・数字）と支援技術向けボタン群でも可能。 -->
   <canvas bind:this={under} aria-hidden="true" class="layer"></canvas>
+  {#each ROTORS as o, i (o.id)}
+    <canvas
+      bind:this={rotorEls[i]}
+      aria-hidden="true"
+      class="layer rotor"
+      class:paused={!motion.on}
+      style="--a0: {o.start}deg; animation-duration: {360 / Math.abs(o.degPerSec)}s; animation-direction: {o.degPerSec < 0 ? 'reverse' : 'normal'}"
+    ></canvas>
+  {/each}
   <canvas
     bind:this={canvas}
     aria-hidden="true"
     class="layer"
     class:pointer={hover !== null || hot !== null}
-    onpointermove={onMove}
+    class:grabbing={dragged && drag !== null}
+    onpointermove={(e) => (onMove(e), onDragMove(e))}
+    onpointerdown={onDown}
+    onpointerup={onUp}
+    onpointercancel={onUp}
     onpointerleave={() => ((hover = null), (hot = null))}
+    onwheel={onWheel}
     onclick={onClick}
   ></canvas>
 </div>
@@ -191,5 +314,27 @@
   }
   canvas.pointer {
     cursor: pointer;
+  }
+  canvas.grabbing {
+    cursor: grabbing;
+  }
+  /* 回転体：GPU 合成の等速回転（再描画なし）。推論中・動き削減時は停止 */
+  .rotor {
+    pointer-events: none;
+    transform-origin: 50% 50%;
+    animation-name: spin;
+    animation-timing-function: linear;
+    animation-iteration-count: infinite;
+  }
+  .rotor.paused {
+    animation-play-state: paused;
+  }
+  @keyframes spin {
+    from {
+      transform: rotate(var(--a0));
+    }
+    to {
+      transform: rotate(calc(var(--a0) + 360deg));
+    }
   }
 </style>

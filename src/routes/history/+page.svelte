@@ -182,7 +182,7 @@
       {:else if keepHistory === false}
         <p>履歴保存：オフ（変更は<a href="/settings/#section-history" class="text-accent underline-offset-2 hover:underline">設定</a>）</p>
       {:else}
-        <p>履歴なし。画面翻訳の実行後に表示。</p>
+        <p>履歴なし。翻訳の実行後に表示。</p>
       {/if}
     </div>
   {:else if entries.length > 0}
