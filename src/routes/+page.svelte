@@ -8,7 +8,6 @@
     listAsrModels,
     listLlmModels,
     listNotices,
-    newLensWindow,
     onNotices,
     ocrModelsStatus,
     onHotkey,
@@ -80,7 +79,7 @@
       unlisteners.push(
         await onHotkey((action) => {
           if (action === 'toggle_pin_overlay_empty')
-            lastError = 'ピン留め対象なし。範囲翻訳を先に実行。';
+            lastError = '常時翻訳の対象なし。ウィンドウ翻訳を先に実行。';
         })
       );
       unlisteners.push(
@@ -88,7 +87,7 @@
           if (event.kind === 'started') subtitleRunning = true;
           else if (event.kind === 'stopped') subtitleRunning = false;
           else if (event.kind === 'chunk') subtitlePreview = event.translated || event.original;
-          else if (event.kind === 'error') lastError = `ライブ字幕：${event.message}`;
+          else if (event.kind === 'error') lastError = `音声翻訳：${event.message}`;
         })
       );
       subtitleRunning = await subtitleState();
@@ -120,50 +119,40 @@
     }
   }
 
-  /** 魔法陣の 6 機能。順序は数字キー（1〜6）と一致。 */
+  /** 魔法陣の 4 機能。順序は数字キー（1〜4）と一致。 */
   const functions = $derived([
     {
-      label: '範囲翻訳',
+      label: 'ウィンドウ',
+      title: 'ウィンドウ翻訳',
       icon: 'region',
-      desc: '範囲を静止し、原文位置へ訳文をオーバーレイ表示。',
+      desc: 'ドラッグ：範囲、クリック：全画面。常時 ON で画面変化へ追従。',
       hotkey: key('capture_region'),
       run: () => startRegionSelection(false)
     },
     {
-      label: '全画面翻訳',
-      icon: 'full',
-      desc: '画面全体を静止し、原文位置へ訳文をオーバーレイ表示。',
-      hotkey: key('capture_window'),
-      run: () => startRegionSelection(true)
-    },
-    {
-      label: 'Lens',
-      icon: 'lens',
-      desc: '定位置の継続翻訳ウィンドウ。動画字幕・ゲーム画面向け。',
+      label: '画像',
+      title: '画像翻訳',
+      icon: 'image',
+      desc: '画像ファイルの文字を認識・翻訳。ドロップ・貼付に対応。',
       hotkey: '',
-      run: newLensWindow
+      run: () => goto('/image/')
     },
     {
-      label: 'ライブ字幕',
-      icon: 'mic',
-      desc: subtitleRunning ? '字幕表示中。Enter で停止。' : 'システム音声を認識・翻訳し、字幕表示。',
-      hotkey: key('toggle_subtitle'),
-      // 施錠なし：外部 whisper.cpp サーバー・ASR プラグインも有効なため、可否判定は本体側
-      run: toggleSubtitle
-    },
-    {
-      label: 'テキスト翻訳',
+      label: 'テキスト',
+      title: 'テキスト翻訳',
       icon: 'text',
       desc: '入力文の翻訳。用語集・文脈指定に対応。',
       hotkey: '',
       run: () => goto('/translate/')
     },
     {
-      label: '画像翻訳',
-      icon: 'image',
-      desc: '画像ファイルの文字を認識・翻訳。ドロップ・貼付に対応。',
-      hotkey: '',
-      run: () => goto('/image/')
+      label: '音声',
+      title: '音声翻訳',
+      icon: 'mic',
+      desc: subtitleRunning ? '字幕表示中。Enter で停止。' : 'システム音声を認識・翻訳し、字幕表示。',
+      hotkey: key('toggle_subtitle'),
+      // 施錠なし：外部 whisper.cpp サーバー・ASR プラグインも有効なため、可否判定は本体側
+      run: toggleSubtitle
     }
   ] satisfies (DialItem & { desc: string; hotkey: string; run: () => unknown })[]);
 
@@ -187,14 +176,14 @@
   const view = $derived({
     items: functions,
     hotkey: current.hotkey,
-    running: current.label === 'ライブ字幕' && subtitleRunning,
+    running: current.icon === 'mic' && subtitleRunning,
     desc: current.desc,
-    preview: current.label === 'ライブ字幕' ? subtitlePreview : null,
+    preview: current.icon === 'mic' ? subtitlePreview : null,
     // 起動失敗の全文は上部の通知帯へ表示（魔法陣側は 1 行省略のため重複表示しない）
     error: null,
     engines,
     recent,
-    hint: `←→選択 Enter・1-6起動${key('open_command_palette') ? ` ${key('open_command_palette')}パレット` : ''}`
+    hint: `←→選択 Enter・1-${functions.length}起動${key('open_command_palette') ? ` ${key('open_command_palette')}パレット` : ''}`
   });
 
   function onRegion(r: HomeRegion) {

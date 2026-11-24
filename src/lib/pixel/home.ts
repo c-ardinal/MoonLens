@@ -13,6 +13,8 @@ const K = 0.3;
 export const HOME_MIN = { w: 560, h: 318 } as const;
 /** 案内行を表示する最小の高さ。未満は案内行を省略し、最近の翻訳を下端へ移動。 */
 const HINT_MIN_H = 344;
+/** 見出し帯の機能名の最大幅（論理画素）。右端の番号表示と非重複。 */
+const TITLE_ROOM = 244;
 
 /**
  * 表示領域（CSS px）に対するドット 1 個の CSS 寸法。
@@ -99,7 +101,10 @@ export function drawHome(p: Pix, v: HomeView) {
   const off = Math.round((1 - s) * (1 - s) * 56);
   p.slab(dx + 300 + off, c.top + 8, 360, 62, K, 9);
   p.slab(dx + 312 + off * 2, c.top, 340, 62, K, 5);
-  p.text(item?.label ?? '', dx + 342 + off * 2, c.top + 6, 0, { k: K, font: `700 44px ${TITLE_FONT_FAMILY}` });
+  // 機能名：番号表示（右端）の手前へ収まる寸法へ縮小（最大 44px）
+  const title = item?.title ?? item?.label ?? '';
+  const fit = Math.min(44, Math.floor((44 * TITLE_ROOM) / Math.max(1, p.textW(title, `700 44px ${TITLE_FONT_FAMILY}`))));
+  p.text(title, dx + 342 + off * 2, c.top + 6 + Math.round((44 - fit) * 0.6), 0, { k: K, font: `700 ${fit}px ${TITLE_FONT_FAMILY}` });
   const n = String(v.selected + 1).padStart(2, '0'),
     total = String(v.items.length).padStart(2, '0');
   p.text(n, w - 12, c.top + 2, 0, { align: 'right' });

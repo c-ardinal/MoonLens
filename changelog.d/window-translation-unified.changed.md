@@ -1,0 +1,4 @@
+- Region, full-screen, Lens and fixed-region live translation are merged into one "Window translation" feature. In the selector, drag picks a region and click picks the full screen. The "Continuous" toggle (Tab) opens a live translation window straight away.
+- The live translation window now sits over the selected region with its header just above it. The body passes clicks through to the app behind it. Drag the header to move it and the corner grip to resize it. Its action buttons match the selector.
+- The continuous-translation hotkey reopens the last region when no window is open, or toggles continuous mode when one is.
+- Main menu items are renamed to Window, Image, Text and Voice. The magic circle now accepts the mouse wheel and dragging to change the selection, and its runes rotate smoothly instead of in pixel steps.

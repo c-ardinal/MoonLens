@@ -1,7 +1,8 @@
 /**
- * Pure helpers for the live translation window (`/live`). The window
- * covers the pinned region exactly, so block boxes (capture pixels,
- * relative to the region) map to CSS px by the device pixel ratio.
+ * Pure helpers for continuous window translation (`/lens`). The body of
+ * a lens window covers the observed range exactly, so block boxes
+ * (capture pixels, relative to the range) map to CSS px by the device
+ * pixel ratio.
  */
 
 import type { LensBlock } from "./ipc";

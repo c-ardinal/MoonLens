@@ -1,31 +1,34 @@
-//! Lens Window mode.
+//! Window translation (`lens` windows).
 //!
-//! A lens window is a frameless, always-on-top, mostly-transparent Tauri
-//! window that the user moves and resizes to mark an on-screen region. The
-//! region updates automatically whenever the window geometry changes (via
-//! the renderer). A session can have many lens windows, each independent.
+//! Window translation is the one on-screen translation feature: the
+//! selector picks the target (a dragged range or the whole screen) on a
+//! frozen frame and translates it once; switching to continuous reading
+//! opens a lens window exactly over that range. A lens window is a
+//! frameless, always-on-top, transparent window: its header can be
+//! dragged and its edges resized, while the body lets the mouse through
+//! to the app underneath (see [`run_passthrough`]). A session can have
+//! many lens windows, each independent.
 //!
-//! By default a lens reads its region continuously, like a camera lens:
-//! [`start_watch`] runs the same change-driven [`Tracker`] as live
-//! translation, so OCR runs only when the pixels change and only text not
-//! shown yet goes to the model. While the lens is dragged or resized no
-//! capture is taken; reading resumes once it holds still. With continuous
-//! reading switched off the lens is read on request only.
+//! A lens reads its region continuously, like a camera lens:
+//! [`set_continuous`] runs the change-driven [`Tracker`], so OCR runs
+//! only when the pixels change and only text not shown yet goes to the
+//! model. While the lens is dragged or resized no capture is taken;
+//! reading resumes once it holds still. With continuous reading switched
+//! off the lens is read on request only.
 //!
 //! The capture flow:
 //! 1. The watcher (or the frontend, on request) captures a given lens id.
 //! 2. The captured frame must not include the lens UI. Windows and macOS
 //!    exclude the window from screen capture (content protection); on
 //!    other platforms Rust hides the window for the moment of the grab.
-//! 3. Rust resolves the window's outer bounds, shrinks them by the title
-//!    bar / border offsets the renderer tells us about (CSS pixels, scaled
-//!    to physical pixels here), and feeds the
-//!    resulting rect to [`crate::capture::capture_global_rect`].
+//! 3. Rust resolves the window's client bounds, shrinks them by the
+//!    header the renderer tells us about (CSS pixels, scaled to physical
+//!    pixels here), and feeds the resulting rect to
+//!    [`crate::capture::capture_global_rect`].
 //! 4. Pipeline runs as usual; the translation appears in the lens body.
 //!
-//! The actual Tauri window creation lives in [`create`]; pure geometry
-//! and id generation live in [`geometry`] and [`ids`] so they are
-//! testable.
+//! Pure geometry and id generation live in [`geometry`] and [`ids`] so
+//! they are testable.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -35,9 +38,13 @@ use image::DynamicImage;
 use parking_lot::Mutex;
 use serde::Serialize;
 use tauri::async_runtime::JoinHandle;
-use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
+use tauri::{
+    AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, WebviewUrl, WebviewWindow,
+    WebviewWindowBuilder,
+};
 
 use crate::{
+    capture::CaptureRect,
     pipeline::Pipeline,
     region_watcher::{Frame, Geometry, LiveEvent, Tick, TickEnv, Tracker},
     settings::SettingsStore,
@@ -45,6 +52,24 @@ use crate::{
 
 /// Event with [`LiveEvent`]s for one lens window.
 pub const LENS_LIVE_EVENT: &str = "moonlens://lens-live";
+
+/// Event telling every window whether any lens reads continuously (the
+/// main window pauses its animations meanwhile).
+pub const LENS_ACTIVE_EVENT: &str = "moonlens://lens-active";
+
+/// Height of the lens header in CSS pixels (fixed in `routes/lens`), used
+/// to put the header just above a range when a lens opens over it.
+pub const HEADER_CSS: u32 = 34;
+
+/// Width in CSS pixels of the band along the window edges that stays
+/// clickable for resizing while the body lets the mouse through.
+const EDGE_CSS: f64 = 6.0;
+
+/// Size in CSS pixels of the resize grip in the bottom-right corner.
+const GRIP_CSS: f64 = 18.0;
+
+/// How often the pointer position is checked for click-through.
+const PASSTHROUGH_POLL_MS: u64 = 40;
 
 /// Shortest pause between readings where the lens must be hidden for a
 /// capture (no content protection): a shorter one makes it flicker.
@@ -91,6 +116,53 @@ pub mod geometry {
         }
     }
 
+    /// Client rect for a lens that should observe `region` (global
+    /// physical pixels): the header goes right above the region. Where
+    /// the monitor ends above it (`top_limit`), the header covers the top
+    /// of the region instead.
+    pub fn window_for_region(region: LensOuterRect, header: u32, top_limit: i32) -> LensOuterRect {
+        let y = (region.y - header as i32).max(top_limit.min(region.y));
+        let bottom = region.y + region.h as i32;
+        LensOuterRect {
+            x: region.x,
+            y,
+            w: region.w,
+            h: (bottom - y).max(header as i32 + 1) as u32,
+        }
+    }
+
+    /// Whether a pointer at (`px`, `py`) should reach the lens window
+    /// rather than the app underneath: on the header, on the resize band
+    /// along the edges (including the frame outside the client area) or
+    /// on the resize grip. `outer` is the window frame, `inner` the
+    /// client area; `header`, `edge` and `grip` are physical pixels.
+    pub fn hits_controls(
+        outer: LensOuterRect,
+        inner: LensOuterRect,
+        header: u32,
+        edge: u32,
+        grip: u32,
+        px: i32,
+        py: i32,
+    ) -> bool {
+        let inside = |r: LensOuterRect, m: i32| {
+            px >= r.x + m && py >= r.y + m && px < r.x + r.w as i32 - m && py < r.y + r.h as i32 - m
+        };
+        let frame = LensOuterRect {
+            x: outer.x.min(inner.x),
+            y: outer.y.min(inner.y),
+            w: outer.w.max(inner.w),
+            h: outer.h.max(inner.h),
+        };
+        if !inside(frame, 0) && !inside(inner, 0) {
+            return false;
+        }
+        let right = inner.x + inner.w as i32;
+        let bottom = inner.y + inner.h as i32;
+        let on_grip = px >= right - grip as i32 && py >= bottom - grip as i32;
+        py < inner.y + header as i32 || !inside(inner, edge as i32) || on_grip
+    }
+
     #[cfg(test)]
     mod tests {
         use super::*;
@@ -119,6 +191,76 @@ pub mod geometry {
                     h: 268
                 }
             );
+        }
+
+        #[test]
+        fn header_goes_above_the_region() {
+            let region = LensOuterRect {
+                x: 100,
+                y: 300,
+                w: 400,
+                h: 200,
+            };
+            assert_eq!(
+                window_for_region(region, 34, 0),
+                LensOuterRect {
+                    x: 100,
+                    y: 266,
+                    w: 400,
+                    h: 234
+                }
+            );
+        }
+
+        #[test]
+        fn header_covers_the_top_at_the_monitor_edge() {
+            // Whole screen: no room above, the header overlaps the top.
+            let region = LensOuterRect {
+                x: 0,
+                y: 0,
+                w: 1920,
+                h: 1080,
+            };
+            assert_eq!(window_for_region(region, 34, 0), region);
+            // Partly room above.
+            let region = LensOuterRect {
+                x: 0,
+                y: 10,
+                w: 300,
+                h: 100,
+            };
+            assert_eq!(
+                window_for_region(region, 34, 0),
+                LensOuterRect {
+                    x: 0,
+                    y: 0,
+                    w: 300,
+                    h: 110
+                }
+            );
+        }
+
+        #[test]
+        fn controls_take_the_pointer_only_on_header_edges_and_grip() {
+            let inner = LensOuterRect {
+                x: 100,
+                y: 100,
+                w: 400,
+                h: 300,
+            };
+            let outer = LensOuterRect {
+                x: 92,
+                y: 100,
+                w: 416,
+                h: 308,
+            };
+            let hit = |x, y| hits_controls(outer, inner, 34, 6, 18, x, y);
+            assert!(hit(300, 110), "header");
+            assert!(!hit(300, 250), "body lets the pointer through");
+            assert!(hit(102, 250), "left resize band");
+            assert!(hit(95, 250), "invisible frame outside the client area");
+            assert!(hit(490, 390), "resize grip");
+            assert!(!hit(50, 50), "outside the window");
         }
 
         #[test]
@@ -216,13 +358,28 @@ pub struct LensDescriptor {
     pub id: String,
     pub title: String,
     pub insets: geometry::LensInsets,
-    /// Reads the region continuously (see [`start_watch`]).
+    /// Reads the region continuously (see [`set_continuous`]).
     pub continuous: bool,
+    /// Language it translates into; `None` = the configured target.
+    pub target_language: Option<String>,
 }
 
 struct LensEntry {
     insets: geometry::LensInsets,
     watch: Option<Watch>,
+    /// Translate into this language; `None` = the configured target.
+    target_language: Option<String>,
+    /// The renderer shows controls over the body (text view): the body
+    /// takes the mouse too.
+    interactive: bool,
+}
+
+/// Where a lens opens: the range to observe and the language to show.
+#[derive(Debug, Clone)]
+pub struct Placement {
+    /// Monitor-relative physical pixels, like the selector's crops.
+    pub rect: CaptureRect,
+    pub target_language: Option<String>,
 }
 
 /// A running continuous reading of one lens.
@@ -243,6 +400,11 @@ impl Watch {
 #[derive(Default)]
 pub struct LensRegistry {
     entries: Mutex<Vec<(String, LensEntry)>>,
+    /// Range of the most recent one-off translation, for the toggle
+    /// hotkey ("keep translating what I just translated").
+    last: Mutex<Option<Placement>>,
+    /// Lens the toggle hotkey opened, closed by the next press.
+    toggled: Mutex<Option<String>>,
 }
 
 impl LensRegistry {
@@ -259,18 +421,74 @@ impl LensRegistry {
                 title: format!("Lens {}", short(id)),
                 insets: e.insets,
                 continuous: e.watch.is_some(),
+                target_language: e.target_language.clone(),
             })
             .collect()
     }
 
     pub fn track(&self, id: String) {
+        self.track_with(id, None);
+    }
+
+    fn track_with(&self, id: String, target_language: Option<String>) {
         self.entries.lock().push((
             id,
             LensEntry {
-                insets: geometry::LensInsets::default(),
+                // The renderer reports its header once loaded; until then
+                // assume the fixed one, or the first reading would
+                // include the strip under the header.
+                insets: geometry::LensInsets {
+                    top: HEADER_CSS,
+                    ..Default::default()
+                },
                 watch: None,
+                target_language,
+                interactive: false,
             },
         ));
+    }
+
+    /// Whether any lens reads continuously.
+    pub fn any_continuous(&self) -> bool {
+        self.entries.lock().iter().any(|(_, e)| e.watch.is_some())
+    }
+
+    /// Remember the range of a one-off translation for [`toggle`].
+    pub fn remember(&self, placement: Placement) {
+        *self.last.lock() = Some(placement);
+    }
+
+    pub fn last(&self) -> Option<Placement> {
+        self.last.lock().clone()
+    }
+
+    pub fn target_language(&self, id: &str) -> Option<String> {
+        self.entries
+            .lock()
+            .iter()
+            .find(|(i, _)| i == id)
+            .and_then(|(_, e)| e.target_language.clone())
+    }
+
+    pub fn set_target_language(&self, id: &str, lang: Option<String>) {
+        if let Some((_, e)) = self.entries.lock().iter_mut().find(|(i, _)| i == id) {
+            e.target_language = lang;
+        }
+    }
+
+    pub fn set_interactive(&self, id: &str, on: bool) {
+        if let Some((_, e)) = self.entries.lock().iter_mut().find(|(i, _)| i == id) {
+            e.interactive = on;
+        }
+    }
+
+    /// `None` for a lens that is gone.
+    fn interactive(&self, id: &str) -> Option<bool> {
+        self.entries
+            .lock()
+            .iter()
+            .find(|(i, _)| i == id)
+            .map(|(_, e)| e.interactive)
     }
 
     pub fn untrack(&self, id: &str) {
@@ -334,18 +552,23 @@ impl LensRegistry {
 
 pub type LensRegistryHandle = Arc<LensRegistry>;
 
-/// Create a new lens window at a sensible default position/size and
-/// register it in the shared registry.
-pub fn create(app: &AppHandle, registry: &LensRegistryHandle) -> Result<String> {
+/// Open a lens window over `placement` (or at a default spot), register
+/// it and start letting the mouse through its body.
+pub fn create(
+    app: &AppHandle,
+    registry: &LensRegistryHandle,
+    placement: Option<Placement>,
+) -> Result<String> {
     let id = ids::next();
     let label = id.clone();
     let url = format!("/lens/?id={id}");
     let win = WebviewWindowBuilder::new(app, &label, WebviewUrl::App(url.into()))
-        .title(format!("MoonLens Lens {}", short(&id)))
+        .title(format!("MoonLens {}", short(&id)))
         .inner_size(460.0, 320.0)
         .position(200.0, 200.0)
         .decorations(false)
         .transparent(true)
+        .shadow(false)
         .always_on_top(true)
         .skip_taskbar(true)
         .resizable(true)
@@ -354,14 +577,165 @@ pub fn create(app: &AppHandle, registry: &LensRegistryHandle) -> Result<String> 
         // has faded the window out, so the grab read the lens itself
         // (its own Japanese placeholder) and nothing got translated.
         .content_protected(EXCLUDED_FROM_CAPTURE)
-        .visible(true)
+        .visible(placement.is_none())
         .build()
         .context("create lens window")?;
-    // Give the window a fractional opacity fallback for platforms without
-    // true transparency (handled in CSS; the flag here makes intent clear).
+    let target_language = placement.as_ref().and_then(|p| p.target_language.clone());
+    if let Some(p) = &placement {
+        if let Err(e) = place(&win, &p.rect) {
+            tracing::warn!("placing lens window: {e:#}");
+        }
+        win.show().ok();
+    }
     let _ = win.set_always_on_top(true);
-    registry.track(id.clone());
+    registry.track_with(id.clone(), target_language);
+    tauri::async_runtime::spawn(run_passthrough(app.clone(), registry.clone(), id.clone()));
     Ok(id)
+}
+
+/// Move and size `win` so that its body covers `rect` (monitor-relative
+/// physical pixels) and its header sits right above it.
+fn place(win: &WebviewWindow, rect: &CaptureRect) -> Result<()> {
+    let monitors = xcap::Monitor::all()?;
+    let m = monitors
+        .get(rect.monitor_index)
+        .ok_or_else(|| anyhow!("monitor {} missing", rect.monitor_index))?;
+    let (mx, my) = (m.x()?, m.y()?);
+    let scale = m.scale_factor().unwrap_or(1.0) as f64;
+    let header = (HEADER_CSS as f64 * scale).ceil() as u32;
+    let region = geometry::LensOuterRect {
+        x: mx + rect.x,
+        y: my + rect.y,
+        w: rect.w,
+        h: rect.h,
+    };
+    let want = geometry::window_for_region(region, header, my);
+    win.set_size(PhysicalSize::new(want.w, want.h))?;
+    win.set_position(PhysicalPosition::new(want.x, want.y))?;
+    // `set_position` places the outer frame; a frameless window on
+    // Windows 11 has an invisible border around its client area. Shift
+    // by the difference so the client area lands on the range.
+    if let (Ok(inner), Ok(outer)) = (win.inner_position(), win.outer_position()) {
+        let (dx, dy) = (inner.x - outer.x, inner.y - outer.y);
+        if dx != 0 || dy != 0 {
+            win.set_position(PhysicalPosition::new(want.x - dx, want.y - dy))?;
+        }
+    }
+    Ok(())
+}
+
+/// Toggle hotkey: close the lens it opened, or open one over the range
+/// translated last. Returns the new state, `None` when nothing was
+/// translated yet.
+pub fn toggle(app: &AppHandle, registry: &LensRegistryHandle) -> Option<bool> {
+    let open = registry.toggled.lock().take();
+    if let Some(id) = open.filter(|id| registry.insets(id).is_some()) {
+        let _ = close(app, registry, &id);
+        return Some(false);
+    }
+    let placement = registry.last()?;
+    match create(app, registry, Some(placement)) {
+        Ok(id) => {
+            *registry.toggled.lock() = Some(id);
+            Some(true)
+        }
+        Err(e) => {
+            tracing::warn!("opening lens window: {e:#}");
+            None
+        }
+    }
+}
+
+/// Let the mouse through the lens body to the app underneath, but keep
+/// the header, the resize edges and the grip clickable. Windows can only
+/// ignore the cursor as a whole, so the pointer position decides.
+async fn run_passthrough(app: AppHandle, registry: LensRegistryHandle, id: String) {
+    let mut applied: Option<bool> = None;
+    let mut since_apply = 0u32;
+    loop {
+        tokio::time::sleep(Duration::from_millis(PASSTHROUGH_POLL_MS)).await;
+        let Some(win) = app.get_webview_window(&id) else {
+            break;
+        };
+        let Some(body_interactive) = registry.interactive(&id) else {
+            break;
+        };
+        let take = body_interactive || pointer_on_controls(&app, &win, &registry, &id);
+        since_apply += 1;
+        // Re-apply now and then: hiding and showing the window for a
+        // capture (Linux) can reset it.
+        if applied != Some(take) || since_apply >= 25 {
+            if win.set_ignore_cursor_events(!take).is_ok() {
+                applied = Some(take);
+            }
+            since_apply = 0;
+        }
+    }
+}
+
+fn pointer_on_controls(
+    app: &AppHandle,
+    win: &WebviewWindow,
+    registry: &LensRegistryHandle,
+    id: &str,
+) -> bool {
+    let (Some(p), Ok(inner), Ok(pos), Ok(size)) = (
+        pointer_position(app),
+        inner_rect(win),
+        win.outer_position(),
+        win.outer_size(),
+    ) else {
+        // Unknown: keep the window usable rather than unreachable.
+        return true;
+    };
+    let scale = win.scale_factor().unwrap_or(1.0);
+    let outer = geometry::LensOuterRect {
+        x: pos.x,
+        y: pos.y,
+        w: size.width,
+        h: size.height,
+    };
+    let header = scale_insets(registry.insets(id).unwrap_or_default(), scale).top;
+    let px = |v: f64| (v * scale).ceil() as u32;
+    geometry::hits_controls(outer, inner, header, px(EDGE_CSS), px(GRIP_CSS), p.0, p.1)
+}
+
+/// Pointer position on the screen (physical pixels).
+#[cfg(not(target_os = "linux"))]
+fn pointer_position(app: &AppHandle) -> Option<(i32, i32)> {
+    let p = app.cursor_position().ok()?;
+    Some((p.x.floor() as i32, p.y.floor() as i32))
+}
+
+/// Pointer position on the screen (physical pixels). On Linux tao reports
+/// the last position its own windows saw, which goes stale as soon as a
+/// window lets the mouse through, so ask the X server (Wayland sessions
+/// without X fall back to tao).
+#[cfg(target_os = "linux")]
+fn pointer_position(app: &AppHandle) -> Option<(i32, i32)> {
+    use x11rb::connection::Connection;
+    use x11rb::protocol::xproto::ConnectionExt;
+    use x11rb::rust_connection::RustConnection;
+
+    static X: Mutex<Option<(RustConnection, u32)>> = Mutex::new(None);
+    let mut x = X.lock();
+    if x.is_none() {
+        *x = x11rb::connect(None).ok().map(|(c, screen)| {
+            let root = c.setup().roots[screen].root;
+            (c, root)
+        });
+    }
+    let queried = x
+        .as_ref()
+        .and_then(|(c, root)| c.query_pointer(*root).ok()?.reply().ok());
+    match queried {
+        Some(r) => Some((r.root_x as i32, r.root_y as i32)),
+        None => {
+            *x = None;
+            let p = app.cursor_position().ok()?;
+            Some((p.x.floor() as i32, p.y.floor() as i32))
+        }
+    }
 }
 
 pub fn close(app: &AppHandle, registry: &LensRegistryHandle, id: &str) -> Result<()> {
@@ -369,6 +743,7 @@ pub fn close(app: &AppHandle, registry: &LensRegistryHandle, id: &str) -> Result
         win.close().ok();
     }
     registry.untrack(id);
+    emit_active(app, registry);
     Ok(())
 }
 
@@ -468,6 +843,7 @@ pub fn set_continuous(
 ) {
     if !on {
         registry.set_watch(id, None);
+        emit_active(app, registry);
         return;
     }
     let stop = Arc::new(tokio::sync::Notify::new());
@@ -482,6 +858,12 @@ pub fn set_continuous(
         kick.clone(),
     ));
     registry.set_watch(id, Some(Watch { handle, stop, kick }));
+    emit_active(app, registry);
+}
+
+/// Tell the windows whether any lens reads continuously now.
+pub fn emit_active(app: &AppHandle, registry: &LensRegistryHandle) {
+    let _ = app.emit(LENS_ACTIVE_EVENT, registry.any_continuous());
 }
 
 /// Continuous reading of one lens: every `region_watcher_poll_ms` (or on
@@ -530,7 +912,9 @@ async fn run_watch(
                 _ = tokio::time::sleep(Duration::from_millis(interval)) => {}
             }
         }
-        let target_language = settings.snapshot().subtitle.target_language.clone();
+        let target_language = registry
+            .target_language(&id)
+            .unwrap_or_else(|| settings.snapshot().subtitle.target_language.clone());
         let env = TickEnv {
             pipeline: &pipeline,
             target_language: &target_language,
@@ -668,7 +1052,8 @@ mod tests {
             },
         );
         assert_eq!(r.insets("a").unwrap().top, 30);
-        assert_eq!(r.insets("b").unwrap().top, 0);
+        // Untouched: the fixed header until the renderer reports.
+        assert_eq!(r.insets("b").unwrap().top, HEADER_CSS);
     }
 
     #[test]
@@ -680,6 +1065,44 @@ mod tests {
         assert!(!r.list()[0].continuous);
         assert!(!r.kick("a"));
         assert!(!r.kick("missing"));
+    }
+
+    #[test]
+    fn per_lens_language_and_interaction() {
+        let r = new_registry_for_test();
+        r.track_with("a".into(), Some("en".into()));
+        r.track("b".into());
+        assert_eq!(r.target_language("a").as_deref(), Some("en"));
+        assert_eq!(r.target_language("b"), None);
+        r.set_target_language("b", Some("ko".into()));
+        assert_eq!(r.list()[1].target_language.as_deref(), Some("ko"));
+        assert_eq!(r.interactive("a"), Some(false));
+        r.set_interactive("a", true);
+        assert_eq!(r.interactive("a"), Some(true));
+        // Gone: the click-through loop stops.
+        r.untrack("a");
+        assert_eq!(r.interactive("a"), None);
+        assert!(!r.any_continuous());
+    }
+
+    #[test]
+    fn the_last_range_is_remembered_for_the_toggle() {
+        let r = new_registry_for_test();
+        assert!(r.last().is_none());
+        let rect = CaptureRect {
+            monitor_index: 1,
+            x: 10,
+            y: 20,
+            w: 300,
+            h: 100,
+        };
+        r.remember(Placement {
+            rect,
+            target_language: Some("ja".into()),
+        });
+        let last = r.last().unwrap();
+        assert_eq!((last.rect.monitor_index, last.rect.w), (1, 300));
+        assert_eq!(last.target_language.as_deref(), Some("ja"));
     }
 
     #[test]

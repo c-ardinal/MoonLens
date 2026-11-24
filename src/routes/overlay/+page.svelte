@@ -1,16 +1,14 @@
 <script lang="ts">
   import { onDestroy, onMount } from 'svelte';
-  import { Pin, Sparkles, X } from 'lucide-svelte';
+  import { Radio, Sparkles, X } from 'lucide-svelte';
   import PrivacyBadge from '$lib/components/PrivacyBadge.svelte';
   import ActionRibbon from '$lib/components/ActionRibbon.svelte';
   import {
     getSettings,
     hideOverlay,
     onOverlay,
-    onPinState,
     onSettingsChanged,
-    pinOverlay,
-    unpinOverlay,
+    openLens,
     runExplain,
     openExternalUrl,
     runTranslate,
@@ -26,13 +24,11 @@
   let translation = $state('');
   let viaCloud = $state(false);
   let provider = $state('');
-  let pinned = $state(false);
   let status = $state<'idle' | 'processing' | 'result' | 'error'>('idle');
   let statusMessage = $state('');
   let intent = $state<Intent | null>(null);
   let sourceRect = $state<CaptureFlowRect | null>(null);
   let unlisten: (() => void) | undefined;
-  let unlistenPin: (() => void) | undefined;
   let unlistenSettings: (() => void) | undefined;
   let hideTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -60,12 +56,12 @@
     };
   }
 
-  /** Hide the finished result after `auto_hide_ms` unless it is pinned. */
+  /** Hide the finished result after `auto_hide_ms`. */
   function scheduleAutoHide() {
     if (hideTimer) clearTimeout(hideTimer);
-    if (look.autoHideMs > 0 && !pinned) {
+    if (look.autoHideMs > 0) {
       hideTimer = setTimeout(() => {
-        if (status === 'result' && !pinned) hideOverlay().catch(() => {});
+        if (status === 'result') hideOverlay().catch(() => {});
       }, look.autoHideMs);
     }
   }
@@ -73,7 +69,6 @@
   onMount(async () => {
     getSettings().then(applySettings).catch(() => {});
     unlistenSettings = await onSettingsChanged(applySettings);
-    unlistenPin = await onPinState((p) => (pinned = p));
     unlisten = await onOverlay((event: OverlayEvent) => {
       if (event.kind === 'processing') {
         status = 'processing';
@@ -107,7 +102,6 @@
 
   onDestroy(() => {
     unlisten?.();
-    unlistenPin?.();
     unlistenSettings?.();
     if (hideTimer) clearTimeout(hideTimer);
   });
@@ -116,17 +110,11 @@
     if (translation) navigator.clipboard.writeText(translation).catch(() => {});
   }
 
-  async function togglePin() {
-    if (pinned) {
-      await unpinOverlay();
-      pinned = false;
-    } else if (sourceRect) {
-      // The pin UI stays disabled until we have a rect from the last
-      // capture event, so this branch only runs when pinning is
-      // actually meaningful.
-      await pinOverlay(sourceRect);
-      pinned = true;
-    }
+  /** Continuous window translation of the same range; the popup steps aside. */
+  async function keepTranslating() {
+    if (!sourceRect) return;
+    await openLens(sourceRect);
+    await hideOverlay().catch(() => {});
   }
 
   /** Best-effort URL extractor: if the translated / decoded payload
@@ -152,7 +140,7 @@
       return;
     }
     if (a === 'pin') {
-      await togglePin();
+      await keepTranslating();
       return;
     }
     if (a === 'open_url') {
@@ -236,12 +224,11 @@
       {/if}
       <button
         class="rounded-ml-sm p-1 transition hover:bg-surface-muted disabled:opacity-40"
-        aria-pressed={pinned}
-        disabled={!sourceRect && !pinned}
-        onclick={togglePin}
-        title={pinned ? 'ライブ翻訳を停止' : 'ライブ翻訳（選択範囲へ訳文を重畳表示し、画面変化へ追従）'}
+        disabled={!sourceRect}
+        onclick={keepTranslating}
+        title="常時翻訳：同一範囲を画面変化へ追従して再翻訳"
       >
-        <Pin class="h-4 w-4 {pinned ? 'text-accent' : 'text-ink-faint'}" />
+        <Radio class="h-4 w-4 text-ink-faint" />
       </button>
       <button
         class="rounded-ml-sm p-1 transition hover:bg-surface-muted"
@@ -268,6 +255,6 @@
     >{translation}</p>
     <ActionRibbon {intent} onAction={onRibbonAction} />
   {:else}
-    <p class="text-sm text-ink-faint">範囲翻訳の結果を表示。</p>
+    <p class="text-sm text-ink-faint">ウィンドウ翻訳の結果を表示。</p>
   {/if}
 </section>

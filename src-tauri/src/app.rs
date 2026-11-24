@@ -14,7 +14,6 @@ use crate::{
     lens::{LensRegistry, LensRegistryHandle},
     pipeline::Pipeline,
     plugins::PluginRegistry,
-    region_watcher::RegionWatcher,
     settings::{SettingsStore, Watcher},
     storage::Storage,
     subtitle::SubtitleService,
@@ -47,8 +46,6 @@ macro_rules! all_commands {
             ipc::read_image_file,
             ipc::retranslate_selection,
             ipc::close_selector,
-            ipc::pin_overlay,
-            ipc::unpin_overlay,
             ipc::install_ocr_models,
             ipc::ocr_models_status,
             ipc::list_llm_models,
@@ -74,7 +71,9 @@ macro_rules! all_commands {
             ipc::open_macos_privacy_pane,
             ipc::macos_permissions_snapshot,
             ipc::macos_request_screen_capture,
-            ipc::new_lens_window,
+            ipc::open_lens,
+            ipc::set_lens_language,
+            ipc::set_lens_interactive,
             ipc::close_lens_window,
             ipc::list_lens_windows,
             ipc::set_lens_insets,
@@ -108,9 +107,6 @@ pub struct AppState {
     pub pipeline: Arc<Pipeline>,
     pub subtitle: Arc<SubtitleService>,
     pub lenses: LensRegistryHandle,
-    /// Watcher for pinned overlay auto-refresh. Started when the user
-    /// pins the overlay on a captured region; idle otherwise.
-    pub region_watcher: Arc<RegionWatcher>,
     /// Background watcher that re-reads `config.toml` when the user
     /// edits it outside of the app. Held here so its thread stays alive
     /// for the lifetime of the Tauri AppHandle.
@@ -206,7 +202,6 @@ pub fn build() -> Result<()> {
             }
             let subtitle = Arc::new(SubtitleService::new(settings.clone(), pipeline.clone()));
             let lenses: LensRegistryHandle = Arc::new(LensRegistry::new());
-            let region_watcher = Arc::new(RegionWatcher::new());
 
             // A hotkey another app already owns must not stop MoonLens
             // from starting; the others still register.
@@ -231,7 +226,6 @@ pub fn build() -> Result<()> {
                 pipeline,
                 subtitle,
                 lenses,
-                region_watcher,
                 _settings_watcher: settings_watcher,
             });
             if !std::env::args().any(|a| a == START_HIDDEN_FLAG) {
@@ -258,15 +252,15 @@ pub fn build() -> Result<()> {
 
 fn build_tray(app: &AppHandle) -> Result<()> {
     let open = MenuItem::with_id(app, "open", "MoonLens 表示", true, None::<&str>)?;
-    let capture = MenuItem::with_id(app, "capture", "範囲翻訳", true, None::<&str>)?;
-    let lens = MenuItem::with_id(
+    let capture = MenuItem::with_id(app, "capture", "ウィンドウ翻訳（範囲）", true, None::<&str>)?;
+    let full = MenuItem::with_id(
         app,
-        "new_lens",
-        "Lens ウィンドウ新規作成",
+        "capture_full",
+        "ウィンドウ翻訳（全画面）",
         true,
         None::<&str>,
     )?;
-    let subtitle = MenuItem::with_id(app, "subtitle", "ライブ字幕 開始／停止", true, None::<&str>)?;
+    let subtitle = MenuItem::with_id(app, "subtitle", "音声翻訳 開始／停止", true, None::<&str>)?;
     let plugins = MenuItem::with_id(app, "plugins", "プラグイン", true, None::<&str>)?;
     let history = MenuItem::with_id(app, "history", "履歴", true, None::<&str>)?;
     let sep = tauri::menu::PredefinedMenuItem::separator(app)?;
@@ -275,7 +269,7 @@ fn build_tray(app: &AppHandle) -> Result<()> {
     let menu = Menu::with_items(
         app,
         &[
-            &open, &capture, &lens, &subtitle, &plugins, &history, &sep, &quit,
+            &open, &capture, &full, &subtitle, &plugins, &history, &sep, &quit,
         ],
     )?;
 
@@ -290,12 +284,7 @@ fn build_tray(app: &AppHandle) -> Result<()> {
         .on_menu_event(move |app, event| match event.id.as_ref() {
             "open" => show_main_window(app),
             "capture" => hotkey::open_selector(app, false),
-            "new_lens" => {
-                let state = app.state::<AppState>();
-                if let Err(e) = crate::lens::create(app, &state.lenses) {
-                    tracing::warn!("lens create failed: {e:?}");
-                }
-            }
+            "capture_full" => hotkey::open_selector(app, true),
             "subtitle" => {
                 let state = app.state::<AppState>();
                 state.subtitle.toggle_checked(app);

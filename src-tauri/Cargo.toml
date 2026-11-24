@@ -109,6 +109,12 @@ llama-cpp-2 = { version = "0.1.161", default-features = false, optional = true, 
 [target.'cfg(any(windows, target_os = "linux"))'.dependencies]
 llama-cpp-2 = { version = "0.1.161", default-features = false, optional = true, features = ["vulkan"] }
 
+# Pointer position for click-through lens windows: tao's cursor position
+# on Linux is the last one its own windows saw, stale once the window lets
+# the mouse through, so the X server is asked directly.
+[target.'cfg(target_os = "linux")'.dependencies]
+x11rb = "0.13"
+
 [features]
 default = ["audio", "ocrs-engine", "local-llm", "local-asr"]
 local-llm = ["dep:llama-cpp-2", "dep:minijinja", "dep:minijinja-contrib"]

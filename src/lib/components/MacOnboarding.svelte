@@ -32,7 +32,7 @@
     {
       id: 'screen_capture',
       title: '画面収録',
-      description: 'OCR・ライブ字幕の画面取得に必須。',
+      description: 'ウィンドウ翻訳・音声翻訳に必須。',
       icon: Monitor,
       detectable: true
     },

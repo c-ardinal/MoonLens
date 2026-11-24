@@ -2,14 +2,18 @@
  * ホームの魔法陣メニュー：幾何計算（純関数）と描画。
  * 寸法は UI 第5案のモック（論理 640×368、外周ルーン環 半径 158）を基準に比例配分。
  * 選択中の項目は常に右上（-54 度）へ回転し、見出し帯と接続。
- * 描画は 2 層：静止層（drawDial）と動作層（drawDialMotion：ルーン環の回転・光点・波紋・中心核）。
- * 動作層は静止層の下へ重ね、毎フレーム再描画しても文字の 2 値化処理を伴わない軽量構成。
+ * 描画は 3 種：静止層（drawDial）、動作層（drawDialMotion：光点・波紋・中心核）、
+ * 回転体（drawRotor：ルーン環・中心核の正方形。CSS で等速回転）。
+ * 動作層・回転体は静止層の下へ重ね、再描画しても文字の 2 値化処理を伴わない軽量構成。
  */
 import { type Color, Pix } from './pix';
 import { ICONS, MINI_RUNES, RUNES, type IconName } from './glyphs';
 
 export interface DialItem {
+  /** 魔法陣上の名札。 */
   label: string;
+  /** 見出し帯の機能名。省略時は label。 */
+  title?: string;
   icon: IconName;
   /** 実行不可。破線枠と赤い × 印で表示。 */
   locked?: boolean;
@@ -75,11 +79,11 @@ export function labelPlacement(angle: number): 'above' | 'below' | 'left' | 'rig
 type Box = { x: number; y: number; w: number; h: number };
 const overlap = (a: Box, b: Box) => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
 
-function runeRing(p: Pix, cx: number, cy: number, r: number, n: number, set: readonly (readonly string[])[], c: Color, offDeg = 0) {
+function runeRing(p: Pix, cx: number, cy: number, r: number, n: number, set: readonly (readonly string[])[], c: Color) {
   const w = set[0][0].length,
     h = set[0].length;
   for (let i = 0; i < n; i++) {
-    const t = ((i / n) * 360 - 90 + offDeg) * (Math.PI / 180);
+    const t = ((i / n) * 360 - 90) * (Math.PI / 180);
     p.icon(set[i % set.length], Math.round(cx + r * Math.cos(t) - w / 2), Math.round(cy + r * Math.sin(t) - h / 2), c);
   }
 }
@@ -105,12 +109,50 @@ export interface DialState {
 const geometryOf = (p: Pix, s: DialState, reserve: number) =>
   dialGeometry(p.w, p.h, s.items.length, s.turn ?? s.selected, reserve);
 
-/** 角度の量子化（0.5 度単位）：1 ドット未満の揺れを抑止。 */
-const quant = (deg: number) => Math.round(deg * 2) / 2;
+/**
+ * 回転体：外周・内周のルーン環と中心核の 2 枚の正方形。
+ * 各回転体は専用の小型 Canvas へ 1 度だけ描画し、表示側の CSS 回転（線形・等速）で回す。
+ * 毎フレームのドット再配置（ルーン単位の段階的な移動）を避け、滑らかな回転を実現。
+ * degPerSec：回転速度（負値は反時計回り）、start：初期角度。
+ */
+export const ROTORS = [
+  { id: 'outer', degPerSec: 3, start: 0 },
+  { id: 'inner', degPerSec: -8, start: 6 },
+  { id: 'core-a', degPerSec: 24, start: 0 },
+  { id: 'core-b', degPerSec: -36, start: 45 }
+] as const;
+export type RotorId = (typeof ROTORS)[number]['id'];
+
+const coreRadius = (q: number) => Math.round(34 * Math.min(1, q + 0.15));
+
+/** 回転体の Canvas 寸法（論理画素、奇数：中心画素を回転中心と一致）。 */
+export function rotorSize(id: RotorId, r: number): number {
+  const q = r / 158;
+  const half = id === 'outer' ? r + 6 : id === 'inner' ? Math.round(r * 0.456) - 4 : coreRadius(q);
+  return half * 2 + 1;
+}
+
+/** 回転体の描画（角度 0、Canvas 中心が回転中心）。p は rotorSize 四方。 */
+export function drawRotor(p: Pix, id: RotorId, r: number) {
+  const q = r / 158;
+  const c = (p.w - 1) / 2;
+  p.clear();
+  if (id === 'outer') runeRing(p, c, c, r, Math.round(52 * q), RUNES, 5);
+  else if (id === 'inner') runeRing(p, c, c, Math.round(r * 0.456) - 11, 30, MINI_RUNES, 4);
+  else {
+    const cr = coreRadius(q);
+    const rad = id === 'core-a' ? cr - 6 : cr - 12;
+    const pts = [0, 1, 2, 3].map((i) => {
+      const a = (i * 90 * Math.PI) / 180;
+      return [c + rad * Math.cos(a), c + rad * Math.sin(a)] as const;
+    });
+    pts.forEach((a, i) => p.line(a[0], a[1], pts[(i + 1) % 4][0], pts[(i + 1) % 4][1], id === 'core-a' ? 5 : 4));
+  }
+}
 
 /**
- * 動作層：背景円・回転するルーン環・外周の光点・選択ノードの波紋・中心核。
- * t は経過秒（静止表示は 0）。
+ * 動作層：背景円・外周の光点・選択ノードの波紋・中心核の円と核。
+ * ルーン環と正方形は回転体（drawRotor）として別層で回転。t は経過秒（静止表示は 0）。
  */
 export function drawDialMotion(p: Pix, s: DialState, t: number, reserve = SIDE_WIDTH) {
   const geo = geometryOf(p, s, reserve);
@@ -118,11 +160,6 @@ export function drawDialMotion(p: Pix, s: DialState, t: number, reserve = SIDE_W
   const q = r / 158;
   p.clear();
   p.fcircle(cx, cy, Math.round(r + 20 * q), 0);
-
-  // ルーン環：外周は時計回り、内周は反時計回り
-  runeRing(p, cx, cy, r, Math.round(52 * q), RUNES, 5, quant(t * 3));
-  const ri = Math.round(r * 0.456);
-  runeRing(p, cx, cy, ri - 11, 30, MINI_RUNES, 4, quant(6 - t * 8));
 
   // 外周の光点：二重円の隙間を周回し、尾を引く
   const ro = r + 16 * q;
@@ -133,19 +170,10 @@ export function drawDialMotion(p: Pix, s: DialState, t: number, reserve = SIDE_W
     p.px(Math.round(cx + ro * Math.cos(a)), Math.round(cy + ro * Math.sin(a)), c);
   });
 
-  // 中心核：逆回転する 2 枚の正方形と核
-  const square = (rad: number, deg: number, c: number) => {
-    const pts = [0, 1, 2, 3].map((i) => {
-      const a = ((deg + i * 90) * Math.PI) / 180;
-      return [cx + rad * Math.cos(a), cy + rad * Math.sin(a)] as const;
-    });
-    pts.forEach((a, i) => p.line(a[0], a[1], pts[(i + 1) % 4][0], pts[(i + 1) % 4][1], c));
-  };
-  const cr = Math.round(34 * Math.min(1, q + 0.15));
+  // 中心核：円と核（正方形は回転体）
+  const cr = coreRadius(q);
   p.circle(cx, cy, cr, 3);
   p.circle(cx, cy, cr - 3, 5, [1, 3]);
-  square(cr - 6, quant(t * 24), 5);
-  square(cr - 12, quant(45 - t * 36), 4);
   p.diamond(cx, cy, 4, 9, 5);
 
   // 選択ノードの波紋：菱形が外側へ広がり減光（回転演出中は省略）
@@ -177,10 +205,11 @@ export function drawDial(p: Pix, s: DialState, reserve = SIDE_WIDTH) {
     p.line(cx + tick * Math.cos(t), cy + tick * Math.sin(t), cx + (tick - l) * Math.cos(t), cy + (tick - l) * Math.sin(t), i % 6 === 0 ? 5 : 3);
   }
 
-  // 五芒星（項目数 5）・六芒星（6）・多角形（その他）
+  // 四角形と対角線（項目数 4）・五芒星（5）・六芒星（6）・多角形（その他）
   const N = geo.nodes;
   const path = (ids: number[]) => ids.reduce((a, b) => (p.line(N[a].x, N[a].y, N[b].x, N[b].y, 4), b));
-  if (N.length === 5) path([0, 2, 4, 1, 3, 0]);
+  if (N.length === 4) (path([0, 1, 2, 3, 0]), path([0, 2]), path([1, 3]));
+  else if (N.length === 5) path([0, 2, 4, 1, 3, 0]);
   else if (N.length === 6) (path([0, 2, 4, 0]), path([1, 3, 5, 1]));
   else N.forEach((n, i) => p.line(n.x, n.y, N[(i + 1) % N.length].x, N[(i + 1) % N.length].y, 4));
 

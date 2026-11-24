@@ -1,12 +1,9 @@
-//! Live in-place translation of a pinned region.
+//! Change-driven reading of a screen region (continuous window
+//! translation).
 //!
-//! Pinning a region opens the `live` window exactly over it: a
-//! transparent, click-through, always-on-top window that paints each
-//! paragraph's translation over the source text, like the selector does
-//! on a frozen frame, but on the live screen. The watcher keeps reading
-//! the region and updates the window as the content changes.
-//!
-//! Per tick (`performance.region_watcher_poll_ms`):
+//! A window-translation window (`lens`) set to continuous reading feeds
+//! its region to a [`Tracker`] at every tick
+//! (`performance.region_watcher_poll_ms`):
 //!
 //! 1. Capture the region and reduce it to a small greyscale thumbnail.
 //!    Unchanged pixels cost nothing more.
@@ -22,35 +19,17 @@
 //! 4. Blocks seen before come from the translation cache and are shown
 //!    immediately; only new paragraphs go to the model.
 //!
-//! Steps 1–4 live in [`Tracker`], which Lens windows run too (see
-//! `lens::set_continuous`).
-//!
-//! The live window is excluded from screen capture (Windows / macOS), so
-//! the watcher reads the original text under it. Where that is not
-//! supported (Linux) the window is hidden for the duration of a capture.
-
-use std::sync::Arc;
-use std::time::Duration;
+//! The capture loop and the window live in `lens`.
 
 use image::{DynamicImage, GrayImage};
-use parking_lot::Mutex;
 use serde::Serialize;
-use tauri::async_runtime::JoinHandle;
-use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize};
 
 use crate::{
-    capture::{self, CaptureRect},
+    capture,
     pipeline::{LensBlock, Pipeline},
     providers::{Capability, TaskOutput},
-    settings::SettingsStore,
     user_error,
 };
-
-/// Label of the live translation window (see `tauri.conf.json`).
-pub const LIVE_WINDOW: &str = "live";
-
-/// Event sent to the live window.
-pub const LIVE_EVENT: &str = "moonlens://live";
 
 /// Longest side of the thumbnail used for change detection.
 const THUMB_MAX_SIDE: u32 = 192;
@@ -71,15 +50,7 @@ const BLOCK_CHANGED: f32 = 0.12;
 /// anyway (a clock, a counter).
 const SETTLE_LIMIT: u32 = 6;
 
-/// What the watcher is currently tracking.
-#[derive(Debug, Clone)]
-pub struct WatchTarget {
-    pub rect: CaptureRect,
-    /// Translate into this language; `None` = the configured target.
-    pub target_language: Option<String>,
-}
-
-/// Messages for the live window.
+/// Messages for a window-translation window.
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum LiveEvent {
@@ -99,156 +70,13 @@ pub enum LiveEvent {
     /// Hide these blocks (indices into the last `Blocks`): their source
     /// changed and a new reading is on its way.
     Stale { indices: Vec<usize> },
-    /// Nothing to show (live translation stopped or the region is empty).
+    /// Nothing to show (the region is empty).
     Clear,
-    /// A QR code in the region was decoded; Lens windows show `text`.
+    /// A QR code in the region was decoded; the window shows `text`.
     Decoded { text: String },
     /// Reading or translating failed (`code|message`, see `user_error`).
-    /// Lens windows show it; the live window ignores it.
+    /// The window shows it.
     Error { message: String },
-}
-
-#[derive(Default)]
-pub struct RegionWatcher {
-    inner: Mutex<Option<Running>>,
-    /// Region of the most recent capture (or pin), so the pin hotkey can
-    /// pin "what I just translated" without the overlay being open.
-    last: Mutex<Option<WatchTarget>>,
-}
-
-struct Running {
-    handle: JoinHandle<()>,
-    stop: Arc<tokio::sync::Notify>,
-}
-
-impl RegionWatcher {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    pub fn is_running(&self) -> bool {
-        self.inner.lock().is_some()
-    }
-
-    pub fn start(
-        &self,
-        app: AppHandle,
-        pipeline: Arc<Pipeline>,
-        settings: Arc<SettingsStore>,
-        target: WatchTarget,
-    ) {
-        self.stop_task();
-        self.remember(target.clone());
-        if let Err(e) = show_live_window(&app, &target.rect) {
-            tracing::warn!("showing the live translation window: {e}");
-        }
-        let stop = Arc::new(tokio::sync::Notify::new());
-        let stop_t = stop.clone();
-        let handle = tauri::async_runtime::spawn(async move {
-            run_watch(app, pipeline, settings, target, stop_t).await;
-        });
-        *self.inner.lock() = Some(Running { handle, stop });
-    }
-
-    /// Record the region of the latest capture as the next pin target.
-    pub fn remember(&self, target: WatchTarget) {
-        *self.last.lock() = Some(target);
-    }
-
-    /// Pin hotkey: stop when running, otherwise pin the last captured
-    /// region. Returns the new pinned state, or `None` when there is
-    /// nothing to pin yet.
-    pub fn toggle(
-        &self,
-        app: AppHandle,
-        pipeline: Arc<Pipeline>,
-        settings: Arc<SettingsStore>,
-    ) -> Option<bool> {
-        if self.is_running() {
-            self.stop_with(&app);
-            return Some(false);
-        }
-        let target = self.last.lock().clone()?;
-        self.start(app, pipeline, settings, target);
-        Some(true)
-    }
-
-    /// Stop watching and take the translations off the screen.
-    pub fn stop_with(&self, app: &AppHandle) {
-        self.stop_task();
-        hide_live_window(app);
-    }
-
-    /// Stop watching (the live window is left to the caller).
-    pub fn stop(&self) {
-        self.stop_task();
-    }
-
-    fn stop_task(&self) {
-        if let Some(r) = self.inner.lock().take() {
-            r.stop.notify_waiters();
-            r.handle.abort();
-        }
-    }
-}
-
-/// Place the live window over `rect` and show it without taking focus.
-fn show_live_window(app: &AppHandle, rect: &CaptureRect) -> anyhow::Result<()> {
-    let win = app
-        .get_webview_window(LIVE_WINDOW)
-        .ok_or_else(|| anyhow::anyhow!("live window missing"))?;
-    let monitors = xcap::Monitor::all()?;
-    let m = monitors
-        .get(rect.monitor_index)
-        .ok_or_else(|| anyhow::anyhow!("monitor {} missing", rect.monitor_index))?;
-    let (mx, my) = (m.x()?, m.y()?);
-    let _ = app.emit_to(LIVE_WINDOW, LIVE_EVENT, LiveEvent::Clear);
-    win.set_position(PhysicalPosition::new(mx + rect.x, my + rect.y))?;
-    win.set_size(PhysicalSize::new(rect.w, rect.h))?;
-    // Keep our own translations out of the watcher's captures (and out of
-    // screenshots / recordings) where the OS supports it.
-    win.set_content_protected(true)?;
-    win.set_ignore_cursor_events(true)?;
-    win.set_always_on_top(true)?;
-    win.show()?;
-    Ok(())
-}
-
-fn hide_live_window(app: &AppHandle) {
-    let _ = app.emit_to(LIVE_WINDOW, LIVE_EVENT, LiveEvent::Clear);
-    if let Some(win) = app.get_webview_window(LIVE_WINDOW) {
-        let _ = win.hide();
-    }
-}
-
-/// Capture the region without the live window in it. Windows and macOS
-/// exclude the window from capture (content protection); elsewhere it
-/// is hidden for the moment of the capture.
-async fn capture_under_window(app: &AppHandle, rect: CaptureRect) -> Option<DynamicImage> {
-    let hide = cfg!(not(any(target_os = "windows", target_os = "macos")));
-    let win = app.get_webview_window(LIVE_WINDOW);
-    let was_visible = hide
-        && win
-            .as_ref()
-            .and_then(|w| w.is_visible().ok())
-            .unwrap_or(false);
-    if was_visible {
-        if let Some(w) = &win {
-            let _ = w.hide();
-        }
-        // Let the compositor drop the window before reading the screen.
-        tokio::time::sleep(Duration::from_millis(40)).await;
-    }
-    let image = tokio::task::spawn_blocking(move || capture::capture_rect(rect))
-        .await
-        .ok()
-        .and_then(|r| r.ok());
-    if was_visible {
-        if let Some(w) = &win {
-            let _ = w.show();
-        }
-    }
-    image
 }
 
 /// Region geometry in screen pixels (`[x, y, w, h]`). A different value
@@ -475,7 +303,7 @@ impl Tracker {
                 ..Shown::default()
             };
             if let Some(text) = decoded {
-                // Take earlier boxes off (the live window shows no QR text).
+                // Take earlier boxes off before the decoded text.
                 (env.emit)(LiveEvent::Clear);
                 (env.emit)(LiveEvent::Decoded { text: text.clone() });
                 return Ok(Tick::Decoded { text });
@@ -548,66 +376,6 @@ impl Tracker {
             requested,
         })
     }
-}
-
-async fn run_watch(
-    app: AppHandle,
-    pipeline: Arc<Pipeline>,
-    settings: Arc<SettingsStore>,
-    target: WatchTarget,
-    stop: Arc<tokio::sync::Notify>,
-) {
-    let mut tracker = Tracker::new();
-    let geometry = [
-        target.rect.x,
-        target.rect.y,
-        target.rect.w as i32,
-        target.rect.h as i32,
-    ];
-    let emit_app = app.clone();
-    let emit = move |ev: LiveEvent| {
-        let _ = emit_app.emit_to(LIVE_WINDOW, LIVE_EVENT, ev);
-    };
-    let geometry_now = move || Some(geometry);
-    let mut first = true;
-    loop {
-        let snap = settings.snapshot();
-        if !snap.overlay.follow_source {
-            break;
-        }
-        let interval = snap.performance.region_watcher_poll_ms.max(50) as u64;
-        let target_language = target
-            .target_language
-            .clone()
-            .unwrap_or_else(|| snap.subtitle.target_language.clone());
-        drop(snap);
-
-        // The first reading happens at once; later ones every interval.
-        if !first {
-            tokio::select! {
-                _ = stop.notified() => break,
-                _ = tokio::time::sleep(Duration::from_millis(interval)) => {}
-            }
-        }
-        first = false;
-
-        let Some(image) = capture_under_window(&app, target.rect).await else {
-            continue;
-        };
-        let env = TickEnv {
-            pipeline: &pipeline,
-            target_language: &target_language,
-            history_kind: crate::pipeline::history_kind::LIVE,
-            emit: &emit,
-            geometry_now: &geometry_now,
-        };
-        if let Err(e) = tracker.tick(Frame { image, geometry }, false, &env).await {
-            tracing::debug!("live translation: {e}");
-        }
-    }
-    // Live translation was switched off in settings.
-    hide_live_window(&app);
-    let _ = app.emit("moonlens://pin-state", false);
 }
 
 /// Text of all blocks in order: what decides whether the screen says

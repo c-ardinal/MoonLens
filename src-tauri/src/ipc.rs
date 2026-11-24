@@ -270,46 +270,6 @@ pub async fn capture_region_cmd(
     Ok(CapturedRegion { image_png })
 }
 
-/// Live translation: paint translations over `args` on the live screen
-/// and keep them current as it changes (see `region_watcher`).
-/// `target_language` defaults to the configured target. Idempotent:
-/// calling it again moves live translation to the new region.
-#[tauri::command]
-pub async fn pin_overlay(
-    args: RegionArgs,
-    target_language: Option<String>,
-    app: AppHandle,
-    state: State<'_, AppState>,
-) -> Result<(), String> {
-    let target = crate::region_watcher::WatchTarget {
-        rect: CaptureRect {
-            monitor_index: args.monitor_index,
-            x: args.x,
-            y: args.y,
-            w: args.w,
-            h: args.h,
-        },
-        target_language: target_language
-            .map(|t| t.trim().to_string())
-            .filter(|t| !t.is_empty()),
-    };
-    state.region_watcher.start(
-        app.clone(),
-        state.pipeline.clone(),
-        state.settings.clone(),
-        target,
-    );
-    let _ = app.emit("moonlens://pin-state", true);
-    Ok(())
-}
-
-#[tauri::command]
-pub async fn unpin_overlay(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
-    state.region_watcher.stop_with(&app);
-    let _ = app.emit("moonlens://pin-state", false);
-    Ok(())
-}
-
 #[tauri::command]
 pub async fn capture_and_process(
     args: Option<RegionArgs>,
@@ -450,18 +410,16 @@ pub async fn process_frozen_selection(
         w: r.w,
         h: r.h,
     });
-    state
-        .region_watcher
-        .remember(crate::region_watcher::WatchTarget {
-            rect: CaptureRect {
-                monitor_index,
-                x: r.x as i32,
-                y: r.y as i32,
-                w: r.w,
-                h: r.h,
-            },
-            target_language: target_language.clone(),
-        });
+    state.lenses.remember(lens::Placement {
+        rect: CaptureRect {
+            monitor_index,
+            x: r.x as i32,
+            y: r.y as i32,
+            w: r.w,
+            h: r.h,
+        },
+        target_language: clean_language(target_language.clone()),
+    });
     if bundle.needs_translation() {
         // The selector remembers the language last picked in its toolbar;
         // otherwise use the configured target.
@@ -1324,9 +1282,74 @@ fn platform_label(os: &str) -> &'static str {
     }
 }
 
+/// Open a window-translation window. With `rect` (monitor-relative
+/// physical pixels, as in a selector result) its body covers that range;
+/// without, it opens at a default spot. `target_language` defaults to the
+/// configured target.
 #[tauri::command]
-pub async fn new_lens_window(app: AppHandle, state: State<'_, AppState>) -> Result<String, String> {
-    lens::create(&app, &state.lenses).map_err(|e| e.to_string())
+pub async fn open_lens(
+    rect: Option<RegionArgs>,
+    target_language: Option<String>,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<String, String> {
+    let placement = rect.map(|r| lens::Placement {
+        rect: CaptureRect {
+            monitor_index: r.monitor_index,
+            x: r.x,
+            y: r.y,
+            w: r.w,
+            h: r.h,
+        },
+        target_language: clean_language(target_language.clone()),
+    });
+    // The toggle hotkey reopens this range later.
+    if let Some(p) = &placement {
+        state.lenses.remember(p.clone());
+    }
+    // Window creation must not run on the IPC worker on Windows (it
+    // deadlocks with the event loop); hand it to the main thread.
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    let lenses = state.lenses.clone();
+    let app_main = app.clone();
+    app.run_on_main_thread(move || {
+        let _ = tx.send(lens::create(&app_main, &lenses, placement));
+    })
+    .map_err(|e| e.to_string())?;
+    rx.await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())
+}
+
+/// Change the language a lens window translates into (`None` / empty:
+/// the configured target). A continuous lens translates again at once.
+#[tauri::command]
+pub async fn set_lens_language(
+    id: String,
+    target_language: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    state
+        .lenses
+        .set_target_language(&id, clean_language(target_language));
+    state.lenses.kick(&id);
+    Ok(())
+}
+
+/// The lens renderer shows controls over its body (text view): let the
+/// body take the mouse instead of passing it through.
+#[tauri::command]
+pub async fn set_lens_interactive(
+    id: String,
+    on: bool,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    state.lenses.set_interactive(&id, on);
+    Ok(())
+}
+
+fn clean_language(lang: Option<String>) -> Option<String> {
+    lang.map(|t| t.trim().to_string()).filter(|t| !t.is_empty())
 }
 
 #[tauri::command]
@@ -1411,7 +1434,25 @@ pub async fn capture_lens_now(
             .await
             .map_err(|e| e.to_string())?
             .map_err(|e| e.to_string())?;
-    let bundle = capture_flow(&pipeline, png, crate::pipeline::history_kind::LENS).await?;
+    let mut bundle = pipeline
+        .analyze_capture(png)
+        .await
+        .map_err(|e| user_error::provider(&e, Capability::Ocr))?;
+    if bundle.needs_translation() {
+        let target = state
+            .lenses
+            .target_language(&id)
+            .unwrap_or_else(|| state.settings.snapshot().subtitle.target_language.clone());
+        pipeline
+            .translate_capture_as(
+                &mut bundle,
+                &target,
+                None,
+                crate::pipeline::history_kind::LENS,
+            )
+            .await
+            .map_err(|e| user_error::provider(&e, Capability::Translate))?;
+    }
     // Lens captures must obey the same clipboard policy as the
     // regular ⌘⇧Space flow. Without this the user's auto_copy settings
     // would apply to ad-hoc captures but silently drop lens results.

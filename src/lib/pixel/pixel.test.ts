@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { slantPolygon } from './slant';
-import { SELECTED_ANGLE, SIDE_WIDTH, dialGeometry, hitTest, labelPlacement } from './dial';
+import { ROTORS, SELECTED_ANGLE, SIDE_WIDTH, dialGeometry, hitTest, labelPlacement, rotorSize } from './dial';
 import { homeDot } from './home';
 
 const points = (poly: string) =>
@@ -87,5 +87,16 @@ describe('homeDot', () => {
     // 1920×1080・150% の画面（作業領域 1280×672 相当）
     expect(homeDot(1280, 608, 1.5)).toBeCloseTo(2 / 1.5);
     expect(homeDot(1000, 560, 1)).toBe(1);
+  });
+});
+
+describe('回転体', () => {
+  it('寸法は奇数（中心画素＝回転中心）、外周ほど大きい', () => {
+    for (const r of [120, 158, 171]) {
+      const sizes = ROTORS.map((o) => rotorSize(o.id, r));
+      expect(sizes.every((n) => n % 2 === 1)).toBe(true);
+      expect(sizes[0]).toBeGreaterThan(sizes[1]);
+      expect(sizes[1]).toBeGreaterThan(sizes[2]);
+    }
   });
 });

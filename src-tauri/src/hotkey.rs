@@ -53,7 +53,7 @@ pub fn register_all(
     );
 
     // Capture window: same frozen-frame selector, but the whole monitor
-    // is translated immediately (Lens "translate screen").
+    // is translated immediately (window translation of the full screen).
     let app_w = app.clone();
     bind(
         shortcut_mgr,
@@ -66,7 +66,7 @@ pub fn register_all(
         },
     );
 
-    // Pin overlay toggle.
+    // Continuous window translation of the last range: toggle.
     let app_p = app.clone();
     bind(
         shortcut_mgr,
@@ -76,21 +76,11 @@ pub fn register_all(
             if !matches!(e.state(), ShortcutState::Pressed) {
                 return;
             }
-            // Pin (or unpin) the region of the last capture; the overlay
-            // follows along through `moonlens://pin-state`.
+            // Keep translating the range translated last (a continuous
+            // window-translation window over it), or close that window.
             let state = app_p.state::<AppState>();
-            let pinned = state.region_watcher.toggle(
-                app_p.clone(),
-                state.pipeline.clone(),
-                state.settings.clone(),
-            );
-            match pinned {
-                Some(p) => {
-                    let _ = app_p.emit("moonlens://pin-state", p);
-                }
-                None => {
-                    let _ = app_p.emit("moonlens://hotkey", "toggle_pin_overlay_empty");
-                }
+            if crate::lens::toggle(&app_p, &state.lenses).is_none() {
+                let _ = app_p.emit("moonlens://hotkey", "toggle_pin_overlay_empty");
             }
         },
     );

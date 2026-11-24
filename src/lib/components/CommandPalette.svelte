@@ -5,7 +5,6 @@
     Camera,
     Puzzle,
     History,
-    Focus,
     Home,
     Image as ImageIcon,
     Languages,
@@ -17,7 +16,6 @@
   } from 'lucide-svelte';
   import {
     getSettings,
-    newLensWindow,
     onHotkey,
     quitApp,
     startRegionSelection,
@@ -48,11 +46,6 @@
     await startRegionSelection(full);
   }
 
-  async function runOpenLens() {
-    open = false;
-    await newLensWindow();
-  }
-
   async function toggleSub() {
     open = false;
     if (subtitleRunning) await stopSubtitle();
@@ -69,28 +62,27 @@
   const commands: Command[] = $derived([
     {
       id: 'capture',
-      label: '範囲翻訳',
+      label: 'ウィンドウ翻訳（範囲）',
       hint: hint('capture_region'),
       icon: Camera,
       run: () => runCapture(false)
     },
     {
       id: 'capture-full',
-      label: '全画面翻訳',
+      label: 'ウィンドウ翻訳（全画面）',
       hint: hint('capture_window'),
       icon: Maximize,
       run: () => runCapture(true)
     },
-    { id: 'lens', label: 'Lens ウィンドウ', icon: Focus, run: runOpenLens },
     {
       id: 'subtitle',
-      label: subtitleRunning ? 'ライブ字幕 停止' : 'ライブ字幕 開始',
+      label: subtitleRunning ? '音声翻訳 停止' : '音声翻訳 開始',
       hint: hint('toggle_subtitle'),
       icon: subtitleRunning ? MicOff : Mic,
       run: toggleSub
     },
     { id: 'home', label: 'ホーム', icon: Home, run: go('/') },
-    { id: 'image', label: '画像ファイル翻訳', icon: ImageIcon, run: go('/image/') },
+    { id: 'image', label: '画像翻訳', icon: ImageIcon, run: go('/image/') },
     { id: 'translate', label: 'テキスト翻訳', icon: Languages, run: go('/translate/') },
     { id: 'settings', label: '設定', icon: SettingsIcon, run: go('/settings/') },
     { id: 'history', label: '履歴', hint: hint('open_history'), icon: History, run: go('/history/') },
