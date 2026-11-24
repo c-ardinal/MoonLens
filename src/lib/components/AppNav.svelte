@@ -23,7 +23,7 @@
   const items = [
     { href: '/', label: 'ホーム' },
     { href: '/history/', label: '履歴' },
-    { href: '/plugins/', label: 'プラグイン' },
+    { href: '/plugins/', label: '拡張' },
     { href: '/settings/', label: '設定' }
   ];
 
@@ -115,6 +115,11 @@
   }
   .px-chip {
     padding: 0 8px 0 12px;
+  }
+  /* 画面切替タブ：等幅で整列（最長の 3 文字＋斜めの切抜き分） */
+  .tabs .px-chip {
+    justify-content: center;
+    width: 124px;
   }
   .px-chip:not([data-tone]) {
     color: var(--ml-px-mid);

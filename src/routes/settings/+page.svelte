@@ -12,9 +12,11 @@
     setSettings,
     type Settings
   } from '$lib/ipc';
-  import { SECTIONS, changedPaths, duplicateHotkeys, fieldMatches, getPath, setPath } from '$lib/settings-meta';
+  import { GROUPS, SECTIONS, changedPaths, duplicateHotkeys, fieldMatches, getPath, setPath } from '$lib/settings-meta';
   import { errorText } from '$lib/errors';
   import SettingField from '$lib/components/SettingField.svelte';
+  import SettingRow from '$lib/components/SettingRow.svelte';
+  import { provideRowSelection } from '$lib/settings-rows.svelte';
   import LocalModels from '$lib/components/LocalModels.svelte';
   import AsrModels from '$lib/components/AsrModels.svelte';
   import OcrModels from '$lib/components/OcrModels.svelte';
@@ -136,27 +138,48 @@
     message = null;
   }
 
-  /** 表示中の分類（検索結果に含まれない場合は先頭）。 */
+  /** 表示中の小分類（検索結果に含まれない場合は先頭）。 */
   const shown = $derived(visible.find((v) => v.section.id === current) ?? visible[0]);
-  /** 選択中の項目（選択帯と説明窓の対象）。 */
-  let activePath = $state<string | null>(null);
-  const activeField = $derived(shown?.fields.find((f) => f.path === activePath) ?? null);
-  const showingModels = $derived(
-    !!shown && 'component' in shown.section && shown.section.component !== 'data'
+  /** 大分類：検索結果を含む分類のみ。 */
+  const groups = $derived(
+    GROUPS.map((g) => ({ group: g, sections: visible.filter((v) => g.sections.includes(v.section.id)) })).filter(
+      (g) => g.sections.length > 0
+    )
   );
+  const shownGroup = $derived(groups.find((g) => g.sections.some((v) => v === shown)) ?? groups[0]);
+
+  /** 選択中の行（選択帯と説明窓の対象）。 */
+  const rows = provideRowSelection();
+  const MODEL_COMPONENTS = ['llm-translate', 'llm-assist', 'ocr', 'asr'];
+  const component = $derived(shown && 'component' in shown.section ? shown.section.component : null);
   let modelsMounted = $state(false);
   $effect(() => {
-    if (showingModels) modelsMounted = true;
+    if (component && MODEL_COMPONENTS.includes(component)) modelsMounted = true;
   });
-  // 項目名の再掲は冗長：説明のない項目は分類の説明を表示
-  const explain = $derived(activeField?.help ?? shown?.section.description ?? activeField?.label ?? '');
+  // 項目名の再掲は冗長：説明のない項目は小分類の説明を表示
+  const explain = $derived(rows.help ?? shown?.section.description ?? '');
 
+  /** 先頭行を選択状態へ（分類切替時）。 */
+  async function selectFirstRow() {
+    rows.clear();
+    await tick();
+    const first = [...document.querySelectorAll<HTMLElement>('.cfg .scroll [data-row]')].find(
+      (r) => r.offsetParent !== null
+    );
+    first?.dispatchEvent(new MouseEvent('mouseenter'));
+  }
+
+  /** 小分類 id・大分類 id のどちらでも該当画面へ切替。 */
   function jump(id: string) {
+    const group = GROUPS.find((g) => g.id === id);
+    const target = group
+      ? (groups.find((g) => g.group.id === id)?.sections[0]?.section.id ?? group.sections[0])
+      : id;
+    if (target === current && rows.active) return;
     // 分類切替時は先頭から表示（前の分類のスクロール位置を持越さない）
-    if (id !== current) document.querySelector('.cfg .scroll')?.scrollTo({ top: 0 });
-    current = id;
-    const s = visible.find((v) => v.section.id === id);
-    activePath = s?.fields[0]?.path ?? null;
+    document.querySelector('.cfg .scroll')?.scrollTo({ top: 0 });
+    current = target;
+    selectFirstRow();
   }
 
   // 表示中の設定画面へ /settings/#section-xxx で再遷移した場合も該当分類へ切替
@@ -168,25 +191,34 @@
   });
 
   function moveRow(delta: number) {
-    const fields = shown?.fields ?? [];
-    if (fields.length === 0) return;
-    const i = fields.findIndex((f) => f.path === activePath);
-    const next = fields[(i + delta + fields.length) % fields.length];
-    activePath = next.path;
-    const row = document.querySelector<HTMLElement>(`[data-row="${next.path}"]`);
-    row?.scrollIntoView({ block: 'nearest' });
-    row?.querySelector<HTMLElement>('input,select,button')?.focus({ preventScroll: true });
+    const list = [...document.querySelectorAll<HTMLElement>('.cfg .scroll [data-row]')].filter(
+      (r) => r.offsetParent !== null
+    );
+    if (list.length === 0) return;
+    const i = list.findIndex((r) => r.dataset.row === rows.active);
+    const row = list[(i + delta + list.length) % list.length];
+    row.dispatchEvent(new MouseEvent('mouseenter'));
+    row.scrollIntoView({ block: 'nearest' });
+    row.querySelector<HTMLElement>('input,select,button')?.focus({ preventScroll: true });
+  }
+
+  function cycle<T>(list: T[], at: number, delta: number): T {
+    return list[(at + delta + list.length) % list.length];
   }
 
   function onKey(e: KeyboardEvent) {
     if (e.ctrlKey || e.altKey || e.metaKey) return;
     const t = e.target as HTMLElement | null;
     const typing = !!t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName));
-    const ids = visible.map((v) => v.section.id);
-    const at = Math.max(0, ids.indexOf(shown?.section.id ?? ''));
-    if (e.key === 'PageDown') jump(ids[(at + 1) % ids.length]);
-    else if (e.key === 'PageUp') jump(ids[(at - 1 + ids.length) % ids.length]);
+    const gids = groups.map((g) => g.group.id);
+    const gat = Math.max(0, gids.indexOf(shownGroup?.group.id ?? ''));
+    const sids = shownGroup?.sections.map((v) => v.section.id) ?? [];
+    const sat = Math.max(0, sids.indexOf(shown?.section.id ?? ''));
+    if (e.key === 'PageDown') jump(cycle(gids, gat, 1));
+    else if (e.key === 'PageUp') jump(cycle(gids, gat, -1));
     else if (typing) return;
+    else if (e.key === 'ArrowRight' && sids.length > 1) jump(cycle(sids, sat, 1));
+    else if (e.key === 'ArrowLeft' && sids.length > 1) jump(cycle(sids, sat, -1));
     else if (e.key === 'ArrowDown') moveRow(1);
     else if (e.key === 'ArrowUp') moveRow(-1);
     else if (e.key === '/') document.getElementById('settings-search')?.focus();
@@ -200,7 +232,7 @@
 <div class="cfg" class:with-bar={changed.length > 0 || !!message}>
   <header class="head">
     <div class="page-title"><PixelTitle text="設定" tag="h1" height={40} fit /></div>
-    <p class="hint">↑↓項目 PgUp/Dn分類 /検索</p>
+    <p class="hint">↑↓項目 ←→タブ PgUp/Dn分類</p>
     <div class="search">
       <Search class="icon" />
       <input id="settings-search" bind:value={query} type="search" placeholder="設定を検索" aria-label="設定を検索" />
@@ -215,18 +247,18 @@
     <p class="px-win empty">「{query}」：該当なし</p>
   {:else}
     <div class="body">
-      <!-- 分類：斜めの階段状タブ（下段ほど左へ後退） -->
-      <nav aria-label="設定の分類" class="tabs scrollbar-minimal">
-        {#each visible as { section }, i (section.id)}
+      <!-- 大分類：等幅の斜め帯を階段状に配置（左右端とも同じ傾きで整列） -->
+      <nav aria-label="設定の分類" class="tabs scrollbar-minimal" style="--n: {groups.length}">
+        {#each groups as { group }, i (group.id)}
           <button
             class="px-chip tab"
-            style="--step: {visible.length - 1 - i}"
-            data-tone={shown?.section.id === section.id ? 'bone' : undefined}
-            aria-current={shown?.section.id === section.id ? 'true' : undefined}
+            style="--step: {groups.length - 1 - i}"
+            data-tone={shownGroup?.group.id === group.id ? 'bone' : undefined}
+            aria-current={shownGroup?.group.id === group.id ? 'true' : undefined}
             use:slant
-            onclick={() => jump(section.id)}
+            onclick={() => jump(group.id)}
           >
-            {section.title}
+            {group.title}
           </button>
         {/each}
       </nav>
@@ -234,33 +266,34 @@
       <div class="right">
       <section class="main" id="section-{shown.section.id}" aria-label={shown.section.title}>
         <div class="frame" aria-hidden="true"></div>
+        {#if (shownGroup?.sections.length ?? 0) > 1}
+          <!-- 小分類：枠上部の矩形タブ -->
+          <div class="subtabs" role="tablist" aria-label="{shownGroup.group.title}の小分類">
+            {#each shownGroup.sections as { section } (section.id)}
+              <button
+                class="subtab"
+                role="tab"
+                aria-selected={shown.section.id === section.id}
+                onclick={() => jump(section.id)}
+              >
+                {section.title}
+              </button>
+            {/each}
+          </div>
+        {/if}
         <div class="scroll scrollbar-minimal">
           <!-- モデル管理：一度表示後は分類切替でも保持（取得中の進捗・完了通知を継続） -->
           {#if modelsMounted}
-            <div class="flex flex-col gap-6" style:display={showingModels ? null : "none"}>
-              <LocalModels />
-              <OcrModels />
-              <AsrModels />
-            </div>
+            <div style:display={component === 'llm-translate' ? null : 'none'}><LocalModels role="translate" /></div>
+            <div style:display={component === 'llm-assist' ? null : 'none'}><LocalModels role="assistant" /></div>
+            <div style:display={component === 'ocr' ? null : 'none'}><OcrModels /></div>
+            <div style:display={component === 'asr' ? null : 'none'}><AsrModels /></div>
           {/if}
-          {#if 'component' in shown.section && shown.section.component === 'data'}
+          {#if component === 'data'}
             <DataLocations />
-          {:else if 'component' in shown.section}
-            <!-- モデル管理は上部で描画 -->
-          {:else}
+          {:else if !component}
             {#each shown.fields as field (field.path)}
-              <div
-                class="row"
-                class:active={activePath === field.path}
-                data-row={field.path}
-                role="presentation"
-                onmouseenter={() => (activePath = field.path)}
-                onfocusin={() => (activePath = field.path)}
-              >
-                {#if activePath === field.path}
-                  <div class="band outer" use:slant aria-hidden="true"></div>
-                  <div class="band inner" use:slant aria-hidden="true"></div>
-                {/if}
+              <SettingRow id={field.path} help={field.help}>
                 {#if field.kind === 'glossary'}
                   <GlossaryEditor
                     label={field.label}
@@ -279,7 +312,7 @@
                     onChange={(v) => update(field.path, v)}
                   />
                 {/if}
-              </div>
+              </SettingRow>
             {/each}
           {/if}
         </div>
@@ -287,7 +320,12 @@
       <!-- 説明窓：右列の下部（タブ列は全高を使用し、分類の見切れを防止） -->
       <section class="px-win desc" aria-live="polite">
         <span class="px-chip px-win-title" data-tone="amber" use:slant>説明</span>
-        <p>{explain}</p>
+        <p>
+          {explain}
+          {#if rows.link}
+            <a href={rows.link.href} target="_blank" rel="noreferrer">{rows.link.label}</a>
+          {/if}
+        </p>
       </section>
       </div>
     </div>
@@ -366,27 +404,29 @@
   }
   .body {
     display: grid;
-    grid-template-columns: 340px minmax(0, 1fr);
+    grid-template-columns: var(--tab-col) minmax(0, 1fr);
     gap: 16px;
     min-height: 0;
+    /* 大分類の帯：幅 280px、1 段ごとに 12px 後退（帯自体の傾き 0.3 と同等） */
+    --tab-w: 280px;
+    --tab-step: 12px;
+    --tab-col: calc(var(--tab-w) + 5 * var(--tab-step));
   }
   .tabs {
     display: flex;
     flex-direction: column;
-    gap: 0;
+    gap: 6px;
     overflow-x: hidden;
     overflow-y: auto;
     padding: 4px 0;
   }
   .tab {
-    margin-left: calc(var(--step) * 6px);
-    margin-right: 16px;
+    flex-shrink: 0;
+    width: var(--tab-w);
+    margin-left: calc((var(--step) + 5 - (var(--n) - 1)) * var(--tab-step));
     white-space: nowrap;
     line-height: 34px;
     text-align: left;
-  }
-  .tab[data-tone] {
-    margin-right: 0; /* 列内で完結：斜めの右端が切れない */
   }
   .tab:not([data-tone]):hover {
     background: var(--ml-px-dim);
@@ -400,63 +440,59 @@
   }
   .main {
     position: relative;
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
     min-height: 0;
   }
   .frame {
     position: absolute;
-    inset: 0 0 0 20px;
+    inset: 0;
     background: var(--ml-px-black);
     border-top: 2px solid var(--ml-px-bone);
     border-left: 2px solid var(--ml-px-bone);
     border-right: 2px solid var(--ml-px-dim);
     border-bottom: 2px solid var(--ml-px-dim);
   }
+  .subtabs {
+    position: relative;
+    grid-row: 1;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin: 2px 2px 0;
+    padding: 10px 26px 0;
+    border-bottom: 2px solid var(--ml-px-dim);
+  }
+  .subtab {
+    padding: 0 14px;
+    line-height: 40px;
+    color: var(--ml-px-mid);
+    white-space: nowrap;
+  }
+  .subtab:hover {
+    background: var(--ml-px-dim);
+    color: var(--ml-px-cream);
+  }
+  .subtab[aria-selected='true'] {
+    background: var(--ml-px-amber);
+    color: var(--ml-px-black);
+  }
   .scroll {
     position: relative;
+    grid-row: 2;
     height: 100%;
     overflow-x: hidden;
     overflow-y: auto;
-    padding: 16px 28px 16px 60px;
+    padding: 12px 28px 16px;
     box-sizing: border-box;
   }
-  .row {
-    position: relative;
-    border-bottom: 2px dotted var(--ml-px-dim);
-  }
-  .row:last-child {
-    border-bottom: 0;
-  }
-  .band {
-    position: absolute;
-    pointer-events: none;
-  }
-  .band.outer {
-    /* 枠（左 22px・右 2px の内側）へ収める：枠線との重複なし */
-    inset: -6px -24px -4px -36px;
-    background: var(--ml-px-bone);
-  }
-  .band.inner {
-    inset: -2px -20px 0 -30px;
-    background: var(--ml-px-amber);
-  }
-  .row > :global(:not(.band)) {
-    position: relative;
-  }
-  .row.active :global(label),
-  .row.active :global(.value-text) {
-    color: var(--ml-px-black);
-  }
-  /* 琥珀の帯上のスライダー：つまみ・溝を黒系へ反転 */
-  .row.active :global(input[type='range']::-webkit-slider-thumb) {
-    background: var(--ml-px-black);
-    box-shadow: none;
-  }
-  .row.active :global(input[type='range']::-webkit-slider-runnable-track) {
-    background: var(--ml-px-faint);
+  .desc a {
+    color: var(--ml-px-mid);
+    text-decoration: underline;
   }
   .desc {
-    /* 見出し札（上へ 20px 突出）がタブ列と重ならない余白 */
-    margin: 20px 0 0 20px;
+    /* 見出し札（上へ 20px 突出）分の余白 */
+    margin: 20px 0 0;
     padding-top: 26px;
     box-sizing: border-box;
   }

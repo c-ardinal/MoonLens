@@ -86,7 +86,7 @@
     { id: 'translate', label: 'テキスト翻訳', icon: Languages, run: go('/translate/') },
     { id: 'settings', label: '設定', icon: SettingsIcon, run: go('/settings/') },
     { id: 'history', label: '履歴', hint: hint('open_history'), icon: History, run: go('/history/') },
-    { id: 'plugins', label: 'プラグイン管理', icon: Puzzle, run: go('/plugins/') },
+    { id: 'plugins', label: '拡張機能管理', icon: Puzzle, run: go('/plugins/') },
     { id: 'quit', label: 'MoonLens 終了', icon: Power, run: () => quitApp() }
   ]);
 

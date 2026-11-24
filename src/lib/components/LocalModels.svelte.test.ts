@@ -33,7 +33,7 @@ vi.mock('$lib/ipc', () => ipc);
 import LocalModels from './LocalModels.svelte';
 
 describe('<LocalModels>', () => {
-  it('lists models and marks which role each one serves', async () => {
+  it('lists every model for translation and marks the one in use', async () => {
     ipc.listLlmModels.mockResolvedValue({
       selected: 'a',
       assistant: 'c',
@@ -44,16 +44,30 @@ describe('<LocalModels>', () => {
         model('c', { installed: true })
       ]
     });
-    const { findByText, getByText, queryByText } = render(LocalModels);
+    const { findByText, getByText, getAllByText } = render(LocalModels, { role: 'translate' });
     expect(await findByText('Model a')).toBeInTheDocument();
-    expect(getByText('翻訳')).toBeInTheDocument();
-    expect(getByText('説明・要約')).toBeInTheDocument();
-    // The chat model can also take over translation; PLaMo cannot assist.
-    expect(getByText('翻訳用に設定')).toBeInTheDocument();
-    expect(queryByText('説明用に設定')).not.toBeInTheDocument();
+    expect(getByText('Model c')).toBeInTheDocument();
+    expect(getAllByText('使用中')).toHaveLength(1);
+    // The chat model can also take over translation.
+    expect(getAllByText('使用')).toHaveLength(1);
     // Interrupted download offers to resume.
     expect(getByText('再開')).toBeInTheDocument();
-    expect(getByText('/data/llm')).toBeInTheDocument();
+  });
+
+  it('offers only chat models for explain / summarize', async () => {
+    ipc.listLlmModels.mockResolvedValue({
+      selected: 'a',
+      assistant: 'c',
+      dir: '/data/llm',
+      models: [model('a', { installed: true, style: 'pfml3' }), model('c', { installed: true }), model('d', { installed: true })]
+    });
+    ipc.selectLlmModel.mockResolvedValue(undefined);
+    const { findByText, queryByText, getByText } = render(LocalModels, { role: 'assistant' });
+    expect(await findByText('Model d')).toBeInTheDocument();
+    // PLaMo cannot assist.
+    expect(queryByText('Model a')).not.toBeInTheDocument();
+    await fireEvent.click(getByText('使用'));
+    await waitFor(() => expect(ipc.selectLlmModel).toHaveBeenCalledWith('d', 'assistant'));
   });
 
   it('puts a downloaded translation model to work when none is installed', async () => {
@@ -66,9 +80,27 @@ describe('<LocalModels>', () => {
     ipc.installLlmModel.mockResolvedValue('/data/llm/a.gguf');
     ipc.selectLlmModel.mockResolvedValue(undefined);
     const { findByText } = render(LocalModels);
-    await fireEvent.click(await findByText('ダウンロード'));
+    await fireEvent.click(await findByText('取得'));
     await waitFor(() => expect(ipc.installLlmModel).toHaveBeenCalledWith('a'));
     await waitFor(() => expect(ipc.selectLlmModel).toHaveBeenCalledWith('a', 'translate'));
+  });
+});
+
+describe('<LocalModels> shared state', () => {
+  it('shows a model downloaded in one panel as installed in the other', async () => {
+    const before = { selected: 'a', assistant: 'x', dir: '', models: [model('a', { installed: true, style: 'pfml3' }), model('c')] };
+    const after = { ...before, assistant: 'c', models: [before.models[0], model('c', { installed: true })] };
+    ipc.listLlmModels.mockResolvedValue(before);
+    ipc.installLlmModel.mockImplementation(async () => {
+      ipc.listLlmModels.mockResolvedValue(after);
+      return '/d/c.gguf';
+    });
+    ipc.selectLlmModel.mockResolvedValue(undefined);
+    const tr = render(LocalModels, { role: 'translate' });
+    const as = render(LocalModels, { role: 'assistant' });
+    await fireEvent.click(await tr.findByText('取得'));
+    await waitFor(() => expect(as.getByText('使用中')).toBeInTheDocument());
+    expect(as.queryByText('中止')).not.toBeInTheDocument();
   });
 });
 
@@ -89,15 +121,6 @@ describe('<LocalModels> housekeeping', () => {
     await waitFor(() => expect(ipc.deleteLlmModel).toHaveBeenCalledWith('a'));
   });
 
-  it('lists files left by older versions and deletes them', async () => {
-    ipc.listLlmModels.mockResolvedValue({ selected: 'a', assistant: 'c', dir: '/d', models: [] });
-    ipc.listOrphanLlmFiles.mockResolvedValue([{ name: 'old-Q4.gguf', size: 1_073_741_824 }]);
-    ipc.deleteOrphanLlmFile.mockResolvedValue(undefined);
-    const { findByLabelText } = render(LocalModels);
-    await fireEvent.click(await findByLabelText('old-Q4.gguf を削除'));
-    await waitFor(() => expect(ipc.deleteOrphanLlmFile).toHaveBeenCalledWith('old-Q4.gguf'));
-  });
-
   it('shows coded backend errors as plain text', async () => {
     ipc.listOrphanLlmFiles.mockResolvedValue([]);
     ipc.listLlmModels.mockResolvedValue({
@@ -108,7 +131,7 @@ describe('<LocalModels> housekeeping', () => {
     });
     ipc.installLlmModel.mockRejectedValue('disk_full|空き容量不足：必要 2.3 GB／空き 1.0 GB');
     const { findByText, getByText } = render(LocalModels);
-    await fireEvent.click(await findByText('ダウンロード'));
+    await fireEvent.click(await findByText('取得'));
     await waitFor(() => expect(getByText('空き容量不足：必要 2.3 GB／空き 1.0 GB')).toBeInTheDocument());
   });
 });

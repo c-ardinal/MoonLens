@@ -1,0 +1,2 @@
+- Settings are grouped into six categories with sub-tabs; models are split by role (translation, explain / summarize, OCR, speech) and shown one row each, with notes and licenses in the description window. Old model files are listed under Data.
+- Settings category list uses equal-width slanted bands; row selection and ON/OFF toggles are rectangular. Top menu tabs share one width, the logo underline is removed, and "Plugins" is labeled 拡張 / 拡張機能.

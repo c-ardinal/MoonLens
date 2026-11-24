@@ -81,7 +81,7 @@
 <main class="plugins mx-auto flex max-w-4xl flex-col gap-4 px-4 py-6 sm:gap-6 sm:px-6">
   <header class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
     <div>
-      <div class="page-title"><PixelTitle text="プラグイン" tag="h1" height={40} fit /></div>
+      <div class="page-title"><PixelTitle text="拡張機能" tag="h1" height={40} fit /></div>
       <p class="text-sm text-ink-muted">拡張機能の有効化・権限確認。</p>
     </div>
     <div class="flex items-center gap-2">
@@ -116,7 +116,7 @@
       <p
         class="rounded-ml border border-border bg-surface-elevated p-2 text-xs text-ink-muted"
       >
-        全プラグイン最新。
+        全拡張機能最新。
       </p>
     {:else}
       <section class="rounded-ml border border-accent/40 bg-accent-soft p-3">
@@ -164,7 +164,7 @@
     <div
       class="rounded-ml border border-dashed border-border bg-surface-elevated p-8 text-center text-ink-muted"
     >
-      プラグインなし。
+      拡張機能なし。
       <br />
       「ファイル追加」で .moonlens-plugin を読込、または
       <code class="font-mono text-xs break-all">$APPDATA/plugins/&lt;id&gt;/plugin.toml</code>
