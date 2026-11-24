@@ -128,6 +128,12 @@ export const SECTIONS: Section[] = [
         label: 'ウィンドウ翻訳 表示／全終了',
         help: '窓なし：窓を表示。窓あり：全窓を終了。'
       },
+      {
+        kind: 'hotkey',
+        path: 'hotkeys.toggle_window_operate',
+        label: 'ウィンドウ翻訳 透過／操作',
+        help: '全窓の切替。透過：窓上のクリックは背面へ。操作：訳文の選択・コピー可。'
+      },
       { kind: 'hotkey', path: 'hotkeys.toggle_subtitle', label: '音声翻訳 開始／停止' },
       { kind: 'hotkey', path: 'hotkeys.open_command_palette', label: 'コマンドパレット' },
       { kind: 'hotkey', path: 'hotkeys.open_history', label: '履歴表示' }

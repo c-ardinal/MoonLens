@@ -1,0 +1,1 @@
+- Window translation windows now have two modes. In pass-through mode (the default), clicks on a window go to the app behind it. In operate mode, the window takes the mouse, so you can select and copy the translation. A new header button switches one window. A new hotkey (default Ctrl+Shift+E) switches all windows at once.

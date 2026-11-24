@@ -102,6 +102,9 @@ pub struct Hotkeys {
     /// Window translation: open a window when there is none, otherwise
     /// close them all.
     pub toggle_pin_overlay: String,
+    /// Window translation: switch every window between letting the mouse
+    /// through (default) and taking it (select / copy the translation).
+    pub toggle_window_operate: String,
     pub toggle_subtitle: String,
     pub open_command_palette: String,
     pub open_history: String,
@@ -116,6 +119,7 @@ impl Default for Hotkeys {
             capture_region: "CommandOrControl+Shift+Space".into(),
             capture_window: "CommandOrControl+Shift+W".into(),
             toggle_pin_overlay: "CommandOrControl+Shift+P".into(),
+            toggle_window_operate: "CommandOrControl+Shift+E".into(),
             toggle_subtitle: "CommandOrControl+Shift+S".into(),
             open_command_palette: "CommandOrControl+K".into(),
             open_history: "CommandOrControl+Shift+H".into(),

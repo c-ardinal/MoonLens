@@ -56,6 +56,8 @@ pub const LENS_LIVE_EVENT: &str = "moonlens://lens-live";
 /// Event telling every window whether any lens reads continuously (the
 /// main window pauses its animations meanwhile).
 pub const LENS_ACTIVE_EVENT: &str = "moonlens://lens-active";
+/// Operate mode on (`true`) / off for a lens window (operate hotkey).
+pub const LENS_OPERATE_EVENT: &str = "moonlens://lens-operate";
 
 /// Height of the lens header in CSS pixels (fixed in `routes/lens`), used
 /// to put the header just above a range when a lens opens over it.
@@ -484,6 +486,11 @@ impl LensRegistry {
         }
     }
 
+    /// Whether any lens takes the mouse over its body.
+    pub fn any_interactive(&self) -> bool {
+        self.entries.lock().iter().any(|(_, e)| e.interactive)
+    }
+
     /// `None` for a lens that is gone.
     fn interactive(&self, id: &str) -> Option<bool> {
         self.entries
@@ -653,6 +660,26 @@ pub fn toggle(app: &AppHandle, registry: &LensRegistryHandle) -> bool {
         let _ = close(app, registry, &id);
     }
     false
+}
+
+/// Operate-mode hotkey: when any window takes the mouse, let it through
+/// on all of them again; otherwise let every window take it (to select
+/// and copy translations). Each window applies the mode itself
+/// ([`LENS_OPERATE_EVENT`]). Returns the new mode.
+pub fn toggle_operate(app: &AppHandle, registry: &LensRegistryHandle) -> bool {
+    let operate = !registry.any_interactive();
+    for d in registry.list() {
+        let _ = app.emit_to(
+            tauri::EventTarget::WebviewWindow {
+                label: d.id.clone(),
+            },
+            LENS_OPERATE_EVENT,
+            operate,
+        );
+        // Right away, so a second press in quick succession sees it.
+        registry.set_interactive(&d.id, operate);
+    }
+    operate
 }
 
 /// Put a new window's header under the mouse pointer (default size),
@@ -1118,9 +1145,12 @@ mod tests {
         assert_eq!(r.target_language("b"), None);
         r.set_target_language("b", Some("ko".into()));
         assert_eq!(r.list()[1].target_language.as_deref(), Some("ko"));
+        // Every window lets the mouse through until it is operated.
         assert_eq!(r.interactive("a"), Some(false));
+        assert!(!r.any_interactive());
         r.set_interactive("a", true);
         assert_eq!(r.interactive("a"), Some(true));
+        assert!(r.any_interactive());
         // Gone: the click-through loop stops.
         r.untrack("a");
         assert_eq!(r.interactive("a"), None);
