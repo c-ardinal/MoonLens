@@ -24,6 +24,7 @@ pub mod plugins;
 pub mod providers;
 pub mod region_watcher;
 pub mod settings;
+pub mod setup;
 pub mod storage;
 pub mod subtitle;
 pub mod translate_plan;

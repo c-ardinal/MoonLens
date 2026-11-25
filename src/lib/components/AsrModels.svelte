@@ -1,6 +1,5 @@
 <script lang="ts">
   import { onDestroy, onMount } from 'svelte';
-  import { Trash2 } from 'lucide-svelte';
   import {
     cancelAsrDownload,
     deleteAsrModel,
@@ -8,119 +7,86 @@
     listAsrModels,
     onAsrProgress,
     selectAsrModel,
-    type AsrModels,
-    type LlmProgress
+    type AsrModels
   } from '$lib/ipc';
+  import { systemProfile } from '$lib/system-profile.svelte';
   import { errorText } from '$lib/errors';
-  import SettingRow from './SettingRow.svelte';
+  import ModelChoice from './ModelChoice.svelte';
 
   let data = $state<AsrModels>({ selected: '', dir: '', models: [] });
-  let progress = $state<Record<string, LlmProgress>>({});
+  let progress = $state<Record<string, number | undefined>>({});
   let busy = $state<Record<string, boolean>>({});
   let error = $state<string | null>(null);
-  /** Model whose delete button was pressed once (asks to confirm). */
-  let confirmDelete = $state<string | null>(null);
   let unlisten: (() => void) | undefined;
-
-  const size = (n: number) =>
-    n >= 1_073_741_824 ? `${(n / 1_073_741_824).toFixed(1)} GB` : `${Math.round(n / 1_048_576)} MB`;
+  const recommended = $derived(systemProfile.recommended?.asr.model ?? '');
 
   async function refresh() {
+    data = await listAsrModels();
+  }
+
+  async function guard(task: () => Promise<void>) {
+    error = null;
     try {
-      data = await listAsrModels();
+      await task();
     } catch (e) {
-      error = errorText(e);
+      if (!String(e).includes('cancelled')) error = errorText(e);
     }
+    await refresh().catch((e) => (error = errorText(e)));
   }
 
   onMount(async () => {
-    await refresh();
+    systemProfile.load();
+    await guard(async () => {});
     unlisten = await onAsrProgress((p) => {
-      progress = { ...progress, [p.id]: p };
+      progress = { ...progress, [p.id]: p.fraction };
     });
   });
   onDestroy(() => unlisten?.());
 
-  async function download(id: string) {
-    error = null;
+  /** 取得。select 指定時、または選択中モデルが未取得の場合は完了後に切替。 */
+  async function download(id: string, select: boolean) {
     busy = { ...busy, [id]: true };
     try {
       await installAsrModel(id);
-      // Put the first downloaded model to work.
-      if (!data.models.find((x) => x.id === data.selected)?.installed) {
-        await selectAsrModel(id);
-      }
-    } catch (e) {
-      if (!String(e).includes('cancelled')) error = errorText(e);
+      const current = data.models.find((x) => x.id === data.selected);
+      if (select || !current?.installed || current.id === id) await selectAsrModel(id);
     } finally {
       busy = { ...busy, [id]: false };
       const { [id]: _done, ...rest } = progress;
       progress = rest;
-      await refresh();
     }
   }
 
-  async function remove(id: string) {
-    if (confirmDelete !== id) {
-      confirmDelete = id;
-      return;
-    }
-    confirmDelete = null;
-    error = null;
-    try {
+  const select = (id: string) => guard(() => selectAsrModel(id));
+  const install = (id: string, sel: boolean) => guard(() => download(id, sel));
+
+  /** 使用中モデルの削除：代替モデルを先に切替（未取得なら取得後）。 */
+  const remove = (id: string, replacement: string | null) =>
+    guard(async () => {
+      if (replacement) {
+        const alt = data.models.find((m) => m.id === replacement);
+        if (alt && !alt.installed) await download(replacement, true);
+        else await selectAsrModel(replacement);
+        await refresh();
+        if (data.selected !== replacement) return;
+      }
       await deleteAsrModel(id);
-    } catch (e) {
-      error = errorText(e);
-    }
-    await refresh();
-  }
-
-  async function choose(id: string) {
-    error = null;
-    try {
-      await selectAsrModel(id);
-    } catch (e) {
-      error = errorText(e);
-    }
-    await refresh();
-  }
+    });
 </script>
 
-{#each data.models as m (m.id)}
-  {@const p = progress[m.id]}
-  {@const selected = m.id === data.selected}
-  <SettingRow id="asr:{m.id}" help="{m.note}。" link={{ href: m.license_url, label: `ライセンス：${m.license}` }}>
-    <div class="srow">
-      <span class="row-label">{m.label}</span>
-      <span class="row-ctl">
-        <span class="row-value">{p ? `${Math.round(p.fraction * 100)}%` : size(m.size)}</span>
-        {#if m.installed}
-          {#if selected}
-            <span class="stag">使用中</span>
-          {:else}
-            <button class="sbtn" onclick={() => choose(m.id)}>使用</button>
-          {/if}
-          {#if confirmDelete === m.id}
-            <button class="sbtn danger" onclick={() => remove(m.id)} onblur={() => (confirmDelete = null)}>
-              {selected ? '使用中。削除確定' : '削除確定'}
-            </button>
-          {:else}
-            <button class="sbtn icon" title="削除" aria-label="{m.label} を削除" onclick={() => remove(m.id)}>
-              <Trash2 class="h-4 w-4" />
-            </button>
-          {/if}
-        {:else if busy[m.id] || m.downloading || p}
-          <button class="sbtn" onclick={() => cancelAsrDownload(m.id)}>中止</button>
-        {:else}
-          <button class="sbtn" onclick={() => download(m.id)}>{m.partial_bytes > 0 ? '再開' : '取得'}</button>
-        {/if}
-      </span>
-    </div>
-    {#if p}
-      <div class="sprogress" aria-hidden="true"><span style="width: {(p.fraction * 100).toFixed(1)}%"></span></div>
-    {/if}
-  </SettingRow>
-{/each}
+<ModelChoice
+  key="asr"
+  feature="音声認識"
+  rows={data.models}
+  selected={data.selected}
+  {recommended}
+  {progress}
+  {busy}
+  onselect={select}
+  oninstall={install}
+  oncancel={(id) => cancelAsrDownload(id)}
+  onremove={remove}
+/>
 {#if error}
   <div class="srow error"><p class="row-label">{error}</p></div>
 {/if}

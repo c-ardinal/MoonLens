@@ -37,6 +37,43 @@ pub fn offload_devices() -> Vec<String> {
     Vec::new()
 }
 
+/// A GPU llama.cpp (and whisper.cpp, which shares its ggml) can run on.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct GpuDevice {
+    /// e.g. "NVIDIA GeForce RTX 4070".
+    pub name: String,
+    /// e.g. "Vulkan", "Metal", "CUDA".
+    pub backend: String,
+    /// Device memory in bytes (shared system memory for an integrated GPU).
+    pub memory_total: u64,
+    /// Integrated GPU: shares system RAM, usually far slower than a
+    /// discrete card.
+    pub integrated: bool,
+}
+
+/// GPUs the built-in engines can offload to, with their memory
+/// (empty when inference runs on the CPU only).
+#[cfg(feature = "local-llm")]
+pub fn devices() -> Vec<GpuDevice> {
+    use llama_cpp_2::LlamaBackendDeviceType as T;
+    prepare();
+    llama_cpp_2::list_llama_ggml_backend_devices()
+        .into_iter()
+        .filter(|d| matches!(d.device_type, T::Gpu | T::IntegratedGpu))
+        .map(|d| GpuDevice {
+            name: d.description,
+            backend: d.backend,
+            memory_total: d.memory_total as u64,
+            integrated: matches!(d.device_type, T::IntegratedGpu),
+        })
+        .collect()
+}
+
+#[cfg(not(feature = "local-llm"))]
+pub fn devices() -> Vec<GpuDevice> {
+    Vec::new()
+}
+
 #[cfg(all(windows, target_env = "msvc", feature = "local-llm"))]
 mod delay_load {
     //! Failure hook for the MSVC delay-load helper (`delayimp.lib`).

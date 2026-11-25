@@ -43,17 +43,23 @@ class LlmModelStore {
     }
   }
 
-  /** 取得後、該当用途の使用モデルが未導入なら自動で割当。 */
-  async download(id: string, role: LlmRole) {
+  /**
+   * 取得。select 指定時は完了後に該当用途の選択を切替。未指定でも、
+   * 選択中モデルが未取得の用途へは自動割当（各機能のモデル不在を回避）。
+   */
+  async download(id: string, role: LlmRole, select = false) {
     this.busy = { ...this.busy, [id]: true };
     try {
       await installLlmModel(id);
+      await this.refresh().catch(() => {});
       const m = this.data.models.find((x) => x.id === id);
       const installed = (sel: string) => this.data.models.find((x) => x.id === sel)?.installed;
-      if ((m?.style === 'pfml3' || role === 'translate') && !installed(this.data.selected)) {
+      if (select) {
+        await selectLlmModel(id, role);
+      } else if ((m?.style === 'pfml3' || role === 'translate') && !installed(this.data.selected)) {
         await selectLlmModel(id, 'translate');
       }
-      if (m?.style === 'chat_template' && !installed(this.data.assistant)) {
+      if (m?.style === 'chat_template' && !installed(this.data.assistant) && !(select && role === 'assistant')) {
         await selectLlmModel(id, 'assistant');
       }
     } finally {

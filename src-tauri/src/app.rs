@@ -61,6 +61,8 @@ macro_rules! all_commands {
             ipc::stop_subtitle,
             ipc::start_subtitle,
             ipc::get_onboarding_status,
+            ipc::get_system_profile,
+            ipc::complete_setup,
             ipc::mark_macos_permissions_reviewed,
             ipc::open_macos_privacy_pane,
             ipc::macos_permissions_snapshot,

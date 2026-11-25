@@ -1,0 +1,162 @@
+import { describe, expect, it } from 'vitest';
+import {
+  buildFeatures,
+  downloadQueue,
+  formatBytes,
+  hardwareLines,
+  replacementCandidates,
+  totalBytes
+} from './model-setup';
+import type { AsrModels, LlmModels, Recommendation, SystemReport } from './ipc';
+
+const llmModel = (id: string, style: 'pfml3' | 'chat_template', size: number, installed = false) => ({
+  id,
+  label: id,
+  note: '',
+  file: '',
+  url: '',
+  size,
+  sha256: '',
+  license: '',
+  license_url: '',
+  style,
+  installed,
+  partial_bytes: 0,
+  downloading: false
+});
+
+const llm = (installed: string[] = []): LlmModels => ({
+  selected: 'plamo-3-translate-2b',
+  assistant: 'gemma-4-e4b',
+  dir: '',
+  models: [
+    llmModel('plamo-3-translate-2b', 'pfml3', 1_800_000_000),
+    llmModel('plamo-3-translate-0.8b', 'pfml3', 570_000_000),
+    llmModel('gemma-4-e4b', 'chat_template', 5_000_000_000),
+    llmModel('gemma-4-e2b', 'chat_template', 3_100_000_000)
+  ].map((m) => ({ ...m, installed: installed.includes(m.id) }))
+});
+
+const asr: AsrModels = {
+  selected: 'whisper-large-v3-turbo',
+  dir: '',
+  models: [
+    { ...llmModel('whisper-large-v3-turbo', 'pfml3', 874_000_000) },
+    { ...llmModel('whisper-small', 'pfml3', 190_000_000) }
+  ]
+};
+
+const rec: Recommendation = {
+  translate: { model: 'plamo-3-translate-2b', reason: '' },
+  assistant: { model: 'gemma-4-e2b', reason: '' },
+  ocr: { model: 'ppocr', reason: '' },
+  asr: { model: 'whisper-small', reason: '' }
+};
+
+const noOcr = { ppocr: false, ocrs: false, dir: '' };
+
+describe('buildFeatures', () => {
+  it('selects the recommended model of every feature', () => {
+    const f = buildFeatures(llm(), asr, noOcr, rec);
+    expect(f.map((x) => [x.feature, x.selected])).toEqual([
+      ['translate', 'plamo-3-translate-2b'],
+      ['ocr', 'ppocr'],
+      ['assistant', 'gemma-4-e2b'],
+      ['asr', 'whisper-small']
+    ]);
+    expect(f.filter((x) => x.required).map((x) => x.feature)).toEqual(['translate', 'ocr']);
+  });
+
+  it('offers only general models for explain / summarize', () => {
+    const a = buildFeatures(llm(), asr, noOcr, rec).find((x) => x.feature === 'assistant')!;
+    expect(a.choices.map((c) => c.id)).toEqual(['gemma-4-e4b', 'gemma-4-e2b']);
+  });
+
+  it('falls back to the current model when the recommendation is unknown', () => {
+    const bad = { ...rec, translate: { model: 'gone', reason: '' } };
+    const f = buildFeatures(llm(), asr, noOcr, bad);
+    expect(f[0].selected).toBe('plamo-3-translate-2b');
+    expect(buildFeatures(llm(), asr, noOcr, null)[2].selected).toBe('gemma-4-e4b');
+  });
+});
+
+describe('downloadQueue', () => {
+  it('downloads every selected model that is missing, translation first', () => {
+    const q = downloadQueue(buildFeatures(llm(), asr, noOcr, rec));
+    expect(q.map((d) => [d.kind, d.id])).toEqual([
+      ['llm', 'plamo-3-translate-2b'],
+      ['ocr', 'ppocr'],
+      ['llm', 'gemma-4-e2b'],
+      ['asr', 'whisper-small']
+    ]);
+    expect(totalBytes(q)).toBe(1_800_000_000 + 38_000_000 + 3_100_000_000 + 190_000_000);
+  });
+
+  it('skips installed models and features left out', () => {
+    const f = buildFeatures(llm(['plamo-3-translate-2b']), asr, { ppocr: true, ocrs: true, dir: '' }, rec);
+    f[3].enabled = false;
+    expect(downloadQueue(f).map((d) => d.id)).toEqual(['gemma-4-e2b']);
+  });
+
+  it('fetches a model shared by two features once', () => {
+    const f = buildFeatures(llm(), asr, noOcr, rec);
+    f[0].selected = 'gemma-4-e2b';
+    const q = downloadQueue(f).filter((d) => d.id === 'gemma-4-e2b');
+    expect(q).toHaveLength(1);
+    expect(q[0].features).toEqual(['translate', 'assistant']);
+  });
+});
+
+describe('replacementCandidates', () => {
+  it('puts the recommended model first, then installed ones', () => {
+    const models = llm(['gemma-4-e4b', 'plamo-3-translate-2b']).models;
+    const ids = replacementCandidates(models, 'plamo-3-translate-2b', 'plamo-3-translate-0.8b').map((m) => m.id);
+    expect(ids).toEqual(['plamo-3-translate-0.8b', 'gemma-4-e4b', 'gemma-4-e2b']);
+  });
+});
+
+describe('hardwareLines', () => {
+  const report = (over: Partial<SystemReport['profile']>, gpu = true): SystemReport => {
+    const g = { name: 'RTX 4070', backend: 'Vulkan', memory_total: 12 * 1_073_741_824, integrated: false };
+    return {
+      profile: {
+        os: 'windows',
+        cpu_name: 'Ryzen 7',
+        cpu_cores: 16,
+        ram_total: 32 * 1_073_741_824,
+        gpus: [g],
+        disk_free: 200 * 1_073_741_824,
+        use_gpu: true,
+        ...over
+      },
+      accelerator: gpu ? g : null,
+      recommended: rec
+    };
+  };
+
+  it('names the GPU inference runs on', () => {
+    const l = hardwareLines(report({}));
+    expect(l.find((x) => x.label === 'GPU')?.value).toBe('RTX 4070（12.0 GB・Vulkan）');
+    expect(l.find((x) => x.label === '推論処理')?.value).toBe('GPU：RTX 4070');
+    expect(l.find((x) => x.label === 'メモリ')?.value).toBe('32.0 GB');
+  });
+
+  it('says when the GPU is switched off', () => {
+    const l = hardwareLines(report({ use_gpu: false }, false));
+    expect(l.find((x) => x.label === '推論処理')?.value).toBe('CPU（GPU 使用：無効）');
+  });
+
+  it('reports a CPU-only PC', () => {
+    const l = hardwareLines(report({ gpus: [], disk_free: null }, false));
+    expect(l.find((x) => x.label === 'GPU')?.value).toBe('非検出');
+    expect(l.find((x) => x.label === '推論処理')?.value).toBe('CPU');
+    expect(l.some((x) => x.label === '空き容量')).toBe(false);
+  });
+});
+
+describe('formatBytes', () => {
+  it('uses GB from 1 GiB and MB below', () => {
+    expect(formatBytes(1_807_203_040)).toBe('1.7 GB');
+    expect(formatBytes(190_085_487)).toBe('181 MB');
+  });
+});

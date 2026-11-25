@@ -1,0 +1,2 @@
+- First-run setup: MoonLens checks the PC (CPU, RAM, GPU and free space), recommends a model for each feature (translation, OCR, explain / summarize, speech recognition) and downloads the approved set in one go. Shown once; the home notice reopens it while models are missing.
+- Model settings use radio buttons, so every feature always has exactly one model selected. Choosing a model that is not downloaded asks to download it first, the model recommended for this PC is marked, and deleting the model in use asks for a replacement first.

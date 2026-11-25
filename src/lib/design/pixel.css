@@ -411,6 +411,87 @@
   background: var(--ml-px-dim);
   color: var(--ml-px-cream);
 }
+/** 推奨札：琥珀地。 */
+.stag.rec {
+  background: var(--ml-px-amber);
+  color: var(--ml-px-black);
+}
+/** モデル選択：ラジオ（四角）＋名称の行全体が選択操作。 */
+.spick {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  align-items: center;
+  gap: 12px;
+  padding: 0;
+  background: none;
+  border: 0;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.sradio {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  border: 2px solid var(--ml-px-faint);
+  background: var(--ml-px-black);
+  box-shadow: inset 0 0 0 4px var(--ml-px-black);
+}
+.spick[aria-checked='true'] .sradio {
+  border-color: var(--ml-px-cream);
+  background: var(--ml-px-cream);
+}
+/* 推奨札は名称の直後（右端の容量・操作と分離） */
+.spick .row-label {
+  flex: 0 1 auto;
+}
+.spick:focus-visible {
+  outline: 2px solid var(--ml-px-amber);
+  outline-offset: 2px;
+}
+/** 行内の確認・案内（未取得モデルの取得、削除前の代替選択）。 */
+.sprompt {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 0 0 12px 34px;
+  color: var(--ml-px-cream);
+}
+.sprompt > p {
+  flex: 1;
+  min-width: 12em;
+  margin: 0;
+}
+.sprompt.warn > p {
+  color: var(--ml-px-amber);
+}
+.sprompt.col {
+  flex-direction: column;
+  align-items: stretch;
+}
+.salts {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.spick.alt {
+  gap: 10px;
+  min-height: 40px;
+}
+.spick.alt .row-value {
+  margin-left: auto;
+  color: var(--ml-px-mid);
+}
+.sacts {
+  display: flex;
+  gap: 8px;
+}
+.sbtn.on {
+  border-color: var(--ml-px-amber);
+  color: var(--ml-px-amber);
+}
 /** 取得中の進捗線（行の下端）。 */
 .sprogress {
   position: absolute;

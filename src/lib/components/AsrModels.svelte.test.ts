@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, waitFor } from '@testing-library/svelte';
+import { fireEvent, render, waitFor, within } from '@testing-library/svelte';
 
 const model = (id: string, extra: Record<string, unknown> = {}) => ({
   id,
@@ -23,63 +23,87 @@ const ipc = vi.hoisted(() => ({
   cancelAsrDownload: vi.fn(),
   deleteAsrModel: vi.fn(),
   selectAsrModel: vi.fn(),
-  onAsrProgress: vi.fn(async () => () => {})
+  onAsrProgress: vi.fn(async () => () => {}),
+  getSystemProfile: vi.fn(async () => ({
+    profile: {},
+    accelerator: null,
+    recommended: {
+      translate: { model: 't', reason: '' },
+      assistant: { model: 'g', reason: '' },
+      ocr: { model: 'ppocr', reason: '' },
+      asr: { model: 'b', reason: '' }
+    }
+  }))
 }));
 vi.mock('$lib/ipc', () => ipc);
 
 import AsrModels from './AsrModels.svelte';
 
+type Found = { findByRole: (role: string, opts: { name: RegExp }) => Promise<HTMLElement> };
+const radio = (r: Found, id: string) =>
+  r.findByRole('radio', { name: new RegExp(`^Model ${id}`) });
+
 describe('<AsrModels>', () => {
-  it('lists models, marks the one in use and offers to switch', async () => {
+  it('shows the selection as a radio, the recommended mark and missing models', async () => {
     ipc.listAsrModels.mockResolvedValue({
       selected: 'a',
       dir: '/data/whisper',
-      models: [
-        model('a', { installed: true }),
-        model('b', { installed: true, size: 190_085_487 }),
-        model('c', { partial_bytes: 5 })
-      ]
+      models: [model('a', { installed: true }), model('b', { installed: true, size: 190_085_487 }), model('c')]
     });
-    const { findByText, getByText, getAllByText } = render(AsrModels);
-    expect(await findByText('Model a')).toBeInTheDocument();
-    expect(getByText('使用中')).toBeInTheDocument();
-    expect(getAllByText('使用')).toHaveLength(1);
-    // Sizes under a gigabyte read in MB.
-    expect(getByText(/181 MB/)).toBeInTheDocument();
-    expect(getByText('再開')).toBeInTheDocument();
+    ipc.selectAsrModel.mockResolvedValue(undefined);
+    const r = render(AsrModels);
+    expect(await radio(r, 'a')).toHaveAttribute('aria-checked', 'true');
+    await waitFor(() => expect(within(r.getByRole('radio', { name: /^Model b/ })).getByText('推奨')).toBeInTheDocument());
+    expect(r.getByText('181 MB')).toBeInTheDocument();
+    expect(r.getAllByText('未取得')).toHaveLength(1);
+    await fireEvent.click(r.getByRole('radio', { name: /^Model b/ }));
+    await waitFor(() => expect(ipc.selectAsrModel).toHaveBeenCalledWith('b'));
   });
 
-  it('puts the first downloaded model to work', async () => {
-    ipc.listAsrModels.mockResolvedValue({ selected: 'a', dir: '', models: [model('b')] });
-    ipc.installAsrModel.mockResolvedValue('/data/whisper/ggml-b.bin');
+  it('downloads a missing model after asking, then puts it to work', async () => {
+    ipc.listAsrModels.mockResolvedValue({
+      selected: 'a',
+      dir: '',
+      models: [model('a', { installed: true }), model('b')]
+    });
+    ipc.installAsrModel.mockResolvedValue('/d/ggml-b.bin');
     ipc.selectAsrModel.mockResolvedValue(undefined);
-    const { findByText } = render(AsrModels);
-    await fireEvent.click(await findByText('取得'));
+    ipc.selectAsrModel.mockClear();
+    const r = render(AsrModels);
+    await fireEvent.click(await radio(r, 'b'));
+    expect(ipc.installAsrModel).not.toHaveBeenCalled();
+    await fireEvent.click(await r.findByText('取得・切替'));
     await waitFor(() => expect(ipc.installAsrModel).toHaveBeenCalledWith('b'));
     await waitFor(() => expect(ipc.selectAsrModel).toHaveBeenCalledWith('b'));
   });
 
-  it('asks once more before deleting the model in use', async () => {
+  it('asks for a replacement before deleting the model in use', async () => {
     ipc.listAsrModels.mockResolvedValue({
       selected: 'a',
       dir: '',
-      models: [model('a', { installed: true })]
+      models: [model('a', { installed: true }), model('b', { installed: true })]
+    });
+    ipc.selectAsrModel.mockImplementation(async () => {
+      ipc.listAsrModels.mockResolvedValue({
+        selected: 'b',
+        dir: '',
+        models: [model('a', { installed: true }), model('b', { installed: true })]
+      });
     });
     ipc.deleteAsrModel.mockResolvedValue(undefined);
-    const { findByLabelText, findByText } = render(AsrModels);
-    await fireEvent.click(await findByLabelText('Model a を削除'));
+    const r = render(AsrModels);
+    await fireEvent.click(await r.findByLabelText('Model a を削除'));
     expect(ipc.deleteAsrModel).not.toHaveBeenCalled();
-    await fireEvent.click(await findByText('使用中。削除確定'));
+    await fireEvent.click(await r.findByText('切替・削除'));
+    await waitFor(() => expect(ipc.selectAsrModel).toHaveBeenCalledWith('b'));
     await waitFor(() => expect(ipc.deleteAsrModel).toHaveBeenCalledWith('a'));
   });
 
   it('shows coded backend errors as plain text', async () => {
-    ipc.listAsrModels.mockResolvedValue({ selected: 'x', dir: '', models: [model('x')] });
-    ipc.installAsrModel.mockRejectedValue('disk_full|空き容量不足：必要 1.4 GB／空き 1.0 GB');
-    const { findByText, getByText } = render(AsrModels);
-    await fireEvent.click(await findByText('取得'));
-    await waitFor(() =>
-      expect(getByText('空き容量不足：必要 1.4 GB／空き 1.0 GB')).toBeInTheDocument()
-    );
+    ipc.listAsrModels.mockResolvedValue({ selected: 'a', dir: '', models: [model('a')] });
+    ipc.installAsrModel.mockRejectedValue('disk_full|空き容量不足：必要 1.0 GB／空き 0.5 GB');
+    const r = render(AsrModels);
+    await fireEvent.click(await r.findByRole('button', { name: '取得' }));
+    await waitFor(() => expect(r.getByText('空き容量不足：必要 1.0 GB／空き 0.5 GB')).toBeInTheDocument());
   });
 });
