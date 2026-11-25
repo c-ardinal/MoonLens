@@ -1,0 +1,1 @@
+- Window translation runs text recognition once per screen change instead of twice: the reading that waits to be confirmed is reused when the picture has not changed. New text appears sooner and CPU use while reading drops.

@@ -399,6 +399,10 @@ pub mod engine {
     const REC_HEIGHT: u32 = 48;
     const REC_MAX_WIDTH: u32 = 3200;
     const REC_BATCH: usize = 1;
+    // The line cache relies on a line's text depending on its own pixels
+    // only. In a larger batch the padding to the widest line would make
+    // it depend on its batch mates.
+    const _: () = assert!(REC_BATCH == 1);
     const REC_WORKERS: usize = 4;
     /// Unclip ratio for the bbox we report (≈ the visible glyph extent).
     const REPORT_UNCLIP_RATIO: f32 = 0.9;
@@ -406,10 +410,60 @@ pub mod engine {
     /// Decoded `(text, confidence)` per crop of one recognition batch.
     type BatchResult = Result<Vec<(String, f32)>>;
 
+    /// Recognised lines kept for reuse (see [`LineCache`]). A full 4K
+    /// screen has a few hundred lines; this holds several screens.
+    const LINE_CACHE_SIZE: usize = 2048;
+
     pub struct PpOcr {
         det: rten::Model,
         rec: rten::Model,
         dict: Vec<String>,
+        lines: Mutex<LineCache>,
+    }
+
+    /// Text already recognised from a line image, by the image's pixels.
+    ///
+    /// A watched screen region mostly keeps its lines from one reading
+    /// to the next (a chat gains a message, a dialogue box changes while
+    /// the UI around it stays). Recognition takes most of the OCR time
+    /// and gives the same text for the same pixels, so a line whose crop
+    /// is pixel for pixel one read before is not recognised again.
+    /// Detection still runs on every reading.
+    #[derive(Default)]
+    pub(super) struct LineCache {
+        map: std::collections::HashMap<u64, (String, f32, u64)>,
+        /// Counts lookups; entries remember when they were last used.
+        clock: u64,
+    }
+
+    impl LineCache {
+        /// Identifies a line crop by size and pixels.
+        pub(super) fn key(crop: &RgbImage) -> u64 {
+            use std::hash::{Hash, Hasher};
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            (crop.width(), crop.height()).hash(&mut h);
+            crop.as_raw().hash(&mut h);
+            h.finish()
+        }
+
+        pub(super) fn get(&mut self, key: u64) -> Option<(String, f32)> {
+            self.clock += 1;
+            let e = self.map.get_mut(&key)?;
+            e.2 = self.clock;
+            Some((e.0.clone(), e.1))
+        }
+
+        pub(super) fn put(&mut self, key: u64, text: String, confidence: f32, cap: usize) {
+            self.clock += 1;
+            self.map.insert(key, (text, confidence, self.clock));
+            if self.map.len() > cap {
+                // Drop the least recently used half in one pass.
+                let mut used: Vec<u64> = self.map.values().map(|e| e.2).collect();
+                used.sort_unstable();
+                let cut = used[used.len() / 2];
+                self.map.retain(|_, e| e.2 > cut);
+            }
+        }
     }
 
     static CACHE: Mutex<Option<(PathBuf, Arc<PpOcr>)>> = Mutex::new(None);
@@ -438,7 +492,12 @@ pub mod engine {
                 .lines()
                 .map(|l| l.trim_end_matches('\r').to_string())
                 .collect();
-            Ok(Self { det, rec, dict })
+            Ok(Self {
+                det,
+                rec,
+                dict,
+                lines: Mutex::new(LineCache::default()),
+            })
         }
 
         /// Full pipeline: returns lines with bboxes in `img` pixels.
@@ -478,6 +537,19 @@ pub mod engine {
                 ra.partial_cmp(&rb).unwrap_or(std::cmp::Ordering::Equal)
             });
             let mut lines = Vec::new();
+            // Lines read before (same pixels) keep their text; only the
+            // rest goes through recognition.
+            let keys: Vec<u64> = crops.iter().map(|c| LineCache::key(&c.1)).collect();
+            let mut known: Vec<Option<(String, f32)>> = {
+                let mut cache = self.lines.lock();
+                keys.iter().map(|k| cache.get(*k)).collect()
+            };
+            let fresh: Vec<usize> = (0..crops.len()).filter(|&i| known[i].is_none()).collect();
+            tracing::debug!(
+                "ppocr rec: {} lines, {} from the line cache",
+                crops.len(),
+                crops.len() - fresh.len()
+            );
             // Recognise lines on a few worker threads. rten parallelises
             // inside each op too, but one line is too small a workload
             // to keep every core busy; measured ~2× faster on 4 cores.
@@ -485,7 +557,7 @@ pub mod engine {
                 .map(|n| n.get())
                 .unwrap_or(2)
                 .clamp(1, REC_WORKERS);
-            let chunks: Vec<&[(post::DetBox, RgbImage)]> = crops.chunks(REC_BATCH).collect();
+            let chunks: Vec<&[usize]> = fresh.chunks(REC_BATCH).collect();
             let next = std::sync::atomic::AtomicUsize::new(0);
             let results: Mutex<Vec<(usize, BatchResult)>> = Mutex::new(Vec::new());
             std::thread::scope(|scope| {
@@ -493,24 +565,32 @@ pub mod engine {
                     scope.spawn(|| loop {
                         let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                         let Some(chunk) = chunks.get(i) else { break };
-                        let r = self.recognize_batch(chunk.iter().map(|c| &c.1));
+                        let r = self.recognize_batch(chunk.iter().map(|&c| &crops[c].1));
                         results.lock().push((i, r));
                     });
                 }
             });
             let mut results = results.into_inner();
             results.sort_by_key(|(i, _)| *i);
-            for (i, texts) in results {
-                for ((b, _), (text, conf)) in chunks[i].iter().zip(texts?) {
-                    if text.is_empty() || conf < p.min_confidence {
-                        continue;
+            {
+                let mut cache = self.lines.lock();
+                for (i, texts) in results {
+                    for (&c, (text, conf)) in chunks[i].iter().zip(texts?) {
+                        cache.put(keys[c], text.clone(), conf, LINE_CACHE_SIZE);
+                        known[c] = Some((text, conf));
                     }
-                    lines.push(OcrLine {
-                        text,
-                        bbox: [b.x0, b.y0, b.x1 - b.x0, b.y1 - b.y0],
-                        confidence: conf,
-                    });
                 }
+            }
+            for ((b, _), read) in crops.iter().zip(known) {
+                let Some((text, conf)) = read else { continue };
+                if text.is_empty() || conf < p.min_confidence {
+                    continue;
+                }
+                lines.push(OcrLine {
+                    text,
+                    bbox: [b.x0, b.y0, b.x1 - b.x0, b.y1 - b.y0],
+                    confidence: conf,
+                });
             }
             Ok(lines)
         }
@@ -810,6 +890,42 @@ mod tests {
             .recognize(&img, &Params::default())
             .unwrap()
             .is_empty());
+    }
+
+    #[test]
+    fn line_cache_knows_a_line_by_its_pixels() {
+        use engine::LineCache;
+        use image::{Rgb, RgbImage};
+        let a = RgbImage::from_pixel(40, 12, Rgb([10, 20, 30]));
+        let mut b = a.clone();
+        b.put_pixel(39, 11, Rgb([10, 20, 31]));
+        // Same pixel data in another shape is another line.
+        let c = RgbImage::from_pixel(12, 40, Rgb([10, 20, 30]));
+        assert_eq!(LineCache::key(&a), LineCache::key(&a.clone()));
+        assert_ne!(LineCache::key(&a), LineCache::key(&b));
+        assert_ne!(LineCache::key(&a), LineCache::key(&c));
+
+        let mut cache = LineCache::default();
+        assert_eq!(cache.get(LineCache::key(&a)), None);
+        cache.put(LineCache::key(&a), "Hello".into(), 0.9, 8);
+        assert_eq!(cache.get(LineCache::key(&a)), Some(("Hello".into(), 0.9)));
+        assert_eq!(cache.get(LineCache::key(&b)), None);
+    }
+
+    #[test]
+    fn line_cache_drops_the_least_recently_used_lines_when_full() {
+        use engine::LineCache;
+        let mut cache = LineCache::default();
+        for k in 0..8u64 {
+            cache.put(k, k.to_string(), 1.0, 8);
+        }
+        // Line 0 is still on screen; the next new line overflows the cache.
+        assert!(cache.get(0).is_some());
+        cache.put(8, "8".into(), 1.0, 8);
+        assert!(cache.get(0).is_some(), "a line in use was dropped");
+        assert!(cache.get(8).is_some(), "the newest line was dropped");
+        assert!(cache.get(1).is_none(), "the oldest unused line was kept");
+        assert!((0..=8).filter(|k| cache.get(*k).is_some()).count() <= 8);
     }
 
     #[test]

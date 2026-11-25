@@ -25,10 +25,32 @@ fn main() -> anyhow::Result<()> {
     let engine = ocr_ppocr::engine::PpOcr::load(&dir)?;
     println!("model load: {:?}", t.elapsed());
     let img = image::open(&path)?;
-    for run in 0..2 {
+    // Run 0 recognises every line; run 1 reads the same picture again,
+    // so its lines come from the line cache and the time is detection
+    // alone. Run 2 has a band of the picture changed: only the lines in
+    // that band are recognised again.
+    let mut first: Option<Vec<(String, [i32; 4])>> = None;
+    for run in 0..3 {
+        let mut frame = img.clone();
+        if run == 2 {
+            let (w, h) = (frame.width(), frame.height());
+            let band = image::imageops::crop_imm(&img, 0, h / 2, w, h / 8).to_image();
+            let mut band = image::DynamicImage::ImageRgba8(band);
+            band.invert();
+            image::imageops::replace(&mut frame, &band, 0, (h / 2) as i64);
+        }
         let t = Instant::now();
-        let lines = engine.recognize(&img, &params)?;
+        let lines = engine.recognize(&frame, &params)?;
         println!("run {run}: {} lines in {:?}", lines.len(), t.elapsed());
+        let read: Vec<(String, [i32; 4])> = lines
+            .iter()
+            .map(|l| (l.text.clone(), l.bbox.map(|v| v.round() as i32)))
+            .collect();
+        match (&first, run) {
+            (None, _) => first = Some(read),
+            (Some(f), 1) => assert_eq!(f, &read, "cached lines differ from the first reading"),
+            _ => {}
+        }
         if run == 1 {
             for l in &lines {
                 println!(

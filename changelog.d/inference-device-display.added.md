@@ -1,0 +1,2 @@
+- Settings → Performance shows the device translation and speech recognition run on (the GPU names, or CPU and why).
+- The log records how long each translation took and the generation speed of the built-in engine, so a slow device can be told from a long text.

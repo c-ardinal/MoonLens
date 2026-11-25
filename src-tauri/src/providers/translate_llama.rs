@@ -533,6 +533,8 @@ mod engine {
         session: Option<Session>,
         path: PathBuf,
         n_gpu_layers: u32,
+        /// The weights really sit on a GPU (not the CPU fallback).
+        on_gpu: bool,
         template: Option<String>,
         /// Boxed so its address is stable for the session's borrow.
         model: Box<LlamaModel>,
@@ -641,6 +643,7 @@ mod engine {
             let mp = LlamaModelParams::default().with_n_gpu_layers(layers);
             LlamaModel::load_from_file(backend, path, &mp)
         };
+        let mut on_gpu = params.n_gpu_layers > 0 && !crate::gpu::offload_devices().is_empty();
         let model = match load(params.n_gpu_layers) {
             Ok(m) => Ok(m),
             // Not enough GPU memory, or a driver that cannot run the
@@ -650,6 +653,7 @@ mod engine {
                     "loading {} on the GPU failed ({e}); using the CPU",
                     path.display()
                 );
+                on_gpu = false;
                 load(0)
             }
             Err(e) => Err(e),
@@ -660,14 +664,16 @@ mod engine {
             .ok()
             .and_then(|t| t.to_string().ok());
         tracing::info!(
-            "loaded local model {} in {:.1}s",
+            "loaded local model {} in {:.1}s ({})",
             path.display(),
-            started.elapsed().as_secs_f32()
+            started.elapsed().as_secs_f32(),
+            if on_gpu { "GPU" } else { "CPU" }
         );
         *slot = Some(Loaded {
             session: None,
             path: path.to_path_buf(),
             n_gpu_layers: params.n_gpu_layers,
+            on_gpu,
             template,
             model: Box::new(model),
         });
@@ -774,6 +780,7 @@ mod engine {
         cancel: &AtomicBool,
     ) -> Result<String, ProviderError> {
         let backend = backend()?;
+        let on_gpu = loaded.on_gpu;
         let Loaded { session, model, .. } = loaded;
         let model: &LlamaModel = model;
 
@@ -828,6 +835,7 @@ mod engine {
 
         let mut batch = LlamaBatch::new(N_BATCH, 1);
         let rest = &tokens[keep..];
+        let prompt_started = Instant::now();
         for (chunk_idx, chunk) in rest.chunks(N_BATCH).enumerate() {
             if cancel.load(Ordering::SeqCst) {
                 return Err(ProviderError::Timeout(0));
@@ -843,7 +851,11 @@ mod engine {
             sess.cached.extend_from_slice(chunk);
         }
 
+        let prompt_s = prompt_started.elapsed().as_secs_f32();
+
         // ---- sampling ---------------------------------------------------
+        let gen_started = Instant::now();
+        let mut generated = 0usize;
         let mut sampler = if params.temperature <= 0.0 {
             LlamaSampler::greedy()
         } else {
@@ -888,7 +900,20 @@ mod engine {
             logits_idx = 0;
             sess.ctx.decode(&mut batch).map_err(other)?;
             sess.cached.push(tok);
+            generated += 1;
         }
+        // Speed of one request, to tell a slow device from a long text.
+        let gen_s = gen_started.elapsed().as_secs_f32();
+        tracing::info!(
+            "local model: prompt {} tokens ({} cached) in {:.2}s, generated {} tokens in {:.2}s ({:.0} tokens/s), {}",
+            tokens.len(),
+            keep,
+            prompt_s,
+            generated,
+            gen_s,
+            if gen_s > 0.0 { generated as f32 / gen_s } else { 0.0 },
+            if on_gpu { "GPU" } else { "CPU" },
+        );
         if !pending.is_empty() {
             out.push_str(&String::from_utf8_lossy(&pending));
         }
