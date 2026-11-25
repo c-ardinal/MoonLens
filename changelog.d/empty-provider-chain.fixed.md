@@ -1,0 +1,1 @@
+- Live subtitles no longer report "no speech recognition provider" when `config.toml` carries an empty provider chain from a pre-release build: empty chains of built-in features (translation, OCR, speech recognition, explain, summarize) are restored to the defaults at load.
