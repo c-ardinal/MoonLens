@@ -3,6 +3,7 @@
  * PC 構成の表示文、削除時の代替候補。UI 非依存（単体テスト対象）。
  */
 import type {
+  SystemProfile,
   AsrModels,
   LlmModels,
   OcrModelsStatus,
@@ -186,6 +187,16 @@ export function hardwareLines(r: SystemReport): HardwareLine[] {
   ];
   if (p.disk_free != null) lines.push({ label: '空き容量', value: formatBytes(p.disk_free) });
   return lines;
+}
+
+/**
+ * 翻訳・音声認識の推論デバイス（設定画面の表示）。内蔵エンジンは検出した
+ * GPU 全てを使用するため、全 GPU 名を列挙。`useGpu` は「GPU 使用」の現在値。
+ */
+export function inferenceDevice(p: SystemProfile, useGpu: boolean): string {
+  if (!p.gpus.length) return 'CPU（対応 GPU：非検出）';
+  if (!useGpu) return 'CPU（GPU 使用：無効）';
+  return `GPU：${p.gpus.map((g) => `${g.name}（${g.backend}）`).join('、')}`;
 }
 
 /**

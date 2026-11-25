@@ -914,9 +914,16 @@ impl Pipeline {
         } else {
             whole
         };
+        let latency_ms = started.elapsed().as_millis() as u64;
+        tracing::info!(
+            "translation: {} blocks ({} chars) via {} in {latency_ms} ms",
+            pending.len(),
+            sources.iter().map(|t| t.chars().count()).sum::<usize>(),
+            first.used_provider,
+        );
         bundle.result = TaskResult {
             output: TaskOutput::Text(text),
-            latency_ms: started.elapsed().as_millis() as u64,
+            latency_ms,
             fallback_reasons: reasons,
             ..first
         };

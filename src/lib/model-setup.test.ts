@@ -4,6 +4,7 @@ import {
   downloadQueue,
   formatBytes,
   hardwareLines,
+  inferenceDevice,
   replacementCandidates,
   totalBytes
 } from './model-setup';
@@ -165,5 +166,32 @@ describe('formatBytes', () => {
   it('uses GB from 1 GiB and MB below', () => {
     expect(formatBytes(1_807_203_040)).toBe('1.7 GB');
     expect(formatBytes(190_085_487)).toBe('181 MB');
+  });
+});
+
+describe('inferenceDevice', () => {
+  const profile = (gpus: SystemReport['profile']['gpus']): SystemReport['profile'] => ({
+    os: 'windows',
+    cpu_name: 'Ryzen 7',
+    cpu_cores: 16,
+    ram_total: 32 * 1_073_741_824,
+    gpus,
+    disk_free: null,
+    use_gpu: true
+  });
+  const rtx = { name: 'RTX 4080', backend: 'Vulkan', memory_total: 16 * 1_073_741_824, integrated: false };
+  const igpu = { name: 'UHD 770', backend: 'Vulkan', memory_total: 8 * 1_073_741_824, integrated: true };
+
+  it('names every GPU the engine offloads to', () => {
+    expect(inferenceDevice(profile([rtx]), true)).toBe('GPU：RTX 4080（Vulkan）');
+    expect(inferenceDevice(profile([rtx, igpu]), true)).toBe('GPU：RTX 4080（Vulkan）、UHD 770（Vulkan）');
+  });
+
+  it('follows the unsaved GPU switch', () => {
+    expect(inferenceDevice(profile([rtx]), false)).toBe('CPU（GPU 使用：無効）');
+  });
+
+  it('reports a PC without a usable GPU', () => {
+    expect(inferenceDevice(profile([]), true)).toBe('CPU（対応 GPU：非検出）');
   });
 });

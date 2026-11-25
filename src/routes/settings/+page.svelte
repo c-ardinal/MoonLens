@@ -22,11 +22,15 @@
   import OcrModels from '$lib/components/OcrModels.svelte';
   import DataLocations from '$lib/components/DataLocations.svelte';
   import GlossaryEditor from '$lib/components/GlossaryEditor.svelte';
+  import InferenceDevice from '$lib/components/InferenceDevice.svelte';
   import { compactGlossary } from '$lib/glossary';
   import { replay, type Effect } from '$lib/pixel/transition';
 
   /** The selector remembers the language last picked in its toolbar. */
   const SELECTOR_LANG_KEY = 'moonlens.selector.targetLanguage';
+
+  const DEVICE_HELP =
+    '翻訳・音声認識の実行先。文字認識（OCR）は CPU 専用。実行結果の詳細はログに記録。';
 
   /** Bundled defaults, for each field's reset button. */
   let defaults = $state<Settings | null>(null);
@@ -328,6 +332,11 @@
                   />
                 {/if}
               </SettingRow>
+              {#if field.path === 'performance.use_gpu_if_available'}
+                <SettingRow id="info:inference-device" help={DEVICE_HELP}>
+                  <InferenceDevice useGpu={!!getPath(draft, field.path)} />
+                </SettingRow>
+              {/if}
             {/each}
           {/if}
         </div>

@@ -15,7 +15,9 @@
 //!    New text is translated once it reads the same on two consecutive
 //!    ticks, so text that is still being typed out is not translated
 //!    half-way; text that keeps changing is translated after
-//!    [`SETTLE_LIMIT`] ticks anyway.
+//!    [`SETTLE_LIMIT`] ticks anyway. When the pixels did not change
+//!    between those two ticks the first reading stands: OCR is not run
+//!    a second time on the same picture.
 //! 4. Blocks seen before come from the translation cache and are shown
 //!    immediately; only new paragraphs go to the model.
 //!
@@ -26,7 +28,7 @@ use serde::Serialize;
 
 use crate::{
     capture,
-    pipeline::{LensBlock, Pipeline},
+    pipeline::{CaptureFlowResult, LensBlock, Pipeline},
     providers::{Capability, TaskOutput},
     user_error,
 };
@@ -146,12 +148,21 @@ struct Shown {
 #[derive(Default)]
 pub struct Tracker {
     shown: Shown,
-    /// Last frame read, and the text OCR found in it while waiting for
-    /// the text to settle.
+    /// Last frame read.
     last_thumb: Option<Thumb>,
     last_geometry: Option<Geometry>,
-    pending_text: Option<String>,
+    /// The reading that waits for the text to settle.
+    pending: Option<Pending>,
     unsettled: u32,
+}
+
+/// A reading of new text, kept until the next tick confirms it.
+struct Pending {
+    /// Target language and text read (see `key` in [`Tracker::tick`]).
+    key: String,
+    /// What OCR returned. Used as the next tick's reading when the
+    /// pixels are still the same, instead of running OCR again.
+    bundle: CaptureFlowResult,
 }
 
 impl Tracker {
@@ -164,7 +175,7 @@ impl Tracker {
     pub fn region_moved(&mut self, geometry: Geometry, env: &TickEnv<'_>) {
         self.last_geometry = Some(geometry);
         self.last_thumb = None;
-        self.pending_text = None;
+        self.pending = None;
         self.unsettled = 0;
         let newly: Vec<usize> = (0..self.shown.blocks.len())
             .filter(|i| !self.shown.stale.contains(i))
@@ -205,7 +216,7 @@ impl Tracker {
         if !changed
             && !force
             && !language_changed
-            && self.pending_text.is_none()
+            && self.pending.is_none()
             && self.shown.stale.is_empty()
         {
             return Ok(Tick::Unchanged);
@@ -230,12 +241,22 @@ impl Tracker {
             }
         }
 
-        let png = capture::png_bytes(&frame.image).map_err(|e| e.to_string())?;
-        let mut bundle = env
-            .pipeline
-            .analyze_capture(png)
-            .await
-            .map_err(|e| user_error::provider(&e, Capability::Ocr))?;
+        let (mut bundle, pending_key) = match self.pending.take() {
+            // Same picture as the reading that waits to settle: OCR
+            // would return the same again, so that reading stands.
+            Some(p) if !changed && !force => (p.bundle, Some(p.key)),
+            waiting => {
+                let png = capture::png_bytes(&frame.image).map_err(|e| e.to_string())?;
+                match env.pipeline.analyze_capture(png).await {
+                    Ok(bundle) => (bundle, waiting.map(|p| p.key)),
+                    Err(e) => {
+                        // Still unread: the next tick tries again.
+                        self.pending = waiting;
+                        return Err(user_error::provider(&e, Capability::Ocr));
+                    }
+                }
+            }
+        };
         // The region moved while OCR ran: these boxes belong to the old
         // place. Hide what is shown and read again once it holds still.
         if let Some(now) = (env.geometry_now)().filter(|g| *g != frame.geometry) {
@@ -266,7 +287,6 @@ impl Tracker {
             // Same text as on screen (only the background changed, or
             // the region moved over the same text): show what was hidden
             // again, at the new positions.
-            self.pending_text = None;
             self.unsettled = 0;
             self.shown.thumb = Some(thumb);
             if let (Some(text), true) = (&decoded, force) {
@@ -287,13 +307,12 @@ impl Tracker {
 
         // New text: wait for it to read the same twice (text being typed
         // out), unless it has been changing for too long.
-        let settled = force || self.pending_text.as_deref() == Some(key.as_str());
+        let settled = force || pending_key.as_deref() == Some(key.as_str());
         if !settled && self.unsettled < SETTLE_LIMIT {
-            self.pending_text = Some(key);
+            self.pending = Some(Pending { key, bundle });
             self.unsettled += 1;
             return Ok(Tick::Settling);
         }
-        self.pending_text = None;
         self.unsettled = 0;
 
         if bundle.blocks.is_empty() {
