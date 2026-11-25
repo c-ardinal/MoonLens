@@ -51,6 +51,10 @@ pub struct Appearance {
     pub theme: Theme,
     pub accent: String,
     pub density: Density,
+    /// Text size of the main window's body screens (history, settings,
+    /// text/image translation, extensions). Home and page titles keep
+    /// their size; window translation keeps the source layout.
+    pub text_size: TextSize,
     pub ui_language: String,
     pub font_family_ui: String,
     pub font_family_mono: String,
@@ -63,6 +67,7 @@ impl Default for Appearance {
             theme: Theme::System,
             accent: "#8B5CF6".into(),
             density: Density::Normal,
+            text_size: TextSize::default(),
             ui_language: "ja".into(),
             font_family_ui: "Inter Variable".into(),
             font_family_mono: "JetBrains Mono".into(),
@@ -87,6 +92,19 @@ pub enum Density {
     #[default]
     Normal,
     Comfortable,
+}
+
+/// Body text size of the main window. The pixel font is drawn at 16 dots,
+/// so each step is a whole number of CSS px: 16 / 20 / 24 / 28 / 32.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum TextSize {
+    Xsmall,
+    Small,
+    #[default]
+    Medium,
+    Large,
+    Xlarge,
 }
 
 /* --------------------------------- hotkeys -------------------------------- */

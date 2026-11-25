@@ -1,0 +1,2 @@
+- Main window body screens (history, settings, text / image translation, extensions) and dialogs use 24px text by default instead of 32px, with controls scaled to match. Home, the top menu and page titles keep their size.
+- New setting System › Appearance › 文字サイズ: 16 / 20 / 24 / 28 / 32px for body screens, applied without restart.

@@ -239,7 +239,7 @@
 
 <svelte:window onkeydown={onKey} />
 
-<div class="cfg" class:with-bar={changed.length > 0 || !!message}>
+<div class="cfg px-body" class:with-bar={changed.length > 0 || !!message}>
   <header class="head">
     <div class="page-title"><PixelTitle text="設定" tag="h1" height={40} fit /></div>
     <p class="hint">↑↓項目 ←→タブ PgUp/Dn分類</p>
@@ -349,7 +349,7 @@
 
 {#if changed.length > 0 || message}
   <!-- 保存バー：画面下端固定。本文と同じ左右余白で整列 -->
-  <div class="savebar">
+  <div class="savebar px-zoom">
     <p class="msg" class:error={message?.kind === 'error'} role="status">
       {#if message && changed.length === 0}
         {message.text}
@@ -378,7 +378,6 @@
     display: grid;
     grid-template-rows: auto minmax(0, 1fr);
     gap: 12px;
-    height: calc(100vh - var(--ml-nav-h, 64px));
     padding: 12px 28px 8px 40px;
     box-sizing: border-box;
   }

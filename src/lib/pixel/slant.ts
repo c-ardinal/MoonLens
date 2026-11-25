@@ -40,8 +40,10 @@ export function slantPolygon(w: number, h: number, k = 0.3, dot = DOT): string {
 export function slant(node: HTMLElement, k = 0.3) {
   let factor = k;
   const apply = () => {
-    const { width, height } = node.getBoundingClientRect();
-    if (width > 0 && height > 0) node.style.clipPath = slantPolygon(Math.round(width), Math.round(height), factor);
+    // 要素自身の座標系の寸法（祖先の zoom 適用前）。clip-path も同じ座標系で解釈
+    const width = node.offsetWidth,
+      height = node.offsetHeight;
+    if (width > 0 && height > 0) node.style.clipPath = slantPolygon(width, height, factor);
   };
   const ro = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(apply);
   ro?.observe(node);

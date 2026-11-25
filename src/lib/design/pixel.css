@@ -224,6 +224,35 @@
   margin: 0 0 6px -4px;
 }
 
+/* ── 本文画面の拡縮（外観設定「文字サイズ」） ──
+ * 部品寸法は 32px 文字前提で設計。本文画面（履歴・設定・翻訳・拡張機能）と
+ * 対話窓は zoom で一括縮小し、文字・余白・操作部の比率を維持。
+ * ホーム・ナビゲーション・各画面の見出し帯は対象外（等倍）。
+ * zoom 内の vh は拡縮対象のため、画面高は vh でなく縦 flex で確定。 */
+[data-skin='pixel'] .app-root {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+[data-skin='pixel'] .app-root > nav {
+  flex-shrink: 0;
+}
+[data-skin='pixel'] .px-body {
+  zoom: var(--ml-body-zoom, 0.75);
+  flex: 1 1 0;
+  width: 100%;
+  min-height: 0;
+  overflow-y: auto;
+}
+[data-skin='pixel'] .px-body .page-title {
+  zoom: calc(1 / var(--ml-body-zoom, 0.75));
+}
+/* 本文領域外の付属部品（設定の保存バー・対話窓）：本文と同率で拡縮 */
+[data-skin='pixel'] .px-zoom,
+[data-skin='pixel'] [role='dialog']:not(.px-body *) {
+  zoom: var(--ml-body-zoom, 0.75);
+}
+
 /* ── 各画面の共通寸法（32px 文字前提） ── */
 
 /* 本文幅：画面間で統一（旧 UI の最大幅指定は 14px 文字前提のため解除） */
@@ -291,6 +320,13 @@
 /* 入力・結果欄：画面の高さに追従（旧 UI の固定 12rem は 32px 文字で 4 行未満） */
 [data-skin='pixel'] .min-h-48 {
   min-height: max(192px, calc(100vh - var(--ml-nav-h) - 400px));
+}
+/* 本文画面内：vh は zoom で縮小されるため拡縮率で補正（Chromium の標準 zoom 準拠） */
+[data-skin='pixel'] .px-body .min-h-48 {
+  min-height: max(192px, calc((100vh - var(--ml-nav-h)) / var(--ml-body-zoom, 0.75) - 400px));
+}
+[data-skin='pixel'] .px-body .max-h-\[calc\(100vh-12rem\)\] {
+  max-height: calc((100vh - var(--ml-nav-h)) / var(--ml-body-zoom, 0.75) - 128px);
 }
 [data-skin='pixel'] input.sm\:w-72 {
   width: 380px;
