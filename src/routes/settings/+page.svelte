@@ -21,6 +21,7 @@
   import AsrModels from '$lib/components/AsrModels.svelte';
   import OcrModels from '$lib/components/OcrModels.svelte';
   import DataLocations from '$lib/components/DataLocations.svelte';
+  import Plugins from '$lib/components/Plugins.svelte';
   import GlossaryEditor from '$lib/components/GlossaryEditor.svelte';
   import { compactGlossary } from '$lib/glossary';
   import { replay, type Effect } from '$lib/pixel/transition';
@@ -306,6 +307,8 @@
           {/if}
           {#if component === 'data'}
             <DataLocations />
+          {:else if component === 'plugins'}
+            <Plugins />
           {:else if !component}
             {#each shown.fields as field (field.path)}
               <SettingRow id={field.path} help={field.help}>
@@ -424,7 +427,7 @@
     /* 大分類の帯：幅 280px、1 段ごとに 12px 後退（帯自体の傾き 0.3 と同等） */
     --tab-w: 280px;
     --tab-step: 12px;
-    --tab-col: calc(var(--tab-w) + 5 * var(--tab-step));
+    --tab-col: calc(var(--tab-w) + 6 * var(--tab-step));
   }
   .tabs {
     display: flex;
@@ -437,7 +440,7 @@
   .tab {
     flex-shrink: 0;
     width: var(--tab-w);
-    margin-left: calc((var(--step) + 5 - (var(--n) - 1)) * var(--tab-step));
+    margin-left: calc((var(--step) + 6 - (var(--n) - 1)) * var(--tab-step));
     white-space: nowrap;
     line-height: 34px;
     text-align: left;

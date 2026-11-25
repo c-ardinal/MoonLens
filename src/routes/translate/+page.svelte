@@ -270,6 +270,7 @@
   }
 </script>
 
+<!-- 画面高へ固定：長文は入力欄・出力欄の内部でスクロール（操作部を常時表示） -->
 <main class="px-body mx-auto flex max-w-5xl flex-col gap-4 px-4 py-6 sm:px-6">
   <header class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
     <div class="min-w-0">
@@ -329,10 +330,10 @@
     </label>
   </div>
 
-  <div class="grid gap-3 sm:grid-cols-2">
-    <section class="flex min-w-0 flex-col rounded-ml border border-border bg-surface-elevated shadow-ml">
+  <div class="panes grid gap-3 sm:grid-cols-2">
+    <section class="flex min-h-0 min-w-0 flex-col rounded-ml border border-border bg-surface-elevated shadow-ml">
       <textarea
-        class="min-h-48 w-full flex-1 resize-none rounded-t-ml bg-transparent p-3 text-sm leading-relaxed outline-none"
+        class="scrollbar-minimal min-h-0 w-full flex-1 resize-none rounded-t-ml bg-transparent p-3 text-sm leading-relaxed outline-none"
         placeholder="翻訳対象の文章（Ctrl+Enter で翻訳）"
         aria-label="翻訳元テキスト"
         spellcheck="false"
@@ -378,10 +379,12 @@
     </section>
 
     <section
-      class="flex min-w-0 flex-col rounded-ml border border-border bg-surface-elevated shadow-ml"
+      class="flex min-h-0 min-w-0 flex-col rounded-ml border border-border bg-surface-elevated shadow-ml"
       aria-live="polite"
     >
-      <div class="min-h-48 flex-1 p-3 text-sm leading-relaxed">
+      <!-- tabindex：キーボードでのスクロール用 -->
+      <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+      <div class="scrollbar-minimal min-h-0 flex-1 overflow-y-auto p-3 text-sm leading-relaxed" tabindex="0" role="region" aria-label="翻訳結果">
         {#if error}
           <div class="rounded-ml-sm border border-red-500/50 bg-red-500/10 p-3 text-red-500" role="alert">
             <p class="break-words">{error.message}</p>
@@ -425,3 +428,15 @@
     </section>
   </div>
 </main>
+
+<style>
+  /* 残余の高さを 2 欄へ等分。極小ウィンドウは下限を維持し、画面全体のスクロールへ移行 */
+  .panes {
+    flex: 1 0 320px;
+    min-height: 0;
+    grid-auto-rows: minmax(0, 1fr);
+  }
+  .panes > section > :last-child {
+    flex-shrink: 0;
+  }
+</style>
