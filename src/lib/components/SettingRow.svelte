@@ -41,7 +41,7 @@
   .band {
     position: absolute;
     /* 枠の内側へ収める（枠線との重複なし） */
-    inset: -2px -20px 0 -20px;
+    inset: -2px calc(var(--ml-sp-5) * -1) 0 calc(var(--ml-sp-5) * -1);
     background: var(--ml-px-amber);
     box-shadow: 0 0 0 2px var(--ml-px-bone);
     pointer-events: none;

@@ -286,26 +286,26 @@
   .setup {
     display: grid;
     grid-template-rows: auto minmax(0, 1fr) auto;
-    gap: 12px;
+    gap: var(--ml-sp-4);
     height: calc(100vh - var(--ml-nav-h, 64px));
-    padding: 12px 40px 12px;
+    padding: var(--ml-page-y) var(--ml-page-x);
     box-sizing: border-box;
   }
   .head {
     display: flex;
     align-items: center;
-    gap: 24px;
+    gap: var(--ml-sp-6);
     flex-wrap: wrap;
   }
   .steps {
     display: flex;
-    gap: 8px;
+    gap: var(--ml-sp-2);
     margin: 0;
     padding: 0;
     list-style: none;
   }
   .steps li {
-    padding: 0 12px;
+    padding: 0 var(--ml-sp-3);
     border: 2px solid var(--ml-px-dim);
     color: var(--ml-px-mid);
     white-space: nowrap;
@@ -318,13 +318,13 @@
   .body {
     display: flex;
     flex-direction: column;
-    gap: 36px;
+    gap: var(--ml-sp-9);
     min-height: 0;
     overflow-y: auto;
-    padding: 24px 8px 8px 4px;
+    padding: var(--ml-sp-6) var(--ml-sp-2) var(--ml-sp-2) var(--ml-sp-1);
   }
   .panel {
-    padding-top: 28px;
+    padding-top: var(--ml-sp-7);
   }
   .lead {
     margin: 0;
@@ -337,7 +337,7 @@
   .hw {
     display: grid;
     grid-template-columns: max-content minmax(0, 1fr);
-    gap: 6px 24px;
+    gap: var(--ml-sp-2) var(--ml-sp-6);
     margin: 0;
   }
   .hw dt {
@@ -351,8 +351,8 @@
   .fhead {
     display: flex;
     align-items: center;
-    gap: 16px;
-    margin-bottom: 8px;
+    gap: var(--ml-sp-4);
+    margin-bottom: var(--ml-sp-2);
   }
   .fhead .muted {
     flex: 1;
@@ -360,19 +360,19 @@
   .opt {
     display: inline-flex;
     align-items: center;
-    gap: 8px;
+    gap: var(--ml-sp-2);
     color: var(--ml-px-cream);
     white-space: nowrap;
     cursor: pointer;
   }
   .opt input {
-    width: 22px;
-    height: 22px;
+    width: 24px;
+    height: 24px;
     accent-color: var(--ml-px-amber);
   }
   .choice {
     width: 100%;
-    min-height: 48px;
+    min-height: var(--ml-sp-12);
     border-bottom: 2px dotted var(--ml-px-dim);
   }
   .choice:last-child {
@@ -404,8 +404,8 @@
     display: flex;
     flex-wrap: wrap;
     align-items: center;
-    gap: 4px 16px;
-    padding: 8px 0;
+    gap: var(--ml-sp-1) var(--ml-sp-4);
+    padding: var(--ml-sp-2) 0;
     border-bottom: 2px dotted var(--ml-px-dim);
   }
   .dl li:last-child {
@@ -441,7 +441,7 @@
   .pbar {
     position: absolute;
     inset: auto 0 -2px 0;
-    height: 4px;
+    height: var(--ml-sp-1);
     background: var(--ml-px-dim);
   }
   .pbar > span {
@@ -453,8 +453,8 @@
     display: flex;
     align-items: center;
     justify-content: flex-end;
-    gap: 8px;
-    padding-top: 8px;
+    gap: var(--ml-sp-2);
+    padding-top: var(--ml-sp-2);
     border-top: 2px solid var(--ml-px-dim);
   }
   .sum {
@@ -467,8 +467,8 @@
   }
   .px-btn {
     flex-shrink: 0;
-    height: 48px;
-    padding: 0 16px;
+    height: var(--ml-sp-12);
+    padding: 0 var(--ml-sp-4);
     border: 2px solid var(--ml-px-dim);
     background: var(--ml-px-black);
     color: var(--ml-px-mid);

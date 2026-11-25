@@ -91,9 +91,9 @@
   .bar {
     display: flex;
     align-items: center;
-    gap: 4px;
+    gap: var(--ml-sp-1);
     height: 100%;
-    padding-right: 8px;
+    padding-right: var(--ml-sp-2);
   }
   .logo {
     align-self: flex-start;
@@ -104,16 +104,17 @@
     display: flex;
     min-width: 0;
     flex: 1;
-    gap: 2px;
+    gap: var(--ml-sp-1);
     overflow-x: auto;
-    padding-left: 8px;
+    padding-left: var(--ml-sp-2);
     scrollbar-width: none;
   }
   .tabs li {
     flex-shrink: 0;
   }
+  /* 斜めの切抜きは上下で相殺され外形の中心は不変：左右の余白は均等 */
   .px-chip {
-    padding: 0 8px 0 12px;
+    padding: 0 var(--ml-sp-3);
   }
   /* 画面切替タブ：等幅で整列（最長の 3 文字＋斜めの切抜き分） */
   .tabs .px-chip {
@@ -133,10 +134,10 @@
   .ctls {
     display: flex;
     flex-shrink: 0;
-    gap: 2px;
+    gap: var(--ml-sp-1);
   }
   .ctl {
-    padding: 4px;
+    padding: var(--ml-sp-1);
     color: var(--ml-px-faint);
   }
   .ctl:hover {

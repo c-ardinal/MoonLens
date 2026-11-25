@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { slantPolygon } from './slant';
 import { ROTORS, SELECTED_ANGLE, SIDE_WIDTH, dialGeometry, hitTest, labelPlacement, rotorSize } from './dial';
 import { homeDot } from './home';
+import { inkBounds, slabCenterOrigin } from './pix';
 
 const points = (poly: string) =>
   poly
@@ -98,5 +99,31 @@ describe('回転体', () => {
       expect(sizes[0]).toBeGreaterThan(sizes[1]);
       expect(sizes[1]).toBeGreaterThan(sizes[2]);
     }
+  });
+});
+
+describe('帯内の字面配置', () => {
+  /** 幅 w・高さ h の画素列（指定範囲のみ不透明）。 */
+  const bitmap = (w: number, h: number, x0: number, y0: number, x1: number, y1: number) => {
+    const d = new Uint8ClampedArray(w * h * 4);
+    for (let j = y0; j <= y1; j++) for (let i = x0; i <= x1; i++) d[(j * w + i) * 4 + 3] = 255;
+    return d;
+  };
+  it('打点範囲：斜体は上の行ほど右へ拡大、打点なしは null', () => {
+    expect(inkBounds(bitmap(10, 10, 2, 3, 5, 6), 10, 10)).toEqual({ x0: 2, y0: 3, x1: 5, y1: 6 });
+    // k=0.5：行 3 は +3、行 6 は +1
+    expect(inkBounds(bitmap(10, 10, 2, 3, 5, 6), 10, 10, 0.5)).toEqual({ x0: 3, y0: 3, x1: 8, y1: 6 });
+    expect(inkBounds(new Uint8ClampedArray(400), 10, 10)).toBeNull();
+  });
+  it('字面の上下・左右の余白は均等（差は 1 ドット以内）', () => {
+    const ink = { x0: 3, y0: 5, x1: 40, y1: 20 };
+    const slab = { x: 0, y: 0, w: 60, h: 32, k: 0 };
+    const o = slabCenterOrigin(ink, slab);
+    const top = o.y + ink.y0 - slab.y,
+      bottom = slab.y + slab.h - 1 - (o.y + ink.y1);
+    const left = o.x + ink.x0 - slab.x,
+      right = slab.x + slab.w - 1 - (o.x + ink.x1);
+    expect(Math.abs(top - bottom)).toBeLessThanOrEqual(1);
+    expect(Math.abs(left - right)).toBeLessThanOrEqual(1);
   });
 });

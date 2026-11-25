@@ -159,7 +159,7 @@
     flex: 0 0 auto;
     align-items: center;
     justify-content: flex-end;
-    gap: 8px;
+    gap: var(--ml-sp-2);
     width: clamp(290px, 45%, 440px);
     min-width: 0;
   }

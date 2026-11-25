@@ -35,6 +35,51 @@ export const TITLE_FONT_FAMILY = "'BIZ UDGothic','Yu Gothic UI','Hiragino Sans',
 /** 2 値化の閾値（アルファ値）。 */
 const INK_THRESHOLD = 115;
 
+/** 斜めの帯：左下基準の x、上端 y、幅、高さ、傾き（上の行ほど右へ k 倍）。 */
+export interface Slab {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  k: number;
+}
+/** 字面の打点範囲（両端含む、描画原点基準）。 */
+export interface InkBox {
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+}
+
+/** 2 値化後の打点範囲。斜体は text() と同じ行単位のずれを加算。打点なしは null。 */
+export function inkBounds(d: ArrayLike<number>, w: number, h: number, k = 0): InkBox | null {
+  let x0 = Infinity,
+    y0 = Infinity,
+    x1 = -Infinity,
+    y1 = -Infinity;
+  for (let j = 0; j < h; j++) {
+    const o = Math.floor((h - 1 - j) * k);
+    for (let i = 0; i < w; i++) {
+      if (d[(j * w + i) * 4 + 3] <= INK_THRESHOLD) continue;
+      x0 = Math.min(x0, i + o);
+      x1 = Math.max(x1, i + o);
+      y0 = Math.min(y0, j);
+      y1 = Math.max(y1, j);
+    }
+  }
+  return y1 < 0 ? null : { x0, y0, x1, y1 };
+}
+
+/** 字面の中心を帯（平行四辺形）の中心へ一致させる描画原点。 */
+export function slabCenterOrigin(ink: InkBox, slab: Slab): { x: number; y: number } {
+  const cx = slab.x + ((slab.h - 1) * slab.k) / 2 + slab.w / 2;
+  const cy = slab.y + slab.h / 2;
+  return {
+    x: Math.round(cx - (ink.x0 + ink.x1 + 1) / 2),
+    y: Math.round(cy - (ink.y0 + ink.y1 + 1) / 2)
+  };
+}
+
 export class Pix {
   readonly g: CanvasRenderingContext2D;
   private scratch: HTMLCanvasElement | null = null;
@@ -166,6 +211,24 @@ export class Pix {
     return Math.ceil(this.g.measureText(s).width);
   }
 
+  /** 文字を原寸で描画し 2 値化前の画素列を取得。 */
+  private raster(s: string, font: string): { d: Uint8ClampedArray; w: number; h: number; tw: number } | null {
+    const size = Number(/(\d+)px/.exec(font)?.[1] ?? 16);
+    const tw = this.textW(s, font),
+      th = Math.ceil(size * 1.15);
+    const t = (this.scratch ??= document.createElement('canvas'));
+    t.width = tw + 2;
+    t.height = th;
+    const tg = t.getContext('2d', { willReadFrequently: true });
+    if (!tg) return null;
+    tg.clearRect(0, 0, t.width, t.height);
+    tg.font = font;
+    tg.textBaseline = 'top';
+    tg.fillStyle = '#fff';
+    tg.fillText(s, 0, 1);
+    return { d: tg.getImageData(0, 0, t.width, t.height).data, w: t.width, h: t.height, tw };
+  }
+
   /**
    * 2 値化した文字。k > 0 で斜体（上の行ほど右へ移動）。
    * 斜体は原寸ビットマップの行単位でずらしてから拡大し、字形の崩れを回避。
@@ -178,33 +241,31 @@ export class Pix {
     opt: { scale?: number; align?: 'left' | 'center' | 'right'; k?: number; font?: string } = {}
   ): number {
     const scale = opt.scale ?? 1,
-      k = opt.k ?? 0,
-      font = opt.font ?? PIXEL_FONT;
-    const size = Number(/(\d+)px/.exec(font)?.[1] ?? 16);
-    const tw = this.textW(s, font),
-      th = Math.ceil(size * 1.15);
-    const t = (this.scratch ??= document.createElement('canvas'));
-    t.width = tw + 2;
-    t.height = th;
-    const tg = t.getContext('2d', { willReadFrequently: true });
-    if (!tg) return 0;
-    tg.clearRect(0, 0, t.width, t.height);
-    tg.font = font;
-    tg.textBaseline = 'top';
-    tg.fillStyle = '#fff';
-    tg.fillText(s, 0, 1);
-    const d = tg.getImageData(0, 0, t.width, t.height).data;
+      k = opt.k ?? 0;
+    const r = this.raster(s, opt.font ?? PIXEL_FONT);
+    if (!r) return 0;
+    const { d, tw } = r;
     if (opt.align === 'center') x -= (tw * scale) / 2;
     else if (opt.align === 'right') x -= tw * scale;
     x = Math.round(x);
     y = Math.round(y);
     this.g.fillStyle = this.col(c);
-    for (let j = 0; j < t.height; j++) {
-      const o = Math.floor((th - 1 - j) * k) * scale;
-      for (let i = 0; i < t.width; i++)
-        if (d[(j * t.width + i) * 4 + 3] > INK_THRESHOLD) this.g.fillRect(x + i * scale + o, y + j * scale, scale, scale);
+    for (let j = 0; j < r.h; j++) {
+      const o = Math.floor((r.h - 1 - j) * k) * scale;
+      for (let i = 0; i < r.w; i++)
+        if (d[(j * r.w + i) * 4 + 3] > INK_THRESHOLD) this.g.fillRect(x + i * scale + o, y + j * scale, scale, scale);
     }
     return tw * scale;
+  }
+
+  /**
+   * 斜めの帯の中央へ字面を配置する描画原点（text() の x・y）。
+   * 字体・環境で字面の位置が異なるため、2 値化後の打点範囲を実測して算出。
+   */
+  centerInSlab(s: string, slab: Slab, opt: { k?: number; font?: string } = {}): { x: number; y: number } {
+    const r = this.raster(s, opt.font ?? PIXEL_FONT);
+    const ink = r && inkBounds(r.d, r.w, r.h, opt.k ?? 0);
+    return ink ? slabCenterOrigin(ink, slab) : { x: slab.x, y: slab.y };
   }
 
   /** 斜めの帯（平行四辺形）。上の行ほど右へ移動。 */

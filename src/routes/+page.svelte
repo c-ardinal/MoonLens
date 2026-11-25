@@ -279,8 +279,8 @@
   .alerts {
     display: flex;
     flex-direction: column;
-    gap: 4px;
-    padding: 6px 40px 0;
+    gap: var(--ml-sp-1);
+    padding: var(--ml-sp-2) var(--ml-sp-10) 0;
   }
   .alerts:not(:has(> *)) {
     display: none;
@@ -289,8 +289,8 @@
   .notice {
     display: flex;
     align-items: center;
-    gap: 16px;
-    padding: 2px 16px;
+    gap: var(--ml-sp-4);
+    padding: var(--ml-sp-1) var(--ml-sp-4);
   }
   .close {
     color: var(--ml-px-faint);
