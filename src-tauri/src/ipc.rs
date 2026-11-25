@@ -1040,6 +1040,9 @@ pub async fn start_subtitle(app: AppHandle, state: State<'_, AppState>) -> Resul
 pub struct OnboardingStatus {
     pub platform: &'static str,
     pub needs_macos_permissions_review: bool,
+    /// First run: show the setup wizard (hardware check, recommended
+    /// models, bulk download).
+    pub needs_setup: bool,
     /// Live per-permission snapshot. The modal renders each status as
     /// a badge next to its System Settings link.
     pub macos_permissions: crate::macos_permissions::PermissionReport,
@@ -1062,11 +1065,67 @@ pub async fn get_onboarding_status(state: State<'_, AppState>) -> Result<Onboard
             perms.accessibility,
             crate::macos_permissions::PermissionStatus::Denied
         ));
+    // Users who already prepared the translation and OCR models (before
+    // the wizard existed) are not sent through it.
+    let needs_setup = !snapshot.onboarding.setup_completed && !core_models_ready(&snapshot);
     Ok(OnboardingStatus {
         platform: platform_label(platform),
         needs_macos_permissions_review,
+        needs_setup,
         macos_permissions: perms,
     })
+}
+
+/// Translation model and PP-OCR on disk: MoonLens can translate.
+fn core_models_ready(settings: &Settings) -> bool {
+    // Resolve the path the engine would load (honours a custom
+    // `model_path` / `models_dir`), not only the default catalog folder.
+    let cfg = settings
+        .providers
+        .configs
+        .get(LOCAL_LLM_ID)
+        .cloned()
+        .unwrap_or_else(|| serde_json::json!({}));
+    let llm = crate::providers::translate_llama::LlamaTranslator::new(LOCAL_LLM_ID, &cfg, false)
+        .model_path()
+        .is_file();
+    let ocr = ocr_ocrs::default_models_dir()
+        .is_some_and(|d| crate::providers::ocr_ppocr::models_installed(&d));
+    llm && ocr
+}
+
+/// The PC's hardware and the model each feature should use on it, for
+/// the setup wizard and the recommended marks in the model settings.
+#[derive(serde::Serialize)]
+pub struct SystemReport {
+    pub profile: crate::setup::SystemProfile,
+    /// The GPU inference runs on (None: CPU).
+    pub accelerator: Option<crate::gpu::GpuDevice>,
+    pub recommended: crate::setup::Recommendation,
+}
+
+#[tauri::command]
+pub async fn get_system_profile(state: State<'_, AppState>) -> Result<SystemReport, String> {
+    let use_gpu = state.settings.snapshot().performance.use_gpu_if_available;
+    // GPU enumeration starts the Vulkan / Metal driver: keep it off the
+    // async runtime.
+    let profile = tokio::task::spawn_blocking(move || crate::setup::SystemProfile::detect(use_gpu))
+        .await
+        .map_err(|e| e.to_string())?;
+    let recommended = crate::setup::recommend(&profile);
+    Ok(SystemReport {
+        accelerator: profile.accelerator().cloned(),
+        profile,
+        recommended,
+    })
+}
+
+/// The setup wizard was finished or skipped: do not show it again.
+#[tauri::command]
+pub async fn complete_setup(state: State<'_, AppState>) -> Result<(), String> {
+    let mut s = (*state.settings.snapshot()).clone();
+    s.onboarding.setup_completed = true;
+    state.settings.save(s).map_err(|e| e.to_string())
 }
 
 /// Re-query the live permission snapshot. The onboarding UI calls this

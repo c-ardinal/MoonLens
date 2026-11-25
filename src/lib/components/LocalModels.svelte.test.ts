@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, waitFor } from '@testing-library/svelte';
+import { fireEvent, render, waitFor, within } from '@testing-library/svelte';
 
 const model = (id: string, extra: Record<string, unknown> = {}) => ({
   id,
@@ -26,35 +26,47 @@ const ipc = vi.hoisted(() => ({
   selectLlmModel: vi.fn(),
   onLlmProgress: vi.fn(async () => () => {}),
   listOrphanLlmFiles: vi.fn(async () => [] as { name: string; size: number }[]),
-  deleteOrphanLlmFile: vi.fn()
+  deleteOrphanLlmFile: vi.fn(),
+  getSystemProfile: vi.fn(async () => ({
+    profile: {},
+    accelerator: null,
+    recommended: {
+      translate: { model: 'b', reason: '' },
+      assistant: { model: 'd', reason: '' },
+      ocr: { model: 'ppocr', reason: '' },
+      asr: { model: 'w', reason: '' }
+    }
+  }))
 }));
 vi.mock('$lib/ipc', () => ipc);
 
 import LocalModels from './LocalModels.svelte';
 
+type Found = { findByRole: (role: string, opts: { name: RegExp }) => Promise<HTMLElement> };
+const radio = (r: Found, name: string) =>
+  r.findByRole('radio', { name: new RegExp(`^Model ${name}`) });
+
 describe('<LocalModels>', () => {
-  it('lists every model for translation and marks the one in use', async () => {
+  it('shows one selected radio per role, the recommended mark and missing models', async () => {
     ipc.listLlmModels.mockResolvedValue({
       selected: 'a',
       assistant: 'c',
       dir: '/data/llm',
       models: [
         model('a', { installed: true, style: 'pfml3' }),
-        model('b', { partial_bytes: 5 }),
+        model('b', { partial_bytes: 5, style: 'pfml3' }),
         model('c', { installed: true })
       ]
     });
-    const { findByText, getByText, getAllByText } = render(LocalModels, { role: 'translate' });
-    expect(await findByText('Model a')).toBeInTheDocument();
-    expect(getByText('Model c')).toBeInTheDocument();
-    expect(getAllByText('使用中')).toHaveLength(1);
-    // The chat model can also take over translation.
-    expect(getAllByText('使用')).toHaveLength(1);
-    // Interrupted download offers to resume.
-    expect(getByText('再開')).toBeInTheDocument();
+    const r = render(LocalModels, { role: 'translate' });
+    expect(await radio(r, 'a')).toHaveAttribute('aria-checked', 'true');
+    expect(r.getAllByRole('radio').filter((x) => x.getAttribute('aria-checked') === 'true')).toHaveLength(1);
+    // Recommended for this PC (system profile): model b.
+    await waitFor(() => expect(within(r.getByRole('radio', { name: /^Model b/ })).getByText('推奨')).toBeInTheDocument());
+    expect(r.getAllByText('未取得')).toHaveLength(1);
   });
 
-  it('offers only chat models for explain / summarize', async () => {
+  it('switches to an installed model at once, explain / summarize offers chat models only', async () => {
     ipc.listLlmModels.mockResolvedValue({
       selected: 'a',
       assistant: 'c',
@@ -62,27 +74,46 @@ describe('<LocalModels>', () => {
       models: [model('a', { installed: true, style: 'pfml3' }), model('c', { installed: true }), model('d', { installed: true })]
     });
     ipc.selectLlmModel.mockResolvedValue(undefined);
-    const { findByText, queryByText, getByText } = render(LocalModels, { role: 'assistant' });
-    expect(await findByText('Model d')).toBeInTheDocument();
+    const r = render(LocalModels, { role: 'assistant' });
+    await fireEvent.click(await radio(r, 'd'));
     // PLaMo cannot assist.
-    expect(queryByText('Model a')).not.toBeInTheDocument();
-    await fireEvent.click(getByText('使用'));
+    expect(r.queryByRole('radio', { name: /^Model a/ })).not.toBeInTheDocument();
     await waitFor(() => expect(ipc.selectLlmModel).toHaveBeenCalledWith('d', 'assistant'));
   });
 
-  it('puts a downloaded translation model to work when none is installed', async () => {
+  it('asks before downloading a missing model, then switches to it', async () => {
+    ipc.listLlmModels.mockResolvedValue({
+      selected: 'a',
+      assistant: 'y',
+      dir: '',
+      models: [model('a', { installed: true, style: 'pfml3' }), model('b', { style: 'pfml3' })]
+    });
+    ipc.installLlmModel.mockResolvedValue('/data/llm/b.gguf');
+    ipc.selectLlmModel.mockResolvedValue(undefined);
+    ipc.installLlmModel.mockClear();
+    ipc.selectLlmModel.mockClear();
+    const r = render(LocalModels);
+    await fireEvent.click(await radio(r, 'b'));
+    expect(ipc.installLlmModel).not.toHaveBeenCalled();
+    expect(ipc.selectLlmModel).not.toHaveBeenCalled();
+    await fireEvent.click(await r.findByText('取得・切替'));
+    await waitFor(() => expect(ipc.installLlmModel).toHaveBeenCalledWith('b'));
+    await waitFor(() => expect(ipc.selectLlmModel).toHaveBeenCalledWith('b', 'translate'));
+  });
+
+  it('prompts to download the selected model when it is missing', async () => {
     ipc.listLlmModels.mockResolvedValue({
       selected: 'x',
       assistant: 'y',
       dir: '',
-      models: [model('a', { style: 'pfml3' })]
+      models: [model('x', { style: 'pfml3' })]
     });
-    ipc.installLlmModel.mockResolvedValue('/data/llm/a.gguf');
-    ipc.selectLlmModel.mockResolvedValue(undefined);
-    const { findByText } = render(LocalModels);
-    await fireEvent.click(await findByText('取得'));
-    await waitFor(() => expect(ipc.installLlmModel).toHaveBeenCalledWith('a'));
-    await waitFor(() => expect(ipc.selectLlmModel).toHaveBeenCalledWith('a', 'translate'));
+    ipc.installLlmModel.mockResolvedValue('/data/llm/x.gguf');
+    ipc.installLlmModel.mockClear();
+    const r = render(LocalModels);
+    expect(await r.findByText('選択中モデル未取得。翻訳に必要')).toBeInTheDocument();
+    await fireEvent.click(r.getByRole('button', { name: '取得' }));
+    await waitFor(() => expect(ipc.installLlmModel).toHaveBeenCalledWith('x'));
   });
 });
 
@@ -98,31 +129,78 @@ describe('<LocalModels> shared state', () => {
     ipc.selectLlmModel.mockResolvedValue(undefined);
     const tr = render(LocalModels, { role: 'translate' });
     const as = render(LocalModels, { role: 'assistant' });
-    await fireEvent.click(await tr.findByText('取得'));
-    await waitFor(() => expect(as.getByText('使用中')).toBeInTheDocument());
-    expect(as.queryByText('中止')).not.toBeInTheDocument();
+    const trPanel = within(tr.container);
+    await fireEvent.click(await trPanel.findByRole('radio', { name: /^Model c/ }));
+    await fireEvent.click(await trPanel.findByText('取得・切替'));
+    const asPanel = within(as.container);
+    await waitFor(() => expect(asPanel.getByRole('radio', { name: /^Model c/ })).toHaveAttribute('aria-checked', 'true'));
+    expect(asPanel.queryByText('未取得')).not.toBeInTheDocument();
   });
 });
 
 describe('<LocalModels> housekeeping', () => {
-  it('asks once more before deleting a model', async () => {
+  it('asks once more before deleting a model not in use', async () => {
     ipc.listLlmModels.mockResolvedValue({
       selected: 'a',
       assistant: 'c',
       dir: '/data/llm',
-      models: [model('a', { installed: true, style: 'pfml3' })]
+      models: [model('a', { installed: true, style: 'pfml3' }), model('b', { installed: true, style: 'pfml3' })]
     });
     ipc.deleteLlmModel.mockResolvedValue(undefined);
-    const { findByLabelText, findByText } = render(LocalModels);
-    await fireEvent.click(await findByLabelText('Model a を削除'));
+    ipc.deleteLlmModel.mockClear();
+    const r = render(LocalModels);
+    await fireEvent.click(await r.findByLabelText('Model b を削除'));
     expect(ipc.deleteLlmModel).not.toHaveBeenCalled();
-    // The model is in use, and the confirmation says so.
-    await fireEvent.click(await findByText('使用中。削除確定'));
+    await fireEvent.click(await r.findByText('削除確定'));
+    await waitFor(() => expect(ipc.deleteLlmModel).toHaveBeenCalledWith('b'));
+  });
+
+  it('asks for a replacement before deleting the model in use', async () => {
+    ipc.listLlmModels.mockResolvedValue({
+      selected: 'a',
+      assistant: 'c',
+      dir: '/data/llm',
+      models: [model('a', { installed: true, style: 'pfml3' }), model('b', { style: 'pfml3' })]
+    });
+    ipc.installLlmModel.mockImplementation(async () => {
+      ipc.listLlmModels.mockResolvedValue({
+        selected: 'b',
+        assistant: 'c',
+        dir: '/data/llm',
+        models: [model('a', { installed: true, style: 'pfml3' }), model('b', { installed: true, style: 'pfml3' })]
+      });
+      return '/data/llm/b.gguf';
+    });
+    ipc.selectLlmModel.mockResolvedValue(undefined);
+    ipc.deleteLlmModel.mockResolvedValue(undefined);
+    ipc.deleteLlmModel.mockClear();
+    const r = render(LocalModels);
+    await fireEvent.click(await r.findByLabelText('Model a を削除'));
+    expect(await r.findByText('使用中モデル。削除前に代替モデル選択')).toBeInTheDocument();
+    // The recommended model is offered first.
+    const alts = within(r.getByRole('radiogroup', { name: '代替モデル' })).getAllByRole('radio');
+    expect(alts[0]).toHaveAttribute('aria-checked', 'true');
+    await fireEvent.click(r.getByText('切替・削除'));
+    await waitFor(() => expect(ipc.installLlmModel).toHaveBeenCalledWith('b'));
+    await waitFor(() => expect(ipc.selectLlmModel).toHaveBeenCalledWith('b', 'translate'));
     await waitFor(() => expect(ipc.deleteLlmModel).toHaveBeenCalledWith('a'));
   });
 
+  it('keeps a model the other role uses', async () => {
+    ipc.listLlmModels.mockResolvedValue({
+      selected: 'a',
+      assistant: 'c',
+      dir: '/data/llm',
+      models: [model('a', { installed: true, style: 'pfml3' }), model('c', { installed: true })]
+    });
+    ipc.deleteLlmModel.mockClear();
+    const r = render(LocalModels, { role: 'translate' });
+    await fireEvent.click(await r.findByLabelText('Model c を削除'));
+    expect(await r.findByText('説明・要約で使用中。説明・要約の選択変更後に削除可能')).toBeInTheDocument();
+    expect(ipc.deleteLlmModel).not.toHaveBeenCalled();
+  });
+
   it('shows coded backend errors as plain text', async () => {
-    ipc.listOrphanLlmFiles.mockResolvedValue([]);
     ipc.listLlmModels.mockResolvedValue({
       selected: 'x',
       assistant: 'y',
@@ -130,8 +208,8 @@ describe('<LocalModels> housekeeping', () => {
       models: [model('x', { style: 'pfml3' })]
     });
     ipc.installLlmModel.mockRejectedValue('disk_full|空き容量不足：必要 2.3 GB／空き 1.0 GB');
-    const { findByText, getByText } = render(LocalModels);
-    await fireEvent.click(await findByText('取得'));
-    await waitFor(() => expect(getByText('空き容量不足：必要 2.3 GB／空き 1.0 GB')).toBeInTheDocument());
+    const r = render(LocalModels);
+    await fireEvent.click(await r.findByRole('button', { name: '取得' }));
+    await waitFor(() => expect(r.getByText('空き容量不足：必要 2.3 GB／空き 1.0 GB')).toBeInTheDocument());
   });
 });

@@ -350,6 +350,8 @@ const defaultPermissions: PermissionReport = {
 export interface OnboardingStatus {
   platform: 'macos' | 'windows' | 'linux' | 'other';
   needs_macos_permissions_review: boolean;
+  /** 初回セットアップ（構成診断・推奨モデル・一括取得）の表示要否。 */
+  needs_setup: boolean;
   macos_permissions: PermissionReport;
 }
 
@@ -357,8 +359,49 @@ export const getOnboardingStatus = () =>
   safeInvoke<OnboardingStatus>('get_onboarding_status', undefined, {
     platform: 'other',
     needs_macos_permissions_review: false,
+    needs_setup: false,
     macos_permissions: defaultPermissions
   });
+
+export interface GpuDevice {
+  name: string;
+  backend: string;
+  memory_total: number;
+  integrated: boolean;
+}
+
+export interface SystemProfile {
+  os: string;
+  cpu_name: string;
+  cpu_cores: number;
+  ram_total: number;
+  gpus: GpuDevice[];
+  disk_free: number | null;
+  use_gpu: boolean;
+}
+
+export interface ModelPick {
+  model: string;
+  reason: string;
+}
+
+/** 機能別の推奨モデル（ocr は PP-OCRv5 固定で 'ppocr'）。 */
+export interface Recommendation {
+  translate: ModelPick;
+  assistant: ModelPick;
+  ocr: ModelPick;
+  asr: ModelPick;
+}
+
+export interface SystemReport {
+  profile: SystemProfile;
+  /** 推論に使用する GPU（null：CPU）。 */
+  accelerator: GpuDevice | null;
+  recommended: Recommendation;
+}
+
+export const getSystemProfile = () => safeInvoke<SystemReport>('get_system_profile');
+export const completeSetup = () => safeInvoke<void>('complete_setup');
 
 export const markMacosPermissionsReviewed = () =>
   safeInvoke<void>('mark_macos_permissions_reviewed');

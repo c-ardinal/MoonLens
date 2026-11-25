@@ -41,6 +41,9 @@ pub struct OnboardingState {
     /// walk-through on macOS. Other platforms always store `true` so the
     /// flag is a no-op there.
     pub macos_permissions_reviewed: bool,
+    /// Whether the first-run setup (hardware check, recommended models,
+    /// bulk download) was finished or skipped.
+    pub setup_completed: bool,
 }
 
 /* ------------------------------- appearance ------------------------------ */

@@ -1,26 +1,15 @@
 <script lang="ts">
   import { onDestroy, onMount } from 'svelte';
-  import {
-    installOcrModels,
-    ocrModelsStatus,
-    onModelProgress,
-    type ModelProgress,
-    type OcrModelsStatus
-  } from '$lib/ipc';
+  import { installOcrModels, ocrModelsStatus, onModelProgress, type OcrModelsStatus } from '$lib/ipc';
+  import { ocrChoice, OCR_CHOICE_ID } from '$lib/model-setup';
   import { errorText } from '$lib/errors';
-  import SettingRow from './SettingRow.svelte';
+  import ModelChoice from './ModelChoice.svelte';
 
   let status = $state<OcrModelsStatus | null>(null);
   let installing = $state(false);
-  let progress = $state<ModelProgress | null>(null);
+  let fraction = $state<number | undefined>(undefined);
   let error = $state<string | null>(null);
   let unlisten: (() => void) | undefined;
-
-  /** 両エンジンは一括取得（片方のみの取得は不可）。 */
-  const ENGINES = [
-    { key: 'ppocr', label: 'PP-OCRv5', size: '26 MB', help: '標準エンジン。日本語・中国語・英語に対応。' },
-    { key: 'ocrs', label: 'ocrs', size: '12 MB', help: '予備エンジン。英語のみ対応。' }
-  ] as const;
 
   async function refresh() {
     try {
@@ -32,10 +21,11 @@
 
   onMount(async () => {
     await refresh();
-    unlisten = await onModelProgress((p) => (progress = p));
+    unlisten = await onModelProgress((p) => (fraction = p.fraction ?? 0));
   });
   onDestroy(() => unlisten?.());
 
+  /** PP-OCRv5 と予備の ocrs を一括取得（片方のみの取得は不可）。 */
   async function install() {
     installing = true;
     error = null;
@@ -45,36 +35,26 @@
       error = errorText(e);
     } finally {
       installing = false;
-      progress = null;
+      fraction = undefined;
       await refresh();
     }
   }
 </script>
 
 {#if status}
-  {#each ENGINES as e (e.key)}
-    {@const ready = status[e.key]}
-    <SettingRow id="ocr:{e.key}" help={e.help}>
-      <div class="srow">
-        <span class="row-label">{e.label}</span>
-        <span class="row-ctl">
-          <span class="row-value">
-            {installing && !ready && progress ? `${Math.round((progress.fraction ?? 0) * 100)}%` : e.size}
-          </span>
-          {#if ready}
-            <span class="stag">導入済み</span>
-          {:else}
-            <button class="sbtn" onclick={install} disabled={installing}>{installing ? '取得中…' : '取得'}</button>
-          {/if}
-        </span>
-      </div>
-      {#if installing && !ready && progress}
-        <div class="sprogress" aria-hidden="true">
-          <span style="width: {((progress.fraction ?? 0) * 100).toFixed(1)}%"></span>
-        </div>
-      {/if}
-    </SettingRow>
-  {/each}
+  <!-- 選択肢は PP-OCRv5 のみ（常に選択状態）。未取得時は取得を案内 -->
+  <ModelChoice
+    key="ocr"
+    feature="文字認識"
+    rows={[ocrChoice(status)]}
+    selected={OCR_CHOICE_ID}
+    recommended={OCR_CHOICE_ID}
+    progress={installing ? { [OCR_CHOICE_ID]: fraction ?? 0 } : {}}
+    busy={{ [OCR_CHOICE_ID]: installing }}
+    removable={false}
+    onselect={async () => {}}
+    oninstall={install}
+  />
 {/if}
 {#if error}
   <div class="srow error"><p class="row-label">{error}</p></div>

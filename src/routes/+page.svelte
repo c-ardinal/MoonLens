@@ -230,8 +230,8 @@
       {/each}
       {#if missing.length > 0}
         <section class="px-win notice">
-          <p class="min-w-0 flex-1">初回セットアップ：{missing.join('・')}のダウンロードが必要。</p>
-          <button class="px-chip" data-tone="amber" use:slant onclick={() => goto('/settings/#section-models')}>モデル準備</button>
+          <p class="min-w-0 flex-1">{missing.join('・')}未取得。初期設定で推奨モデルを一括取得</p>
+          <button class="px-chip" data-tone="amber" use:slant onclick={() => goto('/setup/')}>初期設定</button>
         </section>
       {/if}
       {#if lastError}

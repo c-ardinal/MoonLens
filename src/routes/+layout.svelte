@@ -3,7 +3,7 @@
   import { onDestroy, onMount } from 'svelte';
   import { page } from '$app/state';
   import { goto } from '$app/navigation';
-  import { getSettings, onNavigate, onSettingsChanged } from '$lib/ipc';
+  import { getOnboardingStatus, getSettings, onNavigate, onSettingsChanged } from '$lib/ipc';
   import { applyAppearance } from '$lib/appearance';
   import { applyPixelSkin } from '$lib/pixel/skin';
   import { motion, watchMotion } from '$lib/pixel/motion.svelte';
@@ -16,7 +16,7 @@
 
   // Overlay-type windows (selector, overlay, subtitle, lens) draw their own
   // chrome; only the main window's pages get the menu and palette.
-  const MAIN_ROUTES = ['/', '/translate/', '/image/', '/settings/', '/history/', '/plugins/'];
+  const MAIN_ROUTES = ['/', '/translate/', '/image/', '/settings/', '/history/', '/plugins/', '/setup/'];
   const isMain = $derived(MAIN_ROUTES.includes(page.url.pathname));
   // ドット絵外観はメインウィンドウ限定。訳文表示のウィンドウは原文準拠。
   $effect(() => applyPixelSkin(isMain));
@@ -33,6 +33,8 @@
       // Tray menu, hotkeys and other windows open main-window pages.
       // Only the main window receives this event.
       unlisteners.push(await onNavigate((path) => goto(path)));
+      // 初回起動（翻訳・OCR モデル未取得かつ初期設定未完了）：初期設定へ誘導。
+      if (page.url.pathname === '/' && (await getOnboardingStatus()).needs_setup) goto('/setup/');
     } catch {
       /* backend not reachable during pure-frontend dev; keep defaults */
     }

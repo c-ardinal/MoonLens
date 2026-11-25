@@ -52,8 +52,23 @@
   .row.active :global(label),
   .row.active :global(.value-text),
   .row.active :global(.row-label),
-  .row.active :global(.row-value) {
+  .row.active :global(.row-value),
+  .row.active :global(.sprompt),
+  .row.active :global(.sprompt.warn > p) {
     color: var(--ml-px-black);
+  }
+  /* 琥珀の帯上：ラジオ・推奨札・ボタンを黒系へ反転 */
+  .row.active :global(.sradio) {
+    border-color: var(--ml-px-black);
+    background: var(--ml-px-amber);
+    box-shadow: inset 0 0 0 4px var(--ml-px-amber);
+  }
+  .row.active :global(.spick[aria-checked='true'] .sradio) {
+    background: var(--ml-px-black);
+  }
+  .row.active :global(.stag.rec) {
+    background: var(--ml-px-black);
+    color: var(--ml-px-amber);
   }
   /* 琥珀の帯上のスライダー：つまみ・溝を黒系へ反転 */
   .row.active :global(input[type='range']::-webkit-slider-thumb) {
