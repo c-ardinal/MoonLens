@@ -10,11 +10,24 @@
   src: url('/fonts/DotGothic16-Regular.woff2') format('woff2');
   font-display: block;
 }
+/* DOM 文字用の別名：字面（16 ドット枠）を行の上下中央へ配置。
+ * 元の字体は行ボックス内の字面が 2px（1 ドット）下寄り。上下の字体寸法を
+ * 字面の実寸（上 28.9px・下 3.1px／32px 時）へ補正し、行高との差を上下均等に配分。
+ * キャンバス描画（ホーム・見出し帯）は座標指定のため元の字体を使用。
+ * 補正記述子の非対応環境（WebKit）は従来の配置。 */
+@font-face {
+  font-family: 'DotGothic16 UI';
+  src: url('/fonts/DotGothic16-Regular.woff2') format('woff2');
+  font-display: block;
+  ascent-override: 90.3%;
+  descent-override: 9.7%;
+  line-gap-override: 0%;
+}
 
 :root[data-skin='pixel'] {
   color-scheme: dark;
-  --ml-font-ui: 'DotGothic16', 'Yu Gothic UI', 'Hiragino Sans', monospace;
-  --ml-font-mono: 'DotGothic16', ui-monospace, monospace;
+  --ml-font-ui: 'DotGothic16 UI', 'DotGothic16', 'Yu Gothic UI', 'Hiragino Sans', monospace;
+  --ml-font-mono: 'DotGothic16 UI', 'DotGothic16', ui-monospace, monospace;
 
   --ml-px-black: #0b0805;
   --ml-px-brown: #1c1207;
@@ -99,7 +112,7 @@
 [data-skin='pixel'] body,
 [data-skin='pixel'] :is(.text-sm, .text-base, .text-xs, .text-lg, .text-xl, .text-\[10px\], .text-\[11px\]) {
   font-size: 32px;
-  line-height: 36px;
+  line-height: var(--ml-sp-9);
 }
 [data-skin='pixel'] :is(.font-semibold, .font-medium, .font-bold) {
   font-weight: 400;
@@ -160,34 +173,74 @@
   background: var(--ml-px-black);
 }
 
-/* ── 共通部品 ── */
+/* ── 余白トークン（4px 格子） ──
+ * 余白・行高・操作部の高さは --ml-sp-N（設計値 N×4px）で指定。
+ * 本文画面は zoom で拡縮するため、描画後の寸法（設計値 × 拡縮率）を 4px の倍数へ
+ * 丸め、拡縮率で除算した値を使用。文字サイズ全段階で描画寸法が 4px 格子へ整列。
+ * 0 以外の余白は最小 4px。枠線・ドット単位の段差（2px）は対象外。
+ * --ml-z：適用範囲の実効拡縮率（等倍領域 1、本文画面・保存バー・対話窓は設定値）。 */
+:root[data-skin='pixel'] {
+  --ml-z: 1;
+}
+[data-skin='pixel'] :is(.px-body, .px-zoom, [role='dialog']:not(.px-body *)) {
+  --ml-z: var(--ml-body-zoom, 0.75);
+}
+[data-skin='pixel'] .px-body .page-title {
+  --ml-z: 1;
+}
+/* 計算式は --ml-z の確定する各範囲で再宣言（継承値は宣言元の拡縮率で確定済みのため） */
+:root[data-skin='pixel'],
+[data-skin='pixel'] :is(.px-body, .px-zoom, [role='dialog'], .page-title) {
+  --ml-sp-1: calc(max(4px, round(4px * var(--ml-z), 4px)) / var(--ml-z));
+  --ml-sp-2: calc(max(4px, round(8px * var(--ml-z), 4px)) / var(--ml-z));
+  --ml-sp-3: calc(max(4px, round(12px * var(--ml-z), 4px)) / var(--ml-z));
+  --ml-sp-4: calc(max(4px, round(16px * var(--ml-z), 4px)) / var(--ml-z));
+  --ml-sp-5: calc(max(4px, round(20px * var(--ml-z), 4px)) / var(--ml-z));
+  --ml-sp-6: calc(max(4px, round(24px * var(--ml-z), 4px)) / var(--ml-z));
+  --ml-sp-7: calc(max(4px, round(28px * var(--ml-z), 4px)) / var(--ml-z));
+  --ml-sp-8: calc(max(4px, round(32px * var(--ml-z), 4px)) / var(--ml-z));
+  --ml-sp-9: calc(max(4px, round(36px * var(--ml-z), 4px)) / var(--ml-z));
+  --ml-sp-10: calc(max(4px, round(40px * var(--ml-z), 4px)) / var(--ml-z));
+  --ml-sp-11: calc(max(4px, round(44px * var(--ml-z), 4px)) / var(--ml-z));
+  --ml-sp-12: calc(max(4px, round(48px * var(--ml-z), 4px)) / var(--ml-z));
+  --ml-sp-13: calc(max(4px, round(52px * var(--ml-z), 4px)) / var(--ml-z));
+  --ml-sp-14: calc(max(4px, round(56px * var(--ml-z), 4px)) / var(--ml-z));
+  --ml-sp-15: calc(max(4px, round(60px * var(--ml-z), 4px)) / var(--ml-z));
+  --ml-sp-16: calc(max(4px, round(64px * var(--ml-z), 4px)) / var(--ml-z));
+  /* 画面外周の余白：文字サイズ設定に依存しない固定値（描画寸法 上 16px・左右 40px） */
+  --ml-page-y: calc(16px / var(--ml-z));
+  --ml-page-x: calc(40px / var(--ml-z));
+  /* 見出し帯（琥珀部）の高さ：描画寸法 80px 固定 */
+  --ml-title-h: calc(80px / var(--ml-z));
+  /* Tailwind の余白段階（p-4・gap-2 等）：同一格子へ整列 */
+  --spacing-0\.5: calc(max(4px, round(2px * var(--ml-z), 4px)) / var(--ml-z));
+  --spacing-1\.5: calc(max(4px, round(6px * var(--ml-z), 4px)) / var(--ml-z));
+  --spacing-2\.5: calc(max(4px, round(10px * var(--ml-z), 4px)) / var(--ml-z));
+  --spacing-3\.5: calc(max(4px, round(14px * var(--ml-z), 4px)) / var(--ml-z));
+  --spacing-1: var(--ml-sp-1);
+  --spacing-2: var(--ml-sp-2);
+  --spacing-3: var(--ml-sp-3);
+  --spacing-4: var(--ml-sp-4);
+  --spacing-5: var(--ml-sp-5);
+  --spacing-6: var(--ml-sp-6);
+  --spacing-7: var(--ml-sp-7);
+  --spacing-8: var(--ml-sp-8);
+  --spacing-9: var(--ml-sp-9);
+  --spacing-10: var(--ml-sp-10);
+  --spacing-11: var(--ml-sp-11);
+  --spacing-12: var(--ml-sp-12);
+}
 
-/** 斜めの見出し帯（use:slant と併用）。 */
-.px-band {
-  display: inline-flex;
-  align-items: center;
-  gap: 12px;
-  padding: 4px 28px 4px 16px;
-  background: var(--ml-px-amber);
-  color: var(--ml-px-black);
-  font-size: 32px;
-  line-height: 40px;
-}
-.px-band-shadow {
-  display: inline-block;
-  background: var(--ml-px-bone);
-  padding: 0 0 6px 0;
-  margin-left: -8px;
-}
+/* ── 共通部品 ── */
 
 /** 斜めの名札（use:slant と併用）。 */
 .px-chip {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 1px 16px 1px 22px;
+  gap: var(--ml-sp-2);
+  padding: 0 var(--ml-sp-4) 0 var(--ml-sp-6);
   font-size: 32px;
-  line-height: 36px;
+  line-height: var(--ml-sp-9);
   white-space: nowrap;
   background: var(--ml-px-brown);
   color: var(--ml-px-amber);
@@ -210,18 +263,29 @@
     inset 0 0 0 2px var(--ml-px-black),
     inset 0 0 0 4px var(--ml-px-dim),
     4px 4px 0 var(--ml-px-dim);
-  padding: 20px 28px;
+  padding: var(--ml-sp-5) var(--ml-sp-7);
 }
 .px-win > .px-win-title {
   position: absolute;
-  top: -20px;
-  left: 24px;
+  top: calc(var(--ml-sp-5) * -1);
+  left: var(--ml-sp-6);
 }
 
 /** 各画面の見出し帯の幅。 */
 .page-title {
   width: max-content;
-  margin: 0 0 6px -4px;
+  margin: 0 0 var(--ml-sp-2) calc(var(--ml-sp-1) * -1);
+}
+
+/* 見出し行：右側の操作部は全画面で見出し帯（琥珀部）の上下中央へ配置 */
+[data-skin='pixel'] :is(.px-body, .setup) > header {
+  align-items: flex-start;
+}
+[data-skin='pixel'] :is(.px-body, .setup) > header > :not(:first-child) {
+  display: flex;
+  align-items: center;
+  align-self: flex-start;
+  min-height: var(--ml-title-h);
 }
 
 /* ── 本文画面の拡縮（外観設定「文字サイズ」） ──
@@ -258,7 +322,7 @@
 /* 本文幅：画面間で統一（旧 UI の最大幅指定は 14px 文字前提のため解除） */
 [data-skin='pixel'] main:is(.max-w-4xl, .max-w-5xl, .max-w-6xl) {
   max-width: none;
-  padding: 16px 40px 32px;
+  padding: var(--ml-page-y) var(--ml-page-x) calc(var(--ml-page-y) * 2);
 }
 
 /* 図標：32px 文字に対し 16px は過小。24px（12 ドット）へ統一 */
@@ -268,7 +332,7 @@
   flex-shrink: 0;
 }
 [data-skin='pixel'] input.pl-7 {
-  padding-left: 40px;
+  padding-left: var(--ml-sp-10);
 }
 
 /* 切替スイッチ：角型の ON/OFF 枠（旧 UI の丸型を置換） */
@@ -304,17 +368,17 @@
 
 /* 選択欄：高さを入力欄・ボタン（48px）へ統一、文字と矢印の重複を回避 */
 [data-skin='pixel'] select {
-  height: 48px;
+  height: var(--ml-sp-12);
   padding-top: 0;
   padding-bottom: 0;
-  padding-right: 32px;
-  line-height: 44px;
+  padding-right: var(--ml-sp-8);
+  line-height: var(--ml-sp-11);
   text-overflow: ellipsis;
 }
 
 /* 1 行省略の文字：行高 36px では字形の下端が欠けるため余白を確保 */
 [data-skin='pixel'] .truncate {
-  line-height: 44px;
+  line-height: var(--ml-sp-11);
 }
 
 /* 入力・結果欄：画面の高さに追従（旧 UI の固定 12rem は 32px 文字で 4 行未満） */
@@ -347,7 +411,8 @@
   appearance: none;
   width: 16px;
   height: 28px;
-  margin-top: -10px;
+  /* 溝（8px）の上下中央へつまみ（28px）を配置 */
+  margin-top: calc((8px - 28px) / 2);
   background: var(--ml-px-amber);
   box-shadow: inset 0 0 0 2px var(--ml-px-black);
 }
@@ -371,7 +436,7 @@
   max-height: min(60vh, 480px);
 }
 [data-skin='pixel'] .max-w-lg kbd {
-  margin-left: 24px;
+  margin-left: var(--ml-sp-6);
 }
 
 /* ── 設定画面の行（モデル・データ）：項目名＋右寄せの値・操作 ── */
@@ -379,15 +444,15 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
-  min-height: 60px;
-  padding: 6px 0;
+  gap: var(--ml-sp-4);
+  min-height: var(--ml-sp-15);
+  padding: var(--ml-sp-1) 0;
 }
 .srow .row-label {
   flex: 1;
   min-width: 0;
   color: var(--ml-px-cream);
-  line-height: 40px;
+  line-height: var(--ml-sp-10);
   overflow-wrap: anywhere;
 }
 .srow .row-ctl {
@@ -395,7 +460,7 @@
   flex-shrink: 0;
   align-items: center;
   justify-content: flex-end;
-  gap: 8px;
+  gap: var(--ml-sp-2);
 }
 .srow .row-value {
   color: var(--ml-px-mid);
@@ -410,9 +475,9 @@
   display: inline-flex;
   flex-shrink: 0;
   align-items: center;
-  gap: 6px;
-  height: 44px;
-  padding: 0 14px;
+  gap: var(--ml-sp-2);
+  height: var(--ml-sp-11);
+  padding: 0 var(--ml-sp-4);
   border: 2px solid var(--ml-px-dim);
   background: var(--ml-px-black);
   color: var(--ml-px-mid);
@@ -437,10 +502,10 @@
 }
 /** 状態札（使用中・導入済み等）：矩形。 */
 .stag {
-  padding: 0 10px;
+  padding: 0 var(--ml-sp-3);
   background: var(--ml-px-bone);
   color: var(--ml-px-black);
-  line-height: 40px;
+  line-height: var(--ml-sp-10);
   white-space: nowrap;
 }
 .stag.off {
@@ -458,7 +523,7 @@
   flex: 1;
   min-width: 0;
   align-items: center;
-  gap: 12px;
+  gap: var(--ml-sp-3);
   padding: 0;
   background: none;
   border: 0;
@@ -468,8 +533,8 @@
 }
 .sradio {
   flex-shrink: 0;
-  width: 22px;
-  height: 22px;
+  width: 24px;
+  height: 24px;
   border: 2px solid var(--ml-px-faint);
   background: var(--ml-px-black);
   box-shadow: inset 0 0 0 4px var(--ml-px-black);
@@ -491,8 +556,8 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px 12px;
-  padding: 0 0 12px 34px;
+  gap: var(--ml-sp-2) var(--ml-sp-3);
+  padding: 0 0 var(--ml-sp-3) var(--ml-sp-9);
   color: var(--ml-px-cream);
 }
 .sprompt > p {
@@ -510,11 +575,11 @@
 .salts {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--ml-sp-1);
 }
 .spick.alt {
-  gap: 10px;
-  min-height: 40px;
+  gap: var(--ml-sp-3);
+  min-height: var(--ml-sp-10);
 }
 .spick.alt .row-value {
   margin-left: auto;
@@ -522,7 +587,7 @@
 }
 .sacts {
   display: flex;
-  gap: 8px;
+  gap: var(--ml-sp-2);
 }
 .sbtn.on {
   border-color: var(--ml-px-amber);

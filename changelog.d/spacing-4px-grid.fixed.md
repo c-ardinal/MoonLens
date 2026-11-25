@@ -1,0 +1,2 @@
+- Main window: paddings, margins and gaps now land on a 4px grid at every text-size step (16–32px). Spacing is defined by tokens that round the rendered size to a multiple of 4px; page margins and the title position are identical on every screen.
+- Main window: fixed off-centre text — the logo and page titles are centred inside their bands, menu and button labels are vertically centred, and header controls line up with the title band on every screen.

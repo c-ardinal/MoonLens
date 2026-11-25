@@ -8,6 +8,27 @@
    compiled to nothing. */
 @config '../tailwind.config.ts';
 
+/* 余白段階：各段を個別のトークンへ分離（既定値は Tailwind 標準と同値）。
+   ドット絵外観は pixel.css で 4px 格子へ整列した値へ差替え。 */
+@theme {
+  --spacing-0\.5: calc(var(--spacing) * 0.5);
+  --spacing-1: calc(var(--spacing) * 1);
+  --spacing-1\.5: calc(var(--spacing) * 1.5);
+  --spacing-2: calc(var(--spacing) * 2);
+  --spacing-2\.5: calc(var(--spacing) * 2.5);
+  --spacing-3: calc(var(--spacing) * 3);
+  --spacing-3\.5: calc(var(--spacing) * 3.5);
+  --spacing-4: calc(var(--spacing) * 4);
+  --spacing-5: calc(var(--spacing) * 5);
+  --spacing-6: calc(var(--spacing) * 6);
+  --spacing-7: calc(var(--spacing) * 7);
+  --spacing-8: calc(var(--spacing) * 8);
+  --spacing-9: calc(var(--spacing) * 9);
+  --spacing-10: calc(var(--spacing) * 10);
+  --spacing-11: calc(var(--spacing) * 11);
+  --spacing-12: calc(var(--spacing) * 12);
+}
+
 :root {
   color-scheme: light dark;
   font-family: var(--ml-font-ui);

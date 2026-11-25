@@ -377,28 +377,26 @@
     position: relative;
     display: grid;
     grid-template-rows: auto minmax(0, 1fr);
-    gap: 12px;
-    padding: 12px 28px 8px 40px;
+    gap: var(--ml-sp-4);
+    padding: var(--ml-page-y) var(--ml-page-x);
     box-sizing: border-box;
   }
   /* 保存バー（画面下端固定）表示中：説明窓との重複を回避 */
   .cfg.with-bar {
-    padding-bottom: 76px;
+    padding-bottom: calc(var(--ml-sp-16) + var(--ml-page-y));
   }
   .head {
     display: flex;
-    align-items: flex-start;
-    gap: 16px;
+    gap: var(--ml-sp-4);
   }
   .search {
     position: relative;
-    margin-top: 20px;
     flex-shrink: 0;
     width: clamp(240px, 22vw, 300px);
   }
   .search :global(.icon) {
     position: absolute;
-    left: 10px;
+    left: var(--ml-sp-3);
     top: 50%;
     width: 24px;
     height: 24px;
@@ -407,7 +405,8 @@
   }
   .search input {
     width: 100%;
-    padding: 2px 10px 2px 44px;
+    height: var(--ml-sp-11);
+    padding: 0 var(--ml-sp-3) 0 var(--ml-sp-11);
     background: var(--ml-px-black);
     border: 2px solid var(--ml-px-dim);
     color: var(--ml-px-cream);
@@ -419,27 +418,26 @@
   .body {
     display: grid;
     grid-template-columns: var(--tab-col) minmax(0, 1fr);
-    gap: 16px;
+    gap: var(--ml-sp-4);
     min-height: 0;
     /* 大分類の帯：幅 280px、1 段ごとに 12px 後退（帯自体の傾き 0.3 と同等） */
     --tab-w: 280px;
-    --tab-step: 12px;
+    --tab-step: var(--ml-sp-3);
     --tab-col: calc(var(--tab-w) + 5 * var(--tab-step));
   }
   .tabs {
     display: flex;
     flex-direction: column;
-    gap: 6px;
+    gap: var(--ml-sp-2);
     overflow-x: hidden;
     overflow-y: auto;
-    padding: 4px 0;
+    padding: var(--ml-sp-1) 0;
   }
   .tab {
     flex-shrink: 0;
     width: var(--tab-w);
     margin-left: calc((var(--step) + 5 - (var(--n) - 1)) * var(--tab-step));
     white-space: nowrap;
-    line-height: 34px;
     text-align: left;
   }
   .tab:not([data-tone]):hover {
@@ -449,7 +447,7 @@
   .right {
     display: grid;
     grid-template-rows: minmax(0, 1fr) auto;
-    gap: 12px;
+    gap: var(--ml-sp-3);
     min-height: 0;
   }
   .main {
@@ -457,10 +455,12 @@
     display: grid;
     grid-template-rows: auto minmax(0, 1fr);
     min-height: 0;
+    /* 枠線（.frame）の領域を確保：内部の余白を枠線の内側から計測 */
+    border: 2px solid transparent;
   }
   .frame {
     position: absolute;
-    inset: 0;
+    inset: -2px;
     background: var(--ml-px-black);
     border-top: 2px solid var(--ml-px-bone);
     border-left: 2px solid var(--ml-px-bone);
@@ -472,14 +472,13 @@
     grid-row: 1;
     display: flex;
     flex-wrap: wrap;
-    gap: 4px;
-    margin: 2px 2px 0;
-    padding: 10px 26px 0;
+    gap: var(--ml-sp-1);
+    padding: var(--ml-sp-3) var(--ml-sp-7) 0;
     border-bottom: 2px solid var(--ml-px-dim);
   }
   .subtab {
-    padding: 0 14px;
-    line-height: 40px;
+    padding: 0 var(--ml-sp-4);
+    line-height: var(--ml-sp-10);
     color: var(--ml-px-mid);
     white-space: nowrap;
   }
@@ -497,7 +496,7 @@
     height: 100%;
     overflow-x: hidden;
     overflow-y: auto;
-    padding: 12px 28px 16px;
+    padding: var(--ml-sp-3) var(--ml-sp-7) var(--ml-sp-4);
     box-sizing: border-box;
   }
   .desc a {
@@ -506,15 +505,14 @@
   }
   .desc {
     /* 見出し札（上へ 20px 突出）分の余白 */
-    margin: 20px 0 0;
-    padding-top: 26px;
+    margin: var(--ml-sp-5) 0 0;
+    padding-top: var(--ml-sp-6);
     box-sizing: border-box;
   }
   .hint {
     min-width: 0;
-    margin: 24px 0 0 auto;
+    margin: 0 0 0 auto;
     overflow: hidden;
-    line-height: 44px;
     color: var(--ml-px-faint);
     white-space: nowrap;
   }
@@ -525,9 +523,9 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 16px;
-    min-height: 64px;
-    padding: 6px 28px 6px 40px;
+    gap: var(--ml-sp-4);
+    min-height: var(--ml-sp-16);
+    padding: var(--ml-sp-2) var(--ml-page-x);
     box-sizing: border-box;
     background: var(--ml-px-black);
     border-top: 2px solid var(--ml-px-amber);
@@ -544,12 +542,12 @@
   .savebar .actions {
     display: flex;
     flex-shrink: 0;
-    gap: 8px;
+    gap: var(--ml-sp-2);
   }
   .px-btn {
     flex-shrink: 0;
-    height: 48px;
-    padding: 0 16px;
+    height: var(--ml-sp-12);
+    padding: 0 var(--ml-sp-4);
     border: 2px solid var(--ml-px-dim);
     background: var(--ml-px-black);
     color: var(--ml-px-mid);
@@ -568,7 +566,7 @@
   }
   /* 枠内の部品（モデル管理・データ）：外枠と二重化する独自の窓枠を解除 */
   .scroll :global(section.rounded-ml.border) {
-    padding: 0 0 20px;
+    padding: 0 0 var(--ml-sp-5);
     border: 0;
     border-bottom: 2px dotted var(--ml-px-dim);
     border-radius: 0;
@@ -582,7 +580,7 @@
   .loading,
   .error,
   .empty {
-    margin-left: 28px;
+    margin-left: var(--ml-sp-7);
   }
   .error {
     color: var(--ml-px-red);

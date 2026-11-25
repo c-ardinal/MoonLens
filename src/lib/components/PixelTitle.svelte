@@ -61,7 +61,9 @@
     p.clear();
     p.slab(0, 6, bw - 10, h, K, 9); // 段影
     p.slab(10, 0, bw - 10, h, K, 5); // 帯
-    p.text(label, 30, Math.round((h - size * 1.15) / 2) + 1, 0, { k: K, font });
+    // 字面を帯の上下中央へ配置。fit（文字幅準拠の帯）は左右も中央
+    const at = p.centerInSlab(label, { x: 10, y: 0, w: bw - 10, h, k: K }, { k: K, font });
+    p.text(label, fit ? at.x : 30, at.y, 0, { k: K, font });
     if (sub) p.text(sub, bw - 10, 4, 0, { align: 'right' });
   });
 

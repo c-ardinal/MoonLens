@@ -159,7 +159,7 @@
     flex: 0 0 auto;
     align-items: center;
     justify-content: flex-end;
-    gap: 8px;
+    gap: var(--ml-sp-2);
     width: clamp(290px, 45%, 440px);
     min-width: 0;
   }
@@ -175,11 +175,11 @@
   }
   .toggle-chips {
     display: inline-flex;
-    gap: 6px;
+    gap: var(--ml-sp-1);
     cursor: pointer;
   }
   .tc {
-    padding: 0 12px;
+    padding: 0 var(--ml-sp-3);
     color: var(--ml-px-faint, currentColor);
   }
   .tc.on {

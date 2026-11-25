@@ -23,9 +23,10 @@
     canvas.style.height = `${H * dot}px`;
     p.clear();
     p.slab(0, 0, bw, H, K, 5);
-    const y = Math.round((H - 23 * 1.15) / 2) - 2;
-    p.text('MOONLENS', 15, y + 1, 9, { k: 0.3, font: FONT }); // 段影
-    p.text('MOONLENS', 14, y, 0, { k: 0.3, font: FONT });
+    // 字面を帯の上下左右の中央へ配置
+    const { x, y } = p.centerInSlab('MOONLENS', { x: 0, y: 0, w: bw, h: H, k: K }, { k: 0.3, font: FONT });
+    p.text('MOONLENS', x + 1, y + 1, 9, { k: 0.3, font: FONT }); // 段影
+    p.text('MOONLENS', x, y, 0, { k: 0.3, font: FONT });
   }
 
   onMount(() => {
