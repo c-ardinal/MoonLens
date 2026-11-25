@@ -16,6 +16,14 @@ class SystemProfileStore {
     return this.pending;
   }
 
+  /** 再診断（空き容量の変化を反映。初期設定の表示時・モデル選定への移行時）。 */
+  reload(): Promise<SystemReport | null> {
+    this.pending = getSystemProfile()
+      .then((r) => (this.report = r))
+      .catch(() => this.report);
+    return this.pending;
+  }
+
   get recommended(): Recommendation | null {
     return this.report?.recommended ?? null;
   }

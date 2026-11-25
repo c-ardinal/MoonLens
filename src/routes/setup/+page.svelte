@@ -68,7 +68,7 @@
     loadError = null;
     try {
       const [llm, asr, ocr] = await Promise.all([listLlmModels(), listAsrModels(), ocrModelsStatus()]);
-      const r = await systemProfile.load();
+      const r = await systemProfile.reload();
       features = buildFeatures(llm, asr, ocr, r?.recommended ?? null);
     } catch (e) {
       loadError = errorText(e);
@@ -134,6 +134,12 @@
       errors = { ...errors, apply: errorText(e) };
     }
     running = false;
+  }
+
+  /** モデル選定へ移行：空き容量を再取得（診断後の容量変化を反映）。 */
+  async function toSelect() {
+    step = 'select';
+    await systemProfile.reload();
   }
 
   function cancel() {
@@ -252,7 +258,7 @@
   <footer class="actions">
     {#if step === 'check'}
       <button class="px-btn" onclick={finish}>スキップ</button>
-      <button class="px-btn primary" disabled={!report && !loadError} onclick={() => (step = 'select')}>次へ</button>
+      <button class="px-btn primary" disabled={!report && !loadError} onclick={toSelect}>次へ</button>
     {:else if step === 'select'}
       <p class="sum" class:warn={short}>
         合計 {formatBytes(total)}{free != null ? `／空き ${formatBytes(free)}` : ''}{short ? '。空き容量不足' : ''}
