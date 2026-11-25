@@ -23,6 +23,7 @@
   import DataLocations from '$lib/components/DataLocations.svelte';
   import GlossaryEditor from '$lib/components/GlossaryEditor.svelte';
   import { compactGlossary } from '$lib/glossary';
+  import { replay, type Effect } from '$lib/pixel/transition';
 
   /** The selector remembers the language last picked in its toolbar. */
   const SELECTOR_LANG_KEY = 'moonlens.selector.targetLanguage';
@@ -190,6 +191,15 @@
     if (target && untrack(() => draft) && SECTIONS.some((x) => x.id === target)) untrack(() => jump(target));
   });
 
+  /** 切替演出の方向：大分類は一覧の並び順で上下、小分類はタブの並び順で左右。 */
+  const groupIndex = (id: string) => GROUPS.findIndex((g) => g.id === id);
+  const groupMotion = (a: string, b: string): Effect => (groupIndex(b) > groupIndex(a) ? 'slide-up' : 'slide-down');
+  const sectionMotion = (a: string, b: string): Effect | null => {
+    const g = GROUPS.find((x) => x.sections.includes(a));
+    if (!g || !g.sections.includes(b)) return null; // 大分類の切替は枠全体で演出
+    return g.sections.indexOf(b) > g.sections.indexOf(a) ? 'slide-left' : 'slide-right';
+  };
+
   function moveRow(delta: number) {
     const list = [...document.querySelectorAll<HTMLElement>('.cfg .scroll [data-row]')].filter(
       (r) => r.offsetParent !== null
@@ -264,7 +274,12 @@
       </nav>
 
       <div class="right">
-      <section class="main" id="section-{shown.section.id}" aria-label={shown.section.title}>
+      <section
+        class="main"
+        id="section-{shown.section.id}"
+        aria-label={shown.section.title}
+        use:replay={{ key: shownGroup?.group.id ?? '', effect: groupMotion }}
+      >
         <div class="frame" aria-hidden="true"></div>
         {#if (shownGroup?.sections.length ?? 0) > 1}
           <!-- 小分類：枠上部の矩形タブ -->
@@ -281,7 +296,7 @@
             {/each}
           </div>
         {/if}
-        <div class="scroll scrollbar-minimal">
+        <div class="scroll scrollbar-minimal" use:replay={{ key: shown.section.id, effect: sectionMotion }}>
           <!-- モデル管理：一度表示後は分類切替でも保持（取得中の進捗・完了通知を継続） -->
           {#if modelsMounted}
             <div style:display={component === 'llm-translate' ? null : 'none'}><LocalModels role="translate" /></div>
@@ -320,7 +335,7 @@
       <!-- 説明窓：右列の下部（タブ列は全高を使用し、分類の見切れを防止） -->
       <section class="px-win desc" aria-live="polite">
         <span class="px-chip px-win-title" data-tone="amber" use:slant>説明</span>
-        <p>
+        <p use:replay={{ key: explain, effect: 'type' }}>
           {explain}
           {#if rows.link}
             <a href={rows.link.href} target="_blank" rel="noreferrer">{rows.link.label}</a>

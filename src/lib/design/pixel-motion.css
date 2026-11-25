@@ -1,0 +1,88 @@
+/**
+ * ドット絵外観の切替演出（メインウィンドウ専用）。
+ * 方針：レトロゲーム端末の画面処理に準拠し、補間は steps() の段階変化のみ。
+ * 負荷対策：120〜200ms の単発演出、clip-path・transform・opacity のみ使用。
+ * 推論中・動き削減設定時（data-motion が on 以外）は所要時間 0 で即時切替。
+ * 演出の指定自体は常時有効：data-motion の切替で animation-name が変化すると
+ * 既存要素の演出が再生されるため、時間のみ変更（終了済みの演出は再生なし）。
+ * JS 側から再生する演出（同一要素の内容差替え）は $lib/pixel/transition.ts。
+ */
+
+/* fill-mode は backwards：演出後に clip-path を残さず、段影・フォーカス枠の欠けを防止。 */
+
+/* ── 画面遷移：本文全体を斜めの段階ワイプで表示（見出し帯と同じ右上がりの傾斜） ──
+ * 対象はナビゲーション直後の要素（各画面の最上位要素）。
+ * 画面の差替え時は要素自体が新規挿入となるため、CSS 演出のみで再生。 */
+:root[data-skin='pixel'] .app-root > nav + * {
+  animation: px-page-wipe 200ms steps(6, end) backwards;
+}
+@keyframes px-page-wipe {
+  from {
+    clip-path: polygon(0 0, 0 0, -160px 100%, -160px 100%);
+  }
+  to {
+    clip-path: polygon(0 0, calc(100% + 160px) 0, 100% 100%, -160px 100%);
+  }
+}
+
+/* ── 窓の展開：中央の横線から上下へ段階展開（RPG の会話窓の開閉） ──
+ * 対象：対話窓・通知・エラー表示・操作結果の窓（px-pop）。 */
+:root[data-skin='pixel'] :is([role='dialog'], [role='alert'], .px-pop) {
+  animation: px-win-open 120ms steps(4, end) backwards;
+}
+@keyframes px-win-open {
+  from {
+    clip-path: inset(50% 0 50% 0);
+  }
+  to {
+    clip-path: inset(0 0 0 0);
+  }
+}
+/* 対話窓の背景：2 段階の減光（背景色のみ変化、対話窓自体は半透明化なし） */
+:root[data-skin='pixel'] [role='presentation']:has(> [role='dialog']) {
+  animation: px-dim-in 120ms steps(2, end) backwards;
+}
+@keyframes px-dim-in {
+  from {
+    background-color: transparent;
+  }
+}
+
+/* ── 保存バー：画面下端から段階的にせり上げ ── */
+:root[data-skin='pixel'] .savebar {
+  animation: px-rise 120ms steps(3, end) backwards;
+}
+@keyframes px-rise {
+  from {
+    transform: translateY(100%);
+  }
+}
+
+/* ── 設定の選択帯：左端から右へ段階的に伸長（カーソル移動の手応え） ── */
+:root[data-skin='pixel'] .row > .band {
+  animation: px-band-sweep 80ms steps(3, end) backwards;
+}
+@keyframes px-band-sweep {
+  from {
+    clip-path: inset(-4px 100% -4px -4px);
+  }
+  to {
+    clip-path: inset(-4px -4px -4px -4px);
+  }
+}
+
+/* ── 推論中・動き削減時：全演出を即時完了 ── */
+:root[data-skin='pixel']:not([data-motion='on'])
+  :is(.app-root > nav + *, [role='dialog'], [role='alert'], .px-pop, [role='presentation']:has(> [role='dialog']), .savebar, .row > .band) {
+  animation-duration: 0s !important;
+}
+
+/* ── 切替スイッチ：つまみ移動を 2 段階へ（既定の滑らかな補間を置換） ── */
+[data-skin='pixel'] input.peer.sr-only ~ .absolute.w-4,
+[data-skin='pixel'] input.peer.sr-only + .w-9 {
+  transition-timing-function: steps(2, end);
+  transition-duration: 80ms;
+}
+:root[data-skin='pixel']:not([data-motion='on']) :is(input.peer.sr-only ~ .absolute.w-4, input.peer.sr-only + .w-9) {
+  transition: none;
+}

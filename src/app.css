@@ -1,6 +1,7 @@
 @import 'tailwindcss';
 @import './lib/design/tokens.css';
 @import './lib/design/pixel.css';
+@import './lib/design/pixel-motion.css';
 
 /* Tailwind v4 ignores tailwind.config.ts unless it is named here; without
    it every design-token class (bg-accent, text-ink-muted, rounded-ml…)

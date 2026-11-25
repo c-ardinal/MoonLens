@@ -106,7 +106,7 @@
   </header>
 
   {#if installMsg}
-    <p class="rounded-ml border border-accent/40 bg-accent-soft p-2 text-sm text-accent">
+    <p class="px-pop rounded-ml border border-accent/40 bg-accent-soft p-2 text-sm text-accent">
       {installMsg}
     </p>
   {/if}
@@ -114,12 +114,12 @@
   {#if updatesChecked}
     {#if updates.length === 0}
       <p
-        class="rounded-ml border border-border bg-surface-elevated p-2 text-xs text-ink-muted"
+        class="px-pop rounded-ml border border-border bg-surface-elevated p-2 text-xs text-ink-muted"
       >
         全拡張機能最新。
       </p>
     {:else}
-      <section class="rounded-ml border border-accent/40 bg-accent-soft p-3">
+      <section class="px-pop rounded-ml border border-accent/40 bg-accent-soft p-3">
         <h3 class="text-sm font-semibold text-accent">
           更新あり：{updates.length} 件
         </h3>
@@ -153,7 +153,7 @@
     {/if}
   {/if}
   {#if installError}
-    <p class="rounded-ml border border-red-500/50 bg-red-500/10 p-2 text-sm break-words text-red-500">
+    <p class="px-pop rounded-ml border border-red-500/50 bg-red-500/10 p-2 text-sm break-words text-red-500">
       エラー: {installError}
     </p>
   {/if}
