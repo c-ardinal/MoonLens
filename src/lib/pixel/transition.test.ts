@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { EFFECTS, play, replay, type Effect } from './transition';
+import { EFFECTS, play, replay, wheelStep, type Effect } from './transition';
 
 const dataset: Record<string, string> = {};
 
@@ -26,7 +26,7 @@ describe('play', () => {
   it('段階変化（steps）の単発演出として再生', () => {
     const { node, calls } = fakeNode();
     expect(play(node, 'type')).not.toBeNull();
-    expect(calls[0].opts.easing).toBe(`steps(${EFFECTS.type.steps}, end)`);
+    expect(calls[0].opts.easing).toBe(`steps(${EFFECTS.type.steps}, start)`);
     expect(calls[0].opts.duration).toBeLessThanOrEqual(200);
   });
 
@@ -64,5 +64,48 @@ describe('replay', () => {
     const action = replay(node, { key: 'a', effect: () => null });
     action.update({ key: 'b', effect: () => null });
     expect(calls).toHaveLength(0);
+  });
+});
+
+describe('wheelStep', () => {
+  const wheel = (deltaY: number) => ({ deltaY, deltaX: 0, ctrlKey: false, preventDefault: vi.fn() }) as unknown as WheelEvent;
+  function fakeTarget() {
+    let handler: (e: WheelEvent) => void = () => {};
+    const node = {
+      addEventListener: (_: string, h: (e: WheelEvent) => void) => (handler = h),
+      removeEventListener: vi.fn()
+    } as unknown as HTMLElement;
+    return { node, fire: (e: WheelEvent) => handler(e) };
+  }
+
+  it('1 ノッチで 1 項目、方向は符号に一致、連続入力は間隔を確保', () => {
+    let now = 1000;
+    vi.spyOn(performance, 'now').mockImplementation(() => now);
+    const { node, fire } = fakeTarget();
+    const steps: number[] = [];
+    wheelStep(node, (d) => steps.push(d));
+    fire(wheel(100));
+    expect(steps).toEqual([1]);
+    now += 50; // 間隔未満：無視
+    fire(wheel(100));
+    expect(steps).toEqual([1]);
+    now += 200;
+    fire(wheel(-100));
+    // 累積（+100-100=0）は閾値未満
+    expect(steps).toEqual([1]);
+    fire(wheel(-100));
+    expect(steps).toEqual([1, -1]);
+  });
+
+  it('微小な入力（トラックパッド）は累積で 1 項目', () => {
+    let now = 5000;
+    vi.spyOn(performance, 'now').mockImplementation(() => now);
+    const { node, fire } = fakeTarget();
+    const steps: number[] = [];
+    wheelStep(node, (d) => steps.push(d));
+    for (let i = 0; i < 5; i++) fire(wheel(10));
+    expect(steps).toEqual([]);
+    fire(wheel(10));
+    expect(steps).toEqual([1]);
   });
 });

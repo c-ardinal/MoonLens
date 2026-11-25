@@ -1,3 +1,8 @@
+<script module lang="ts">
+  /** 魔法陣の選択位置。機能画面からの復帰時に直前の選択を復元（画面再生成でも保持）。 */
+  let lastSelected = 0;
+</script>
+
 <script lang="ts">
   import { goto } from '$app/navigation';
   import { onDestroy, onMount } from 'svelte';
@@ -156,7 +161,10 @@
     }
   ] satisfies (DialItem & { desc: string; hotkey: string; run: () => unknown })[]);
 
-  let selected = $state(0);
+  let selected = $state(lastSelected);
+  $effect(() => {
+    lastSelected = selected;
+  });
   const current = $derived(functions[selected]);
 
   /** 最新の履歴 1 件（ホーム下部の「最近」）。 */

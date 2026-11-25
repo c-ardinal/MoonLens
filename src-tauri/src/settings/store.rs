@@ -616,4 +616,23 @@ mod tests {
         assert!(o.is_clean());
         assert_eq!(s.providers.translate.chain, vec!["llamacpp"]);
     }
+
+    #[test]
+    fn empty_asr_chain_in_the_user_file_is_repaired_and_saved() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(
+            &path,
+            "config_version = 1\n\n[providers.asr]\nchain = []\n\n[providers.configs.whisper]\nmodel = \"whisper-small\"\n",
+        )
+        .unwrap();
+        let store = SettingsStore::load_from(path.clone()).unwrap();
+        assert_eq!(store.snapshot().providers.asr.chain, vec!["whisper"]);
+        // The file no longer overrides the chain; the model choice stays.
+        let saved = std::fs::read_to_string(&path).unwrap();
+        assert!(!saved.contains("chain = []"), "{saved}");
+        assert!(saved.contains("whisper-small"), "{saved}");
+        let again = SettingsStore::load_from(path).unwrap();
+        assert_eq!(again.snapshot().providers.asr.chain, vec!["whisper"]);
+    }
 }

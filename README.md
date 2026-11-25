@@ -80,7 +80,7 @@ MoonLens/
 │     ├─ pipeline.rs   # チェーン実行、フォールバック、stickiness
 │     └─ ...
 ├─ src/                # Svelte 5 + SvelteKit フロント
-│  ├─ routes/          # overlay / subtitle / settings / plugins / history
+│  ├─ routes/          # overlay / subtitle / settings / history
 │  └─ lib/
 │     ├─ design/       # デザイントークン、モーション
 │     └─ components/   # SchemaForm, CommandPalette, PrivacyBadge, ActionRibbon

@@ -1,0 +1,1 @@
+- Settings: the mouse wheel switches categories (over the category list) and tabs (over the tab row), one item per notch.

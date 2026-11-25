@@ -1,0 +1,2 @@
+- Plugin management moved into Settings as the 「拡張」 category; the separate top-menu tab was removed. The tray menu entry opens that category.
+- Settings category 「結果」 renamed 「履歴・コピー」 so the name states what it holds (history and auto-copy).

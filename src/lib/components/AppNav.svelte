@@ -23,7 +23,6 @@
   const items = [
     { href: '/', label: 'ホーム' },
     { href: '/history/', label: '履歴' },
-    { href: '/plugins/', label: '拡張' },
     { href: '/settings/', label: '設定' }
   ];
 
