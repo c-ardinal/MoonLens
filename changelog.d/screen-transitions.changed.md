@@ -1,1 +1,1 @@
-- メインウィンドウの画面遷移・設定分類の切替・対話窓などへ短時間の切替演出を追加（ドット絵調の段階変化）。推論中と動き削減設定時は即時切替
+- The main window now animates screen changes, settings category/tab switches, dialogs, notices and the save bar with short stepped (pixel-style) transitions of 80–200 ms. Switching is instant while translation or speech recognition is running and when reduced motion is on.
