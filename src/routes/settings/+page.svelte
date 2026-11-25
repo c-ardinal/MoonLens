@@ -334,7 +334,7 @@
 
 {#if changed.length > 0 || message}
   <!-- 保存バー：画面下端固定。本文と同じ左右余白で整列 -->
-  <div class="savebar">
+  <div class="savebar px-zoom">
     <p class="msg" class:error={message?.kind === 'error'} role="status">
       {#if message && changed.length === 0}
         {message.text}

@@ -247,6 +247,8 @@
 [data-skin='pixel'] .px-body .page-title {
   zoom: calc(1 / var(--ml-body-zoom, 0.75));
 }
+/* 本文領域外の付属部品（設定の保存バー・対話窓）：本文と同率で拡縮 */
+[data-skin='pixel'] .px-zoom,
 [data-skin='pixel'] [role='dialog']:not(.px-body *) {
   zoom: var(--ml-body-zoom, 0.75);
 }
