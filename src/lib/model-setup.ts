@@ -19,6 +19,8 @@ export interface Choice {
   /** 取得容量（バイト）。 */
   size: number;
   installed: boolean;
+  /** 中断した取得の既存分（再開時は残りのみ取得）。 */
+  partial: number;
   note: string;
 }
 
@@ -53,13 +55,23 @@ export function ocrChoice(ocr: OcrModelsStatus): Choice {
     label: 'PP-OCRv5',
     size: OCR_BYTES,
     installed: ocr.ppocr && ocr.ocrs,
+    partial: 0,
     note: '日本語・中国語・英語に対応（予備の英語専用 ocrs を同梱）'
   };
 }
 
-const pick = <T extends { id: string; label: string; size: number; installed: boolean; note: string }>(
+const pick = <
+  T extends { id: string; label: string; size: number; installed: boolean; partial_bytes: number; note: string }
+>(
   m: T
-): Choice => ({ id: m.id, label: m.label, size: m.size, installed: m.installed, note: m.note });
+): Choice => ({
+  id: m.id,
+  label: m.label,
+  size: m.size,
+  installed: m.installed,
+  partial: m.partial_bytes,
+  note: m.note
+});
 
 /** 推奨が候補外（カタログ変更等）の場合は先頭候補へ退避。 */
 function initial(choices: Choice[], recommended: string | undefined, current: string): string {
@@ -110,6 +122,7 @@ export interface DownloadItem {
   features: Feature[];
   id: string;
   label: string;
+  /** 今回の取得量（中断分の再開時は残りのみ）。 */
   size: number;
   kind: 'llm' | 'asr' | 'ocr';
 }
@@ -127,7 +140,14 @@ export function downloadQueue(features: FeaturePlan[]): DownloadItem[] {
     const kind = kindOf(f.feature);
     const same = out.find((d) => d.id === c.id && d.kind === kind);
     if (same) same.features.push(f.feature);
-    else out.push({ features: [f.feature], id: c.id, label: c.label, size: c.size, kind });
+    else
+      out.push({
+        features: [f.feature],
+        id: c.id,
+        label: c.label,
+        size: Math.max(0, c.size - c.partial),
+        kind
+      });
   }
   return out;
 }

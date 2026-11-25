@@ -1078,10 +1078,17 @@ pub async fn get_onboarding_status(state: State<'_, AppState>) -> Result<Onboard
 
 /// Translation model and PP-OCR on disk: MoonLens can translate.
 fn core_models_ready(settings: &Settings) -> bool {
-    let llm = llm_dir().ok().is_some_and(|dir| {
-        llm_models::find(&selected_llm(settings, LOCAL_LLM_ID))
-            .is_some_and(|m| llm_models::is_installed(&dir, m))
-    });
+    // Resolve the path the engine would load (honours a custom
+    // `model_path` / `models_dir`), not only the default catalog folder.
+    let cfg = settings
+        .providers
+        .configs
+        .get(LOCAL_LLM_ID)
+        .cloned()
+        .unwrap_or_else(|| serde_json::json!({}));
+    let llm = crate::providers::translate_llama::LlamaTranslator::new(LOCAL_LLM_ID, &cfg, false)
+        .model_path()
+        .is_file();
     let ocr = ocr_ocrs::default_models_dir()
         .is_some_and(|d| crate::providers::ocr_ppocr::models_installed(&d));
     llm && ocr

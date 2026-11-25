@@ -98,6 +98,13 @@ describe('downloadQueue', () => {
     expect(downloadQueue(f).map((d) => d.id)).toEqual(['gemma-4-e2b']);
   });
 
+  it('counts only the bytes still missing from an interrupted download', () => {
+    const l = llm();
+    l.models[0].partial_bytes = 800_000_000;
+    const q = downloadQueue(buildFeatures(l, asr, noOcr, rec));
+    expect(q[0].size).toBe(1_000_000_000);
+  });
+
   it('fetches a model shared by two features once', () => {
     const f = buildFeatures(llm(), asr, noOcr, rec);
     f[0].selected = 'gemma-4-e2b';
