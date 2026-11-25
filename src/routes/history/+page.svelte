@@ -1,6 +1,7 @@
 <script lang="ts">
   import PixelTitle from '$lib/components/PixelTitle.svelte';
   import { onDestroy, onMount } from 'svelte';
+  import { replay, type Effect } from '$lib/pixel/transition';
   import { Search, Trash2, RefreshCw, Cloud, Cpu, Copy, Check } from 'lucide-svelte';
   import {
     HISTORY_FILTERS,
@@ -118,6 +119,10 @@
     if (delta < 86_400) return `${Math.floor(delta / 3600)}時間前`;
     return `${Math.floor(delta / 86_400)}日前`;
   }
+
+  /** 種別の切替演出：タブの並び順で左右。 */
+  const filterIndex = (v: string) => HISTORY_FILTERS.findIndex((f) => f.value === v);
+  const filterMotion = (a: string, b: string): Effect => (filterIndex(b) > filterIndex(a) ? 'slide-left' : 'slide-right');
 </script>
 
 <!-- 画面高へ固定：一覧・詳細は各自でスクロール（画面全体のはみ出し防止） -->
@@ -206,6 +211,7 @@
       <ul
         class="scrollbar-minimal flex min-h-0 flex-col gap-1.5 overflow-y-auto"
         aria-label="履歴一覧"
+        use:replay={{ key: filter, effect: filterMotion }}
       >
         {#if visible.length === 0}
           <li class="rounded-ml border border-dashed border-border p-6 text-center text-sm text-ink-muted">
@@ -237,6 +243,7 @@
         <section
           class="flex min-h-0 min-w-0 flex-col rounded-ml border border-border bg-surface-elevated shadow-ml"
           aria-label="履歴詳細"
+          use:replay={{ key: current.id, effect: 'open' }}
         >
           <div class="flex flex-wrap items-center gap-2 border-b border-border px-4 py-3 text-xs text-ink-faint">
             <span class="rounded-full bg-surface-muted px-2 py-0.5">{kindLabel(current.kind)}</span>
