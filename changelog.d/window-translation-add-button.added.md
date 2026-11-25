@@ -1,0 +1,1 @@
+- Window translation windows have a new Add button in the header. It opens another window next to the current one, with the same size and target language.

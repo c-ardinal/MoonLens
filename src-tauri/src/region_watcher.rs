@@ -72,6 +72,9 @@ pub enum LiveEvent {
     Stale { indices: Vec<usize> },
     /// Nothing to show (the region is empty).
     Clear,
+    /// Text recognition of a changed region started (`on`) or ended; the
+    /// window shows that it is working.
+    Reading { on: bool },
     /// A QR code in the region was decoded; the window shows `text`.
     Decoded { text: String },
     /// Reading or translating failed (`code|message`, see `user_error`).
@@ -231,11 +234,10 @@ impl Tracker {
         }
 
         let png = capture::png_bytes(&frame.image).map_err(|e| e.to_string())?;
-        let mut bundle = env
-            .pipeline
-            .analyze_capture(png)
-            .await
-            .map_err(|e| user_error::provider(&e, Capability::Ocr))?;
+        (env.emit)(LiveEvent::Reading { on: true });
+        let analyzed = env.pipeline.analyze_capture(png).await;
+        (env.emit)(LiveEvent::Reading { on: false });
+        let mut bundle = analyzed.map_err(|e| user_error::provider(&e, Capability::Ocr))?;
         // The region moved while OCR ran: these boxes belong to the old
         // place. Hide what is shown and read again once it holds still.
         if let Some(now) = (env.geometry_now)().filter(|g| *g != frame.geometry) {
