@@ -121,7 +121,7 @@
 </script>
 
 <!-- 画面高へ固定：一覧・詳細は各自でスクロール（画面全体のはみ出し防止） -->
-<main class="history mx-auto flex max-w-5xl flex-col gap-4 px-4 py-6 sm:px-6">
+<main class="px-body history mx-auto flex max-w-5xl flex-col gap-4 px-4 py-6 sm:px-6">
   <header class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
     <div>
       <div class="page-title"><PixelTitle text="履歴" tag="h1" height={40} fit /></div>
@@ -330,8 +330,3 @@
   </div>
 {/if}
 
-<style>
-  .history {
-    height: calc(100vh - var(--ml-nav-h, 64px));
-  }
-</style>

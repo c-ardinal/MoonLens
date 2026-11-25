@@ -229,7 +229,7 @@
 
 <svelte:window onkeydown={onKey} />
 
-<div class="cfg" class:with-bar={changed.length > 0 || !!message}>
+<div class="cfg px-body" class:with-bar={changed.length > 0 || !!message}>
   <header class="head">
     <div class="page-title"><PixelTitle text="設定" tag="h1" height={40} fit /></div>
     <p class="hint">↑↓項目 ←→タブ PgUp/Dn分類</p>
@@ -363,7 +363,6 @@
     display: grid;
     grid-template-rows: auto minmax(0, 1fr);
     gap: 12px;
-    height: calc(100vh - var(--ml-nav-h, 64px));
     padding: 12px 28px 8px 40px;
     box-sizing: border-box;
   }

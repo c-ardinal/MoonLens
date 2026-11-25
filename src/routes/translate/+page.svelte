@@ -270,7 +270,7 @@
   }
 </script>
 
-<main class="mx-auto flex max-w-5xl flex-col gap-4 px-4 py-6 sm:px-6">
+<main class="px-body mx-auto flex max-w-5xl flex-col gap-4 px-4 py-6 sm:px-6">
   <header class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
     <div class="min-w-0">
       <div class="page-title"><PixelTitle text="テキスト翻訳" tag="h1" height={40} fit /></div>

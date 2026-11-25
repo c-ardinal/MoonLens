@@ -78,7 +78,7 @@
 </script>
 
 <!-- 画面高へ固定：一覧のみスクロール（画面全体のはみ出し防止） -->
-<main class="plugins mx-auto flex max-w-4xl flex-col gap-4 px-4 py-6 sm:gap-6 sm:px-6">
+<main class="px-body plugins mx-auto flex max-w-4xl flex-col gap-4 px-4 py-6 sm:gap-6 sm:px-6">
   <header class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
     <div>
       <div class="page-title"><PixelTitle text="拡張機能" tag="h1" height={40} fit /></div>
@@ -225,9 +225,6 @@
 </main>
 
 <style>
-  .plugins {
-    height: calc(100vh - var(--ml-nav-h, 64px));
-  }
   .plugins > ul > li {
     flex-shrink: 0;
   }
