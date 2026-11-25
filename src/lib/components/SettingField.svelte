@@ -173,21 +173,4 @@
     width: auto;
     min-width: 0;
   }
-  .toggle-chips {
-    display: inline-flex;
-    gap: 6px;
-    cursor: pointer;
-  }
-  .tc {
-    padding: 0 12px;
-    color: var(--ml-px-faint, currentColor);
-  }
-  .tc.on {
-    background: var(--ml-px-black, #000);
-    color: var(--ml-px-amber, currentColor);
-  }
-  .toggle-chips:focus-within .tc.on {
-    outline: 2px solid var(--ml-px-bone, currentColor);
-    outline-offset: -2px;
-  }
 </style>

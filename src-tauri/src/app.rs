@@ -251,7 +251,7 @@ fn build_tray(app: &AppHandle) -> Result<()> {
     let open = MenuItem::with_id(app, "open", "MoonLens 表示", true, None::<&str>)?;
     let capture = MenuItem::with_id(app, "capture", "ウィンドウ翻訳", true, None::<&str>)?;
     let subtitle = MenuItem::with_id(app, "subtitle", "音声翻訳 開始／停止", true, None::<&str>)?;
-    let plugins = MenuItem::with_id(app, "plugins", "プラグイン", true, None::<&str>)?;
+    let plugins = MenuItem::with_id(app, "plugins", "拡張機能", true, None::<&str>)?;
     let history = MenuItem::with_id(app, "history", "履歴", true, None::<&str>)?;
     let sep = tauri::menu::PredefinedMenuItem::separator(app)?;
     let quit = MenuItem::with_id(app, "quit", "終了", true, None::<&str>)?;
@@ -276,7 +276,7 @@ fn build_tray(app: &AppHandle) -> Result<()> {
                 let state = app.state::<AppState>();
                 state.subtitle.toggle_checked(app);
             }
-            "plugins" => route_main(app, "/plugins/"),
+            "plugins" => route_main(app, "/settings/#section-plugins"),
             "history" => route_main(app, "/history/"),
             "quit" => app.exit(0),
             _ => {}

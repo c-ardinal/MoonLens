@@ -1,0 +1,2 @@
+- Text translation: long input or output no longer pushes the page past the window; both panes scroll inside and the buttons stay visible.
+- Home: the magic-circle selection is kept when returning from a translation screen instead of resetting to window translation.
