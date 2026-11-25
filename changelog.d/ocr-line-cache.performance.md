@@ -1,0 +1,1 @@
+- Text recognition (PP-OCR) keeps the text of lines it has already read: when only part of a watched region changes, the unchanged lines are not recognised again. Detection still runs on every reading, and the recognised text is the same as before.
