@@ -9,7 +9,7 @@
 use std::{
     collections::HashMap,
     sync::{
-        atomic::{AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
         Arc,
     },
 };
@@ -34,6 +34,8 @@ use parking_lot::Mutex;
 struct StubOcr {
     text: Arc<Mutex<&'static str>>,
     runs: Arc<AtomicUsize>,
+    /// Fail the next run (an engine error, not "no text").
+    fail_next: Arc<AtomicBool>,
 }
 
 #[async_trait]
@@ -49,6 +51,9 @@ impl Provider for StubOcr {
     }
     async fn run(&self, _input: TaskInput) -> Result<TaskOutput, ProviderError> {
         self.runs.fetch_add(1, Ordering::Relaxed);
+        if self.fail_next.swap(false, Ordering::Relaxed) {
+            return Err(ProviderError::Other("engine failure".into()));
+        }
         Ok(TaskOutput::Ocr {
             lines: vec![OcrLine {
                 text: (*self.text.lock()).into(),
@@ -97,6 +102,7 @@ struct Run {
     tracker: Tracker,
     text: Arc<Mutex<&'static str>>,
     ocr_runs: Arc<AtomicUsize>,
+    fail_next: Arc<AtomicBool>,
     translations: Arc<AtomicUsize>,
 }
 
@@ -122,6 +128,7 @@ impl Run {
 
         let text = Arc::new(Mutex::new("The north wind blows."));
         let ocr_runs = Arc::new(AtomicUsize::new(0));
+        let fail_next = Arc::new(AtomicBool::new(false));
         let translations = Arc::new(AtomicUsize::new(0));
         let mut providers: HashMap<String, ProviderHandle> = HashMap::new();
         providers.insert(
@@ -129,6 +136,7 @@ impl Run {
             Arc::new(StubOcr {
                 text: text.clone(),
                 runs: ocr_runs.clone(),
+                fail_next: fail_next.clone(),
             }),
         );
         providers.insert(
@@ -144,11 +152,16 @@ impl Run {
             tracker: Tracker::new(),
             text,
             ocr_runs,
+            fail_next,
             translations,
         }
     }
 
     async fn tick(&mut self, image: DynamicImage, force: bool) -> Tick {
+        self.try_tick(image, force).await.unwrap()
+    }
+
+    async fn try_tick(&mut self, image: DynamicImage, force: bool) -> Result<Tick, String> {
         const GEOMETRY: Geometry = [0, 0, 800, 60];
         let emit = |_: LiveEvent| {};
         let geometry_now = || Some(GEOMETRY);
@@ -169,7 +182,6 @@ impl Run {
                 &env,
             )
             .await
-            .unwrap()
     }
 
     fn ocr_runs(&self) -> usize {
@@ -218,6 +230,57 @@ async fn a_picture_that_changed_while_settling_is_read_again() {
         "{tick:?}"
     );
     assert_eq!(run.ocr_runs(), 2);
+}
+
+/// One more character typed into a large region changes too few pixels
+/// for the change detection, which ignores video noise. The picture is
+/// not the same one, though, so it must be read again.
+#[tokio::test]
+async fn a_change_below_the_detection_threshold_is_still_read_again() {
+    let mut run = Run::new();
+
+    assert_eq!(run.tick(picture(100), false).await, Tick::Settling);
+    let mut more = picture(100).to_rgba8();
+    more.put_pixel(700, 30, Rgba([0, 0, 0, 255]));
+    *run.text.lock() = "The north wind blows!";
+    assert_eq!(
+        run.tick(DynamicImage::ImageRgba8(more.clone()), false)
+            .await,
+        Tick::Settling
+    );
+    assert_eq!(run.ocr_runs(), 2);
+
+    let tick = run.tick(DynamicImage::ImageRgba8(more), false).await;
+    assert!(
+        matches!(&tick, Tick::Translated { source, .. } if source == "The north wind blows!"),
+        "{tick:?}"
+    );
+    assert_eq!(run.ocr_runs(), 2);
+}
+
+/// A reading must never stand in for a picture it was not read from,
+/// also when reading the newer picture failed.
+#[tokio::test]
+async fn a_failed_read_of_a_new_picture_is_retried_not_replaced_by_the_old_reading() {
+    let mut run = Run::new();
+
+    assert_eq!(run.tick(picture(100), false).await, Tick::Settling);
+    *run.text.lock() = "The north wind blows hard tonight.";
+    run.fail_next.store(true, Ordering::Relaxed);
+    assert!(run.try_tick(picture(300), false).await.is_err());
+    assert_eq!(run.ocr_runs(), 2);
+
+    // The new picture holds still: it is read now, not skipped.
+    assert_eq!(run.tick(picture(300), false).await, Tick::Settling);
+    assert_eq!(run.ocr_runs(), 3);
+    let tick = run.tick(picture(300), false).await;
+    assert!(
+        matches!(&tick, Tick::Translated { source, .. }
+            if source == "The north wind blows hard tonight."),
+        "{tick:?}"
+    );
+    assert_eq!(run.ocr_runs(), 3);
+    assert_eq!(run.translations.load(Ordering::Relaxed), 1);
 }
 
 #[tokio::test]

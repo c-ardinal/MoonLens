@@ -15,9 +15,9 @@
 //!    New text is translated once it reads the same on two consecutive
 //!    ticks, so text that is still being typed out is not translated
 //!    half-way; text that keeps changing is translated after
-//!    [`SETTLE_LIMIT`] ticks anyway. When the pixels did not change
-//!    between those two ticks the first reading stands: OCR is not run
-//!    a second time on the same picture.
+//!    [`SETTLE_LIMIT`] ticks anyway. When the second tick captures
+//!    exactly the same picture the first reading stands: OCR is not
+//!    run a second time on the same pixels.
 //! 4. Blocks seen before come from the translation cache and are shown
 //!    immediately; only new paragraphs go to the model.
 //!
@@ -160,9 +160,24 @@ pub struct Tracker {
 struct Pending {
     /// Target language and text read (see `key` in [`Tracker::tick`]).
     key: String,
-    /// What OCR returned. Used as the next tick's reading when the
-    /// pixels are still the same, instead of running OCR again.
+    /// [`fingerprint`] of the picture that was read.
+    picture: u64,
+    /// What OCR returned for it. Used as the next tick's reading when
+    /// that tick captures the very same picture, instead of running
+    /// OCR again.
     bundle: CaptureFlowResult,
+}
+
+/// Identifies a capture pixel for pixel. The thumbnail comparison is
+/// approximate on purpose (video noise must not count as a change), so
+/// it cannot tell whether OCR would read the same again: one more
+/// character typed into a large region stays below its threshold.
+fn fingerprint(image: &DynamicImage) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    (image.width(), image.height(), image.color()).hash(&mut h);
+    image.as_bytes().hash(&mut h);
+    h.finish()
 }
 
 impl Tracker {
@@ -241,10 +256,11 @@ impl Tracker {
             }
         }
 
+        let picture = fingerprint(&frame.image);
         let (mut bundle, pending_key) = match self.pending.take() {
-            // Same picture as the reading that waits to settle: OCR
-            // would return the same again, so that reading stands.
-            Some(p) if !changed && !force => (p.bundle, Some(p.key)),
+            // The very picture whose reading waits to settle: OCR would
+            // return the same again, so that reading stands.
+            Some(p) if p.picture == picture && !force => (p.bundle, Some(p.key)),
             waiting => {
                 let png = capture::png_bytes(&frame.image).map_err(|e| e.to_string())?;
                 match env.pipeline.analyze_capture(png).await {
@@ -309,7 +325,11 @@ impl Tracker {
         // out), unless it has been changing for too long.
         let settled = force || pending_key.as_deref() == Some(key.as_str());
         if !settled && self.unsettled < SETTLE_LIMIT {
-            self.pending = Some(Pending { key, bundle });
+            self.pending = Some(Pending {
+                key,
+                picture,
+                bundle,
+            });
             self.unsettled += 1;
             return Ok(Tick::Settling);
         }
