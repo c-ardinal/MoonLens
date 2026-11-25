@@ -270,6 +270,8 @@ export const onImageProgress = (handler: (e: ImageRunEvent<TranslationProgress>)
  * Resolves to the window id. */
 export const openLens = (rect: CaptureFlowRect | null = null, targetLanguage?: string | null) =>
   safeInvoke<string>('open_lens', { rect, targetLanguage: targetLanguage ?? null });
+/** Open one more window next to window `id` (same size and language). */
+export const openLensBeside = (id: string) => safeInvoke<string>('open_lens', { beside: id });
 export const setLensLanguage = (id: string, targetLanguage: string | null) =>
   safeInvoke<void>('set_lens_language', { id, targetLanguage });
 export const setLensOperate = (id: string, on: boolean) => safeInvoke<void>('set_lens_operate', { id, on });
