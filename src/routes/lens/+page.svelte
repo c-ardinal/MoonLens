@@ -10,6 +10,7 @@
   import {
     getSettings,
     listLensWindows,
+    openLensBeside,
     runExplain,
     setLensInteractive,
     setLensOperate,
@@ -46,6 +47,10 @@
   let continuous = $state(true);
   /** Continuous reading: new text is with the model. */
   let translating = $state(false);
+  /** Continuous reading: text recognition is running. */
+  let reading = $state(false);
+  /** Reading or translating: the sweep runs over the range. */
+  const working = $derived(busy || reading || translating);
   /** Blocks of the last reading, painted in place over the range. */
   let blocks = $state<LensBlock[]>([]);
   /** Blocks whose source changed or moved away; hidden until re-read. */
@@ -114,6 +119,8 @@
         provider = ev.provider;
         viaCloud = ev.via_cloud ?? false;
       }
+    } else if (ev.kind === 'reading') {
+      reading = ev.on;
     } else if (ev.kind === 'stale') {
       hidden = new Set([...hidden, ...ev.indices]);
     } else if (ev.kind === 'clear') {
@@ -197,7 +204,10 @@
 
   $effect(() => {
     invoke('set_lens_continuous', { id, on: continuous }).catch(() => {});
-    if (!continuous) translating = false;
+    if (!continuous) {
+      translating = false;
+      reading = false;
+    }
   });
 
   /** Operate mode: the body takes the mouse, so the translation can be
@@ -314,8 +324,10 @@
   const status = $derived(
     lastError
       ? lastError
-      : busy || translating
-        ? '処理中…'
+      : busy || reading
+        ? '文字認識中…'
+        : translating
+          ? '翻訳中…'
         : empty
           ? '範囲内に文字なし'
           : !hasText
@@ -342,7 +354,7 @@
       {sourceLanguage}
       {targetLanguage}
       {hasText}
-      busy={busy || translating}
+      busy={working}
       oncontinuous={() => (continuous = !continuous)}
       {operate}
       {operateKey}
@@ -355,12 +367,13 @@
       onexplain={explain}
       {maximized}
       onmaximize={toggleMaximize}
+      onadd={() => openLensBeside(id).catch(() => {})}
       onclose={close}
     />
   </header>
 
   <!-- The observed range. Transparent; the mouse passes through it. -->
-  <section class="body" class:operate aria-label="訳文">
+  <section class="body" class:operate class:working aria-label="訳文" aria-busy={working}>
     {#if !showOriginal}
       {#each boxes as b (b.rect.key)}
         <div
@@ -460,6 +473,12 @@
       display: none;
     }
   }
+  /* 既定幅（460px）：見出しの文字を省略し、操作列の全項目を表示 */
+  @container (max-width: 520px) {
+    .title {
+      display: none;
+    }
+  }
   .title {
     font-size: 11px;
     opacity: 0.75;
@@ -485,8 +504,43 @@
     -webkit-user-select: text;
     cursor: text;
   }
+  /* 処理中（文字認識・翻訳）：斜光が左から右へ反復走査。transform のみの演出（再描画なし） */
+  .body.working::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: 45%;
+    pointer-events: none;
+    background: linear-gradient(
+      90deg,
+      transparent,
+      rgba(167, 139, 250, 0.26) 40%,
+      rgba(255, 255, 255, 0.34) 50%,
+      rgba(167, 139, 250, 0.26) 60%,
+      transparent
+    );
+    transform: translateX(-140%) skewX(-16deg);
+    animation: sweep 1.2s linear infinite;
+    will-change: transform;
+  }
+  @keyframes sweep {
+    to {
+      transform: translateX(330%) skewX(-16deg);
+    }
+  }
   .box.pending {
     background-image: linear-gradient(100deg, transparent 30%, rgba(139, 92, 246, 0.18) 50%, transparent 70%) !important;
+  }
+  /* 動作軽減の設定時：走査を停止し、淡色の面で表示 */
+  @media (prefers-reduced-motion: reduce) {
+    .body.working::before {
+      animation: none;
+      transform: none;
+      width: 100%;
+      background: rgba(167, 139, 250, 0.12);
+    }
   }
   .panel {
     position: absolute;

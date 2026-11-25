@@ -15,6 +15,10 @@ export const HOME_MIN = { w: 560, h: 318 } as const;
 const HINT_MIN_H = 344;
 /** 見出し帯の機能名の最大幅（論理画素）。右端の番号表示と非重複。 */
 const TITLE_ROOM = 244;
+/** 機能名の縦送りの移動量（論理画素）。帯の高さ（62）未満で、開始時も文字の一部を表示。 */
+const TITLE_ROLL = 40;
+/** 右端の番号表示（分数）の占有幅（論理画素）。機能名の切抜き範囲から除外。 */
+const NUMBER_ROOM = 44;
 
 /**
  * 表示領域（CSS px）に対するドット 1 個の CSS 寸法。
@@ -42,7 +46,7 @@ export interface HomeView {
   hint: string;
   /** 押下中・ホバー中の領域。 */
   hot: HomeRegion | null;
-  /** 選択切替の演出：魔法陣の表示位置（小数）と見出し帯の進行度（0〜1）。 */
+  /** 選択切替の演出：魔法陣の表示位置（小数）と機能名の縦送りの進行度（0〜1）。 */
   turn?: number;
   slide?: number;
 }
@@ -95,16 +99,31 @@ export function drawHome(p: Pix, v: HomeView) {
 
   drawDial(p, { items: v.items, selected: v.selected, hover: v.hover, turn: v.turn, anchor: { x: dx + 330, y: c.top + 48 } });
 
-  // 見出し帯：骨白の段影＋琥珀の帯＋斜体の機能名。切替時は右から滑込み
+  // 見出し帯：骨白の段影＋琥珀の帯＋斜体の機能名。帯と番号表示は固定。
+  // 切替時は機能名のみ帯の内側で縦送り（魔法陣の回転方向に一致、後方の項目は下から）。
+  // 横移動なし：右端の番号表示（分数）との干渉を回避。
   const item = v.items[v.selected];
   const s = v.slide ?? 1;
-  const off = Math.round((1 - s) * (1 - s) * 56);
-  p.slab(dx + 300 + off, c.top + 8, 360, 62, K, 9);
-  p.slab(dx + 312 + off * 2, c.top, 340, 62, K, 5);
+  const dir = v.turn !== undefined && v.selected < v.turn ? -1 : 1;
+  const roll = Math.round((1 - s) * (1 - s) * TITLE_ROLL) * dir;
+  p.slab(dx + 300, c.top + 8, 360, 62, K, 9);
+  p.slab(dx + 312, c.top, 340, 62, K, 5);
   // 機能名：番号表示（右端）の手前へ収まる寸法へ縮小（最大 44px）
   const title = item?.title ?? item?.label ?? '';
   const fit = Math.min(44, Math.floor((44 * TITLE_ROOM) / Math.max(1, p.textW(title, `700 44px ${TITLE_FONT_FAMILY}`))));
-  p.text(title, dx + 342 + off * 2, c.top + 6 + Math.round((44 - fit) * 0.6), 0, { k: K, font: `700 ${fit}px ${TITLE_FONT_FAMILY}` });
+  const titleFont = { k: K, font: `700 ${fit}px ${TITLE_FONT_FAMILY}` };
+  const titleY = c.top + 6 + Math.round((44 - fit) * 0.6);
+  if (roll === 0) p.text(title, dx + 342, titleY, 0, titleFont);
+  else {
+    // 帯の高さ・番号表示の手前で切抜き、帯の外へ文字を出さない
+    const g = p.g;
+    g.save();
+    g.beginPath();
+    g.rect(dx + 312, c.top, w - NUMBER_ROOM - (dx + 312), 62);
+    g.clip();
+    p.text(title, dx + 342, titleY + roll, 0, titleFont);
+    g.restore();
+  }
   const n = String(v.selected + 1).padStart(2, '0'),
     total = String(v.items.length).padStart(2, '0');
   p.text(n, w - 12, c.top + 2, 0, { align: 'right' });

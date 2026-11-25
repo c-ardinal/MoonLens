@@ -73,6 +73,30 @@ pub fn migrate_legacy_defaults(s: &mut Settings) -> bool {
         s.providers.asr.timeout_ms = ASR_TIMEOUT_MS;
         changed = true;
     }
+    changed |= restore_empty_chains(s);
+    changed
+}
+
+/// A feature with a built-in engine never works with an empty chain
+/// (pre-release builds wrote `chain = []` for speech recognition, which
+/// made live subtitles report "no provider" even with the model
+/// downloaded). Put the bundled default chain back.
+fn restore_empty_chains(s: &mut Settings) -> bool {
+    let d = super::store::defaults().providers;
+    let p = &mut s.providers;
+    let mut changed = false;
+    for (chain, default) in [
+        (&mut p.translate, d.translate),
+        (&mut p.ocr, d.ocr),
+        (&mut p.asr, d.asr),
+        (&mut p.explain, d.explain),
+        (&mut p.summarize, d.summarize),
+    ] {
+        if chain.chain.is_empty() && !default.chain.is_empty() {
+            chain.chain = default.chain;
+            changed = true;
+        }
+    }
     changed
 }
 
@@ -168,6 +192,20 @@ mod tests {
             s.providers.configs["ollama.gemma4"]["system_prompt"],
             "my own prompt"
         );
+    }
+
+    #[test]
+    fn empty_chains_of_built_in_features_get_the_default_back() {
+        let mut s: Settings = toml::from_str(include_str!("default.toml")).unwrap();
+        s.providers.asr.chain.clear();
+        s.providers.translate.chain.clear();
+        s.providers.reverse_image_search.chain.clear();
+        assert!(migrate_legacy_defaults(&mut s));
+        assert_eq!(s.providers.asr.chain, ["whisper"]);
+        assert_eq!(s.providers.translate.chain, ["llamacpp"]);
+        // No built-in engine: stays empty.
+        assert!(s.providers.reverse_image_search.chain.is_empty());
+        assert!(!migrate_legacy_defaults(&mut s));
     }
 
     #[test]

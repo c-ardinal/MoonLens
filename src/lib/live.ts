@@ -19,7 +19,9 @@ export type LiveEvent =
       via_cloud?: boolean;
     }
   | { kind: "stale"; indices: number[] }
-  | { kind: "clear" };
+  | { kind: "clear" }
+  /** Text recognition of a changed range started / ended. */
+  | { kind: "reading"; on: boolean };
 
 /** Events of a continuously reading Lens window (`moonlens://lens-live`). */
 export type LensLiveEvent =

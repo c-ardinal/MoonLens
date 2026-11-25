@@ -4,7 +4,8 @@ PC 常駐型の Google Lens 風ツール。単一のグローバルホットキ�
 
 - ウィンドウ翻訳：窓の背面を OCR + ローカル LLM で常時翻訳し、原文位置へ訳文を重畳表示。
   窓は複数・任意サイズ・任意位置で配置可能（最大化で全画面翻訳）。字幕・チャット等の変化へ追従。
-  既定は透過モード（窓上のクリックは背面へ）、操作モードで訳文の選択・コピー
+  既定は透過モード（窓上のクリックは背面へ）、操作モードで訳文の選択・コピー。
+  処理中は斜光の走査で表示、窓の「追加」ボタンで窓を増設
 - QR コード認識
 - 音声翻訳：外国語動画のループバック音声から字幕表示
 - ローカル LLM による要約・説明・対話
@@ -80,7 +81,7 @@ MoonLens/
 │     ├─ pipeline.rs   # チェーン実行、フォールバック、stickiness
 │     └─ ...
 ├─ src/                # Svelte 5 + SvelteKit フロント
-│  ├─ routes/          # overlay / subtitle / settings / plugins / history
+│  ├─ routes/          # overlay / subtitle / settings / history
 │  └─ lib/
 │     ├─ design/       # デザイントークン、モーション
 │     └─ components/   # SchemaForm, CommandPalette, PrivacyBadge, ActionRibbon

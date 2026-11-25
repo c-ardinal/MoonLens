@@ -38,7 +38,7 @@ export type Section =
   /** A section rendered by a dedicated component. */
   | { id: string; title: string; description?: string; component: SectionComponent };
 
-export type SectionComponent = 'llm-translate' | 'llm-assist' | 'ocr' | 'asr' | 'data';
+export type SectionComponent = 'llm-translate' | 'llm-assist' | 'ocr' | 'asr' | 'data' | 'plugins';
 
 /**
  * 大分類（左の一覧）。各分類は SECTIONS の小分類（右枠上部のタブ）を束ねる。
@@ -211,7 +211,7 @@ export const SECTIONS: Section[] = [
   {
     id: 'popup',
     title: 'ポップアップ',
-    description: '結果表示用の小型ウィンドウの外観。',
+    description: '翻訳結果表示用の小型ウィンドウの外観。',
     fields: [
       {
         kind: 'number',
@@ -279,7 +279,7 @@ export const SECTIONS: Section[] = [
   {
     id: 'clipboard',
     title: '自動コピー',
-    description: '結果をクリップボードへ自動コピー。',
+    description: '翻訳・認識の結果をクリップボードへ自動コピー。',
     fields: [
       { kind: 'toggle', path: 'clipboard.auto_copy_translation', label: '訳文' },
       {
@@ -404,6 +404,12 @@ export const SECTIONS: Section[] = [
     ]
   },
   {
+    id: 'plugins',
+    title: '拡張機能',
+    description: '拡張機能の追加・有効化・権限確認。変更は即時反映。',
+    component: 'plugins'
+  },
+  {
     id: 'data',
     title: 'データ',
     description: '保存先と使用容量。完全削除：アンインストール後、各保存先を削除。',
@@ -435,8 +441,9 @@ export const GROUPS: Group[] = [
   { id: 'translation', title: '翻訳', sections: ['translation', 'glossary', 'pin', 'popup'] },
   { id: 'subtitle', title: '音声翻訳', sections: ['subtitle'] },
   { id: 'models', title: 'モデル', sections: ['models', 'model-assist', 'model-ocr', 'model-asr'] },
-  { id: 'output', title: '結果', sections: ['history', 'clipboard'] },
+  { id: 'output', title: '履歴・コピー', sections: ['history', 'clipboard'] },
   { id: 'hotkeys', title: 'ショートカット', sections: ['hotkeys'] },
+  { id: 'plugins', title: '拡張', sections: ['plugins'] },
   { id: 'system', title: 'システム', sections: ['appearance', 'performance', 'data', 'advanced'] }
 ];
 

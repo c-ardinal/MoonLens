@@ -149,6 +149,24 @@ pub mod geometry {
         )
     }
 
+    /// Top-left corner for a `size` window opened from the window at
+    /// `source`: shifted by `step` right and down so both headers stay
+    /// reachable, kept inside `monitor`. Where that lands on the source
+    /// again (it sits in the bottom-right corner), the window goes to
+    /// the monitor's top-left instead.
+    pub fn window_beside(
+        monitor: LensOuterRect,
+        size: (u32, u32),
+        source: (i32, i32),
+        step: i32,
+    ) -> (i32, i32) {
+        let at = window_at_pointer(monitor, size, (source.0 + step, source.1 + step), (0, 0));
+        if at == source {
+            return window_at_pointer(monitor, size, (monitor.x + step, monitor.y + step), (0, 0));
+        }
+        at
+    }
+
     /// Whether a pointer at (`px`, `py`) should reach the lens window
     /// rather than the app underneath: on the header, on the resize band
     /// along the edges (including the frame outside the client area) or
@@ -578,6 +596,7 @@ pub fn create(
     app: &AppHandle,
     registry: &LensRegistryHandle,
     placement: Option<Placement>,
+    beside: Option<&str>,
 ) -> Result<String> {
     let id = ids::next();
     let label = id.clone();
@@ -600,10 +619,16 @@ pub fn create(
         .visible(false)
         .build()
         .context("create lens window")?;
-    let target_language = placement.as_ref().and_then(|p| p.target_language.clone());
-    let placed = match &placement {
-        Some(p) => place(&win, &p.rect),
-        None => place_at_pointer(app, &win),
+    let source = beside.and_then(|b| app.get_webview_window(b));
+    let target_language = match &placement {
+        Some(p) => p.target_language.clone(),
+        // Opened from a window: the same language as that window.
+        None => beside.and_then(|b| registry.target_language(b)),
+    };
+    let placed = match (&placement, &source) {
+        (Some(p), _) => place(&win, &p.rect),
+        (None, Some(source)) => place_beside(&win, source),
+        (None, None) => place_at_pointer(app, &win),
     };
     if let Err(e) = placed {
         tracing::warn!("placing lens window: {e:#}");
@@ -653,7 +678,7 @@ pub fn open_new(app: &AppHandle) {
     let main = app.clone();
     let _ = main.run_on_main_thread(move || {
         let state = app.state::<crate::app::AppState>();
-        if let Err(e) = create(&app, &state.lenses, None) {
+        if let Err(e) = create(&app, &state.lenses, None, None) {
             tracing::warn!("opening lens window: {e:#}");
         }
     });
@@ -723,6 +748,33 @@ fn place_at_pointer(app: &AppHandle, win: &WebviewWindow) -> Result<()> {
             (40.0 * scale) as i32,
             (HEADER_CSS as f64 * scale / 2.0) as i32,
         ),
+    );
+    win.set_position(PhysicalPosition::new(want.0, want.1))?;
+    Ok(())
+}
+
+/// Put a new window next to `source` (the window it was opened from):
+/// the same size, one header height right and down. A maximized source
+/// keeps the default size.
+fn place_beside(win: &WebviewWindow, source: &WebviewWindow) -> Result<()> {
+    let at = source.outer_position()?;
+    let Some(m) = source.current_monitor()? else {
+        return Ok(());
+    };
+    if !source.is_maximized().unwrap_or(false) {
+        win.set_size(source.inner_size()?)?;
+    }
+    let size = win.outer_size()?;
+    let want = geometry::window_beside(
+        geometry::LensOuterRect {
+            x: m.position().x,
+            y: m.position().y,
+            w: m.size().width,
+            h: m.size().height,
+        },
+        (size.width, size.height),
+        (at.x, at.y),
+        (HEADER_CSS as f64 * m.scale_factor()).ceil() as i32,
     );
     win.set_position(PhysicalPosition::new(want.0, want.1))?;
     Ok(())
@@ -1201,6 +1253,30 @@ mod tests {
         assert_eq!(
             geometry::window_at_pointer(left, (460, 320), (-1275, 5), (40, 17)),
             (-1280, 0)
+        );
+    }
+
+    #[test]
+    fn a_window_opened_from_a_window_is_shifted_and_stays_on_the_monitor() {
+        let m = geometry::LensOuterRect {
+            x: 0,
+            y: 0,
+            w: 1920,
+            h: 1080,
+        };
+        assert_eq!(
+            geometry::window_beside(m, (460, 320), (500, 400), 34),
+            (534, 434)
+        );
+        // At the right edge: only moves down.
+        assert_eq!(
+            geometry::window_beside(m, (460, 320), (1460, 400), 34),
+            (1460, 434)
+        );
+        // In the bottom-right corner: starts over at the top-left.
+        assert_eq!(
+            geometry::window_beside(m, (460, 320), (1460, 760), 34),
+            (34, 34)
         );
     }
 

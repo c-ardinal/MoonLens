@@ -9,6 +9,7 @@
     Minimize2,
     MousePointerBan,
     MousePointerClick,
+    Plus,
     Radio,
     RefreshCw,
     TextSelect,
@@ -42,6 +43,7 @@
     onexplain,
     onmaximize,
     onoperate,
+    onadd,
     onclose
   }: {
     continuous: boolean;
@@ -71,6 +73,8 @@
     onmaximize?: () => void;
     /** 透過／操作モードの切替。省略時は非表示。 */
     onoperate?: () => void;
+    /** ウィンドウの追加。省略時は非表示。 */
+    onadd?: () => void;
     onclose: () => void;
   } = $props();
 
@@ -154,6 +158,11 @@
       {#if maximized}<Minimize2 class="h-4 w-4" />{:else}<Maximize2 class="h-4 w-4" />{/if}<span class="lb"
         >{maximized ? '元のサイズ' : '最大化'}</span
       >
+    </button>
+  {/if}
+  {#if onadd}
+    <button class="tb" onclick={onadd} title="ウィンドウ追加（同一サイズで隣へ配置）">
+      <Plus class="h-4 w-4" /><span class="lb">追加</span>
     </button>
   {/if}
   <button class="tb close" onclick={onclose} title="閉じる (Esc)"><X class="h-4 w-4" /></button>

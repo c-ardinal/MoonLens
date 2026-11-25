@@ -317,14 +317,7 @@
   line-height: 44px;
 }
 
-/* 入力・結果欄：画面の高さに追従（旧 UI の固定 12rem は 32px 文字で 4 行未満） */
-[data-skin='pixel'] .min-h-48 {
-  min-height: max(192px, calc(100vh - var(--ml-nav-h) - 400px));
-}
 /* 本文画面内：vh は zoom で縮小されるため拡縮率で補正（Chromium の標準 zoom 準拠） */
-[data-skin='pixel'] .px-body .min-h-48 {
-  min-height: max(192px, calc((100vh - var(--ml-nav-h)) / var(--ml-body-zoom, 0.75) - 400px));
-}
 [data-skin='pixel'] .px-body .max-h-\[calc\(100vh-12rem\)\] {
   max-height: calc((100vh - var(--ml-nav-h)) / var(--ml-body-zoom, 0.75) - 128px);
 }
@@ -434,6 +427,24 @@
 }
 .sbtn:disabled {
   opacity: 0.4;
+}
+/** ON／OFF の矩形札（設定項目・拡張機能の有効化）。 */
+.toggle-chips {
+  display: inline-flex;
+  gap: 6px;
+  cursor: pointer;
+}
+.tc {
+  padding: 0 12px;
+  color: var(--ml-px-faint);
+}
+.tc.on {
+  background: var(--ml-px-black);
+  color: var(--ml-px-amber);
+}
+.toggle-chips:focus-within .tc.on {
+  outline: 2px solid var(--ml-px-bone);
+  outline-offset: -2px;
 }
 /** 状態札（使用中・導入済み等）：矩形。 */
 .stag {

@@ -1,0 +1,1 @@
+- Home: when the selection changes, the function title no longer slides in over the item counter at the right edge. The band and the counter stay still and the title rolls vertically inside the band.

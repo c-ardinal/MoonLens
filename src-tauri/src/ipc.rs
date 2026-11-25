@@ -1188,11 +1188,13 @@ fn platform_label(os: &str) -> &'static str {
 /// Open a window-translation window. With `rect` (monitor-relative
 /// physical pixels) its body covers that range; without, it opens
 /// under the mouse pointer. `target_language` defaults to the
-/// configured target.
+/// configured target. `beside` (a window id, without `rect`): next to
+/// that window, with its size and language.
 #[tauri::command]
 pub async fn open_lens(
     rect: Option<RegionArgs>,
     target_language: Option<String>,
+    beside: Option<String>,
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<String, String> {
@@ -1212,7 +1214,12 @@ pub async fn open_lens(
     let lenses = state.lenses.clone();
     let app_main = app.clone();
     app.run_on_main_thread(move || {
-        let _ = tx.send(lens::create(&app_main, &lenses, placement));
+        let _ = tx.send(lens::create(
+            &app_main,
+            &lenses,
+            placement,
+            beside.as_deref(),
+        ));
     })
     .map_err(|e| e.to_string())?;
     rx.await

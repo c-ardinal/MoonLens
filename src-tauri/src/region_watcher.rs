@@ -74,6 +74,9 @@ pub enum LiveEvent {
     Stale { indices: Vec<usize> },
     /// Nothing to show (the region is empty).
     Clear,
+    /// Text recognition of a changed region started (`on`) or ended; the
+    /// window shows that it is working.
+    Reading { on: bool },
     /// A QR code in the region was decoded; the window shows `text`.
     Decoded { text: String },
     /// Reading or translating failed (`code|message`, see `user_error`).
@@ -263,7 +266,10 @@ impl Tracker {
             Some(p) if p.picture == picture && !force => (p.bundle, Some(p.key)),
             waiting => {
                 let png = capture::png_bytes(&frame.image).map_err(|e| e.to_string())?;
-                match env.pipeline.analyze_capture(png).await {
+                (env.emit)(LiveEvent::Reading { on: true });
+                let analyzed = env.pipeline.analyze_capture(png).await;
+                (env.emit)(LiveEvent::Reading { on: false });
+                match analyzed {
                     Ok(bundle) => (bundle, waiting.map(|p| p.key)),
                     Err(e) => {
                         // Still unread: the next tick tries again.

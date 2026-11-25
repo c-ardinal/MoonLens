@@ -21,10 +21,11 @@
   import AsrModels from '$lib/components/AsrModels.svelte';
   import OcrModels from '$lib/components/OcrModels.svelte';
   import DataLocations from '$lib/components/DataLocations.svelte';
+  import Plugins from '$lib/components/Plugins.svelte';
   import GlossaryEditor from '$lib/components/GlossaryEditor.svelte';
   import InferenceDevice from '$lib/components/InferenceDevice.svelte';
   import { compactGlossary } from '$lib/glossary';
-  import { replay, type Effect } from '$lib/pixel/transition';
+  import { replay, wheelStep, type Effect } from '$lib/pixel/transition';
 
   /** The selector remembers the language last picked in its toolbar. */
   const SELECTOR_LANG_KEY = 'moonlens.selector.targetLanguage';
@@ -195,14 +196,10 @@
     if (target && untrack(() => draft) && SECTIONS.some((x) => x.id === target)) untrack(() => jump(target));
   });
 
-  /** 切替演出の方向：大分類は一覧の並び順で上下、小分類はタブの並び順で左右。 */
-  const groupIndex = (id: string) => GROUPS.findIndex((g) => g.id === id);
-  const groupMotion = (a: string, b: string): Effect => (groupIndex(b) > groupIndex(a) ? 'slide-up' : 'slide-down');
-  const sectionMotion = (a: string, b: string): Effect | null => {
-    const g = GROUPS.find((x) => x.sections.includes(a));
-    if (!g || !g.sections.includes(b)) return null; // 大分類の切替は枠全体で演出
-    return g.sections.indexOf(b) > g.sections.indexOf(a) ? 'slide-left' : 'slide-right';
-  };
+  /** 枠内の項目入替の方向：分類・タブの並び順（後方は右から、前方は左から）。枠・タブは固定。 */
+  const ORDER = GROUPS.flatMap((g) => g.sections);
+  const sectionOrder = (id: string) => ORDER.indexOf(id);
+  const sectionMotion = (a: string, b: string): Effect => (sectionOrder(b) > sectionOrder(a) ? 'slide-left' : 'slide-right');
 
   function moveRow(delta: number) {
     const list = [...document.querySelectorAll<HTMLElement>('.cfg .scroll [data-row]')].filter(
@@ -218,6 +215,18 @@
 
   function cycle<T>(list: T[], at: number, delta: number): T {
     return list[(at + delta + list.length) % list.length];
+  }
+
+  /** ホイール：分類一覧の上では大分類、タブ列の上では小分類を 1 個ずつ切替（端で停止）。 */
+  function wheelGroup(delta: 1 | -1) {
+    const ids = groups.map((g) => g.group.id);
+    const next = ids[ids.indexOf(shownGroup?.group.id ?? '') + delta];
+    if (next) jump(next);
+  }
+  function wheelSection(delta: 1 | -1) {
+    const ids = shownGroup?.sections.map((v) => v.section.id) ?? [];
+    const next = ids[ids.indexOf(shown?.section.id ?? '') + delta];
+    if (next) jump(next);
   }
 
   function onKey(e: KeyboardEvent) {
@@ -262,7 +271,7 @@
   {:else}
     <div class="body">
       <!-- 大分類：等幅の斜め帯を階段状に配置（左右端とも同じ傾きで整列） -->
-      <nav aria-label="設定の分類" class="tabs scrollbar-minimal" style="--n: {groups.length}">
+      <nav aria-label="設定の分類" class="tabs scrollbar-minimal" style="--n: {groups.length}" use:wheelStep={wheelGroup}>
         {#each groups as { group }, i (group.id)}
           <button
             class="px-chip tab"
@@ -282,12 +291,11 @@
         class="main"
         id="section-{shown.section.id}"
         aria-label={shown.section.title}
-        use:replay={{ key: shownGroup?.group.id ?? '', effect: groupMotion }}
       >
         <div class="frame" aria-hidden="true"></div>
         {#if (shownGroup?.sections.length ?? 0) > 1}
           <!-- 小分類：枠上部の矩形タブ -->
-          <div class="subtabs" role="tablist" aria-label="{shownGroup.group.title}の小分類">
+          <div class="subtabs" role="tablist" aria-label="{shownGroup.group.title}の小分類" use:wheelStep={wheelSection}>
             {#each shownGroup.sections as { section } (section.id)}
               <button
                 class="subtab"
@@ -300,7 +308,8 @@
             {/each}
           </div>
         {/if}
-        <div class="scroll scrollbar-minimal" use:replay={{ key: shown.section.id, effect: sectionMotion }}>
+        <div class="scroll scrollbar-minimal">
+          <div use:replay={{ key: shown.section.id, effect: sectionMotion }}>
           <!-- モデル管理：一度表示後は分類切替でも保持（取得中の進捗・完了通知を継続） -->
           {#if modelsMounted}
             <div style:display={component === 'llm-translate' ? null : 'none'}><LocalModels role="translate" /></div>
@@ -310,6 +319,8 @@
           {/if}
           {#if component === 'data'}
             <DataLocations />
+          {:else if component === 'plugins'}
+            <Plugins />
           {:else if !component}
             {#each shown.fields as field (field.path)}
               <SettingRow id={field.path} help={field.help}>
@@ -339,6 +350,7 @@
               {/if}
             {/each}
           {/if}
+          </div>
         </div>
       </section>
       <!-- 説明窓：右列の下部（タブ列は全高を使用し、分類の見切れを防止） -->
@@ -433,7 +445,7 @@
     /* 大分類の帯：幅 280px、1 段ごとに 12px 後退（帯自体の傾き 0.3 と同等） */
     --tab-w: 280px;
     --tab-step: 12px;
-    --tab-col: calc(var(--tab-w) + 5 * var(--tab-step));
+    --tab-col: calc(var(--tab-w) + 6 * var(--tab-step));
   }
   .tabs {
     display: flex;
@@ -446,7 +458,7 @@
   .tab {
     flex-shrink: 0;
     width: var(--tab-w);
-    margin-left: calc((var(--step) + 5 - (var(--n) - 1)) * var(--tab-step));
+    margin-left: calc((var(--step) + 6 - (var(--n) - 1)) * var(--tab-step));
     white-space: nowrap;
     line-height: 34px;
     text-align: left;

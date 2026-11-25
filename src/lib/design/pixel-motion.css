@@ -1,6 +1,7 @@
 /**
  * ドット絵外観の切替演出（メインウィンドウ専用）。
- * 方針：レトロゲーム端末の画面処理に準拠し、補間は steps() の段階変化のみ。
+ * 方針：レトロゲーム端末の画面処理に準拠し、補間は steps(n, start) の段階変化
+ * （開始直後に 1 段目を表示。空白のコマは描画遅延に見えるため不使用）。画面遷移の帯のみ等速移動。
  * 負荷対策：120〜200ms の単発演出、clip-path・transform・opacity のみ使用。
  * 推論中・動き削減設定時（data-motion が on 以外）は所要時間 0 で即時切替。
  * 演出の指定自体は常時有効：data-motion の切替で animation-name が変化すると
@@ -10,25 +11,23 @@
 
 /* fill-mode は backwards：演出後に clip-path を残さず、段影・フォーカス枠の欠けを防止。 */
 
-/* ── 画面遷移：本文全体を斜めの段階ワイプで表示（見出し帯と同じ右上がりの傾斜） ──
- * 対象はナビゲーション直後の要素（各画面の最上位要素）。
- * 画面の差替え時は要素自体が新規挿入となるため、CSS 演出のみで再生。 */
-:root[data-skin='pixel'] .app-root > nav + * {
-  animation: px-page-wipe 200ms steps(6, end) backwards;
-}
-@keyframes px-page-wipe {
-  from {
-    clip-path: polygon(0 0, 0 0, -160px 100%, -160px 100%);
-  }
-  to {
-    clip-path: polygon(0 0, calc(100% + 160px) 0, 100% 100%, -160px 100%);
-  }
+/* ── 画面遷移の帯：斜めの帯（琥珀＋白の縁）が左から右へ通過（$lib/pixel/transition.ts の pageWipe） ──
+ * 通常時は不可視。演出中のみ JS 側のキーフレームで表示。 */
+.px-wipe {
+  position: fixed;
+  z-index: 40;
+  visibility: hidden;
+  pointer-events: none;
+  transform-origin: 0 0;
+  background: var(--ml-px-amber);
+  box-shadow: 12px 0 0 var(--ml-px-bone);
+  will-change: transform;
 }
 
 /* ── 窓の展開：中央の横線から上下へ段階展開（RPG の会話窓の開閉） ──
  * 対象：対話窓・通知・エラー表示・操作結果の窓（px-pop）。 */
 :root[data-skin='pixel'] :is([role='dialog'], [role='alert'], .px-pop) {
-  animation: px-win-open 120ms steps(4, end) backwards;
+  animation: px-win-open 120ms steps(4, start) backwards;
 }
 @keyframes px-win-open {
   from {
@@ -40,7 +39,7 @@
 }
 /* 対話窓の背景：2 段階の減光（背景色のみ変化、対話窓自体は半透明化なし） */
 :root[data-skin='pixel'] [role='presentation']:has(> [role='dialog']) {
-  animation: px-dim-in 120ms steps(2, end) backwards;
+  animation: px-dim-in 120ms steps(2, start) backwards;
 }
 @keyframes px-dim-in {
   from {
@@ -50,7 +49,7 @@
 
 /* ── 保存バー：画面下端から段階的にせり上げ ── */
 :root[data-skin='pixel'] .savebar {
-  animation: px-rise 120ms steps(3, end) backwards;
+  animation: px-rise 120ms steps(3, start) backwards;
 }
 @keyframes px-rise {
   from {
@@ -60,7 +59,7 @@
 
 /* ── 設定の選択帯：左端から右へ段階的に伸長（カーソル移動の手応え） ── */
 :root[data-skin='pixel'] .row > .band {
-  animation: px-band-sweep 80ms steps(3, end) backwards;
+  animation: px-band-sweep 80ms steps(3, start) backwards;
 }
 @keyframes px-band-sweep {
   from {
@@ -73,7 +72,7 @@
 
 /* ── 推論中・動き削減時：全演出を即時完了 ── */
 :root[data-skin='pixel']:not([data-motion='on'])
-  :is(.app-root > nav + *, [role='dialog'], [role='alert'], .px-pop, [role='presentation']:has(> [role='dialog']), .savebar, .row > .band) {
+  :is([role='dialog'], [role='alert'], .px-pop, [role='presentation']:has(> [role='dialog']), .savebar, .row > .band) {
   animation-duration: 0s !important;
 }
 

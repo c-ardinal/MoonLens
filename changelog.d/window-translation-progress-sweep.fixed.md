@@ -1,0 +1,1 @@
+- Window translation shows when it is working again. A diagonal light sweeps across the window while text is recognized or translated, and the status reads "recognizing" or "translating". At the default width, the header now shows every button.
