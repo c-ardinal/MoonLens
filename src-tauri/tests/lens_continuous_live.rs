@@ -323,9 +323,14 @@ async fn lens_reads_continuously_and_retranslates_only_changes() {
         )
         .await;
     assert_eq!(t, Tick::SameText);
+    // The region is read again at the new place (`Reading` on and off).
+    let shown: Vec<&LiveEvent> = ev
+        .iter()
+        .filter(|e| !matches!(e, LiveEvent::Reading { .. }))
+        .collect();
     assert!(
         matches!(
-            ev.as_slice(),
+            shown.as_slice(),
             [LiveEvent::Blocks {
                 translating: false,
                 ..

@@ -429,11 +429,65 @@ pub mod engine {
     /// and gives the same text for the same pixels, so a line whose crop
     /// is pixel for pixel one read before is not recognised again.
     /// Detection still runs on every reading.
+    ///
+    /// The detector does not draw the same box around an unchanged line
+    /// every time: a change elsewhere in the picture (a new chat line, a
+    /// blinking cursor) moves its edges by a pixel, and the crop is then
+    /// another picture of the same line. So the places lines were read
+    /// at are kept too ([`Seen`]): a line detected near such a place
+    /// whose pixels there are unchanged is that line.
     #[derive(Default)]
     pub(super) struct LineCache {
         map: std::collections::HashMap<u64, (String, f32, u64)>,
         /// Counts lookups; entries remember when they were last used.
         clock: u64,
+        /// Where lines were read, newest last.
+        seen: std::collections::VecDeque<Seen>,
+    }
+
+    /// A line as it was read: the crop (`[x, y, w, h]` in the picture),
+    /// the box reported for it and the [`LineCache::key`] of the crop.
+    #[derive(Debug, Clone, Copy, PartialEq)]
+    pub(super) struct Seen {
+        pub(super) rect: [u32; 4],
+        pub(super) reported: post::DetBox,
+        pub(super) key: u64,
+    }
+
+    /// How far (pixels) each edge of a detected crop may lie from a crop
+    /// read before for the two to count as the same place.
+    ///
+    /// Must stay below the distance a crop extends past its glyphs (the
+    /// DB unclip distance, at least 0.4 × the shorter glyph side): text
+    /// added next to a line then either lies inside the earlier crop,
+    /// whose pixels no longer match, or moves the detected edge further
+    /// than this. A tenth of the shorter crop side is under half of it.
+    pub(super) fn same_place_tolerance(rect: [u32; 4]) -> u32 {
+        (rect[2].min(rect[3]) / 10).clamp(1, 6)
+    }
+
+    pub(super) fn same_place(a: [u32; 4], b: [u32; 4]) -> bool {
+        let tol = same_place_tolerance(a).min(same_place_tolerance(b));
+        let near = |p: u32, q: u32| p.abs_diff(q) <= tol;
+        near(a[0], b[0])
+            && near(a[1], b[1])
+            && near(a[0] + a[2], b[0] + b[2])
+            && near(a[1] + a[3], b[1] + b[3])
+    }
+
+    /// The picture of the line in `rect` of `rgb`, as recognition reads
+    /// it. `None` when `rect` does not lie inside the picture.
+    pub(super) fn line_image(rgb: &RgbImage, [x, y, w, h]: [u32; 4]) -> Option<RgbImage> {
+        if w < 2 || h < 2 || x + w > rgb.width() || y + h > rgb.height() {
+            return None;
+        }
+        let crop = image::imageops::crop_imm(rgb, x, y, w, h).to_image();
+        // Vertical text column: rotate so it reads left→right.
+        Some(if h as f32 >= w as f32 * 1.5 && h > 2 * REC_HEIGHT / 3 {
+            image::imageops::rotate270(&crop)
+        } else {
+            crop
+        })
     }
 
     impl LineCache {
@@ -451,6 +505,31 @@ pub mod engine {
             let e = self.map.get_mut(&key)?;
             e.2 = self.clock;
             Some((e.0.clone(), e.1))
+        }
+
+        /// The line read before at the place of `rect` when `rgb` still
+        /// shows the same pixels there: its record and its picture.
+        pub(super) fn seen_at(&self, rgb: &RgbImage, rect: [u32; 4]) -> Option<(Seen, RgbImage)> {
+            self.seen
+                .iter()
+                .rev()
+                .filter(|s| same_place(rect, s.rect) && self.map.contains_key(&s.key))
+                .find_map(|s| {
+                    let image = line_image(rgb, s.rect)?;
+                    (Self::key(&image) == s.key).then_some((*s, image))
+                })
+        }
+
+        /// Remember where the lines of one reading were read.
+        pub(super) fn remember(&mut self, lines: impl IntoIterator<Item = Seen>, cap: usize) {
+            for line in lines {
+                if !self.seen.contains(&line) {
+                    self.seen.push_back(line);
+                }
+            }
+            while self.seen.len() > cap {
+                self.seen.pop_front();
+            }
         }
 
         pub(super) fn put(&mut self, key: u64, text: String, confidence: f32, cap: usize) {
@@ -507,29 +586,44 @@ pub mod engine {
             let boxes = self.detect(&rgb, p)?;
             tracing::debug!("ppocr det: {} boxes in {:?}", boxes.len(), t.elapsed());
             let (fw, fh) = (rgb.width() as f32, rgb.height() as f32);
-            let mut crops: Vec<(post::DetBox, RgbImage)> = boxes
+            // Crop generously so glyph edges are intact, but report a
+            // tighter box: it is what the overlay paints over and what
+            // paragraph grouping measures line gaps with.
+            let detected: Vec<Seen> = boxes
                 .into_iter()
-                .filter_map(|raw| {
-                    // Crop generously so glyph edges are intact, but report
-                    // a tighter box: it is what the overlay paints over and
-                    // what paragraph grouping measures line gaps with.
+                .map(|raw| {
                     let b = post::unclip(&raw, p.unclip_ratio, fw, fh);
                     let reported = post::unclip(&raw, REPORT_UNCLIP_RATIO, fw, fh);
                     let x = b.x0.floor() as u32;
                     let y = b.y0.floor() as u32;
                     let w = (b.x1.ceil() as u32).min(rgb.width()).saturating_sub(x);
                     let h = (b.y1.ceil() as u32).min(rgb.height()).saturating_sub(y);
-                    if w < 2 || h < 2 {
-                        return None;
+                    Seen {
+                        rect: [x, y, w, h],
+                        reported,
+                        key: 0,
                     }
-                    let mut crop = image::imageops::crop_imm(&rgb, x, y, w, h).to_image();
-                    // Vertical text column: rotate so it reads left→right.
-                    if h as f32 >= w as f32 * 1.5 && h > 2 * REC_HEIGHT / 3 {
-                        crop = image::imageops::rotate270(&crop);
-                    }
-                    Some((reported, crop))
                 })
                 .collect();
+            // A line read before at (nearly) the same place and unchanged
+            // there is read as before, box included; the rest is cropped
+            // where it was detected now.
+            let mut crops: Vec<(Seen, RgbImage)> = {
+                let cache = self.lines.lock();
+                detected
+                    .into_iter()
+                    .filter_map(|d| {
+                        cache.seen_at(&rgb, d.rect).or_else(|| {
+                            let image = line_image(&rgb, d.rect)?;
+                            let key = LineCache::key(&image);
+                            Some((Seen { key, ..d }, image))
+                        })
+                    })
+                    .collect()
+            };
+            // Two detections of one line that was read before as a whole.
+            let mut places = std::collections::HashSet::new();
+            crops.retain(|c| places.insert(c.0.rect));
             // Similar aspect ratios in one batch keep padding small.
             crops.sort_by(|a, b| {
                 let ra = a.1.width() as f32 / a.1.height() as f32;
@@ -539,7 +633,7 @@ pub mod engine {
             let mut lines = Vec::new();
             // Lines read before (same pixels) keep their text; only the
             // rest goes through recognition.
-            let keys: Vec<u64> = crops.iter().map(|c| LineCache::key(&c.1)).collect();
+            let keys: Vec<u64> = crops.iter().map(|c| c.0.key).collect();
             let mut known: Vec<Option<(String, f32)>> = {
                 let mut cache = self.lines.lock();
                 keys.iter().map(|k| cache.get(*k)).collect()
@@ -580,8 +674,10 @@ pub mod engine {
                         known[c] = Some((text, conf));
                     }
                 }
+                cache.remember(crops.iter().map(|c| c.0), LINE_CACHE_SIZE);
             }
-            for ((b, _), read) in crops.iter().zip(known) {
+            for ((seen, _), read) in crops.iter().zip(known) {
+                let b = &seen.reported;
                 let Some((text, conf)) = read else { continue };
                 if text.is_empty() || conf < p.min_confidence {
                     continue;
@@ -910,6 +1006,108 @@ mod tests {
         cache.put(LineCache::key(&a), "Hello".into(), 0.9, 8);
         assert_eq!(cache.get(LineCache::key(&a)), Some(("Hello".into(), 0.9)));
         assert_eq!(cache.get(LineCache::key(&b)), None);
+    }
+
+    /// Dark picture with a light bar standing in for a line of text.
+    fn page(bar: [u32; 4]) -> image::RgbImage {
+        use image::{Rgb, RgbImage};
+        let mut img = RgbImage::from_pixel(200, 80, Rgb([20, 20, 20]));
+        for y in bar[1]..bar[1] + bar[3] {
+            for x in bar[0]..bar[0] + bar[2] {
+                img.put_pixel(x, y, Rgb([230, 230, 230]));
+            }
+        }
+        img
+    }
+
+    fn seen(rect: [u32; 4], picture: &image::RgbImage) -> engine::Seen {
+        engine::Seen {
+            rect,
+            reported: post::DetBox {
+                x0: rect[0] as f32,
+                y0: rect[1] as f32,
+                x1: (rect[0] + rect[2]) as f32,
+                y1: (rect[1] + rect[3]) as f32,
+                score: 1.0,
+            },
+            key: engine::LineCache::key(&engine::line_image(picture, rect).unwrap()),
+        }
+    }
+
+    #[test]
+    fn a_line_detected_a_pixel_off_is_the_line_read_before() {
+        use engine::LineCache;
+        let picture = page([20, 30, 100, 12]);
+        let read = seen([10, 20, 120, 32], &picture);
+        let mut cache = LineCache::default();
+        cache.put(read.key, "Hello".into(), 0.9, 8);
+        cache.remember([read], 8);
+
+        // The detector moved the box by a pixel or two on unchanged
+        // pixels: the earlier reading stands, at its own place.
+        let (found, _) = cache.seen_at(&picture, [11, 19, 121, 34]).unwrap();
+        assert_eq!(found, read);
+        assert_eq!(cache.get(found.key), Some(("Hello".into(), 0.9)));
+        // A box somewhere else is another line.
+        assert!(cache.seen_at(&picture, [10, 40, 120, 32]).is_none());
+    }
+
+    #[test]
+    fn a_line_whose_pixels_changed_is_read_again() {
+        use engine::LineCache;
+        let picture = page([20, 30, 100, 12]);
+        let read = seen([10, 20, 120, 32], &picture);
+        let mut cache = LineCache::default();
+        cache.put(read.key, "Hello".into(), 0.9, 8);
+        cache.remember([read], 8);
+
+        // One more glyph at the end of the line, inside the earlier crop.
+        let longer = page([20, 30, 106, 12]);
+        assert!(cache.seen_at(&longer, [10, 20, 122, 32]).is_none());
+        // The same place in a smaller picture (the window was resized).
+        let small = image::RgbImage::new(100, 40);
+        assert!(cache.seen_at(&small, [10, 20, 120, 32]).is_none());
+    }
+
+    #[test]
+    fn text_added_beside_a_line_moves_the_box_out_of_tolerance() {
+        // A crop extends past its glyphs by the DB unclip distance, at
+        // least 0.4 × the shorter glyph side for the default ratio. Text
+        // outside the earlier crop moves the detected edge by more than
+        // that, which must never count as the same place.
+        for (w, h) in [(12u32, 12u32), (300, 14), (14, 300), (40, 60), (2000, 48)] {
+            let p = Params::default();
+            let raw = post::DetBox {
+                x0: 100.0,
+                y0: 100.0,
+                x1: 100.0 + w as f32,
+                y1: 100.0 + h as f32,
+                score: 1.0,
+            };
+            let grown = post::unclip(&raw, p.unclip_ratio, 1e6, 1e6);
+            let extends = (raw.x0 - grown.x0).floor() as u32;
+            let crop = [0, 0, w + 2 * extends, h + 2 * extends];
+            assert!(
+                engine::same_place_tolerance(crop) < extends,
+                "{w}x{h}: tolerance {} reaches past the crop margin {extends}",
+                engine::same_place_tolerance(crop)
+            );
+        }
+    }
+
+    #[test]
+    fn remembered_places_are_bounded_and_not_repeated() {
+        use engine::LineCache;
+        let picture = page([20, 30, 100, 12]);
+        let mut cache = LineCache::default();
+        let a = seen([10, 20, 120, 32], &picture);
+        cache.put(a.key, "a".into(), 1.0, 64);
+        cache.remember([a, a], 4);
+        cache.remember([a], 4);
+        // Newer places push the oldest out.
+        let others: Vec<_> = (0..4).map(|i| seen([i, 50, 60, 20], &picture)).collect();
+        cache.remember(others, 4);
+        assert!(cache.seen_at(&picture, a.rect).is_none());
     }
 
     #[test]

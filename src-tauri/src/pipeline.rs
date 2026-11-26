@@ -51,7 +51,7 @@ pub type ChunkSink = Arc<dyn Fn(String, bool) + Send + Sync>;
 
 /// Callback fired before each translation request of a capture; see
 /// [`Pipeline::translate_capture_with_progress`].
-pub type ProgressSink = dyn Fn(&TranslationProgress) + Send + Sync;
+pub type ProgressSink<'a> = dyn Fn(&TranslationProgress) + Send + Sync + 'a;
 
 /// Where a capture's translation stands, sent to the selector before
 /// each request so it can show finished blocks and stream the next ones
@@ -64,7 +64,7 @@ pub struct TranslationProgress {
     pub streaming: Vec<usize>,
 }
 
-fn notify(progress: Option<&ProgressSink>, bundle: &CaptureFlowResult, streaming: &[usize]) {
+fn notify(progress: Option<&ProgressSink<'_>>, bundle: &CaptureFlowResult, streaming: &[usize]) {
     if let Some(p) = progress {
         p(&TranslationProgress {
             blocks: bundle.blocks.clone(),
@@ -685,7 +685,7 @@ impl Pipeline {
         &self,
         bundle: &mut CaptureFlowResult,
         target_language: &str,
-        progress: Option<&ProgressSink>,
+        progress: Option<&ProgressSink<'_>>,
     ) -> Result<(), ProviderError> {
         self.translate_capture_as(bundle, target_language, progress, history_kind::CAPTURE)
             .await
@@ -698,7 +698,7 @@ impl Pipeline {
         &self,
         bundle: &mut CaptureFlowResult,
         target_language: &str,
-        progress: Option<&ProgressSink>,
+        progress: Option<&ProgressSink<'_>>,
         kind: &str,
     ) -> Result<(), ProviderError> {
         let s = self.settings.snapshot();

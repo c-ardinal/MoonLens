@@ -423,12 +423,25 @@ pub fn capture_rect(r: CaptureRect) -> Result<DynamicImage> {
     let monitor = monitors
         .get(r.monitor_index)
         .context("monitor index out of range")?;
-    // `capture_image` returns a platform-specific `image::RgbaImage` in
-    // xcap 0.9; wrap it in `DynamicImage` so the rest of the pipeline can
-    // treat every capture source uniformly.
+    capture_on(monitor, r.x.max(0) as u32, r.y.max(0) as u32, r.w, r.h)
+}
+
+/// Read `w`×`h` pixels at (`x`, `y`) of `monitor`.
+///
+/// Only the region is read from the screen: a window-translation window
+/// reads its region several times a second, and copying and converting
+/// a whole 4K monitor for a small region each time costs far more than
+/// the reading itself. A backend that cannot read a region falls back
+/// to the whole monitor.
+fn capture_on(monitor: &Monitor, x: u32, y: u32, w: u32, h: u32) -> Result<DynamicImage> {
+    if w > 0 && h > 0 {
+        if let Ok(region) = monitor.capture_region(x, y, w, h) {
+            return Ok(DynamicImage::ImageRgba8(region));
+        }
+    }
     let full = monitor.capture_image().context("capture")?;
     let dynamic = DynamicImage::ImageRgba8(full);
-    let cropped = image::imageops::crop_imm(&dynamic, r.x as u32, r.y as u32, r.w, r.h).to_image();
+    let cropped = image::imageops::crop_imm(&dynamic, x, y, w, h).to_image();
     Ok(DynamicImage::ImageRgba8(cropped))
 }
 
@@ -449,13 +462,10 @@ pub fn capture_global_rect(x: i32, y: i32, w: u32, h: u32) -> Result<DynamicImag
         .collect::<Result<_>>()?;
     let local = rect::to_local(&bounds, rect::GlobalRect { x, y, w, h })
         .context("rect does not intersect any monitor")?;
-    capture_rect(CaptureRect {
-        monitor_index: local.monitor_index,
-        x: local.x as i32,
-        y: local.y as i32,
-        w: local.w,
-        h: local.h,
-    })
+    let monitor = monitors
+        .get(local.monitor_index)
+        .context("monitor index out of range")?;
+    capture_on(monitor, local.x, local.y, local.w, local.h)
 }
 
 pub fn capture_primary_full() -> Result<DynamicImage> {

@@ -19,7 +19,8 @@
 //!    exactly the same picture the first reading stands: OCR is not
 //!    run a second time on the same pixels.
 //! 4. Blocks seen before come from the translation cache and are shown
-//!    immediately; only new paragraphs go to the model.
+//!    immediately; only new paragraphs go to the model. A long text is
+//!    translated in parts, each shown as soon as it is ready.
 //!
 //! The capture loop and the window live in `lens`.
 
@@ -28,7 +29,7 @@ use serde::Serialize;
 
 use crate::{
     capture,
-    pipeline::{CaptureFlowResult, LensBlock, Pipeline},
+    pipeline::{CaptureFlowResult, LensBlock, Pipeline, TranslationProgress},
     providers::{Capability, TaskOutput},
     user_error,
 };
@@ -376,9 +377,31 @@ impl Tracker {
             via_cloud: false,
         });
         if requested {
+            // A long text is translated in parts: show each part as it
+            // is done instead of all of them after the last.
+            let ready =
+                |blocks: &[LensBlock]| blocks.iter().filter(|b| b.translation.is_some()).count();
+            let shown = std::sync::atomic::AtomicUsize::new(ready(&bundle.blocks));
+            let progress = |p: &TranslationProgress| {
+                let now = ready(&p.blocks);
+                let more = shown.swap(now, std::sync::atomic::Ordering::Relaxed) < now;
+                if more && (env.geometry_now)() == Some(frame.geometry) {
+                    (env.emit)(LiveEvent::Blocks {
+                        blocks: p.blocks.clone(),
+                        translating: true,
+                        provider: None,
+                        via_cloud: false,
+                    });
+                }
+            };
             let result = env
                 .pipeline
-                .translate_capture_as(&mut bundle, env.target_language, None, env.history_kind)
+                .translate_capture_as(
+                    &mut bundle,
+                    env.target_language,
+                    Some(&progress),
+                    env.history_kind,
+                )
                 .await;
             self.shown.blocks = bundle.blocks.clone();
             if let Err(e) = result {

@@ -125,6 +125,20 @@ fn excluded_window_is_not_in_the_capture() {
         pump(300);
         let excluded = magenta_share();
         println!("magenta share, excluded window: {:.1}%", excluded * 100.0);
+        // For the CI log: what one reading of a window-translation
+        // region costs next to copying the whole monitor.
+        let per_run = |f: &dyn Fn()| {
+            let t = Instant::now();
+            (0..5).for_each(|_| f());
+            t.elapsed().as_secs_f64() * 1000.0 / 5.0
+        };
+        let region = per_run(&|| {
+            capture_global_rect(X, Y, W as u32, H as u32).expect("screen capture");
+        });
+        let whole = per_run(&|| {
+            moonlens_lib::capture::capture_primary_full().expect("screen capture");
+        });
+        println!("capture: region {W}x{H} {region:.1} ms, whole monitor {whole:.1} ms");
         DestroyWindow(hwnd);
         assert!(
             excluded < 0.01,
