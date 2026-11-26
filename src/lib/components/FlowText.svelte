@@ -88,7 +88,7 @@
        past the box to the right (grow). */
     overflow-x: visible;
     overflow-y: clip;
-    font-family: var(--ml-font-ui);
+    font-family: var(--ml-font-plain);
   }
   .flow-line {
     position: absolute;

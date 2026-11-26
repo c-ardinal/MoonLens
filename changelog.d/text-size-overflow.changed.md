@@ -1,0 +1,2 @@
+- The text size setting now also scales the home screen (dial and info column) by the same ratio.
+- Image translation shows the image without the retro look: no scanlines over it, smooth scaling, and translated text in the regular UI font.

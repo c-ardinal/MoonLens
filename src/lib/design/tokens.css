@@ -5,8 +5,10 @@
  */
 
 :root {
-  --ml-font-ui: 'Inter Variable', 'Inter', system-ui, -apple-system,
+  /* 原文準拠の表示（訳文の重畳・ウィンドウ翻訳）用。ドット絵外観でも不変 */
+  --ml-font-plain: 'Inter Variable', 'Inter', system-ui, -apple-system,
     'Hiragino Kaku Gothic ProN', 'Yu Gothic UI', sans-serif;
+  --ml-font-ui: var(--ml-font-plain);
   --ml-font-mono: 'JetBrains Mono', ui-monospace, 'SFMono-Regular', monospace;
 
   --ml-radius: 12px;

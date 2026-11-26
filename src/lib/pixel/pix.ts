@@ -88,16 +88,19 @@ export class Pix {
   readonly g: CanvasRenderingContext2D;
   private scratch: HTMLCanvasElement | null = null;
 
+  /** ss：内部解像度の倍率（整数）。描画座標は論理画素のまま、1 画素を ss×ss で打点。 */
   constructor(
     readonly canvas: HTMLCanvasElement,
     readonly w: number,
-    readonly h: number
+    readonly h: number,
+    readonly ss = 1
   ) {
-    canvas.width = w;
-    canvas.height = h;
+    canvas.width = w * ss;
+    canvas.height = h * ss;
     const g = canvas.getContext('2d');
     if (!g) throw new Error('2d context unavailable');
     g.imageSmoothingEnabled = false;
+    g.scale(ss, ss);
     this.g = g;
   }
 

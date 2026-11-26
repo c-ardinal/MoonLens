@@ -5,6 +5,7 @@
  */
 
 import { applyPalette, normalizeAccent } from './pixel/palette.svelte';
+import { textScale } from './pixel/text-scale.svelte';
 
 /** 本文画面の文字寸法（CSS px）。ドット書体 16 ドットの整数 px 段階。 */
 export const TEXT_SIZE_PX: Record<string, number> = {
@@ -46,7 +47,9 @@ export function applyAppearance(settings: any, root: HTMLElement = document.docu
     stopSystemWatch = () => mq.removeEventListener('change', sync);
   }
 
-  root.style.setProperty('--ml-body-zoom', String(bodyZoom(a.text_size)));
+  const zoom = bodyZoom(a.text_size);
+  root.style.setProperty('--ml-body-zoom', String(zoom));
+  if (root === document.documentElement) textScale.zoom = zoom;
   if (a.reduced_motion) root.dataset.reducedMotion = 'true';
   else delete root.dataset.reducedMotion;
 }

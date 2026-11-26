@@ -223,7 +223,7 @@
 
 <main class="home">
   <!-- 通知・初回セットアップ：魔法陣の上部へ帯状に配置（該当時のみ、重複なし） -->
-  <div class="alerts">
+  <div class="alerts px-zoom">
       <ConfigIssues />
       {#each notices as n (n.id)}
         <section class="px-win notice" role="alert">

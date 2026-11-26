@@ -26,14 +26,26 @@ const NUMBER_ROOM = 44;
 
 /**
  * 表示領域（CSS px）に対するドット 1 個の CSS 寸法。
- * 端末画素の整数倍（最大 2 倍表示）から、最小の論理寸法を満たす最大値を選択。
- * 例：125% 表示は 2 端末画素 = 1.6 CSS px、低い画面は 1 段階縮小。
+ * 基準は文字サイズ設定（zoom＝文字寸法 ÷ 32px）：16 ドット文字を本文画面と同寸で表示
+ * （最大 32px でドット 2px、標準 24px で 1.5px）。
+ * 最小の論理寸法へ収容不可の場合は端末画素の整数倍へ縮小（見切れ防止）。
  */
-export function homeDot(cssW: number, cssH: number, dpr: number): number {
-  const max = Math.max(1, Math.floor(2 * dpr + 1e-6));
-  for (let d = max; d > 1; d--)
-    if (Math.floor((cssW * dpr) / d) >= HOME_MIN.w && Math.floor((cssH * dpr) / d) >= HOME_MIN.h) return d / dpr;
+export function homeDot(cssW: number, cssH: number, dpr: number, zoom = 1): number {
+  const fits = (d: number) => Math.floor((cssW * dpr) / d) >= HOME_MIN.w && Math.floor((cssH * dpr) / d) >= HOME_MIN.h;
+  const want = 2 * zoom * dpr;
+  if (fits(want)) return want / dpr;
+  for (let d = Math.ceil(want) - 1; d > 1; d--) if (fits(d)) return d / dpr;
   return 1 / dpr;
+}
+
+/**
+ * Canvas の内部解像度の倍率（論理画素に対する整数倍）。
+ * ドットが端末画素の整数倍でない場合、次の整数倍で描画し表示側で縮小（補間あり）：
+ * ドットの太さの不揃い（最近傍拡大の 1px／2px 混在）を回避。
+ */
+export function homeSupersample(dot: number, dpr: number): number {
+  const device = dot * dpr;
+  return Math.abs(device - Math.round(device)) < 1e-3 ? 1 : Math.ceil(device);
 }
 
 export interface HomeView {
