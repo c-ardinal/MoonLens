@@ -4,6 +4,7 @@ import {
   allFields,
   changedPaths,
   savable,
+  heldHotkeys,
   saveDelay,
   duplicateHotkeys,
   fieldMatches,
@@ -93,6 +94,20 @@ describe('settings-meta', () => {
     expect(next.appearance.theme).toBe('light');
     expect(next.translation.glossary).toEqual([{ source: 'Lens', target: 'レンズ', lang: 'ja' }]);
     expect(changedPaths(saved, next)).toEqual(['translation.glossary', 'appearance.theme']);
+  });
+
+  it('holds back a change that would clash with a restored shortcut', () => {
+    const saved = { hotkeys: { capture_region: 'Alt+A', toggle_subtitle: 'Alt+B', open_history: 'Alt+C' } };
+    // B -> Alt+C (clash with C), then A -> Alt+B (clash with the restored B).
+    const draft = { hotkeys: { capture_region: 'Alt+B', toggle_subtitle: 'Alt+C', open_history: 'Alt+C' } };
+    const next = savable(saved, draft);
+    expect(duplicateHotkeys(next)).toEqual([]);
+    expect(next.hotkeys).toEqual(saved.hotkeys);
+    expect(heldHotkeys(saved, draft)).toEqual(['hotkeys.capture_region', 'hotkeys.toggle_subtitle']);
+    // Resolving the first clash releases both.
+    const fixed = setPath(draft, 'hotkeys.open_history', 'Alt+D');
+    expect(savable(saved, fixed).hotkeys).toEqual(fixed.hotkeys);
+    expect(heldHotkeys(saved, fixed)).toEqual([]);
   });
 
   it('delays saving only for continuous inputs', () => {

@@ -437,12 +437,25 @@ export function changedPaths(a: any, b: any): string[] {
 
 /**
  * 即時保存の対象：編集中の値から保存不可の値を除外した設定。
- * 重複中のショートカットは保存済の値を維持、用語集の空行は除去。
+ * 重複に関与する変更済ショートカットは保存済の値を維持、用語集の空行は除去。
+ * 復元後の値と新規に重複する変更も同様に除外（保存結果に重複を残さない）。
  */
 export function savable<T>(saved: T, draft: T): T {
   let next = draft;
-  for (const p of duplicateHotkeys(draft)) next = setPath(next, p, getPath(saved, p));
+  for (;;) {
+    const held = duplicateHotkeys(next).filter((p) => !sameValue(getPath(next, p), getPath(saved, p)));
+    if (held.length === 0) break;
+    for (const p of held) next = setPath(next, p, getPath(saved, p));
+  }
   return setPath(next, 'translation.glossary', compactGlossary(getPath(next, 'translation.glossary')));
+}
+
+/** 保存対象外のショートカット（重複の解消まで保存済の値を維持する項目）。 */
+export function heldHotkeys(saved: any, draft: any): string[] {
+  const next = savable(saved, draft);
+  return allFields()
+    .filter((f) => f.kind === 'hotkey' && !sameValue(getPath(next, f.path), getPath(draft, f.path)))
+    .map((f) => f.path);
 }
 
 /** 連続入力の項目（スライダー・色・用語集）：保存までの待機時間（ミリ秒）。 */

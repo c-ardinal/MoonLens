@@ -17,6 +17,7 @@
     SECTIONS,
     changedPaths,
     duplicateHotkeys,
+    heldHotkeys,
     fieldMatches,
     getPath,
     savable,
@@ -57,7 +58,11 @@
   let current = $state(SECTIONS[0].id);
 
   /** Shortcuts bound twice: only one of each pair could be registered. */
-  const clashes = $derived(draft ? duplicateHotkeys(draft) : []);
+  const clashes = $derived(saved && draft ? heldHotkeys(saved, draft) : []);
+  /** 「重複」表示の対象：保存対象外の項目と、その重複相手。 */
+  const marked = $derived(draft ? [...new Set([...clashes, ...duplicateHotkeys(draft)])] : []);
+  /** 直近の保存開始以降に編集した項目（保存中に元の値へ復帰させた項目を含む）。 */
+  let edited = new Set<string>();
   const visible = $derived(
     SECTIONS.map((s) => ({
       section: s,
@@ -79,7 +84,9 @@
       // the new values and keep the edits not saved yet on top, so the
       // next save never reverts them.
       unlisten = await onSettingsChanged((next) => {
-        const edits = changedPaths(saved, draft).map((p) => [p, getPath(draft, p)] as const);
+        // 保存中に元の値へ復帰させた項目は saved との差分に現れない：edited で補完
+        const paths = new Set([...changedPaths(saved, draft), ...edited]);
+        const edits = [...paths].map((p) => [p, getPath(draft, p)] as const);
         saved = next;
         let d = structuredClone(next);
         for (const [p, v] of edits) d = setPath(d, p, v);
@@ -113,6 +120,7 @@
 
   function update(path: string, value: any) {
     draft = setPath(draft, path, value);
+    edited.add(path);
     saveError = null;
     autosave.schedule(saveDelay(path));
   }
@@ -123,6 +131,7 @@
    */
   async function save() {
     if (!saved || !draft) return;
+    edited = new Set();
     const next = savable($state.snapshot(saved), $state.snapshot(draft));
     const changed = changedPaths(saved, next);
     if (changed.length === 0) return;
@@ -351,7 +360,7 @@
                     compact
                     value={getPath(draft, field.path)}
                     defaultValue={getPath(defaults, field.path) ?? null}
-                    invalid={clashes.includes(field.path)}
+                    invalid={marked.includes(field.path)}
                     onChange={(v) => update(field.path, v)}
                   />
                 {/if}
