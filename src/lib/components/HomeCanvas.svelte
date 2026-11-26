@@ -2,7 +2,15 @@
   import { onDestroy, onMount, untrack } from 'svelte';
   import { Pix } from '$lib/pixel/pix';
   import { ROTORS, dialGeometry, drawRotor, hitTest, rotorSize } from '$lib/pixel/dial';
-  import { drawHome, drawHomeMotion, homeDot, homeRegions, type HomeRegion, type HomeView } from '$lib/pixel/home';
+  import {
+    drawHome,
+    drawHomeMotion,
+    homeDot,
+    homeRegions,
+    titleOffsets,
+    type HomeRegion,
+    type HomeView
+  } from '$lib/pixel/home';
   import { motion } from '$lib/pixel/motion.svelte';
 
   /**
@@ -19,7 +27,7 @@
     onactivate,
     onregion
   }: {
-    view: Omit<HomeView, 'hover' | 'hot' | 'selected' | 'turn' | 'slide'>;
+    view: Omit<HomeView, 'hover' | 'hot' | 'selected' | 'turn' | 'slide' | 'leave'>;
     selected?: number;
     onactivate: (index: number) => void;
     onregion: (region: HomeRegion) => void;
@@ -45,6 +53,8 @@
   let anim = $state<{ from: number; to: number; start: number } | null>(null);
   let turn = $state<number | undefined>(undefined);
   let slide = $state(1);
+  /** 退場側の機能名（切替前の項目）。演出の終了時に解除。 */
+  let leave = $state<HomeView['leave']>(undefined);
   let shown = selected;
   let clock = 0;
 
@@ -75,8 +85,12 @@
     let d = (((to - shown) % n) + n) % n;
     if (d > n / 2) d -= n;
     const from = to - d;
+    const prev = shown;
     shown = to;
     if (!motion.on) return;
+    // 演出途中の再切替：入場途中の機能名を現在位置から退場へ転用
+    const running = untrack(() => (anim ? titleOffsets(slide, anim.to < anim.from ? -1 : 1).enter : 0));
+    leave = { index: prev, from: running };
     turn = from;
     slide = 0;
     anim = { from, to, start: performance.now() };
@@ -84,7 +98,7 @@
 
   // 静止層
   $effect(() => {
-    const state = { ...view, selected, hover, hot, turn, slide };
+    const state = { ...view, selected, hover, hot, turn, slide, leave };
     void size;
     if (!ok()) return;
     ensure();
@@ -127,8 +141,12 @@
         const u = Math.min(1, (now - anim.start) / TURN_MS);
         const e = 1 - (1 - u) ** 3;
         turn = u >= 1 ? undefined : anim.from + (anim.to - anim.from) * e;
-        slide = u;
-        if (u >= 1) anim = null;
+        // 機能名の縦送りは項目の切替時のみ（同一項目への復帰は回転のみ）
+        slide = leave ? u : 1;
+        if (u >= 1) {
+          anim = null;
+          leave = undefined;
+        }
       }
       ensure();
       drawHomeMotion(low!, { items: view.items, selected, turn }, clock);
@@ -139,6 +157,7 @@
       // 演出途中の停止（推論開始など）：回転を完了状態へ確定し、表示と当り判定を一致
       if (untrack(() => anim)) {
         anim = null;
+        leave = undefined;
         turn = undefined;
         slide = 1;
       }
@@ -225,6 +244,7 @@
     if (!dragged) {
       dragged = true;
       anim = null;
+      leave = undefined;
       canvas.setPointerCapture(e.pointerId);
     }
     const t = drag.base - drag.total / (360 / view.items.length);
@@ -247,10 +267,13 @@
     const from = was.base - was.total / (360 / n);
     const to = Math.round(from);
     const idx = ((to % n) + n) % n;
+    const prev = shown;
     shown = idx;
     selected = idx;
     if (motion.on && Math.abs(to - from) > 0.01) {
       turn = from;
+      leave = idx === prev ? undefined : { index: prev, from: 0 };
+      slide = leave ? 0 : 1;
       anim = { from, to, start: performance.now() };
     } else {
       turn = undefined;

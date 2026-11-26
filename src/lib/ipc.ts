@@ -154,10 +154,6 @@ export const ocrModelsStatus = () =>
 export const onSettingsChanged = (handler: (s: Settings) => void): Promise<UnlistenFn> =>
   listen<Settings>('moonlens://settings-changed', (e) => handler(e.payload));
 
-/** Whether any window-translation window reads its range continuously. */
-export const onLensActive = (handler: (active: boolean) => void): Promise<UnlistenFn> =>
-  listen<boolean>('moonlens://lens-active', (e) => handler(e.payload));
-
 /** A GGUF model the built-in translation engine can run. */
 export interface LlmModel {
   id: string;

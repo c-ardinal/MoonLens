@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { slantPolygon } from './slant';
 import { ROTORS, SELECTED_ANGLE, SIDE_WIDTH, dialGeometry, hitTest, labelPlacement, rotorSize } from './dial';
-import { homeDot } from './home';
+import { homeDot, titleOffsets } from './home';
 import { inkBounds, slabCenterOrigin } from './pix';
 
 const points = (poly: string) =>
@@ -125,5 +125,29 @@ describe('帯内の字面配置', () => {
       right = slab.x + slab.w - 1 - (o.x + ink.x1);
     expect(Math.abs(top - bottom)).toBeLessThanOrEqual(1);
     expect(Math.abs(left - right)).toBeLessThanOrEqual(1);
+  });
+});
+
+describe('titleOffsets', () => {
+  it('切替前の機能名は回転方向へ退場、切替後は反対側から同時に入場', () => {
+    const start = titleOffsets(0, 1, 0);
+    expect(start.leave).toBe(0);
+    expect(start.enter).toBeGreaterThanOrEqual(62);
+    const mid = titleOffsets(0.5, 1, 0);
+    expect(mid.leave).toBeLessThan(0);
+    expect(mid.enter).toBeGreaterThan(0);
+    // 両者の間隔は一定：重複なしで連続移動
+    expect(mid.enter - mid.leave!).toBe(start.enter - start.leave!);
+    expect(titleOffsets(1, 1, 0)).toEqual({ enter: 0, leave: -62 });
+  });
+  it('逆回転は上下反転', () => {
+    expect(titleOffsets(0.5, -1, 0)).toEqual({ enter: -titleOffsets(0.5, 1, 0).enter, leave: -titleOffsets(0.5, 1, 0).leave! });
+  });
+  it('演出途中の再切替：退場側は途中位置から開始', () => {
+    expect(titleOffsets(0, 1, 20).leave).toBe(20);
+    expect(titleOffsets(1, 1, 20).leave).toBe(-62);
+  });
+  it('退場側なし（同一項目への復帰）は入場側のみ', () => {
+    expect(titleOffsets(1, 1)).toEqual({ enter: 0, leave: null });
   });
 });

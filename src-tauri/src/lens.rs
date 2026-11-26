@@ -53,9 +53,6 @@ use crate::{
 /// Event with [`LiveEvent`]s for one lens window.
 pub const LENS_LIVE_EVENT: &str = "moonlens://lens-live";
 
-/// Event telling every window whether any lens reads continuously (the
-/// main window pauses its animations meanwhile).
-pub const LENS_ACTIVE_EVENT: &str = "moonlens://lens-active";
 /// Operate mode on (`true`) / off for a lens window (operate hotkey).
 pub const LENS_OPERATE_EVENT: &str = "moonlens://lens-operate";
 
@@ -483,11 +480,6 @@ impl LensRegistry {
         ));
     }
 
-    /// Whether any lens reads continuously.
-    pub fn any_continuous(&self) -> bool {
-        self.entries.lock().iter().any(|(_, e)| e.watch.is_some())
-    }
-
     pub fn target_language(&self, id: &str) -> Option<String> {
         self.entries
             .lock()
@@ -877,7 +869,6 @@ pub fn close(app: &AppHandle, registry: &LensRegistryHandle, id: &str) -> Result
         win.close().ok();
     }
     registry.untrack(id);
-    emit_active(app, registry);
     Ok(())
 }
 
@@ -977,7 +968,6 @@ pub fn set_continuous(
 ) {
     if !on {
         registry.set_watch(id, None);
-        emit_active(app, registry);
         return;
     }
     let stop = Arc::new(tokio::sync::Notify::new());
@@ -992,12 +982,6 @@ pub fn set_continuous(
         kick.clone(),
     ));
     registry.set_watch(id, Some(Watch { handle, stop, kick }));
-    emit_active(app, registry);
-}
-
-/// Tell the windows whether any lens reads continuously now.
-pub fn emit_active(app: &AppHandle, registry: &LensRegistryHandle) {
-    let _ = app.emit(LENS_ACTIVE_EVENT, registry.any_continuous());
 }
 
 /// Continuous reading of one lens: every `region_watcher_poll_ms` (or on
@@ -1223,7 +1207,6 @@ mod tests {
         // Gone: the click-through loop stops.
         r.untrack("a");
         assert_eq!(r.interactive("a"), None);
-        assert!(!r.any_continuous());
     }
 
     #[test]
