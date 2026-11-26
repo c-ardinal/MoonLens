@@ -13,7 +13,12 @@
 //!    was broken: the capture listened to a microphone instead of the
 //!    speakers. Needs an audio output device (CI installs a virtual one).
 //!
-//! `#[ignore]` because both need the downloaded models (about 2 GB):
+//! 3. `english_after_a_japanese_aside_stays_english`: an English speech
+//!    with one Japanese sentence in the middle. The language is detected
+//!    for every chunk, so the English that follows the Japanese must come
+//!    out as English again (it used to be decoded as Japanese).
+//!
+//! `#[ignore]` because all need the downloaded models (about 2 GB):
 //!
 //! ```sh
 //! cd src-tauri
@@ -34,9 +39,16 @@ use moonlens_lib::{
 use parking_lot::Mutex;
 use tokio::sync::{mpsc, Notify};
 
-/// The recording as 16 kHz mono PCM16.
+/// The English recording as 16 kHz mono PCM16.
 fn speech() -> Vec<i16> {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/audio/jfk.wav");
+    fixture("jfk.wav")
+}
+
+/// A fixture recording (16 kHz mono PCM16 WAV) as samples.
+fn fixture(name: &str) -> Vec<i16> {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/audio")
+        .join(name);
     let bytes = std::fs::read(path).unwrap();
     let data = bytes
         .windows(4)
@@ -106,11 +118,29 @@ async fn setup() -> Env {
 /// Run the subtitle loop over `rx` until the channel closes; the events
 /// it emitted.
 async fn subtitles(env: Env, rx: mpsc::Receiver<Vec<i16>>) -> Vec<SubtitleEvent> {
+    subtitles_notifying(env, rx, Arc::new(Notify::new())).await
+}
+
+/// [`subtitles`], signalling `idle` each time the loop has finished a
+/// chunk and waits for audio again.
+async fn subtitles_notifying(
+    env: Env,
+    rx: mpsc::Receiver<Vec<i16>>,
+    idle: Arc<Notify>,
+) -> Vec<SubtitleEvent> {
     let (settings, pipeline) = env;
     let events = Arc::new(Mutex::new(Vec::new()));
     let sink = events.clone();
     let emit = move |ev: SubtitleEvent| {
         println!("{ev:?}");
+        if matches!(
+            ev,
+            SubtitleEvent::Status {
+                phase: Phase::Waiting
+            }
+        ) {
+            idle.notify_one();
+        }
         sink.lock().push(ev);
     };
     let gave_up = run_loop(&emit, settings, pipeline, rx, Arc::new(Notify::new())).await;
@@ -177,6 +207,89 @@ async fn english_speech_becomes_japanese_subtitles() {
         }
     });
     assert_subtitles(&subtitles(env, rx).await);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "needs the downloaded models"]
+async fn english_after_a_japanese_aside_stays_english() {
+    let env = setup().await;
+    let chunk = (env.0.snapshot().subtitle.chunk_seconds * 16_000.0) as usize;
+    // English, one Japanese sentence, English again, 0.3 s apart.
+    let pause = vec![0i16; 4_800];
+    let pcm = [
+        speech(),
+        pause.clone(),
+        fixture("ja-moldova.wav"),
+        pause,
+        speech(),
+    ]
+    .concat();
+    let (tx, rx) = mpsc::channel::<Vec<i16>>(4096);
+    let idle = Arc::new(Notify::new());
+    let fed = idle.clone();
+    // One chunk at a time, the next when the previous one is done: the
+    // chunks a PC that keeps up with the audio (a GPU) recognizes. A CI
+    // runner takes many times the length of a chunk; at real-time pace
+    // the loop would merge the backlog into one long window there.
+    tokio::spawn(async move {
+        for piece in pcm.chunks(chunk) {
+            for frame in piece.chunks(160) {
+                if tx.send(frame.to_vec()).await.is_err() {
+                    return;
+                }
+            }
+            if piece.len() == chunk {
+                let _ = tokio::time::timeout(Duration::from_secs(600), fed.notified()).await;
+            }
+        }
+    });
+    let events = subtitles_notifying(env, rx, idle).await;
+
+    let chunks: Vec<(&str, &str)> = events
+        .iter()
+        .filter_map(|ev| match ev {
+            SubtitleEvent::Chunk {
+                original,
+                translated,
+            } => Some((original.as_str(), translated.as_str())),
+            SubtitleEvent::Error { message } => panic!("error event: {message}"),
+            _ => None,
+        })
+        .collect();
+    let first_ja = chunks
+        .iter()
+        .position(|(o, _)| has_japanese(o))
+        .expect("the Japanese sentence was not recognized as Japanese");
+    let last_ja = chunks.iter().rposition(|(o, _)| has_japanese(o)).unwrap();
+    let join = |part: &[(&str, &str)]| {
+        part.iter()
+            .map(|(o, _)| o.to_lowercase())
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
+    let japanese = join(&chunks[first_ja..=last_ja]);
+    assert!(
+        japanese.contains("宗教") || japanese.contains("キリスト"),
+        "Japanese sentence not recognized: {japanese:?}"
+    );
+    let before = join(&chunks[..first_ja]);
+    assert!(
+        before.contains("country"),
+        "English before the Japanese not recognized: {before:?}"
+    );
+    // The point of the test: the speech after the Japanese sentence is
+    // heard as English again, and translated.
+    let after = &chunks[last_ja + 1..];
+    let english = join(after);
+    assert!(
+        english.contains("country"),
+        "English after the Japanese not recognized as English: {english:?}"
+    );
+    let translated: String = after.iter().map(|(_, t)| *t).collect();
+    assert!(
+        has_japanese(&translated) && translated.contains('国'),
+        "English after the Japanese not translated: {translated:?}"
+    );
 }
 
 #[cfg(all(windows, feature = "audio"))]

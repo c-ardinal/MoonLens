@@ -38,6 +38,9 @@ on:
       - 'src-tauri/src/audio.rs'
       - 'src-tauri/src/subtitle.rs'
       - 'src-tauri/src/providers/asr_*.rs'
+      - 'src-tauri/native/**'
+      - 'src-tauri/vendor/whisper.cpp/**'
+      - 'src-tauri/tests/fixtures/audio/**'
       - 'src-tauri/tests/subtitle_live.rs'
       - '.github/workflows/windows.yml'
   workflow_dispatch:
