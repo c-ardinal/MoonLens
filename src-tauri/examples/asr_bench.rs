@@ -110,9 +110,11 @@ fn read_wav_pcm16(path: &str) -> anyhow::Result<Vec<u8>> {
             return Ok(match (fmt, bits) {
                 (1, 16) => body.to_vec(),
                 (3, 32) => body
-                    .chunks_exact(4)
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
                     .flat_map(|c| {
-                        let v = f32::from_le_bytes(c.try_into().unwrap());
+                        let v = f32::from_le_bytes(*c);
                         ((v.clamp(-1.0, 1.0) * 32767.0) as i16).to_le_bytes()
                     })
                     .collect(),
