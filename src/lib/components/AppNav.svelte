@@ -1,7 +1,6 @@
 <script lang="ts">
   import { page } from '$app/state';
   import { Minus, X } from 'lucide-svelte';
-  import { slant } from '$lib/pixel/slant';
   import PixelLogo from './PixelLogo.svelte';
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import { onDestroy, onMount } from 'svelte';
@@ -43,13 +42,12 @@
   });
   onDestroy(() => unlisten?.());
 
-  /** タブの傾き：斜めの切抜き幅（上端 4px）を右余白内へ収め、文字との干渉を防止。 */
-  const TAB_K = 0.15;
-
   /** 翻訳・画像翻訳はホーム配下の機能画面：ホームを選択状態で表示。 */
   const HOME_PATHS = ['/', '/translate/', '/image/'];
   const active = (href: string) =>
     href === '/' ? HOME_PATHS.includes(page.url.pathname) : page.url.pathname.startsWith(href);
+  /** 選択中タブの位置（該当なしは -1）：括弧カーソルの移動先。 */
+  const current = $derived(items.findIndex((item) => active(item.href)));
 </script>
 
 <nav class="sticky top-0 z-30" aria-label="メインメニュー" data-tauri-drag-region>
@@ -62,16 +60,17 @@
             href={item.href}
             aria-current={active(item.href) ? 'page' : undefined}
             class="px-chip"
-            data-tone={active(item.href) ? 'bone' : undefined}
-            use:slant={TAB_K}
           >
             {item.label}
           </a>
         </li>
       {/each}
+      {#if current >= 0}
+        <li class="cursor" style="--i: {current}" aria-hidden="true"></li>
+      {/if}
     </ul>
     {#if target}
-      <a href="/settings/" class="px-chip target" data-tone="amber" use:slant={TAB_K} title="翻訳先言語：{target}（設定で変更）">{target}▶</a>
+      <a href="/settings/" class="px-chip target" title="翻訳先言語：{target}（設定で変更）">{target}▶</a>
     {/if}
     <div class="ctls" data-tauri-drag-region>
       <button class="ctl" title="最小化" aria-label="最小化" onclick={minimize}>
@@ -101,6 +100,7 @@
     flex-shrink: 0;
   }
   .tabs {
+    position: relative;
     display: flex;
     min-width: 0;
     flex: 1;
@@ -112,24 +112,64 @@
   .tabs li {
     flex-shrink: 0;
   }
-  /* 斜めの切抜きは上下で相殺され外形の中心は不変：左右の余白は均等 */
+  /* 背景の塗りなし：選択中のタブと翻訳先言語は四隅の括弧（照準枠）で表示 */
   .px-chip {
     padding: 0 var(--ml-sp-3);
+    background: none;
   }
-  /* 画面切替タブ：等幅で整列（最長の 3 文字＋斜めの切抜き分） */
+  /* 画面切替タブ：等幅で整列（括弧カーソルの移動量は幅＋間隔の整数倍） */
+  .tabs {
+    --tab-w: 124px;
+  }
   .tabs .px-chip {
     justify-content: center;
-    width: 124px;
-  }
-  .px-chip:not([data-tone]) {
+    width: var(--tab-w);
     color: var(--ml-px-mid);
   }
-  .px-chip:not([data-tone]):hover {
-    background: var(--ml-px-dim);
+  .tabs .px-chip:hover {
     color: var(--ml-px-cream);
   }
+  .cursor,
   .target {
+    --corner: var(--ml-px-amber);
+    --h: linear-gradient(var(--corner), var(--corner));
+    background:
+      var(--h) left top / 10px 2px,
+      var(--h) left top / 2px 10px,
+      var(--h) right top / 10px 2px,
+      var(--h) right top / 2px 10px,
+      var(--h) left bottom / 10px 2px,
+      var(--h) left bottom / 2px 10px,
+      var(--h) right bottom / 10px 2px,
+      var(--h) right bottom / 2px 10px;
+    background-repeat: no-repeat;
+  }
+  .tabs .px-chip[aria-current] {
+    color: var(--ml-px-bone);
+  }
+  /* 括弧カーソル：画面切替時に選択先のタブへ段階移動。推論中・動き削減時は即時 */
+  .cursor {
+    position: absolute;
+    top: 0;
+    left: var(--ml-sp-2);
+    width: var(--tab-w);
+    height: 100%;
+    pointer-events: none;
+    transform: translateX(calc(var(--i) * (var(--tab-w) + var(--ml-sp-1))));
+    transition: transform 160ms steps(4, start);
+  }
+  :global(:root:not([data-motion='on'])) .cursor {
+    transition: none;
+  }
+  .target {
+    --corner: var(--ml-px-faint);
     flex-shrink: 0;
+    margin-right: var(--ml-sp-2);
+    color: var(--ml-px-amber);
+  }
+  .target:hover {
+    --corner: var(--ml-px-amber);
+    color: var(--ml-px-cream);
   }
   .ctls {
     display: flex;
