@@ -61,24 +61,29 @@ const record = (state, rows) => {
 const browser = await chromium.launch();
 const wait = (pg, ms) => pg.waitForTimeout(ms);
 const measure = async (pg, state) => record(state, await pg.evaluate(MEASURE));
-const tryDo = async (f) => { try { await f(); return true; } catch { return false; } };
+/** 状態への到達操作。失敗時は監査を中断（未到達の状態を計測済みと誤認しないため）。 */
+const reach = async (state, f) => { try { await f(); } catch (e) { throw new Error(`状態「${state}」へ未到達：${String(e.message).split('\n')[0]}`); } };
 
+const TRANSLATED = JSON.stringify({
+  run_translate: { task: 'translate', output: { Text: '素早い茶色の狐。\n2 行目。' }, used_provider: 'PLaMo', via_cloud: false, latency_ms: 120, fallback_reasons: [] }
+});
 async function mainWindow(ts) {
   const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, deviceScaleFactor: 1, reducedMotion: 'reduce' });
-  await ctx.addInitScript(init('main', MOCK.replace(/"text_size":\s*"medium"/g, `"text_size": "${ts}"`)));
+  await ctx.addInitScript(init('main', MOCK.replace(/"text_size":\s*"medium"/g, `"text_size": "${ts}"`), TRANSLATED));
   const open = async (route) => { const pg = await ctx.newPage(); await pg.goto(url(route)); await wait(pg, 1200); return pg; };
   const m = (pg, name) => measure(pg, `${name}@${ts}`);
   let pg = await open('/'); await m(pg, 'home');
   await pg.keyboard.press('Control+k'); await wait(pg, 400); await m(pg, 'palette'); await pg.close();
   pg = await open('/translate/'); await m(pg, 'translate');
-  await pg.locator('textarea').first().fill('The quick brown fox.\nSecond line.'); await pg.keyboard.press('Control+Enter'); await wait(pg, 1500); await m(pg, 'translate-result');
-  if (await tryDo(() => pg.getByRole('button', { name: '訳文をコピー' }).click({ timeout: 1000 }))) { await wait(pg, 300); await m(pg, 'translate-toast'); }
-  if (await tryDo(() => pg.locator('textarea').first().click({ button: 'right', timeout: 1000 }))) { await wait(pg, 300); await m(pg, 'context-menu'); }
+  await pg.locator('textarea').first().fill('The quick brown fox.\nSecond line.'); await pg.keyboard.press('Control+Enter');
+  await reach('translate-result', () => pg.getByText('素早い茶色の狐。').first().waitFor({ timeout: 5000 })); await m(pg, 'translate-result');
+  await reach('translate-toast', async () => { await pg.getByRole('button', { name: '訳文をコピー' }).click({ timeout: 2000 }); await pg.locator('.toast').first().waitFor({ timeout: 2000 }); }); await m(pg, 'translate-toast');
+  await reach('context-menu', async () => { await pg.locator('textarea').first().click({ button: 'right', timeout: 2000 }); await pg.locator('.ctx-menu').waitFor({ timeout: 2000 }); }); await m(pg, 'context-menu');
   await pg.close();
   pg = await open('/image/'); await m(pg, 'image'); await pg.close();
   pg = await open('/history/'); await m(pg, 'history');
-  if (await tryDo(() => pg.getByRole('button', { name: 'この履歴を削除' }).first().click({ timeout: 1000 }))) { await wait(pg, 300); await m(pg, 'history-toast'); }
-  if (await tryDo(() => pg.getByText('全消去').click({ timeout: 1000 }))) { await wait(pg, 400); await m(pg, 'history-confirm'); }
+  await reach('history-toast', async () => { await pg.getByRole('button', { name: 'この履歴を削除' }).first().click({ timeout: 2000 }); await pg.locator('.toast').first().waitFor({ timeout: 2000 }); }); await m(pg, 'history-toast');
+  await reach('history-confirm', async () => { await pg.getByText('全消去').click({ timeout: 2000 }); await pg.getByRole('dialog').waitFor({ timeout: 2000 }); }); await m(pg, 'history-confirm');
   await pg.close();
   pg = await open('/setup/'); await m(pg, 'setup'); await pg.close();
   pg = await open('/settings/');
@@ -114,7 +119,8 @@ async function lensWindow() {
     await measure(pg, `lens-${w}-idle`);
     await pg.evaluate((blocks) => window.__emit('moonlens://lens-live', { kind: 'blocks', blocks, translating: false, provider: 'PLaMo', via_cloud: false }), BLOCKS);
     await wait(pg, 300); await measure(pg, `lens-${w}`);
-    if (await tryDo(() => pg.click('.more', { timeout: 800 }))) { await wait(pg, 200); await measure(pg, `lens-${w}-menu`); }
+    // 縦メニューは収納項目が有る幅のみ表示
+    if (await pg.locator('.more').count()) { await reach(`lens-${w}-menu`, async () => { await pg.click('.more', { timeout: 2000 }); await pg.locator('.menu').waitFor({ timeout: 2000 }); }); await measure(pg, `lens-${w}-menu`); }
     await pg.context().close();
   }
   for (const placement of ['outside', 'free']) {
