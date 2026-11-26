@@ -4,6 +4,7 @@
   import { ROTORS, dialGeometry, drawRotor, hitTest, rotorSize } from '$lib/pixel/dial';
   import { drawHome, drawHomeMotion, homeDot, homeRegions, type HomeRegion, type HomeView } from '$lib/pixel/home';
   import { motion } from '$lib/pixel/motion.svelte';
+  import { palette } from '$lib/pixel/palette.svelte';
 
   /**
    * ホーム画面の描画層。Canvas を重ねる構成。
@@ -86,6 +87,7 @@
   $effect(() => {
     const state = { ...view, selected, hover, hot, turn, slide };
     void size;
+    void palette.version; // 配色変更時に再描画
     if (!ok()) return;
     ensure();
     drawHome(top!, state);
@@ -95,6 +97,7 @@
   // 回転体：寸法の変化時のみ描画・配置。回転自体は CSS（等速・線形）
   const ring = $derived(size.w >= 200 && size.h >= 200 ? dialGeometry(size.w, size.h, view.items.length, 0) : null);
   $effect(() => {
+    void palette.version;
     if (!ring || !fontsReady) return;
     ROTORS.forEach((o, i) => {
       const el = rotorEls[i];

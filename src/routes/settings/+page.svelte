@@ -398,7 +398,7 @@
     position: relative;
     display: grid;
     grid-template-rows: auto minmax(0, 1fr);
-    gap: var(--ml-sp-4);
+    gap: var(--ml-flow);
     padding: var(--ml-page-y) var(--ml-page-x);
     box-sizing: border-box;
   }
@@ -449,7 +449,7 @@
   .tabs {
     display: flex;
     flex-direction: column;
-    gap: var(--ml-sp-2);
+    gap: var(--ml-row-pad);
     overflow-x: hidden;
     overflow-y: auto;
     padding: var(--ml-sp-1) 0;
@@ -529,6 +529,12 @@
     margin: var(--ml-sp-5) 0 0;
     padding-top: var(--ml-sp-6);
     box-sizing: border-box;
+  }
+  /* 説明文：常時 2 行分の高さ（項目選択での窓の伸縮を防止）。超過分は窓内スクロール */
+  .desc p {
+    height: calc(var(--ml-sp-9) * 2);
+    margin: 0;
+    overflow-y: auto;
   }
   .hint {
     min-width: 0;

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { Pix, TITLE_FONT_FAMILY } from '$lib/pixel/pix';
+  import { palette } from '$lib/pixel/palette.svelte';
 
   /**
    * ロゴ：琥珀の斜め帯＋太字斜体の 2 値化文字＋骨白の段影（見出し帯と同系の書体処理）。
@@ -29,8 +30,15 @@
     p.text('MOONLENS', x, y, 0, { k: 0.3, font: FONT });
   }
 
+  let mounted = $state(false);
+  // 配色変更時に再描画
+  $effect(() => {
+    void palette.version;
+    if (mounted) draw();
+  });
+
   onMount(() => {
-    draw();
+    mounted = true;
     document.fonts
       ?.load(FONT, 'MOONLENS')
       .then(draw)

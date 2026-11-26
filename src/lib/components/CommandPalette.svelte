@@ -168,7 +168,7 @@
         {#each filtered as c (c.id)}
           <li>
             <button
-              class="flex w-full items-center justify-between px-4 py-2 text-left text-sm transition hover:bg-surface-muted disabled:opacity-50"
+              class="flex w-full items-center justify-between px-4 py-[var(--ml-row-pad)] text-left text-sm transition hover:bg-surface-muted disabled:opacity-50"
               disabled={running}
               onclick={() => runWith(c)}
             >
