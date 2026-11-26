@@ -1483,6 +1483,50 @@ mod tests {
         assert!(differing * 100 <= total * others.len(), "backends disagree");
     }
 
+    /// An install from an earlier version has no ONNX Runtime; when it
+    /// arrives while the app runs, the next load uses it. Needs the
+    /// installed models and runtime; run alone (`--exact`), since the
+    /// library loads once per process.
+    #[cfg(feature = "ocr-onnx")]
+    #[test]
+    #[ignore]
+    fn the_runtime_is_used_once_it_arrives() {
+        use crate::providers::ocr_onnx;
+        use engine::{PpOcr, Want};
+        let installed = default_models_dir().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        for file in [
+            DET_FILE,
+            REC_FILE,
+            DICT_FILE,
+            ocr_onnx::DET_FILE,
+            ocr_onnx::REC_FILE,
+        ] {
+            std::fs::copy(installed.join(file), dir.path().join(file)).unwrap();
+        }
+        let want = Want {
+            backend: Backend::Auto,
+            gpu: false,
+        };
+        assert_eq!(
+            PpOcr::load(dir.path(), want).unwrap().backend(),
+            Backend::Rten
+        );
+
+        let library = ocr_onnx::RUNTIME.as_ref().unwrap().library;
+        let to = ocr_onnx::runtime_dir(dir.path());
+        std::fs::create_dir_all(&to).unwrap();
+        std::fs::copy(
+            ocr_onnx::runtime_dir(&installed).join(library),
+            to.join(library),
+        )
+        .unwrap();
+        assert_eq!(
+            PpOcr::load(dir.path(), want).unwrap().backend(),
+            Backend::OnnxCpu
+        );
+    }
+
     #[test]
     fn the_gpu_is_a_candidate_only_where_it_is_allowed_and_exists() {
         use engine::Want;

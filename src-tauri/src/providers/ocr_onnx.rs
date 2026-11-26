@@ -275,16 +275,20 @@ pub mod runtime {
     }
 
     /// The library loads once per process, and so does its failure:
-    /// a library that did not load is not tried again.
+    /// a library that is there but did not load is not tried again.
     static ENVIRONMENT: OnceLock<Result<Environment, String>> = OnceLock::new();
 
     fn environment(models_dir: &Path) -> Result<&'static Environment> {
+        let path =
+            library_path(models_dir).ok_or_else(|| anyhow!("no ONNX Runtime for this platform"))?;
+        // Checked before the one-time load, so that "not installed yet"
+        // is not what the process remembers: the library can arrive
+        // while the app runs.
+        if !path.is_file() {
+            return Err(anyhow!("{} is not installed", path.display()));
+        }
         ENVIRONMENT
             .get_or_init(|| {
-                let path = library_path(models_dir).ok_or("no ONNX Runtime for this platform")?;
-                if !path.is_file() {
-                    return Err(format!("{} is not installed", path.display()));
-                }
                 preload_directml(&path);
                 ort::init_from(&path)
                     .map_err(|e| format!("load {}: {e}", path.display()))?
