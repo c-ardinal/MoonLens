@@ -519,6 +519,11 @@
   border-color: var(--ml-px-red);
   color: var(--ml-px-red);
 }
+/* 図標のみのボタン（削除以外：コピー等）：通常の強調色 */
+.sbtn.icon.neutral:hover {
+  border-color: var(--ml-px-faint);
+  color: var(--ml-px-cream);
+}
 .sbtn:disabled {
   opacity: 0.4;
 }

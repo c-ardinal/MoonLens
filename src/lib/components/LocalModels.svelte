@@ -4,6 +4,7 @@
   import { llmModels } from '$lib/llm-models.svelte';
   import { systemProfile } from '$lib/system-profile.svelte';
   import { errorText } from '$lib/errors';
+  import { notify } from '$lib/toast.svelte';
   import ModelChoice from './ModelChoice.svelte';
 
   interface Props {
@@ -64,6 +65,7 @@
         if (current !== replacement) return;
       }
       await deleteLlmModel(id);
+      notify(`${data.models.find((m) => m.id === id)?.label ?? id}：削除完了`);
     });
 </script>
 

@@ -13,6 +13,7 @@
     type PluginDescriptor
   } from '$lib/ipc';
   import { errorText } from '$lib/errors';
+  import { notify } from '$lib/toast.svelte';
   import SettingRow from './SettingRow.svelte';
 
   type PluginUpdate = {
@@ -27,7 +28,6 @@
   let loading = $state(true);
   let installing = $state(false);
   let checking = $state(false);
-  let notice = $state<string | null>(null);
   let error = $state<string | null>(null);
   /** 更新確認の結果（未確認：null）。 */
   let updates = $state<PluginUpdate[] | null>(null);
@@ -74,12 +74,11 @@
   async function install() {
     if (installing) return;
     installing = true;
-    notice = null;
     error = null;
     try {
       const result = await pickAndInstallPlugin();
       if (result) {
-        notice = `追加完了：${result}`;
+        notify(`追加完了：${result}`);
         await refresh();
       }
     } catch (e) {
@@ -92,11 +91,10 @@
   async function checkUpdates() {
     if (checking) return;
     checking = true;
-    notice = null;
     error = null;
     try {
       updates = await checkPluginUpdates();
-      notice = updates.length === 0 ? '全拡張機能最新' : `更新あり：${updates.length} 件`;
+      notify(updates.length === 0 ? '全拡張機能最新' : `更新あり：${updates.length} 件`);
     } catch (e) {
       error = `更新確認失敗：${errorText(e)}`;
     } finally {
@@ -121,9 +119,6 @@
   </div>
 </SettingRow>
 
-{#if notice}
-  <div class="srow px-pop" role="status"><p class="row-label note">{notice}</p></div>
-{/if}
 {#if error}
   <div class="srow error px-pop" role="alert"><p class="row-label">{error}</p></div>
 {/if}
@@ -174,9 +169,6 @@
 {/if}
 
 <style>
-  .note {
-    color: var(--ml-px-amber);
-  }
   .empty {
     color: var(--ml-px-faint);
   }
