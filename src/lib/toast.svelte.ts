@@ -34,10 +34,15 @@ export const MAX_TOASTS = 3;
 /** 既定の表示時間（ms）：通常・エラー・操作ボタン付き。 */
 export const TOAST_MS = { info: 2500, error: 6000, action: 6000 } as const;
 
+/** 表示時間の計測を停止する要因。 */
+export type HoldSource = 'pointer' | 'focus';
+
 interface Live {
   toast: Toast;
   ms: number;
   timer: ReturnType<typeof setTimeout> | undefined;
+  /** 計測の停止要因（滞在中のポインター・フォーカス）。空の場合のみ計測。 */
+  holds: Set<HoldSource>;
   onClose?: (reason: CloseReason) => void;
 }
 
@@ -65,7 +70,7 @@ export function show(options: ToastOptions): number {
   const kind = options.kind ?? 'info';
   const toast: Toast = { id: nextId++, kind, text: options.text, action: options.action ?? null };
   const ms = options.ms ?? (toast.action ? TOAST_MS.action : TOAST_MS[kind]);
-  const entry: Live = { toast, ms, timer: undefined, onClose: options.onClose };
+  const entry: Live = { toast, ms, timer: undefined, holds: new Set(), onClose: options.onClose };
   live.set(toast.id, entry);
   state.items = [...state.items, toast];
   arm(entry);
@@ -74,15 +79,19 @@ export function show(options: ToastOptions): number {
 }
 
 /** 表示時間の計測を停止（ポインター・フォーカスの滞在中）。 */
-export function hold(id: number): void {
+export function hold(id: number, by: HoldSource): void {
   const entry = live.get(id);
-  if (entry) clearTimeout(entry.timer);
+  if (!entry) return;
+  entry.holds.add(by);
+  clearTimeout(entry.timer);
 }
 
-/** 表示時間の計測を最初から再開。 */
-export function release(id: number): void {
+/** 停止要因を解除。全要因の解除後に計測を最初から再開。 */
+export function release(id: number, by: HoldSource): void {
   const entry = live.get(id);
-  if (entry) arm(entry);
+  if (!entry) return;
+  entry.holds.delete(by);
+  if (entry.holds.size === 0) arm(entry);
 }
 
 /** 全通知を満了扱いで終了（ウィンドウの終了前：取消猶予中の操作を確定）。 */

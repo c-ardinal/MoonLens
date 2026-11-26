@@ -37,12 +37,14 @@ describe('toast', () => {
     expect(onClose).toHaveBeenCalledExactlyOnceWith('timeout');
   });
 
-  it('hold 中は終了せず、release 後に計測を再開', () => {
+  it('hold 中は終了せず、全要因の release 後に計測を再開', () => {
     const id = show({ text: 'a' });
-    hold(id);
+    hold(id, 'pointer');
+    hold(id, 'focus');
+    release(id, 'pointer');
     vi.advanceTimersByTime(TOAST_MS.info * 4);
     expect(texts()).toEqual(['a']);
-    release(id);
+    release(id, 'focus');
     vi.advanceTimersByTime(TOAST_MS.info - 1);
     expect(texts()).toEqual(['a']);
     vi.advanceTimersByTime(1);

@@ -18,10 +18,10 @@
       class="toast"
       class:error={t.kind === 'error'}
       role={t.kind === 'error' ? 'alert' : undefined}
-      onmouseenter={() => hold(t.id)}
-      onmouseleave={() => release(t.id)}
-      onfocusin={() => hold(t.id)}
-      onfocusout={() => release(t.id)}
+      onmouseenter={() => hold(t.id, 'pointer')}
+      onmouseleave={() => release(t.id, 'pointer')}
+      onfocusin={() => hold(t.id, 'focus')}
+      onfocusout={() => release(t.id, 'focus')}
     >
       <p class="text">{t.text}</p>
       {#if t.action}
