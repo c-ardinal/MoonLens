@@ -349,7 +349,6 @@
                 {#if field.kind === 'glossary'}
                   <GlossaryEditor
                     label={field.label}
-                    help={field.help}
                     value={getPath(draft, field.path)}
                     defaultLang={getPath(draft, 'subtitle.target_language') ?? 'ja'}
                     onChange={(v) => update(field.path, v)}
