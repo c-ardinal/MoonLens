@@ -120,8 +120,8 @@
 
   async function wipe() {
     try {
-      const count = entries.length;
-      await clearHistory();
+      // 件数は実際の削除行数（検索中・500 件超過時は表示件数と不一致）
+      const count = await clearHistory();
       loaded = [];
       confirmClear = false;
       notify(`履歴 ${count} 件：全消去完了`);
