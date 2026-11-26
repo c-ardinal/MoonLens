@@ -11,6 +11,7 @@
   import MacOnboarding from '$lib/components/MacOnboarding.svelte';
   import AppNav from '$lib/components/AppNav.svelte';
   import CommandPalette from '$lib/components/CommandPalette.svelte';
+  import ContextMenu from '$lib/components/ContextMenu.svelte';
 
   let { children } = $props();
   const unlisteners: (() => void)[] = [];
@@ -64,3 +65,4 @@
   {@render children()}
 {/if}
 <MacOnboarding />
+<ContextMenu />
