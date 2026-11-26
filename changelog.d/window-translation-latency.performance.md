@@ -1,0 +1,3 @@
+- Window translation reads only its own region from the screen instead of the whole monitor on every check, which shortens the pause between a change on screen and its reading and lowers the idle CPU load, most of all on 4K displays.
+- Lines that did not change keep their recognised text even when the text detector outlines them a pixel differently after a change elsewhere in the region (a new chat line, a blinking cursor); only lines whose pixels changed are recognised again.
+- New text whose reading took longer than the check interval is confirmed at once instead of after another interval, and a long text shows each translated part as soon as it is ready instead of all parts at the end.

@@ -1039,25 +1039,35 @@ async fn run_watch(
     let mut gate = DragGate::default();
     // The first reading happens at once, as on a manual refresh.
     let mut first = true;
+    // New text waits to be confirmed and reading it took an interval
+    // or longer: the screen had that long to change, so the confirming
+    // capture follows without another pause. Only once in a row, so a
+    // region that never settles is not read back to back.
+    let mut confirm_now = false;
     loop {
         let mut manual = std::mem::take(&mut first);
+        let confirming = std::mem::take(&mut confirm_now) && EXCLUDED_FROM_CAPTURE;
+        let mut interval = settings
+            .snapshot()
+            .performance
+            .region_watcher_poll_ms
+            .max(50) as u64;
+        if !EXCLUDED_FROM_CAPTURE {
+            interval = interval.max(HIDDEN_CAPTURE_MIN_MS);
+        }
         if !manual {
-            let mut interval = settings
-                .snapshot()
-                .performance
-                .region_watcher_poll_ms
-                .max(50) as u64;
-            if !EXCLUDED_FROM_CAPTURE {
-                interval = interval.max(HIDDEN_CAPTURE_MIN_MS);
-            }
             // Mid-drag nothing is captured: poll fast to catch the drop.
-            if gate.moving() {
-                interval = lens_drag::MOVING_POLL_MS;
-            }
+            let pause = if gate.moving() {
+                lens_drag::MOVING_POLL_MS
+            } else if confirming {
+                0
+            } else {
+                interval
+            };
             tokio::select! {
                 _ = stop.notified() => break,
                 _ = kick.notified() => manual = true,
-                _ = tokio::time::sleep(Duration::from_millis(interval)) => {}
+                _ = tokio::time::sleep(Duration::from_millis(pause)) => {}
             }
         }
         let target_language = registry
@@ -1092,7 +1102,9 @@ async fn run_watch(
         manual |= was_moving;
 
         let (a, r, i) = (app.clone(), registry.clone(), id.clone());
+        let started = std::time::Instant::now();
         let grabbed = tokio::task::spawn_blocking(move || grab(&a, &r, &i)).await;
+        let capture_ms = started.elapsed().as_millis();
         let (image, rect) = match grabbed {
             Ok(Ok(g)) => g,
             Ok(Err(e)) => {
@@ -1105,7 +1117,33 @@ async fn run_watch(
             image,
             geometry: as_geometry(rect),
         };
-        match tracker.tick(frame, manual, &env).await {
+        let (width, height) = (frame.image.width(), frame.image.height());
+        let started = std::time::Instant::now();
+        let ticked = tracker.tick(frame, manual, &env).await;
+        let tick = started.elapsed();
+        if !matches!(ticked, Ok(Tick::Unchanged | Tick::Moved)) {
+            // Where a reading's time went, next to the OCR and
+            // translation lines of the pipeline.
+            tracing::info!(
+                "window translation {width}x{height}: capture {capture_ms} ms, reading {} ms ({})",
+                tick.as_millis(),
+                match &ticked {
+                    Ok(Tick::Settling) => "new text, confirming",
+                    Ok(Tick::SameText) => "same text",
+                    Ok(Tick::Empty) => "no text",
+                    Ok(Tick::Decoded { .. }) => "QR code",
+                    Ok(Tick::Translated {
+                        requested: true, ..
+                    }) => "translated",
+                    Ok(Tick::Translated { .. }) => "shown without a request",
+                    _ => "failed",
+                }
+            );
+        }
+        confirm_now = !confirming
+            && matches!(ticked, Ok(Tick::Settling))
+            && tick >= Duration::from_millis(interval);
+        match ticked {
             Ok(Tick::Translated {
                 source,
                 translation,
