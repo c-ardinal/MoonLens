@@ -43,6 +43,10 @@ export interface Slab {
   h: number;
   k: number;
 }
+/** 三角（Pix.tri）の寸法。 */
+export const TRI_W = 4;
+export const TRI_H = 8;
+
 /** 字面の打点範囲（両端含む、描画原点基準）。 */
 export interface InkBox {
   x0: number;
@@ -189,6 +193,21 @@ export class Pix {
       this.px(cx - i, cy + r - i, c);
       this.px(cx - r + i, cy - i, c);
     }
+  }
+
+  /**
+   * 右向きの三角（幅 TRI_W・高さ TRI_H の階段形）。
+   * 字形の「▶」は字面の中心が文字より下方へ偏るため、図形で描画。
+   */
+  tri(x: number, y: number, c: Color) {
+    for (let j = 0; j < TRI_H; j++) this.hl(x, y + j, Math.min(j, TRI_H - 1 - j) + 1, c);
+  }
+
+  /** 字面の垂直中心（text() の y からの距離）。図形を文字の中央へ揃える基準。 */
+  inkMidY(s: string, font = PIXEL_FONT): number {
+    const r = this.raster(s, font);
+    const ink = r && inkBounds(r.d, r.w, r.h);
+    return ink ? (ink.y0 + ink.y1 + 1) / 2 : TRI_H;
   }
 
   /** 2 色の網点塗り。level は b 色の比率（0〜1）。 */

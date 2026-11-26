@@ -229,7 +229,7 @@
         <section class="px-win notice" role="alert">
           <p class="min-w-0 flex-1 break-words">
             {n.message}
-            {#if n.action}<a href={n.action} class="link">設定▶</a>{/if}
+            {#if n.action}<a href={n.action} class="link">設定<span class="px-tri" aria-hidden="true"></span></a>{/if}
           </p>
           <button class="close" title="閉じる" aria-label="通知を閉じる" onclick={() => dismissNotice(n.id).catch(() => {})}>
             <X class="h-4 w-4" />
@@ -299,6 +299,10 @@
     color: var(--ml-px-red);
   }
   .link {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--ml-sp-2);
+    vertical-align: bottom;
     color: var(--ml-px-amber);
   }
 </style>
