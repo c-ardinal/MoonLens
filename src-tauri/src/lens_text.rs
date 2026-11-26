@@ -8,11 +8,16 @@
 use anyhow::{anyhow, Context, Result};
 use serde::{Deserialize, Serialize};
 use tauri::{
-    AppHandle, Manager, PhysicalPosition, PhysicalSize, WebviewUrl, WebviewWindow,
-    WebviewWindowBuilder,
+    AppHandle, Emitter, EventTarget, Manager, PhysicalPosition, PhysicalSize, WebviewUrl,
+    WebviewWindow, WebviewWindowBuilder,
 };
 
 use crate::lens::{self, geometry::LensOuterRect as Rect, LensRegistryHandle};
+
+/// Event telling a lens window what the user did in its companion (the
+/// renderer's `TextCommand`); sent from here when the companion was
+/// closed through the window system.
+const COMMAND_EVENT: &str = "moonlens://lens-text-command";
 
 /// Space between the lens and a docked companion (CSS pixels).
 const GAP_CSS: f64 = 4.0;
@@ -264,7 +269,9 @@ pub fn set_dock(
     let Some(dock) = dock else {
         registry.set_text(id, None);
         if let Some(win) = app.get_webview_window(&label) {
-            win.close().ok();
+            // At once, not on request: switching back to an outside
+            // view right away must not find the old window.
+            win.destroy().ok();
         }
         return Ok(());
     };
@@ -272,31 +279,32 @@ pub fn set_dock(
         .get_webview_window(id)
         .ok_or_else(|| anyhow!("lens window {id} not found"))?;
     let scale = lens_win.scale_factor().unwrap_or(1.0);
-    let known = registry.with_text(id, |f| f.set_dock(dock)).is_some();
-    if !known {
+    if registry.with_text(id, |f| f.set_dock(dock)).is_none() {
+        // The window comes first: a placement without a window reads
+        // as a companion the user closed (see `follow`).
+        if app.get_webview_window(&label).is_none() {
+            let url = format!("/lens/text/?id={id}");
+            WebviewWindowBuilder::new(app, &label, WebviewUrl::App(url.into()))
+                .title("MoonLens テキスト")
+                .inner_size(WIDTH_CSS, HEIGHT_CSS)
+                .min_inner_size(MIN_WIDTH_CSS, MIN_HEIGHT_CSS)
+                .decorations(false)
+                .shadow(false)
+                .always_on_top(true)
+                .skip_taskbar(true)
+                .resizable(true)
+                // Like the lens: no window reads its own translations back.
+                .content_protected(lens::EXCLUDED_FROM_CAPTURE)
+                .visible(false)
+                .build()
+                .context("create lens text window")?;
+        }
         registry.set_text(id, Some(Follow::new(dock, scale)));
     }
-    if app.get_webview_window(&label).is_none() {
-        let url = format!("/lens/text/?id={id}");
-        let win = WebviewWindowBuilder::new(app, &label, WebviewUrl::App(url.into()))
-            .title("MoonLens テキスト")
-            .inner_size(WIDTH_CSS, HEIGHT_CSS)
-            .min_inner_size(MIN_WIDTH_CSS, MIN_HEIGHT_CSS)
-            .decorations(false)
-            .shadow(false)
-            .always_on_top(true)
-            .skip_taskbar(true)
-            .resizable(true)
-            // Like the lens: no window reads its own translations back.
-            .content_protected(lens::EXCLUDED_FROM_CAPTURE)
-            .visible(false)
-            .build()
-            .context("create lens text window")?;
-        follow(app, registry, id, &lens_win);
+    follow(app, registry, id, &lens_win);
+    if let Some(win) = app.get_webview_window(&label) {
         win.show().ok();
         let _ = win.set_always_on_top(true);
-    } else {
-        follow(app, registry, id, &lens_win);
     }
     Ok(())
 }
@@ -305,6 +313,19 @@ pub fn set_dock(
 /// [`Follow::step`]). Nothing to do without a companion.
 pub fn follow(app: &AppHandle, registry: &LensRegistryHandle, id: &str, lens_win: &WebviewWindow) {
     let Some(win) = app.get_webview_window(&label(id)) else {
+        // Closed through the window system (Alt+F4): drop the placement
+        // and tell the lens, as the companion's close button does.
+        if registry.with_text(id, |_| ()).is_some() {
+            registry.set_text(id, None);
+            let target = EventTarget::WebviewWindow {
+                label: id.to_string(),
+            };
+            let _ = app.emit_to(
+                target,
+                COMMAND_EVENT,
+                serde_json::json!({ "kind": "close" }),
+            );
+        }
         return;
     };
     let (Ok(lens_rect), Ok(actual)) = (lens::inner_rect(lens_win), lens::inner_rect(&win)) else {
