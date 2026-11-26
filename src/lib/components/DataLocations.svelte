@@ -9,6 +9,7 @@
     type OrphanFile
   } from '$lib/ipc';
   import { errorText } from '$lib/errors';
+  import { notify } from '$lib/toast.svelte';
   import SettingRow from './SettingRow.svelte';
 
   let info = $state<DataLocations | null>(null);
@@ -47,6 +48,7 @@
     error = null;
     try {
       await deleteOrphanLlmFile(name);
+      notify(`${name}：削除完了`);
     } catch (e) {
       error = errorText(e);
     }

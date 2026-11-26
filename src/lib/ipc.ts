@@ -481,6 +481,10 @@ export const listHistory = (args: { limit?: number; query?: string } = {}) =>
 export const deleteHistoryEntry = (id: number) =>
   safeInvoke<number>('delete_history_entry', { id }, 0);
 
+/** 個別削除の取消：削除済みの履歴を元の id・日時で復元。 */
+export const restoreHistoryEntry = (entry: HistoryEntry) =>
+  safeInvoke<number>('restore_history_entry', { entry }, 0);
+
 export const clearHistory = () => safeInvoke<number>('clear_history', undefined, 0);
 
 /* ------------------------------ lifecycle ------------------------------ */

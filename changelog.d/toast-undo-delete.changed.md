@@ -1,0 +1,3 @@
+- History: deleting a single entry now shows a notification with an undo button that puts the entry back.
+- Main window: copy, delete and plugin results are reported through one shared notification at the bottom left instead of per-screen labels.
+- History, text translation and image translation: copy and delete buttons are icon-only (names remain as tooltips and for screen readers).

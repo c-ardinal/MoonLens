@@ -3,7 +3,7 @@
   import PixelTitle from '$lib/components/PixelTitle.svelte';
   import { onDestroy, onMount } from 'svelte';
   import { goto } from '$app/navigation';
-  import { Check, Copy, Eye, EyeOff, FolderOpen, ImageIcon, Loader2 } from 'lucide-svelte';
+  import { Copy, Eye, EyeOff, FolderOpen, ImageIcon, Loader2 } from 'lucide-svelte';
   import {
     getSettings,
     onImageAnalysis,
@@ -18,6 +18,7 @@
   import FlowText from '$lib/components/FlowText.svelte';
   import { parseError, type UiError } from '$lib/errors';
   import { extractText } from '$lib/result';
+  import { copyText } from '$lib/toast.svelte';
   import {
     IMAGE_ACCEPT,
     MAX_IMAGE_BYTES,
@@ -44,7 +45,6 @@
   let error = $state<UiError | null>(null);
   let showOriginal = $state(false);
   let dragging = $state(false);
-  let copied = $state(false);
   let target = $state('ja');
 
   let run = 0;
@@ -142,14 +142,7 @@
     const text = blocks.length
       ? joinedText(blocks, showOriginal ? 'source' : 'translation')
       : plainText;
-    if (!text) return;
-    try {
-      await navigator.clipboard.writeText(text);
-      copied = true;
-      setTimeout(() => (copied = false), 1500);
-    } catch (e) {
-      error = parseError(e);
-    }
+    if (text) await copyText(text, showOriginal && blocks.length ? '原文' : '訳文');
   }
 
   function onPaste(e: ClipboardEvent) {
@@ -263,11 +256,13 @@
           {#if showOriginal}<Eye class="h-4 w-4" />訳文表示{:else}<EyeOff class="h-4 w-4" />原文表示{/if}
         </button>
         <button
-          class="inline-flex items-center gap-1.5 rounded-ml-sm border border-border bg-surface px-3 py-1.5 text-sm transition hover:border-accent/60 disabled:opacity-50"
+          class="sbtn icon neutral"
+          title="全文をコピー"
+          aria-label="全文をコピー"
           onclick={copyAll}
           disabled={busy || (blocks.length === 0 && !plainText)}
         >
-          {#if copied}<Check class="h-4 w-4" />コピー済{:else}<Copy class="h-4 w-4" />全文コピー{/if}
+          <Copy class="h-4 w-4" />
         </button>
       {/if}
       <button

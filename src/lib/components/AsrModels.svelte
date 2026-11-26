@@ -11,6 +11,7 @@
   } from '$lib/ipc';
   import { systemProfile } from '$lib/system-profile.svelte';
   import { errorText } from '$lib/errors';
+  import { notify } from '$lib/toast.svelte';
   import ModelChoice from './ModelChoice.svelte';
 
   let data = $state<AsrModels>({ selected: '', dir: '', models: [] });
@@ -71,6 +72,7 @@
         if (data.selected !== replacement) return;
       }
       await deleteAsrModel(id);
+      notify(`${data.models.find((m) => m.id === id)?.label ?? id}：削除完了`);
     });
 </script>
 
