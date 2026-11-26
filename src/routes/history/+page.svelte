@@ -1,8 +1,20 @@
+<script module lang="ts">
+  import { SvelteSet } from 'svelte/reactivity';
+
+  /**
+   * 削除操作済みの id：取消猶予中は非表示のみ、猶予の満了後に削除を確定。
+   * 画面の実体間で共有：猶予中に他画面へ遷移し再表示した場合も非表示・取消を維持。
+   * id は AUTOINCREMENT で再利用なし：確定後の残置は無害。
+   */
+  const removed = new SvelteSet<number>();
+</script>
+
 <script lang="ts">
   import PixelTitle from '$lib/components/PixelTitle.svelte';
   import { onDestroy, onMount } from 'svelte';
   import { replay, type Effect } from '$lib/pixel/transition';
-  import { Search, Trash2, RefreshCw, Cloud, Cpu, Copy, Check } from 'lucide-svelte';
+  import { Search, Trash2, RefreshCw, Cloud, Cpu, Copy } from 'lucide-svelte';
+  import { copyText, notify, undoable } from '$lib/toast.svelte';
   import {
     HISTORY_FILTERS,
     applyFilter,
@@ -20,7 +32,9 @@
   } from '$lib/ipc';
 
   let q = $state('');
-  let entries = $state<HistoryEntry[]>([]);
+  /** 読込済みの履歴（取消猶予中の削除対象を含む）。 */
+  let loaded = $state<HistoryEntry[]>([]);
+  const entries = $derived(loaded.filter((e) => !removed.has(e.id)));
   let loading = $state(true);
   let error = $state<string | null>(null);
   let confirmClear = $state(false);
@@ -28,25 +42,18 @@
   let keepHistory = $state<boolean | null>(null);
   let filter = $state<HistoryFilter>('all');
   let selectedId = $state<number | null>(null);
-  let copied = $state<'source' | 'result' | null>(null);
-  let copiedTimer: ReturnType<typeof setTimeout> | undefined;
 
   const visible = $derived(applyFilter(entries, filter));
   const counts = $derived(countByFilter(entries));
   const current = $derived(visible.find((e) => e.id === nextSelection(visible, selectedId)) ?? null);
 
-  async function copy(which: 'source' | 'result') {
+  function copy(which: 'source' | 'result') {
     const text = which === 'source' ? current?.source_text : current?.result_text;
-    if (!text) return;
-    try {
-      await navigator.clipboard.writeText(text);
-      copied = which;
-      if (copiedTimer) clearTimeout(copiedTimer);
-      copiedTimer = setTimeout(() => (copied = null), 1500);
-    } catch (e) {
-      error = `コピー失敗：${String(e)}`;
-    }
+    if (text) void copyText(text, which === 'source' ? '原文' : resultLabel(current!));
   }
+
+  /** 結果欄の名称（QR は翻訳なし）。 */
+  const resultLabel = (e: HistoryEntry) => (e.kind === 'qr' ? '内容' : '訳文');
 
   function dateLabel(created: number): string {
     return new Date(created * 1000).toLocaleString('ja-JP', {
@@ -63,7 +70,7 @@
     loading = true;
     error = null;
     try {
-      entries = await listHistory({ limit: 500, query });
+      loaded = await listHistory({ limit: 500, query });
     } catch (e) {
       error = String(e);
     } finally {
@@ -79,7 +86,6 @@
   });
   onDestroy(() => {
     if (refreshTimer) clearTimeout(refreshTimer);
-    if (copiedTimer) clearTimeout(copiedTimer);
   });
 
   function onQueryInput(value: string) {
@@ -89,25 +95,38 @@
     refreshTimer = setTimeout(() => refresh(value), 180);
   }
 
-  async function remove(id: number) {
-    // Optimistic UI so the click feels instant; roll back if the
-    // backend says otherwise.
-    const prev = entries;
-    entries = entries.filter((e) => e.id !== id);
-    try {
-      await deleteHistoryEntry(id);
-    } catch (e) {
-      entries = prev;
-      error = String(e);
-    }
+  /**
+   * 個別削除：一覧から即時に除外し、通知の「取消」で復元。
+   * 削除の確定は通知の終了時（画面遷移後も継続）。
+   */
+  function remove(id: number) {
+    // 選択は隣接項目へ移動（先頭への移動を回避）
+    const i = visible.findIndex((e) => e.id === id);
+    const neighbour = visible[i + 1] ?? visible[i - 1] ?? null;
+    undoable({
+      text: '履歴 1 件：削除完了',
+      failure: '削除失敗',
+      apply: () => {
+        removed.add(id);
+        if (selectedId === id || current?.id === id) selectedId = neighbour?.id ?? null;
+      },
+      revert: () => {
+        removed.delete(id);
+        selectedId = id;
+      },
+      commit: () => deleteHistoryEntry(id)
+    });
   }
 
   async function wipe() {
     try {
+      const count = entries.length;
       await clearHistory();
-      entries = [];
+      loaded = [];
       confirmClear = false;
+      notify(`履歴 ${count} 件：全消去完了`);
     } catch (e) {
+      confirmClear = false;
       error = String(e);
     }
   }
@@ -264,11 +283,8 @@
               <div>
                 <div class="mb-1 flex items-center justify-between">
                   <h2 class="text-xs font-medium text-ink-muted">原文</h2>
-                  <button
-                    class="inline-flex items-center gap-1 rounded-ml-sm px-2 py-0.5 text-xs text-ink-muted transition hover:bg-surface-muted hover:text-ink"
-                    onclick={() => copy('source')}
-                  >
-                    {#if copied === 'source'}<Check class="h-3.5 w-3.5 text-accent" />コピー完了{:else}<Copy class="h-3.5 w-3.5" />コピー{/if}
+                  <button class="sbtn icon neutral" title="原文をコピー" aria-label="原文をコピー" onclick={() => copy('source')}>
+                    <Copy class="h-3.5 w-3.5" />
                   </button>
                 </div>
                 <p class="font-mono text-xs leading-relaxed break-words whitespace-pre-wrap text-ink-muted">{current.source_text}</p>
@@ -277,12 +293,14 @@
             {#if current.result_text}
               <div>
                 <div class="mb-1 flex items-center justify-between">
-                  <h2 class="text-xs font-medium text-ink-muted">{current.kind === 'qr' ? '内容' : '訳文'}</h2>
+                  <h2 class="text-xs font-medium text-ink-muted">{resultLabel(current)}</h2>
                   <button
-                    class="inline-flex items-center gap-1 rounded-ml-sm px-2 py-0.5 text-xs text-ink-muted transition hover:bg-surface-muted hover:text-ink"
+                    class="sbtn icon neutral"
+                    title="{resultLabel(current)}をコピー"
+                    aria-label="{resultLabel(current)}をコピー"
                     onclick={() => copy('result')}
                   >
-                    {#if copied === 'result'}<Check class="h-3.5 w-3.5 text-accent" />コピー完了{:else}<Copy class="h-3.5 w-3.5" />コピー{/if}
+                    <Copy class="h-3.5 w-3.5" />
                   </button>
                 </div>
                 <p class="text-sm leading-relaxed break-words whitespace-pre-wrap">{current.result_text}</p>
@@ -291,10 +309,12 @@
           </div>
           <div class="flex justify-end border-t border-border px-4 py-2">
             <button
-              class="inline-flex items-center gap-1 rounded-ml-sm px-2 py-1 text-xs text-ink-muted transition hover:bg-red-500/10 hover:text-red-500"
+              class="sbtn icon"
+              title="この履歴を削除"
+              aria-label="この履歴を削除"
               onclick={() => current && remove(current.id)}
             >
-              <Trash2 class="h-3.5 w-3.5" />削除
+              <Trash2 class="h-3.5 w-3.5" />
             </button>
           </div>
         </section>

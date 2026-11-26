@@ -12,9 +12,10 @@
   import { holdMotion } from '$lib/pixel/motion.svelte';
   import PixelTitle from '$lib/components/PixelTitle.svelte';
   import { onDestroy, onMount } from 'svelte';
-  import { ArrowLeftRight, Check, Copy, Cpu, Cloud, Languages, Loader2, X } from 'lucide-svelte';
+  import { ArrowLeftRight, Copy, Cpu, Cloud, Languages, Loader2, X } from 'lucide-svelte';
   import { getSettings, recordTranslation, runTranslate, type TaskResult } from '$lib/ipc';
   import { extractText } from '$lib/result';
+  import { copyText } from '$lib/toast.svelte';
   import { parseError, type UiError } from '$lib/errors';
   import { LANGUAGES } from '$lib/lens-overlay';
   import { translateLines, type LineHistory } from '$lib/translate-line';
@@ -40,9 +41,7 @@
   let latencyMs = $state<number | null>(null);
   let autoTranslate = $state(false);
   let progress = $state<string | null>(null);
-  let copied = $state(false);
 
-  let copiedTimer: ReturnType<typeof setTimeout> | undefined;
   let debounceTimer: ReturnType<typeof setTimeout> | undefined;
   /** Bumped on every run and on clear, so a run whose input or language
    *  changed under it does not overwrite the newer state. */
@@ -99,7 +98,6 @@
 
   onDestroy(() => {
     runId += 1;
-    if (copiedTimer) clearTimeout(copiedTimer);
     if (debounceTimer) clearTimeout(debounceTimer);
   });
 
@@ -239,16 +237,8 @@
     if (debounceTimer) clearTimeout(debounceTimer);
   }
 
-  async function copyResult(): Promise<void> {
-    if (!resultText) return;
-    try {
-      await navigator.clipboard.writeText(resultText);
-      copied = true;
-      if (copiedTimer) clearTimeout(copiedTimer);
-      copiedTimer = setTimeout(() => (copied = false), 1500);
-    } catch (e) {
-      error = { code: 'error', message: `コピー失敗：${String(e)}`, fix: null };
-    }
+  function copyResult(): void {
+    if (resultText) void copyText(resultText, '訳文');
   }
 
   function onKeyDown(e: KeyboardEvent): void {
@@ -414,15 +404,13 @@
         </span>
         <button
           type="button"
-          class="inline-flex shrink-0 items-center gap-1 rounded-ml-sm px-2 py-1 text-xs text-ink-muted transition hover:bg-surface-muted hover:text-ink disabled:opacity-40"
+          class="sbtn icon neutral"
+          title="訳文をコピー"
+          aria-label="訳文をコピー"
           disabled={!resultText}
           onclick={copyResult}
         >
-          {#if copied}
-            <Check class="h-3.5 w-3.5 text-accent" />コピー完了
-          {:else}
-            <Copy class="h-3.5 w-3.5" />コピー
-          {/if}
+          <Copy class="h-3.5 w-3.5" />
         </button>
       </div>
     </section>
