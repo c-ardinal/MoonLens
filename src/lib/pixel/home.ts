@@ -15,8 +15,8 @@ export const HOME_MIN = { w: 560, h: 318 } as const;
 const HINT_MIN_H = 344;
 /** 見出し帯の機能名の最大幅（論理画素）。右端の番号表示と非重複。 */
 const TITLE_ROOM = 244;
-/** 機能名の縦送りの移動量（論理画素）。帯の高さ（62）未満で、開始時も文字の一部を表示。 */
-const TITLE_ROLL = 40;
+/** 機能名の縦送りの移動量（論理画素）。帯の高さと同値：退場側の消失と入場側の出現が帯の端で一致。 */
+const TITLE_ROLL = 62;
 /** 右端の番号表示（分数）の占有幅（論理画素）。機能名の切抜き範囲から除外。 */
 const NUMBER_ROOM = 44;
 
@@ -49,6 +49,21 @@ export interface HomeView {
   /** 選択切替の演出：魔法陣の表示位置（小数）と機能名の縦送りの進行度（0〜1）。 */
   turn?: number;
   slide?: number;
+  /** 退場側の機能名：項目番号と開始時の縦位置（論理画素、定位置は 0）。 */
+  leave?: { index: number; from: number };
+}
+
+/**
+ * 機能名の縦送りの位置（論理画素、定位置は 0）。dir は魔法陣の回転方向（1：下から入場、-1：上から入場）。
+ * 入場側と退場側は同方向へ同時に等速移動（12 fps の各コマで退場側を視認可能）。退場側は leaveFrom から帯の外まで。
+ */
+export function titleOffsets(slide: number, dir: 1 | -1, leaveFrom?: number): { enter: number; leave: number | null } {
+  const rest = 1 - slide;
+  const enter = Math.round(rest * TITLE_ROLL) * dir;
+  if (leaveFrom === undefined) return { enter, leave: null };
+  const out = -dir * TITLE_ROLL;
+  // 端数処理は方向に対し対称
+  return { enter, leave: Math.round((out + (leaveFrom - out) * rest) * dir) * dir };
 }
 
 export type HomeRegion = 'go' | 'engines' | 'recent';
@@ -101,19 +116,19 @@ export function drawHome(p: Pix, v: HomeView) {
 
   // 見出し帯：骨白の段影＋琥珀の帯＋斜体の機能名。帯と番号表示は固定。
   // 切替時は機能名のみ帯の内側で縦送り（魔法陣の回転方向に一致、後方の項目は下から）。
-  // 横移動なし：右端の番号表示（分数）との干渉を回避。
-  const item = v.items[v.selected];
-  const s = v.slide ?? 1;
+  // 切替前の機能名は同方向へ退場。横移動なし：右端の番号表示（分数）との干渉を回避。
   const dir = v.turn !== undefined && v.selected < v.turn ? -1 : 1;
-  const roll = Math.round((1 - s) * (1 - s) * TITLE_ROLL) * dir;
+  const off = titleOffsets(v.slide ?? 1, dir, v.leave?.from);
   p.slab(dx + 300, c.top + 8, 360, 62, K, 9);
   p.slab(dx + 312, c.top, 340, 62, K, 5);
   // 機能名：番号表示（右端）の手前へ収まる寸法へ縮小（最大 44px）
-  const title = item?.title ?? item?.label ?? '';
-  const fit = Math.min(44, Math.floor((44 * TITLE_ROOM) / Math.max(1, p.textW(title, `700 44px ${TITLE_FONT_FAMILY}`))));
-  const titleFont = { k: K, font: `700 ${fit}px ${TITLE_FONT_FAMILY}` };
-  const titleY = c.top + 6 + Math.round((44 - fit) * 0.6);
-  if (roll === 0) p.text(title, dx + 342, titleY, 0, titleFont);
+  const drawTitle = (item: DialItem | undefined, dy: number) => {
+    const title = item?.title ?? item?.label ?? '';
+    const fit = Math.min(44, Math.floor((44 * TITLE_ROOM) / Math.max(1, p.textW(title, `700 44px ${TITLE_FONT_FAMILY}`))));
+    const y = c.top + 6 + Math.round((44 - fit) * 0.6);
+    p.text(title, dx + 342, y + dy, 0, { k: K, font: `700 ${fit}px ${TITLE_FONT_FAMILY}` });
+  };
+  if (off.enter === 0 && off.leave === null) drawTitle(v.items[v.selected], 0);
   else {
     // 帯の高さ・番号表示の手前で切抜き、帯の外へ文字を出さない
     const g = p.g;
@@ -121,7 +136,8 @@ export function drawHome(p: Pix, v: HomeView) {
     g.beginPath();
     g.rect(dx + 312, c.top, w - NUMBER_ROOM - (dx + 312), 62);
     g.clip();
-    p.text(title, dx + 342, titleY + roll, 0, titleFont);
+    if (off.leave !== null && v.leave) drawTitle(v.items[v.leave.index], off.leave);
+    drawTitle(v.items[v.selected], off.enter);
     g.restore();
   }
   const n = String(v.selected + 1).padStart(2, '0'),

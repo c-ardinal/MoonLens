@@ -1,0 +1,2 @@
+- Main window: animations keep running while a window-translation window is open (they stopped whenever one read its range continuously).
+- Home: on a selection change the previous title slides out in the rotation direction while the new one slides in, instead of vanishing.
