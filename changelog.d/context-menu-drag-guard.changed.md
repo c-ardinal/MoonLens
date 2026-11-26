@@ -1,0 +1,1 @@
+- The built-in browser context menu no longer appears in any window. Text fields show an edit menu (cut / copy / paste / select all) and selected text shows copy; elsewhere right-click does nothing.
