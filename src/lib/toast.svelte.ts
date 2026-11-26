@@ -1,11 +1,13 @@
 /**
  * メインウィンドウ共通の通知（画面下端へ一時表示）。
- * 用途：操作結果（コピー完了・削除完了）、操作の失敗、取消可能な操作の猶予表示。
+ * 用途：操作結果（コピー完了・削除完了）、操作の失敗、実行済み操作の取消。
  * 継続する状態（読込失敗・設定の不整合等）は対象外：各画面の常設表示を使用。
  *
  * 各通知は「表示中 → 終了」の一方向。終了理由は 1 回のみ確定し、onClose へ通知。
  * 表示は Toaster.svelte（+layout.svelte へ配置）。
  */
+
+import { errorText } from '$lib/errors';
 
 export type ToastKind = 'info' | 'error';
 /** 終了理由。action：通知内の操作ボタン、timeout：表示時間の満了、dismiss：利用者による閉鎖。 */
@@ -94,11 +96,6 @@ export function release(id: number, by: HoldSource): void {
   if (entry.holds.size === 0) arm(entry);
 }
 
-/** 全通知を満了扱いで終了（ウィンドウの終了前：取消猶予中の操作を確定）。 */
-export function flush(): void {
-  for (const id of [...live.keys()]) close(id, 'timeout');
-}
-
 export const toasts = {
   /** 表示中の通知（古い順）。 */
   get items(): readonly Toast[] {
@@ -121,36 +118,27 @@ export async function copyText(text: string, label: string): Promise<boolean> {
     notify(`${label}：コピー完了`);
     return true;
   } catch (e) {
-    notifyError(`コピー失敗：${String(e)}`);
+    notifyError(`コピー失敗：${errorText(e)}`);
     return false;
   }
 }
 
 /**
- * 取消可能な操作。即時に見掛け上の結果を反映し（apply）、猶予時間の満了後に確定（commit）。
- * 猶予中の「取消」で復元（revert）。確定の失敗時も復元し、失敗を通知。
+ * 実行済みの操作の結果通知（「取消」付き）。「取消」の押下で undo を実行し、失敗時は通知。
+ * 操作自体は呼出し前に完了させる：通知の表示中にアプリを終了しても結果を維持。
  */
 export function undoable(options: {
   text: string;
-  apply: () => void;
-  revert: () => void;
-  commit: () => Promise<unknown>;
-  /** 確定失敗時の通知文の前置き（例：削除失敗）。 */
+  undo: () => Promise<unknown>;
+  /** 取消失敗時の通知文の前置き（例：復元失敗）。 */
   failure: string;
 }): number {
-  options.apply();
   return show({
     text: options.text,
     action: '取消',
     onClose: (reason) => {
-      if (reason === 'action') {
-        options.revert();
-        return;
-      }
-      options.commit().catch((e) => {
-        options.revert();
-        notifyError(`${options.failure}：${String(e)}`);
-      });
+      if (reason !== 'action') return;
+      options.undo().catch((e) => notifyError(`${options.failure}：${errorText(e)}`));
     }
   });
 }

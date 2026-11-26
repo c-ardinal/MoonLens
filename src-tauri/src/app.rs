@@ -80,6 +80,7 @@ macro_rules! all_commands {
             ipc::capture_lens_now,
             ipc::list_history,
             ipc::delete_history_entry,
+            ipc::restore_history_entry,
             ipc::clear_history,
             ipc::list_notices,
             ipc::dismiss_notice,
