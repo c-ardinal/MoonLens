@@ -39,7 +39,7 @@
 
 <div
   class={compact
-    ? 'flex min-h-[60px] items-center justify-between gap-6 py-2'
+    ? 'flex min-h-[var(--ml-row-min)] items-center justify-between gap-6 py-[var(--ml-row-pad)]'
     : 'flex flex-col gap-2 py-3 sm:flex-row sm:items-center sm:justify-between sm:gap-6'}
 >
   <div class="min-w-0 flex-1">
@@ -132,7 +132,7 @@
         {id}
         type="color"
         class="h-8 w-12 cursor-pointer rounded-ml-sm border border-border bg-surface p-0.5"
-        value={/^#[0-9a-f]{6}$/i.test(value ?? '') ? value : '#8b5cf6'}
+        value={/^#[0-9a-f]{6}$/i.test(value ?? '') ? value : '#ffb547'}
         oninput={(e) => onChange((e.currentTarget as HTMLInputElement).value)}
       />
       <code class="font-mono text-xs text-ink-muted">{value}</code>

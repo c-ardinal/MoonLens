@@ -1,0 +1,1 @@
+- Settings → System → Appearance: theme (light / dark / follow the OS), accent colour and density now change the main window. They were saved but ignored because the pixel look fixed its palette and spacing. The palette (window chrome, home screen, titles, logo) is derived from the theme and accent; density changes row and section spacing.

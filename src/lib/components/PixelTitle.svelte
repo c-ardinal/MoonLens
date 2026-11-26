@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { Pix, TITLE_FONT_FAMILY } from '$lib/pixel/pix';
+  import { palette } from '$lib/pixel/palette.svelte';
 
   /**
    * 斜めの巨大見出し帯：琥珀の帯＋骨白の段影＋2 値化した斜体文字。
@@ -42,6 +43,7 @@
       label = text,
       sub = note,
       h = height;
+    void palette.version; // 配色変更時に再描画
     if (!canvas || !ready) return;
     const size = Math.round(h * 0.78);
     const font = `700 ${size}px ${TITLE_FONT_FAMILY}`;

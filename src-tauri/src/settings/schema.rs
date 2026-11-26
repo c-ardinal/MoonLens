@@ -67,8 +67,8 @@ pub struct Appearance {
 impl Default for Appearance {
     fn default() -> Self {
         Self {
-            theme: Theme::System,
-            accent: "#8B5CF6".into(),
+            theme: Theme::Dark,
+            accent: "#FFB547".into(),
             density: Density::Normal,
             text_size: TextSize::default(),
             ui_language: "ja".into(),
@@ -83,8 +83,8 @@ impl Default for Appearance {
 #[serde(rename_all = "lowercase")]
 pub enum Theme {
     Light,
-    Dark,
     #[default]
+    Dark,
     System,
 }
 

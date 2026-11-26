@@ -5,8 +5,8 @@ config_version = 1
 active_profile = "default"
 
 [appearance]
-theme = "system"
-accent = "#8B5CF6"
+theme = "dark"
+accent = "#FFB547"
 density = "normal"
 text_size = "medium"
 ui_language = "ja"

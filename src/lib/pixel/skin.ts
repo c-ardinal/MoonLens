@@ -4,12 +4,15 @@
  * （原文のレイアウト・書体・配色を遵守）。
  */
 import { stripeTile } from './pix';
+import { palette } from './palette.svelte';
 
 let tileUrl: string | null = null;
+let tileVersion = -1;
 
-/** 背景の斜め縞タイルを 1 回だけ生成し、以後は静止画として再利用。 */
+/** 背景の斜め縞タイル。配色単位で 1 回だけ生成し、以後は静止画として再利用。 */
 function backgroundTile(): string | null {
-  if (tileUrl) return tileUrl;
+  if (tileUrl && tileVersion === palette.version) return tileUrl;
+  tileVersion = palette.version;
   try {
     tileUrl = stripeTile().toDataURL('image/png');
   } catch {
