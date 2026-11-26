@@ -70,7 +70,7 @@
       {/if}
     </ul>
     {#if target}
-      <a href="/settings/" class="px-chip target" title="翻訳先言語：{target}（設定で変更）">{target}▶</a>
+      <a href="/settings/" class="px-chip target" title="翻訳先言語：{target}（設定で変更）">{target}<span class="tri" aria-hidden="true"></span></a>
     {/if}
     <div class="ctls" data-tauri-drag-region>
       <button class="ctl" title="最小化" aria-label="最小化" onclick={minimize}>
@@ -166,6 +166,14 @@
     flex-shrink: 0;
     margin-right: var(--ml-sp-2);
     color: var(--ml-px-amber);
+  }
+  /* 設定への遷移を示す三角：2px ドットの階段形。字形の「▶」は字面が下方へ偏るため不使用 */
+  .tri {
+    flex-shrink: 0;
+    width: 8px;
+    height: 16px;
+    background: currentColor;
+    clip-path: polygon(0 0, 2px 0, 2px 2px, 4px 2px, 4px 4px, 6px 4px, 6px 6px, 8px 6px, 8px 10px, 6px 10px, 6px 12px, 4px 12px, 4px 14px, 2px 14px, 2px 16px, 0 16px);
   }
   .target:hover {
     --corner: var(--ml-px-amber);
