@@ -33,6 +33,12 @@ on:
       - 'src-tauri/src/providers/ocr_*.rs'
       - 'src-tauri/tests/lens_screen_windows_live.rs'
       - 'src-tauri/examples/fetch_models.rs'
+      # Live subtitles: loopback capture of what the PC plays, speech
+      # recognition and translation (lens-e2e job).
+      - 'src-tauri/src/audio.rs'
+      - 'src-tauri/src/subtitle.rs'
+      - 'src-tauri/src/providers/asr_*.rs'
+      - 'src-tauri/tests/subtitle_live.rs'
       - '.github/workflows/windows.yml'
   workflow_dispatch:
 
@@ -215,6 +221,23 @@ jobs:
       - name: Screen → OCR → translation
         working-directory: src-tauri
         run: cargo test --release --locked --test lens_screen_windows_live -- --ignored --nocapture
+
+      # Hosted runners have no sound card. A virtual output device lets
+      # the test play real speech and capture it back through WASAPI
+      # loopback, the way the app hears a video.
+      - name: Virtual audio device
+        if: always()
+        uses: LABSN/sound-ci-helpers@v1
+
+      # Recorded English speech → subtitle loop → recognized text and its
+      # Japanese translation; once fed directly, once played on the
+      # output device and captured by the app's loopback capture.
+      - name: Speech → subtitles
+        if: always()
+        working-directory: src-tauri
+        env:
+          MOONLENS_REQUIRE_AUDIO: '1'
+        run: cargo test --release --locked --test subtitle_live -- --ignored --nocapture --test-threads 1
 
       - name: Build the release app
         if: always()

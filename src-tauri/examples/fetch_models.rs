@@ -1,6 +1,7 @@
 //! Download the models the live tests need into the app's models folder
-//! (the same place the app downloads to): PP-OCRv5, ocrs and the default
-//! translation model. Already installed models are skipped.
+//! (the same place the app downloads to): PP-OCRv5, ocrs, the default
+//! translation model and the default speech recognition model. Already
+//! installed models are skipped.
 //!
 //! ```sh
 //! cd src-tauri
@@ -27,5 +28,15 @@ async fn main() -> anyhow::Result<()> {
     println!("translation model {id}: {}", llm_dir.display());
     let path = llm_models::install(&llm_dir, id, None).await?;
     println!("installed {}", path.display());
+
+    #[cfg(feature = "local-asr")]
+    {
+        use moonlens_lib::providers::whisper_models;
+        let dir = whisper_models::default_models_dir().expect("no data dir");
+        let id = whisper_models::DEFAULT_MODEL_ID;
+        println!("speech model {id}: {}", dir.display());
+        let path = whisper_models::install(&dir, id, None).await?;
+        println!("installed {}", path.display());
+    }
     Ok(())
 }

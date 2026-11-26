@@ -25,8 +25,15 @@ use crate::{
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum SubtitleEvent {
-    Started,
+    Started {
+        /// The device whose audio is captured.
+        device: String,
+    },
     Stopped,
+    /// What the loop is doing, for the window's status display.
+    Status {
+        phase: Phase,
+    },
     Chunk {
         original: String,
         translated: String,
@@ -34,6 +41,15 @@ pub enum SubtitleEvent {
     Error {
         message: String,
     },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Phase {
+    /// No sound to recognize: nothing plays, or it is below the gate.
+    Waiting,
+    Recognizing,
+    Translating,
 }
 
 pub struct SubtitleService {
@@ -143,7 +159,10 @@ impl SubtitleService {
         // long decode (callbacks deliver ~10 ms each).
         let (tx, rx) = mpsc::channel::<AudioFrame>(FRAME_QUEUE);
         let stream = LoopbackStream::start(tx)?;
+        let device = stream.device().to_string();
+        tracing::info!("subtitle: started (device: {device})");
         if let Some(win) = app.get_webview_window("subtitle") {
+            place_once(&win);
             win.show().ok();
         }
         let stop = Arc::new(tokio::sync::Notify::new());
@@ -152,14 +171,35 @@ impl SubtitleService {
         let settings = self.settings.clone();
         let app_emit = app.clone();
         let handle = tauri::async_runtime::spawn(async move {
-            let _ = app_emit.emit("moonlens://subtitle", SubtitleEvent::Started);
-            let gave_up = run_loop(app_emit.clone(), settings, pipeline, rx, stop_in).await;
+            let emit = {
+                let app = app_emit.clone();
+                let settings = settings.clone();
+                move |ev: SubtitleEvent| {
+                    if let SubtitleEvent::Chunk {
+                        original,
+                        translated,
+                    } = &ev
+                    {
+                        let text = if translated.is_empty() {
+                            original
+                        } else {
+                            translated
+                        };
+                        let cfg = settings.snapshot().clipboard.clone();
+                        clipboard::auto_copy(&app, clipboard::Kind::Transcript, text, &cfg);
+                    }
+                    let _ = app.emit("moonlens://subtitle", ev);
+                }
+            };
+            emit(SubtitleEvent::Started { device });
+            let gave_up = run_loop(&emit, settings, pipeline, rx, stop_in).await;
             if gave_up {
-                // Close the window and release the audio stream too.
-                let state = app_emit.state::<crate::app::AppState>();
-                let _ = state.subtitle.stop(&app_emit);
+                // Release the audio stream and the model, but leave the
+                // window up: it shows why the subtitles stopped.
+                app_emit.state::<crate::app::AppState>().subtitle.release();
             }
-            let _ = app_emit.emit("moonlens://subtitle", SubtitleEvent::Stopped);
+            tracing::info!("subtitle: stopped (gave up: {gave_up})");
+            emit(SubtitleEvent::Stopped);
         });
         *self.inner.lock() = Some(Inner {
             _stream: stream,
@@ -169,18 +209,30 @@ impl SubtitleService {
         Ok(())
     }
 
-    pub fn stop(&self, app: &AppHandle) -> Result<()> {
+    /// Stop capturing and recognizing. The window stays as it is.
+    fn release(&self) {
         if let Some(inner) = self.inner.lock().take() {
             inner.stop.notify_waiters();
             inner.handle.abort();
-            if let Some(win) = app.get_webview_window("subtitle") {
-                win.hide().ok();
-            }
-            // Reset overlay context if any.
-            overlay::hide(app).ok();
             // Give back the ~1 GB the speech model holds. Off this thread:
             // it waits for an aborted decode to wind down.
             std::thread::spawn(crate::providers::asr_local::release);
+        }
+    }
+
+    /// Stop and hide the window (also when recognition already gave up
+    /// and only the window with its error is left).
+    pub fn stop(&self, app: &AppHandle) -> Result<()> {
+        let was_running = self.is_running();
+        self.release();
+        if let Some(win) = app.get_webview_window("subtitle") {
+            win.hide().ok();
+        }
+        // Reset overlay context if any.
+        overlay::hide(app).ok();
+        if was_running {
+            // The aborted loop cannot report it any more.
+            let _ = app.emit("moonlens://subtitle", SubtitleEvent::Stopped);
         }
         Ok(())
     }
@@ -218,8 +270,29 @@ impl SubtitleService {
     }
 }
 
-async fn run_loop(
-    app: AppHandle,
+/// First show: bottom centre of the primary screen, where subtitles
+/// are expected. Later shows keep wherever the user moved the window.
+fn place_once(win: &tauri::WebviewWindow) {
+    static PLACED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if PLACED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+        return;
+    }
+    let (Ok(Some(monitor)), Ok(size)) = (win.primary_monitor(), win.outer_size()) else {
+        return;
+    };
+    let (origin, screen) = (monitor.position(), monitor.size());
+    let margin = (96.0 * monitor.scale_factor()) as i32;
+    let x = origin.x + (screen.width as i32 - size.width as i32) / 2;
+    let y = origin.y + screen.height as i32 - size.height as i32 - margin;
+    let _ = win.set_position(tauri::PhysicalPosition::new(x, y.max(origin.y)));
+}
+
+/// The subtitle loop: audio frames in, [`SubtitleEvent`]s out. Runs
+/// until `stop` fires or the frame channel closes (what is still
+/// buffered is recognized first). Returns `true` when it gave up after
+/// repeated recognition failures.
+pub async fn run_loop(
+    emit: &(impl Fn(SubtitleEvent) + Sync),
     settings: Arc<SettingsStore>,
     pipeline: Arc<Pipeline>,
     mut rx: mpsc::Receiver<AudioFrame>,
@@ -228,6 +301,15 @@ async fn run_loop(
     let mut failures = 0u32;
     let mut buffer: Vec<i16> = Vec::with_capacity(16_000 * 4);
     let mut overlap: Vec<i16> = Vec::new();
+    let mut phase = Phase::Waiting;
+    let mut set_phase = |next: Phase| {
+        if phase != next {
+            phase = next;
+            emit(SubtitleEvent::Status { phase });
+        }
+    };
+    let mut heard = false;
+    let mut closed = false;
     loop {
         let snap = settings.snapshot();
         let chunk_samples = (snap.subtitle.chunk_seconds * 16_000.0) as usize;
@@ -236,19 +318,42 @@ async fn run_loop(
         let source_lang = snap.subtitle.source_language.clone();
         drop(snap);
 
-        // Wait for either the next frame or a stop notification.
-        tokio::select! {
-            _ = stop.notified() => break,
-            maybe = rx.recv() => match maybe {
-                Some(frame) => buffer.extend_from_slice(&frame),
-                None => break,
-            },
+        // Wait for the next frame, a stop notification, or a pause in
+        // the audio: a loopback delivers nothing while nothing plays, so
+        // without the pause the end of a sentence would sit in the
+        // buffer until sound returns.
+        let mut flush = closed;
+        if !closed {
+            tokio::select! {
+                _ = stop.notified() => break,
+                maybe = rx.recv() => match maybe {
+                    Some(frame) => buffer.extend_from_slice(&frame),
+                    None => {
+                        closed = true;
+                        flush = true;
+                    }
+                },
+                _ = tokio::time::sleep(FLUSH_AFTER), if !buffer.is_empty() => flush = true,
+            }
         }
         // Collect whatever arrived during the previous recognition.
         while let Ok(frame) = rx.try_recv() {
             buffer.extend_from_slice(&frame);
         }
-        if buffer.len() < chunk_samples {
+        if !heard && !buffer.is_empty() {
+            heard = true;
+            tracing::info!("subtitle: first audio frames received");
+        }
+        if buffer.len() < chunk_samples && !(flush && buffer.len() >= MIN_FLUSH_SAMPLES) {
+            if flush {
+                // Too short to recognize on its own.
+                buffer.clear();
+                overlap.clear();
+                set_phase(Phase::Waiting);
+            }
+            if closed {
+                break;
+            }
             continue;
         }
         // Whisper decodes a fixed 30 s window, so a longer chunk costs no
@@ -261,7 +366,7 @@ async fn run_loop(
         let mut to_send = overlap.clone();
         to_send.extend_from_slice(&buffer[..take]);
         // Preserve the tail for the next iteration's overlap.
-        if overlap_samples > 0 && take >= overlap_samples {
+        if overlap_samples > 0 && take >= overlap_samples && !flush {
             overlap = buffer[take - overlap_samples..take].to_vec();
         } else {
             overlap.clear();
@@ -270,9 +375,13 @@ async fn run_loop(
         // Silence (or near-silence) makes Whisper invent stock phrases
         // such as "Thanks for watching"; skip it.
         if is_silent(&to_send) {
+            set_phase(Phase::Waiting);
             continue;
         }
 
+        set_phase(Phase::Recognizing);
+        let seconds = to_send.len() as f32 / 16_000.0;
+        let started = std::time::Instant::now();
         let pcm_bytes = pcm16_to_bytes(&to_send);
         match pipeline
             .run(
@@ -299,9 +408,16 @@ async fn run_loop(
                     TaskOutput::Text(t) => t.clone(),
                     _ => String::new(),
                 };
+                tracing::debug!(
+                    "subtitle: {seconds:.1} s of audio recognized in {} ms ({} chars)",
+                    started.elapsed().as_millis(),
+                    original.chars().count()
+                );
                 if original.trim().is_empty() {
+                    set_phase(Phase::Waiting);
                     continue;
                 }
+                set_phase(Phase::Translating);
                 let translated = match pipeline
                     .run(
                         Capability::Translate,
@@ -318,28 +434,23 @@ async fn run_loop(
                         TaskOutput::Text(s) => s,
                         _ => String::new(),
                     },
-                    Err(_) => String::new(),
+                    Err(e) => {
+                        tracing::warn!("subtitle: translation failed: {e}");
+                        String::new()
+                    }
                 };
-                let clipboard_cfg = settings.snapshot().clipboard.clone();
-                let copy_text = if !translated.is_empty() {
-                    translated.as_str()
-                } else {
-                    original.as_str()
-                };
-                clipboard::auto_copy(&app, clipboard::Kind::Transcript, copy_text, &clipboard_cfg);
-                let _ = app.emit(
-                    "moonlens://subtitle",
-                    SubtitleEvent::Chunk {
-                        original,
-                        translated,
-                    },
-                );
+                emit(SubtitleEvent::Chunk {
+                    original,
+                    translated,
+                });
+                set_phase(Phase::Waiting);
                 // Avoid bursting work when chunks arrive too quickly.
                 tokio::time::sleep(Duration::from_millis(20)).await;
             }
             Err(e) => {
                 failures += 1;
                 let gave_up = failures >= MAX_CONSECUTIVE_FAILURES;
+                tracing::warn!("subtitle: recognition failed ({failures}): {e}");
                 let detail = crate::user_error::provider(&e, Capability::Asr);
                 let detail = detail.split_once('|').map_or(detail.as_str(), |(_, m)| m);
                 let message = if gave_up {
@@ -347,7 +458,7 @@ async fn run_loop(
                 } else {
                     format!("音声認識失敗：{detail}")
                 };
-                let _ = app.emit("moonlens://subtitle", SubtitleEvent::Error { message });
+                emit(SubtitleEvent::Error { message });
                 if gave_up {
                     return true;
                 }
@@ -367,6 +478,13 @@ const MAX_WINDOW_SAMPLES: usize = 28 * 16_000;
 /// Audio frames buffered between the capture thread and the loop
 /// (~40 s at 10 ms per callback).
 const FRAME_QUEUE: usize = 4096;
+
+/// A pause this long in the incoming audio sends what is buffered to
+/// recognition without waiting for a full chunk.
+const FLUSH_AFTER: Duration = Duration::from_millis(700);
+
+/// Shortest buffered audio worth recognizing on a pause (0.5 s).
+const MIN_FLUSH_SAMPLES: usize = 8_000;
 
 /// RMS level below which a chunk counts as silence (about -50 dBFS).
 const SILENCE_RMS: f64 = 100.0;
