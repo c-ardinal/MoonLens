@@ -1,0 +1,1 @@
+- Settings: deleting a glossary row now shows a notification with an undo button that puts the row back in place.

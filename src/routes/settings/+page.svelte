@@ -35,6 +35,8 @@
   import DataLocations from '$lib/components/DataLocations.svelte';
   import Plugins from '$lib/components/Plugins.svelte';
   import GlossaryEditor from '$lib/components/GlossaryEditor.svelte';
+  import { createRemovalLog, isBlankEntry, type GlossaryEntry } from '$lib/glossary';
+  import { close as closeToast, undoable } from '$lib/toast.svelte';
   import InferenceDevice from '$lib/components/InferenceDevice.svelte';
   import { replay, wheelStep, type Effect } from '$lib/pixel/transition';
 
@@ -106,6 +108,8 @@
   });
 
   onDestroy(() => {
+    // 画面破棄後の「取消」は保存済み設定との同期なしで上書き：通知を閉鎖
+    for (const id of glossaryUndo) closeToast(id, 'dismiss');
     unlisten?.();
     clearTimeout(statusTimer);
     void autosave.flush();
@@ -123,6 +127,32 @@
     edited.add(path);
     saveError = null;
     autosave.schedule(saveDelay(path));
+  }
+
+  /** 表示中の「取消」付き通知（用語集の行削除）。 */
+  const glossaryUndo = new Set<number>();
+  /** 削除済みの行の復元位置（複数行の削除・取消の順序に非依存）。 */
+  const glossaryRemovals = createRemovalLog();
+
+  /**
+   * 用語集の行削除。即時に削除・保存し、通知の「取消」で元の位置へ再挿入。
+   * 未入力の行は通知なし（喪失する内容なし）。
+   */
+  function removeGlossaryRow(path: string, index: number) {
+    const current: GlossaryEntry[] = $state.snapshot(getPath(draft, path)) ?? [];
+    if (index >= current.length) return;
+    const { list, row } = glossaryRemovals.remove(current, index);
+    update(path, list);
+    if (isBlankEntry(row.entry)) return;
+    const id = undoable({
+      text: '用語 1 件：削除完了',
+      failure: '復元失敗',
+      undo: async () => {
+        glossaryUndo.delete(id);
+        update(path, glossaryRemovals.restore($state.snapshot(getPath(draft, path)) ?? [], row));
+      }
+    });
+    glossaryUndo.add(id);
   }
 
   /**
@@ -352,6 +382,7 @@
                     value={getPath(draft, field.path)}
                     defaultLang={getPath(draft, 'subtitle.target_language') ?? 'ja'}
                     onChange={(v) => update(field.path, v)}
+                    onRemove={(i) => removeGlossaryRow(field.path, i)}
                   />
                 {:else}
                   <SettingField

@@ -2,7 +2,7 @@
   import { tick } from 'svelte';
   import { Plus, X } from 'lucide-svelte';
   import { LANGUAGES } from '$lib/lens-overlay';
-  import { addEntry, removeEntry, updateEntry, type GlossaryEntry } from '$lib/glossary';
+  import { addEntry, updateEntry, type GlossaryEntry } from '$lib/glossary';
 
   interface Props {
     label: string;
@@ -10,8 +10,10 @@
     /** Language a new entry starts with (the configured target). */
     defaultLang: string;
     onChange: (v: GlossaryEntry[]) => void;
+    /** 行の削除。取消（通知）は呼出し側の責務：本部品の破棄後も有効。 */
+    onRemove: (index: number) => void;
   }
-  let { label, value, defaultLang, onChange }: Props = $props();
+  let { label, value, defaultLang, onChange, onRemove }: Props = $props();
 
   const entries = $derived(Array.isArray(value) ? value : []);
   const input =
@@ -84,7 +86,7 @@
           class="row-value rounded-ml-sm p-1 text-ink-faint transition hover:bg-surface-muted hover:text-ink"
           title="削除"
           aria-label="用語 {i + 1} を削除"
-          onclick={() => onChange(removeEntry(entries, i))}
+          onclick={() => onRemove(i)}
         >
           <X class="h-3.5 w-3.5" />
         </button>
