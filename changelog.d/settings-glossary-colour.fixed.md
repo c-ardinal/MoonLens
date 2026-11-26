@@ -1,0 +1,1 @@
+- Settings: the glossary's title and column headings were unreadable on the selected-row band; they now turn dark like every other row. Its help text is shown in the description box only.

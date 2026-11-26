@@ -1,0 +1,1 @@
+- Settings are saved and applied as soon as a value changes; the save bar with its 保存／破棄 buttons is gone. Sliders, the colour picker and the glossary save shortly after the last input. A shortcut that clashes with another one is held back (the rest still saves) and saves by itself once the clash is resolved.
