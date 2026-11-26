@@ -147,9 +147,7 @@ sticky_session_ms = 30000
   Visual Studio Build Tools + LLVM）
 - Vulkan SDK（内蔵 llama.cpp の GPU 実行用。Windows は LunarG の
   Vulkan SDK を導入し環境変数 `VULKAN_SDK` を設定。Linux は `libvulkan-dev`、
-  `glslc`、`spirv-headers`。macOS は Metal 使用のため不要）。Windows では
-  llama.cpp の入れ子ビルドでパスが 260 文字を超過し失敗するため、
-  `$env:CARGO_TARGET_DIR = "C:\mlt"` 等の短いビルド先を指定
+  `glslc`、`spirv-headers`。macOS は Metal 使用のため不要）
 - Windows では初回のみ `git config --global core.longpaths true` を実行
   （llama.cpp を git から取得し、パスが 260 文字を超過するため）
 - 翻訳モデルはアプリ起動後、ホーム画面の「モデル準備」でダウンロード
@@ -169,6 +167,26 @@ npm run tauri:dev
 ```bash
 npm run tauri:build
 ```
+
+### Windows：llama.cpp のビルド失敗（`llama-cpp-sys-2`、exit code 1）
+
+症状：`cargo clean` 後や llama.cpp 更新後の初回ビルドが
+`failed to run custom build command for llama-cpp-sys-2` で失敗。
+
+原因：llama.cpp 内部のシェーダー生成ツール（`vulkan-shaders-gen`）の手順競合。
+Visual Studio ジェネレーターではカスタムコマンドが並列実行され、exe の生成前に
+インストール手順が開始。発生はタイミング依存。パス長とは無関係。
+
+- 応急対応：同一コマンドを再実行。失敗した回でも exe は生成済みのため、次回は通過。
+- 恒久対応：CI（`windows.yml`）と同様に Ninja を使用。
+  1. `winget install Ninja-build.Ninja`
+  2. 「x64 Native Tools Command Prompt for VS 2022」を起動
+  3. `set CMAKE_GENERATOR=Ninja` の後に `npm run tauri:dev`
+  - ジェネレーター切替の直後のみ、事前に `cargo clean -p llama-cpp-sys-2`
+    （`src-tauri` で実行）
+- `LNK1104`（パス長超過）の場合のみ、`CARGO_TARGET_DIR` に短いビルド先を指定。
+- エラー本文の確認：MSBuild の出力は通常非表示。`src-tauri` で `cargo build -vv`
+  （`tauri dev` 表示の `--features` を付与）を実行し、`CMake Error` / `MSB` 行を確認。
 
 ### CI
 
