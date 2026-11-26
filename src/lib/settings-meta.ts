@@ -7,6 +7,7 @@
  * nothing. When a field starts doing something, add it here.
  */
 
+import { compactGlossary } from './glossary';
 import { LANGUAGES } from './lens-overlay';
 
 export type Option = { value: string; label: string };
@@ -421,11 +422,47 @@ export function fieldMatches(field: Field, section: Section, query: string): boo
   return q.split(/\s+/).every((t) => hay.includes(t));
 }
 
+// f32 values come back as 0.10000000149011612: not a change.
+const sameValue = (a: any, b: any) =>
+  typeof a === 'number' && typeof b === 'number'
+    ? Math.abs(a - b) < 1e-6
+    : JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+
 /** Paths whose value differs between two settings objects. */
 export function changedPaths(a: any, b: any): string[] {
   return allFields()
     .map((f) => f.path)
-    .filter((p) => JSON.stringify(getPath(a, p) ?? null) !== JSON.stringify(getPath(b, p) ?? null));
+    .filter((p) => !sameValue(getPath(a, p), getPath(b, p)));
+}
+
+/**
+ * 即時保存の対象：編集中の値から保存不可の値を除外した設定。
+ * 重複に関与する変更済ショートカットは保存済の値を維持、用語集の空行は除去。
+ * 復元後の値と新規に重複する変更も同様に除外（保存結果に重複を残さない）。
+ */
+export function savable<T>(saved: T, draft: T): T {
+  let next = draft;
+  for (;;) {
+    const held = duplicateHotkeys(next).filter((p) => !sameValue(getPath(next, p), getPath(saved, p)));
+    if (held.length === 0) break;
+    for (const p of held) next = setPath(next, p, getPath(saved, p));
+  }
+  return setPath(next, 'translation.glossary', compactGlossary(getPath(next, 'translation.glossary')));
+}
+
+/** 保存対象外のショートカット（重複の解消まで保存済の値を維持する項目）。 */
+export function heldHotkeys(saved: any, draft: any): string[] {
+  const next = savable(saved, draft);
+  return allFields()
+    .filter((f) => f.kind === 'hotkey' && !sameValue(getPath(next, f.path), getPath(draft, f.path)))
+    .map((f) => f.path);
+}
+
+/** 連続入力の項目（スライダー・色・用語集）：保存までの待機時間（ミリ秒）。 */
+export function saveDelay(path: string): number {
+  const f = allFields().find((x) => x.path === path);
+  if (f?.kind === 'glossary') return 600;
+  return f?.kind === 'color' || (f?.kind === 'number' && f.slider) ? 300 : 0;
 }
 
 /**

@@ -1,0 +1,1 @@
+- Dragging the title, menu items, the target-language indicator or other links, images and displayed text out of a window no longer creates shortcuts or files on the desktop.

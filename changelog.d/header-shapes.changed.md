@@ -1,0 +1,1 @@
+- Main window header: the logo, navigation tabs and target-language button no longer sit on parallelogram backgrounds. The current tab and the target language are marked with corner brackets instead, and the bracket cursor steps to the new tab when the screen changes.

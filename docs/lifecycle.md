@@ -102,10 +102,10 @@ MoonLens の導入〜削除の各段階で発生するケースと、期待動�
 
 | # | ケース | 期待動作 | 状態 | 確認 |
 | --- | --- | --- | --- | --- |
-| C-1 | 設定を保存 | 即時反映。`config.toml` には既定値と異なる値のみ保存 | 修正 | `settings::store::tests::overrides_hold_only_changed_values` |
+| C-1 | 設定を変更 | 変更の都度、即時保存・即時反映（保存操作なし）。`config.toml` には既定値と異なる値のみ保存 | 修正 | `settings::store::tests::overrides_hold_only_changed_values` |
 | C-2 | 設定画面の表示中、モデル欄で翻訳モデルを切替 → 他の設定を保存 | モデル選択は維持（以前は画面表示時点の値で上書きし、選択が消失） | 修正 | 設定変更イベントで下書きを再構築 |
-| C-3 | 設定画面の表示中に `config.toml` を手動編集 | 画面に反映し、未保存の編集は維持 | 修正 | 同上 |
-| C-4 | ショートカットを他の MoonLens 機能と同一キーに設定 | 該当欄に「重複」、保存不可 | 修正 | `settings-meta.test.ts` の重複検出 |
+| C-3 | 設定画面の表示中に `config.toml` を手動編集 | 画面に反映し、保存前の編集は維持 | 修正 | 同上 |
+| C-4 | ショートカットを他の MoonLens 機能と同一キーに設定 | 該当欄に「重複」、該当項目のみ保存対象外（他項目は即時保存、重複解消後に自動保存） | 修正 | `settings-meta.test.ts` の重複検出 |
 | C-5 | 「初期値に復元」 | 同梱の既定値（`default.toml`）を復元（以前は Rust 側の別定義） | 修正 | `get_default_settings` |
 | C-6 | 起動中に `config.toml` を手動編集し構文エラー | 直前の設定を維持し、ホームに通知 | 修正 | Xvfb：保存直後にホームへ通知表示 |
 | C-7 | 構文エラーの `config.toml` で起動 | 既定値で起動、元ファイルを `config.toml.broken-<時刻>` に退避、通知 | 修正 | `settings_file_roundtrip`、Xvfb |
