@@ -134,9 +134,10 @@
   async function wipe() {
     try {
       // 件数は実際の削除行数（検索中・500 件超過時は表示件数と不一致）
-      const count = await clearHistory();
+      // 消去の発行前に「取消」付き通知を閉鎖：消去後の単独復元を防止
       for (const id of undoToasts) closeToast(id, 'dismiss');
       undoToasts.clear();
+      const count = await clearHistory();
       entries = [];
       confirmClear = false;
       notify(`履歴 ${count} 件：全消去完了`);
