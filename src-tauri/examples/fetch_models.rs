@@ -19,6 +19,8 @@ async fn main() -> anyhow::Result<()> {
     )
     .await?;
     ocr_ocrs::install_models_with_progress(&ocr_dir, None).await?;
+    #[cfg(feature = "ocr-onnx")]
+    moonlens_lib::providers::ocr_onnx::install(&ocr_dir, None).await?;
 
     let llm_dir = llm_models::default_models_dir().expect("no data dir");
     let id = llm_models::DEFAULT_TRANSLATE_MODEL_ID;

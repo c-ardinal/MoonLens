@@ -1,0 +1,2 @@
+- Text recognition (PP-OCR) now runs on ONNX Runtime and picks the fastest setup for each PC by measuring it when the models load: the GPU through DirectML on Windows, or the CPU on Windows, Linux and macOS. Reading new text on the CPU takes about half the time it did. Without the runtime, or where it does not load, recognition runs as before.
+- The ONNX Runtime library and its two models (about 45 MB) are downloaded with the OCR models, each checked against a pinned SHA-256. Installs from earlier versions keep working and offer the download in the model settings.

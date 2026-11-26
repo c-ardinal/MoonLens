@@ -70,6 +70,44 @@ pub struct Params {
     pub unclip_ratio: f32,
     /// Lines whose mean character confidence is below this are dropped.
     pub min_confidence: f32,
+    /// What the networks run on (`backend`, default `"auto"`).
+    pub backend: Backend,
+}
+
+/// What runs the networks. The text read is the same up to rounding
+/// in the arithmetic; the speed is not.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum Backend {
+    /// The fastest of those below that load on this PC, measured when
+    /// the models load.
+    #[default]
+    Auto,
+    /// ONNX Runtime on the GPU through DirectML (Windows).
+    DirectMl,
+    /// ONNX Runtime on the CPU.
+    OnnxCpu,
+    /// rten on the CPU: needs nothing beyond the base models.
+    Rten,
+}
+
+impl Backend {
+    /// The name in the config and in the log.
+    pub fn name(self) -> &'static str {
+        match self {
+            Backend::Auto => "auto",
+            Backend::DirectMl => "directml",
+            Backend::OnnxCpu => "onnx-cpu",
+            Backend::Rten => "rten",
+        }
+    }
+
+    /// Unknown names mean `auto`.
+    pub fn from_name(name: &str) -> Self {
+        [Backend::DirectMl, Backend::OnnxCpu, Backend::Rten]
+            .into_iter()
+            .find(|b| b.name() == name)
+            .unwrap_or_default()
+    }
 }
 
 impl Default for Params {
@@ -80,6 +118,7 @@ impl Default for Params {
             box_threshold: 0.6,
             unclip_ratio: 1.6,
             min_confidence: 0.5,
+            backend: Backend::Auto,
         }
     }
 }
@@ -103,6 +142,11 @@ impl Params {
             box_threshold: f("box_threshold", d.box_threshold),
             unclip_ratio: f("unclip_ratio", d.unclip_ratio),
             min_confidence: f("min_confidence", d.min_confidence),
+            backend: cfg
+                .get("backend")
+                .and_then(|x| x.as_str())
+                .map(Backend::from_name)
+                .unwrap_or_default(),
         }
     }
 }
@@ -393,17 +437,230 @@ pub mod engine {
     use rten_tensor::prelude::*;
     use rten_tensor::{NdTensor, Tensor};
 
-    use super::{post, Params, DET_FILE, DICT_FILE, REC_FILE};
+    use super::{post, Backend, Params, DET_FILE, DICT_FILE, REC_FILE};
     use crate::providers::OcrLine;
 
     const REC_HEIGHT: u32 = 48;
     const REC_MAX_WIDTH: u32 = 3200;
-    const REC_BATCH: usize = 1;
-    // The line cache relies on a line's text depending on its own pixels
-    // only. In a larger batch the padding to the widest line would make
-    // it depend on its batch mates.
-    const _: () = assert!(REC_BATCH == 1);
     const REC_WORKERS: usize = 4;
+
+    /// What the caller allows the networks to run on.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+    pub struct Want {
+        pub backend: Backend,
+        /// `performance.use_gpu_if_available`.
+        pub gpu: bool,
+    }
+
+    impl Default for Want {
+        fn default() -> Self {
+            Self {
+                backend: Backend::Auto,
+                gpu: true,
+            }
+        }
+    }
+
+    impl Want {
+        /// The backends to choose between. When none of them loads
+        /// (or the list is empty) the models run on rten, which needs
+        /// nothing that may be missing.
+        pub(super) fn candidates(self) -> Vec<Backend> {
+            let mut list = match self.backend {
+                Backend::Auto => vec![Backend::DirectMl, Backend::OnnxCpu],
+                Backend::Rten => vec![],
+                one => vec![one],
+            };
+            if !(self.gpu && cfg!(windows)) {
+                // No GPU to use: what was meant for it runs on the CPU.
+                list.retain(|b| *b != Backend::DirectMl);
+                if self.backend == Backend::DirectMl {
+                    list.push(Backend::OnnxCpu);
+                }
+            }
+            list
+        }
+    }
+
+    /// How a backend wants its recognition work cut up.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub(super) struct RecPlan {
+        /// Threads that call the network at the same time.
+        pub(super) workers: usize,
+        /// Lines per call, all of one padded width.
+        pub(super) batch: usize,
+    }
+
+    /// Line pictures are padded on the right to a multiple of this
+    /// width, on every backend alike.
+    ///
+    /// The network was trained on padded lines, and short lines read
+    /// better with blank space after them than cut flush (on the 4K
+    /// fixture: `HEIP` → `Help`, `Learn t i` → `Learn to edit`). The
+    /// step also keeps the number of input shapes small, which a GPU
+    /// pays for one by one.
+    ///
+    /// The line cache relies on a line's text depending on its own
+    /// pixels only, so lines never share a call with wider ones
+    /// (padding to the widest would tie a line to its batch mates):
+    /// the padding of a line follows from its own width alone.
+    const REC_WIDTH_STEP: u32 = 64;
+
+    pub(super) fn padded_width(width: u32) -> u32 {
+        width.div_ceil(REC_WIDTH_STEP) * REC_WIDTH_STEP
+    }
+
+    /// The two networks on one backend. Tensors are `f32`, row-major.
+    pub(super) trait Networks: Send + Sync {
+        fn backend(&self) -> Backend;
+        fn plan(&self) -> RecPlan;
+        /// `[1, 3, h, w]` in, the probability map and its `(h, w)` out.
+        fn det(&self, input: Vec<f32>, h: usize, w: usize) -> Result<(Vec<f32>, usize, usize)>;
+        /// `[n, 3, REC_HEIGHT, w]` in, `[n, steps, classes]` and its
+        /// `(steps, classes)` out.
+        fn rec(&self, input: Vec<f32>, n: usize, w: usize) -> Result<(Vec<f32>, usize, usize)>;
+    }
+
+    struct RtenNetworks {
+        det: rten::Model,
+        rec: rten::Model,
+    }
+
+    impl RtenNetworks {
+        fn load(dir: &Path) -> Result<Self> {
+            Ok(Self {
+                det: rten::Model::load_file(dir.join(DET_FILE))
+                    .map_err(|e| anyhow!("load {DET_FILE}: {e}"))?,
+                rec: rten::Model::load_file(dir.join(REC_FILE))
+                    .map_err(|e| anyhow!("load {REC_FILE}: {e}"))?,
+            })
+        }
+
+        fn run(model: &rten::Model, input: Vec<f32>, shape: [usize; 4]) -> Result<Tensor<f32>> {
+            let input: Tensor<f32> = NdTensor::from_data(shape, input).into();
+            model
+                .run_one(input.view().into(), None)
+                .map_err(|e| anyhow!("run: {e}"))?
+                .try_into()
+                .map_err(|e| anyhow!("output: {e:?}"))
+        }
+    }
+
+    impl Networks for RtenNetworks {
+        fn backend(&self) -> Backend {
+            Backend::Rten
+        }
+
+        // rten parallelises inside each op, but one line is too small a
+        // workload to keep every core busy: a few threads, each reading
+        // one line at a time, measured ~2× faster on 4 cores.
+        fn plan(&self) -> RecPlan {
+            RecPlan {
+                workers: REC_WORKERS,
+                batch: 1,
+            }
+        }
+
+        fn det(&self, input: Vec<f32>, h: usize, w: usize) -> Result<(Vec<f32>, usize, usize)> {
+            let out = Self::run(&self.det, input, [1, 3, h, w])?;
+            let shape = out.shape().to_vec();
+            let (ph, pw) = (shape[shape.len() - 2], shape[shape.len() - 1]);
+            Ok((out.iter().copied().collect(), ph, pw))
+        }
+
+        fn rec(&self, input: Vec<f32>, n: usize, w: usize) -> Result<(Vec<f32>, usize, usize)> {
+            let out = Self::run(&self.rec, input, [n, 3, REC_HEIGHT as usize, w])?;
+            let shape = out.shape().to_vec();
+            if shape.len() != 3 || shape[0] != n {
+                anyhow::bail!("unexpected rec output shape {shape:?}");
+            }
+            Ok((out.iter().copied().collect(), shape[1], shape[2]))
+        }
+    }
+
+    #[cfg(feature = "ocr-onnx")]
+    struct OnnxNetworks {
+        models: crate::providers::ocr_onnx::runtime::Models,
+        backend: Backend,
+        plan: RecPlan,
+    }
+
+    #[cfg(feature = "ocr-onnx")]
+    impl OnnxNetworks {
+        /// The GPU takes many lines per call.
+        const GPU_PLAN: RecPlan = RecPlan {
+            workers: 1,
+            batch: 16,
+        };
+
+        fn load(dir: &Path, backend: Backend) -> Result<Self> {
+            use crate::providers::ocr_onnx::runtime::{Device, Models};
+            Ok(if backend == Backend::DirectMl {
+                Self {
+                    models: Models::load(dir, Device::DirectMl, 1)?,
+                    backend,
+                    plan: Self::GPU_PLAN,
+                }
+            } else {
+                // Line by line: a batch gains nothing on the CPU
+                // (measured).
+                let workers = cpu_rec_workers();
+                Self {
+                    models: Models::load(dir, Device::Cpu, workers)?,
+                    backend,
+                    plan: RecPlan { workers, batch: 1 },
+                }
+            })
+        }
+    }
+
+    #[cfg(feature = "ocr-onnx")]
+    impl Networks for OnnxNetworks {
+        fn backend(&self) -> Backend {
+            self.backend
+        }
+
+        fn plan(&self) -> RecPlan {
+            self.plan
+        }
+
+        fn det(&self, input: Vec<f32>, h: usize, w: usize) -> Result<(Vec<f32>, usize, usize)> {
+            let (data, shape) = self.models.det(input, h, w)?;
+            if shape.len() < 2 {
+                anyhow::bail!("unexpected det output shape {shape:?}");
+            }
+            Ok((data, shape[shape.len() - 2], shape[shape.len() - 1]))
+        }
+
+        fn rec(&self, input: Vec<f32>, n: usize, w: usize) -> Result<(Vec<f32>, usize, usize)> {
+            let (data, shape) = self.models.rec(input, n, REC_HEIGHT as usize, w)?;
+            if shape.len() != 3 || shape[0] != n {
+                anyhow::bail!("unexpected rec output shape {shape:?}");
+            }
+            Ok((data, shape[1], shape[2]))
+        }
+    }
+
+    /// Threads reading lines on the CPU through ONNX Runtime, each on
+    /// a session of its own with one thread: for work as small as one
+    /// line this beat one session spread over the cores (25 lines on
+    /// 4 cores: about 0.3 s against 0.45 s).
+    #[cfg(feature = "ocr-onnx")]
+    fn cpu_rec_workers() -> usize {
+        std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(2)
+            .clamp(1, 6)
+    }
+
+    fn networks(dir: &Path, backend: Backend) -> Result<Box<dyn Networks>> {
+        match backend {
+            Backend::Rten => Ok(Box::new(RtenNetworks::load(dir)?)),
+            #[cfg(feature = "ocr-onnx")]
+            Backend::DirectMl | Backend::OnnxCpu => Ok(Box::new(OnnxNetworks::load(dir, backend)?)),
+            other => Err(anyhow!("{} is not part of this build", other.name())),
+        }
+    }
     /// Unclip ratio for the bbox we report (≈ the visible glyph extent).
     const REPORT_UNCLIP_RATIO: f32 = 0.9;
 
@@ -415,8 +672,7 @@ pub mod engine {
     const LINE_CACHE_SIZE: usize = 2048;
 
     pub struct PpOcr {
-        det: rten::Model,
-        rec: rten::Model,
+        networks: Box<dyn Networks>,
         dict: Vec<String>,
         lines: Mutex<LineCache>,
     }
@@ -525,7 +781,7 @@ pub mod engine {
                 .iter()
                 .rev()
                 .filter(|s| same_place(rect, s.rect) && self.map.contains_key(&s.key))
-                .filter(|s| s.cut_by.map_or(true, |size| size == rgb.dimensions()))
+                .filter(|s| s.cut_by.is_none_or(|size| size == rgb.dimensions()))
                 .find_map(|s| {
                     let image = line_image(rgb, s.rect)?;
                     (Self::key(&image) == s.key).then_some((*s, image))
@@ -557,38 +813,163 @@ pub mod engine {
         }
     }
 
-    static CACHE: Mutex<Option<(PathBuf, Arc<PpOcr>)>> = Mutex::new(None);
+    /// What an engine was loaded for: the models directory, the wish
+    /// and whether the ONNX Runtime parts were installed then (they can
+    /// arrive while the app runs).
+    type Loaded = (PathBuf, Want, bool);
+
+    static CACHE: Mutex<Option<(Loaded, Arc<PpOcr>)>> = Mutex::new(None);
 
     /// Cached engine for `dir` (models load once per process).
-    pub fn engine_for(dir: &Path) -> Result<Arc<PpOcr>> {
+    pub fn engine_for(dir: &Path, want: Want) -> Result<Arc<PpOcr>> {
+        let want = Want {
+            gpu: want.gpu && !GPU_FAILED.load(std::sync::atomic::Ordering::Relaxed),
+            ..want
+        };
+        let key: Loaded = (
+            dir.to_path_buf(),
+            want,
+            crate::providers::ocr_onnx::installed(dir),
+        );
         let mut guard = CACHE.lock();
-        if let Some((d, e)) = guard.as_ref() {
-            if d == dir {
+        if let Some((k, e)) = guard.as_ref() {
+            if *k == key {
                 return Ok(e.clone());
             }
         }
-        let e = Arc::new(PpOcr::load(dir)?);
-        *guard = Some((dir.to_path_buf(), e.clone()));
+        let e = Arc::new(PpOcr::load(dir, want)?);
+        *guard = Some((key, e.clone()));
         Ok(e)
     }
 
+    /// Set once a reading on the GPU failed: for the rest of the run
+    /// the GPU is not a candidate (see [`read_falling_back`]).
+    static GPU_FAILED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+    /// Read `img` on `engine`. A GPU backend passed the check at load,
+    /// but a reading can still fail later (a larger picture than the
+    /// graphics memory holds, a driver reset): the picture is then read
+    /// on the CPU, and so is everything after it until the app
+    /// restarts.
+    pub fn read_falling_back(
+        dir: &Path,
+        want: Want,
+        engine: &PpOcr,
+        img: &DynamicImage,
+        p: &Params,
+    ) -> Result<Vec<OcrLine>> {
+        match engine.recognize(img, p) {
+            Err(e) if engine.backend() == Backend::DirectMl => {
+                tracing::warn!("ocr on the GPU failed, continuing on the CPU: {e:#}");
+                GPU_FAILED.store(true, std::sync::atomic::Ordering::Relaxed);
+                engine_for(dir, want)?.recognize(img, p)
+            }
+            read => read,
+        }
+    }
+
+    /// A stand-in for a line of text: bars of varying width.
+    fn bench_line(seed: u32) -> RgbImage {
+        RgbImage::from_fn(320, REC_HEIGHT, |x, y| {
+            let on = (x / (3 + (x / 40 + seed) % 5)).is_multiple_of(2) && (8..40).contains(&y);
+            image::Rgb(if on { [20, 20, 20] } else { [240, 240, 240] })
+        })
+    }
+
     impl PpOcr {
-        pub fn load(dir: &Path) -> Result<Self> {
-            let det = rten::Model::load_file(dir.join(DET_FILE))
-                .map_err(|e| anyhow!("load {DET_FILE}: {e}"))?;
-            let rec = rten::Model::load_file(dir.join(REC_FILE))
-                .map_err(|e| anyhow!("load {REC_FILE}: {e}"))?;
-            let dict = std::fs::read_to_string(dir.join(DICT_FILE))
+        /// Load the models on the backend `want` asks for; for
+        /// [`Backend::Auto`], on the fastest one that loads here.
+        ///
+        /// "Fastest" is measured, not assumed: a GPU behind a slow
+        /// driver or a software adapter loses to the CPU. Each
+        /// candidate reads the same small workload; the timings go to
+        /// the log. rten is the fallback, not a candidate: ONNX Runtime
+        /// on the CPU read lines about twice as fast wherever both were
+        /// measured, and loading rten only to time it costs a second.
+        pub fn load(dir: &Path, want: Want) -> Result<Self> {
+            let dict: Vec<String> = std::fs::read_to_string(dir.join(DICT_FILE))
                 .with_context(|| format!("read {DICT_FILE}"))?
                 .lines()
                 .map(|l| l.trim_end_matches('\r').to_string())
                 .collect();
-            Ok(Self {
-                det,
-                rec,
-                dict,
+            let engine = |networks| Self {
+                networks,
+                dict: dict.clone(),
                 lines: Mutex::new(LineCache::default()),
-            })
+            };
+            let mut loaded: Vec<Self> = Vec::new();
+            for backend in want.candidates() {
+                match networks(dir, backend) {
+                    Ok(n) => loaded.push(engine(n)),
+                    Err(e) => tracing::info!("ocr backend {} unavailable: {e:#}", backend.name()),
+                }
+            }
+            // One candidate needs no race, but must still prove it runs.
+            let mut timed: Vec<(Self, std::time::Duration)> = Vec::new();
+            for e in loaded {
+                match e.bench() {
+                    Ok(t) => timed.push((e, t)),
+                    Err(err) => {
+                        tracing::info!("ocr backend {} failed: {err:#}", e.backend().name())
+                    }
+                }
+            }
+            let report: Vec<String> = timed
+                .iter()
+                .map(|(e, t)| format!("{} {} ms", e.backend().name(), t.as_millis()))
+                .collect();
+            let best = match timed.into_iter().min_by_key(|(_, t)| *t) {
+                Some((e, _)) => e,
+                None => engine(networks(dir, Backend::Rten)?),
+            };
+            tracing::info!(
+                "ocr backend: {} (measured: {})",
+                best.backend().name(),
+                if report.is_empty() {
+                    "nothing else available".to_string()
+                } else {
+                    report.join(", ")
+                }
+            );
+            Ok(best)
+        }
+
+        /// ONNX Runtime on the CPU, cutting the work as the GPU plan
+        /// does: what a GPU reads, where no GPU is at hand.
+        #[cfg(all(test, feature = "ocr-onnx"))]
+        pub(super) fn load_cpu_with_gpu_plan(dir: &Path) -> Result<Self> {
+            let mut networks = OnnxNetworks::load(dir, Backend::OnnxCpu)?;
+            networks.plan = OnnxNetworks::GPU_PLAN;
+            let mut engine = Self::load(
+                dir,
+                Want {
+                    backend: Backend::Rten,
+                    gpu: false,
+                },
+            )?;
+            engine.networks = Box::new(networks);
+            Ok(engine)
+        }
+
+        /// The backend the models run on.
+        pub fn backend(&self) -> Backend {
+            self.networks.backend()
+        }
+
+        /// Time of one detection and eight lines, after a first pass
+        /// that pays the one-time costs (graph and shader compilation).
+        fn bench(&self) -> Result<std::time::Duration> {
+            let (h, w) = (320usize, 480usize);
+            let lines: Vec<RgbImage> = (0..8).map(bench_line).collect();
+            let lines: Vec<&RgbImage> = lines.iter().collect();
+            let pass = || -> Result<std::time::Duration> {
+                let t = std::time::Instant::now();
+                self.networks.det(vec![0.0; 3 * h * w], h, w)?;
+                self.read_lines(&lines)?;
+                Ok(t.elapsed())
+            };
+            pass()?;
+            pass()
         }
 
         /// Full pipeline: returns lines with bboxes in `img` pixels.
@@ -657,35 +1038,13 @@ pub mod engine {
                 crops.len(),
                 crops.len() - fresh.len()
             );
-            // Recognise lines on a few worker threads. rten parallelises
-            // inside each op too, but one line is too small a workload
-            // to keep every core busy; measured ~2× faster on 4 cores.
-            let workers = std::thread::available_parallelism()
-                .map(|n| n.get())
-                .unwrap_or(2)
-                .clamp(1, REC_WORKERS);
-            let chunks: Vec<&[usize]> = fresh.chunks(REC_BATCH).collect();
-            let next = std::sync::atomic::AtomicUsize::new(0);
-            let results: Mutex<Vec<(usize, BatchResult)>> = Mutex::new(Vec::new());
-            std::thread::scope(|scope| {
-                for _ in 0..workers.min(chunks.len()) {
-                    scope.spawn(|| loop {
-                        let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                        let Some(chunk) = chunks.get(i) else { break };
-                        let r = self.recognize_batch(chunk.iter().map(|&c| &crops[c].1));
-                        results.lock().push((i, r));
-                    });
-                }
-            });
-            let mut results = results.into_inner();
-            results.sort_by_key(|(i, _)| *i);
+            let images: Vec<&RgbImage> = fresh.iter().map(|&i| &crops[i].1).collect();
+            let texts = self.read_lines(&images)?;
             {
                 let mut cache = self.lines.lock();
-                for (i, texts) in results {
-                    for (&c, (text, conf)) in chunks[i].iter().zip(texts?) {
-                        cache.put(keys[c], text.clone(), conf, LINE_CACHE_SIZE);
-                        known[c] = Some((text, conf));
-                    }
+                for (&c, (text, conf)) in fresh.iter().zip(texts) {
+                    cache.put(keys[c], text.clone(), conf, LINE_CACHE_SIZE);
+                    known[c] = Some((text, conf));
                 }
                 cache.remember(crops.iter().map(|c| c.0), LINE_CACHE_SIZE);
             }
@@ -711,22 +1070,15 @@ pub mod engine {
             const MEAN: [f32; 3] = [0.485, 0.456, 0.406];
             const STD: [f32; 3] = [0.229, 0.224, 0.225];
             // PaddleOCR feeds BGR (OpenCV) with these means per channel.
-            let input =
-                NdTensor::<f32, 4>::from_fn([1, 3, dh as usize, dw as usize], |[_, c, y, x]| {
-                    let px = resized.get_pixel(x as u32, y as u32).0;
-                    let v = px[2 - c] as f32 / 255.0;
-                    (v - MEAN[c]) / STD[c]
-                });
-            let input: Tensor<f32> = input.into();
-            let out: Tensor<f32> = self
-                .det
-                .run_one(input.view().into(), None)
-                .map_err(|e| anyhow!("det run: {e}"))?
-                .try_into()
-                .map_err(|e| anyhow!("det output: {e:?}"))?;
-            let shape = out.shape().to_vec();
-            let (ph, pw) = (shape[shape.len() - 2], shape[shape.len() - 1]);
-            let prob: Vec<f32> = out.iter().copied().collect();
+            let (dh, dw) = (dh as usize, dw as usize);
+            let mut input = vec![0f32; 3 * dh * dw];
+            for (i, px) in resized.pixels().enumerate() {
+                for c in 0..3 {
+                    let v = px.0[2 - c] as f32 / 255.0;
+                    input[c * dh * dw + i] = (v - MEAN[c]) / STD[c];
+                }
+            }
+            let (prob, ph, pw) = self.networks.det(input, dh, dw)?;
             let sx = iw as f32 / pw as f32;
             let sy = ih as f32 / ph as f32;
             Ok(
@@ -743,43 +1095,76 @@ pub mod engine {
             )
         }
 
-        fn recognize_batch<'a, I: Iterator<Item = &'a RgbImage>>(
-            &self,
-            crops: I,
-        ) -> Result<Vec<(String, f32)>> {
-            let resized: Vec<RgbImage> = crops
-                .map(|c| {
-                    let w = post::rec_width(c.width(), c.height(), REC_HEIGHT, REC_MAX_WIDTH);
-                    image::imageops::resize(c, w, REC_HEIGHT, FilterType::Triangle)
-                })
+        /// Text and confidence of each line picture, in order, read
+        /// the way the backend's [`RecPlan`] asks.
+        fn read_lines(&self, images: &[&RgbImage]) -> Result<Vec<(String, f32)>> {
+            let plan = self.networks.plan();
+            let width = |i: usize| {
+                let c = images[i];
+                padded_width(post::rec_width(
+                    c.width(),
+                    c.height(),
+                    REC_HEIGHT,
+                    REC_MAX_WIDTH,
+                ))
+            };
+            // Calls of one padded width each, at most `batch` lines.
+            let mut order: Vec<usize> = (0..images.len()).collect();
+            order.sort_by_key(|&i| width(i));
+            let chunks: Vec<&[usize]> = order
+                .chunk_by(|&a, &b| width(a) == width(b))
+                .flat_map(|same| same.chunks(plan.batch))
                 .collect();
-            if resized.is_empty() {
+            let workers = std::thread::available_parallelism()
+                .map(|n| n.get())
+                .unwrap_or(2)
+                .clamp(1, plan.workers);
+            let next = std::sync::atomic::AtomicUsize::new(0);
+            let results: Mutex<Vec<(usize, BatchResult)>> = Mutex::new(Vec::new());
+            let work = || loop {
+                let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                let Some(chunk) = chunks.get(i) else { break };
+                let lines: Vec<&RgbImage> = chunk.iter().map(|&c| images[c]).collect();
+                let r = self.recognize_batch(&lines, width(chunk[0]));
+                results.lock().push((i, r));
+            };
+            if workers.min(chunks.len()) <= 1 {
+                work();
+            } else {
+                std::thread::scope(|scope| {
+                    for _ in 0..workers.min(chunks.len()) {
+                        scope.spawn(work);
+                    }
+                });
+            }
+            let mut texts: Vec<(String, f32)> = vec![(String::new(), 0.0); images.len()];
+            for (i, batch) in results.into_inner() {
+                for (&c, read) in chunks[i].iter().zip(batch?) {
+                    texts[c] = read;
+                }
+            }
+            Ok(texts)
+        }
+
+        /// One call of the recognition network: `lines` side by side
+        /// in a batch `width` wide, each padded on the right.
+        fn recognize_batch(&self, lines: &[&RgbImage], width: u32) -> Result<Vec<(String, f32)>> {
+            if lines.is_empty() {
                 return Ok(vec![]);
             }
-            let max_w = resized.iter().map(|r| r.width()).max().unwrap_or(1) as usize;
-            let n = resized.len();
-            let input =
-                NdTensor::<f32, 4>::from_fn([n, 3, REC_HEIGHT as usize, max_w], |[i, c, y, x]| {
-                    let r = &resized[i];
-                    if x as u32 >= r.width() {
-                        return 0.0;
+            let (n, h, w) = (lines.len(), REC_HEIGHT as usize, width as usize);
+            let mut input = vec![0f32; n * 3 * h * w];
+            for (i, line) in lines.iter().enumerate() {
+                let lw = post::rec_width(line.width(), line.height(), REC_HEIGHT, REC_MAX_WIDTH);
+                let resized = image::imageops::resize(*line, lw, REC_HEIGHT, FilterType::Triangle);
+                for (x, y, px) in resized.enumerate_pixels() {
+                    for c in 0..3 {
+                        let v = px.0[2 - c] as f32 / 255.0;
+                        input[((i * 3 + c) * h + y as usize) * w + x as usize] = (v - 0.5) / 0.5;
                     }
-                    let v = r.get_pixel(x as u32, y as u32).0[2 - c] as f32 / 255.0;
-                    (v - 0.5) / 0.5
-                });
-            let input: Tensor<f32> = input.into();
-            let out: Tensor<f32> = self
-                .rec
-                .run_one(input.view().into(), None)
-                .map_err(|e| anyhow!("rec run: {e}"))?
-                .try_into()
-                .map_err(|e| anyhow!("rec output: {e:?}"))?;
-            let shape = out.shape().to_vec();
-            if shape.len() != 3 || shape[0] != n {
-                anyhow::bail!("unexpected rec output shape {shape:?}");
+                }
             }
-            let (steps, classes) = (shape[1], shape[2]);
-            let data: Vec<f32> = out.iter().copied().collect();
+            let (data, steps, classes) = self.networks.rec(input, n, w)?;
             Ok((0..n)
                 .map(|i| {
                     let slice = &data[i * steps * classes..(i + 1) * steps * classes];
@@ -794,6 +1179,7 @@ pub struct PpOcrProvider {
     id: String,
     models_dir: PathBuf,
     params: Params,
+    use_gpu: bool,
 }
 
 impl PpOcrProvider {
@@ -808,7 +1194,15 @@ impl PpOcrProvider {
             id: id.into(),
             models_dir,
             params: Params::from_config(config),
+            use_gpu: true,
         }
+    }
+
+    /// `performance.use_gpu_if_available`: without it the GPU backend
+    /// is not considered.
+    pub fn with_gpu(mut self, use_gpu: bool) -> Self {
+        self.use_gpu = use_gpu;
+        self
     }
 }
 
@@ -839,16 +1233,19 @@ impl Provider for PpOcrProvider {
             }
             let dir = self.models_dir.clone();
             let params = self.params;
+            let want = engine::Want {
+                backend: params.backend,
+                gpu: self.use_gpu,
+            };
             let lines =
                 tokio::task::spawn_blocking(move || -> Result<Vec<OcrLine>, ProviderError> {
-                    let engine = engine::engine_for(&dir).map_err(|e| {
+                    let engine = engine::engine_for(&dir, want).map_err(|e| {
                         tracing::warn!("PP-OCR models unavailable: {e}");
                         ProviderError::LowConfidence
                     })?;
                     let img = image::load_from_memory(&image_png)
                         .map_err(|e| ProviderError::Other(e.to_string()))?;
-                    engine
-                        .recognize(&img, &params)
+                    engine::read_falling_back(&dir, want, &engine, &img, &params)
                         .map_err(|e| ProviderError::Other(e.to_string()))
                 })
                 .await
@@ -860,7 +1257,7 @@ impl Provider for PpOcrProvider {
         }
         #[cfg(not(feature = "ocrs-engine"))]
         {
-            let _ = (image_png, &self.models_dir, self.params);
+            let _ = (image_png, &self.models_dir, self.params, self.use_gpu);
             Err(ProviderError::LowConfidence)
         }
     }
@@ -993,12 +1390,141 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         verify_and_unpack(&tgz, dir.path()).unwrap();
         assert!(models_installed(dir.path()));
-        let engine = engine::PpOcr::load(dir.path()).unwrap();
+        let engine = engine::PpOcr::load(dir.path(), engine::Want::default()).unwrap();
+        // Nothing but the base models here: rten runs them.
+        assert_eq!(engine.backend(), Backend::Rten);
         let img = image::DynamicImage::new_rgb8(64, 32);
         assert!(engine
             .recognize(&img, &Params::default())
             .unwrap()
             .is_empty());
+    }
+
+    /// The backends must read the same text: speed is never bought
+    /// with reading quality. Needs the installed models (rten and
+    /// ONNX) and ONNX Runtime in the default models directory; reads
+    /// the lens fixtures plus `MOONLENS_OCR_IMAGES`. Also reports what
+    /// [`Backend::Auto`] chooses here and how long each backend took.
+    #[cfg(feature = "ocr-onnx")]
+    #[test]
+    #[ignore]
+    fn backends_read_the_same_lines() {
+        use engine::{PpOcr, Want};
+        let dir = default_models_dir().unwrap();
+        let on = |backend, gpu| PpOcr::load(&dir, Want { backend, gpu }).unwrap();
+        let rten = on(Backend::Rten, false);
+        let cpu = on(Backend::OnnxCpu, false);
+        assert_eq!(cpu.backend(), Backend::OnnxCpu, "ONNX Runtime did not load");
+        let mut others = vec![
+            ("onnx-cpu", cpu),
+            (
+                "gpu plan on cpu",
+                PpOcr::load_cpu_with_gpu_plan(&dir).unwrap(),
+            ),
+        ];
+        // Where DirectML starts (any Windows with a Direct3D 12 adapter,
+        // the software one included) it must read the same text too.
+        let directml = on(Backend::DirectMl, true);
+        if directml.backend() == Backend::DirectMl {
+            others.push(("directml", directml));
+        } else {
+            println!("directml: not available here");
+        }
+        println!("auto chooses: {}", on(Backend::Auto, true).backend().name());
+
+        let mut images: Vec<PathBuf> = std::fs::read_dir("tests/fixtures/lens")
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .filter(|p| p.extension().is_some_and(|e| e == "png"))
+            .collect();
+        if let Some(extra) = std::env::var_os("MOONLENS_OCR_IMAGES") {
+            images.extend(std::env::split_paths(&extra));
+        }
+        images.sort();
+        let read = |engine: &PpOcr, img: &image::DynamicImage| {
+            let t = std::time::Instant::now();
+            let mut lines = engine.recognize(img, &Params::default()).unwrap();
+            let took = t.elapsed();
+            lines.sort_by_key(|l| (l.bbox[1] as i32 / 8, l.bbox[0] as i32));
+            let texts: Vec<String> = lines.into_iter().map(|l| l.text).collect();
+            (texts, took)
+        };
+        let (mut total, mut differing) = (0, 0);
+        let mut spent = vec![std::time::Duration::ZERO; others.len() + 1];
+        for path in &images {
+            let img = image::open(path).unwrap();
+            let (want, took) = read(&rten, &img);
+            spent[0] += took;
+            total += want.len();
+            for (i, (name, engine)) in others.iter().enumerate() {
+                let (got, took) = read(engine, &img);
+                spent[i + 1] += took;
+                let missing: Vec<_> = want.iter().filter(|l| !got.contains(l)).collect();
+                let extra: Vec<_> = got.iter().filter(|l| !want.contains(l)).collect();
+                let n = missing.len().max(extra.len());
+                if n > 0 {
+                    println!("{}: {name} differs in {n} lines", path.display());
+                    println!("  rten: {missing:?}\n  {name}: {extra:?}");
+                }
+                differing += n;
+            }
+        }
+        println!("rten: {:?} for {total} lines", spent[0]);
+        for ((name, _), t) in others.iter().zip(&spent[1..]) {
+            println!("{name}: {t:?}");
+        }
+        println!(
+            "{differing} differing readings of {} ({total} lines x {} backends)",
+            total * others.len(),
+            others.len()
+        );
+        // Rounding may flip a character in a rare line; more than one
+        // reading in a hundred means the backends do not agree.
+        assert!(differing * 100 <= total * others.len(), "backends disagree");
+    }
+
+    #[test]
+    fn the_gpu_is_a_candidate_only_where_it_is_allowed_and_exists() {
+        use engine::Want;
+        let auto = |gpu| {
+            Want {
+                backend: Backend::Auto,
+                gpu,
+            }
+            .candidates()
+        };
+        assert_eq!(auto(false), [Backend::OnnxCpu]);
+        assert_eq!(auto(true).contains(&Backend::DirectMl), cfg!(windows));
+        assert_eq!(auto(true).last(), Some(&Backend::OnnxCpu));
+        let pinned = |backend| Want { backend, gpu: true }.candidates();
+        assert!(pinned(Backend::Rten).is_empty());
+        assert_eq!(pinned(Backend::OnnxCpu), [Backend::OnnxCpu]);
+        // GPU use switched off wins over a pinned GPU backend, which
+        // then runs on the CPU.
+        let no_gpu = Want {
+            backend: Backend::DirectMl,
+            gpu: false,
+        };
+        assert_eq!(no_gpu.candidates(), [Backend::OnnxCpu]);
+    }
+
+    #[test]
+    fn a_line_is_padded_by_its_own_width_alone() {
+        assert_eq!(engine::padded_width(1), 64);
+        assert_eq!(engine::padded_width(64), 64);
+        assert_eq!(engine::padded_width(65), 128);
+        assert_eq!(engine::padded_width(3200), 3200);
+    }
+
+    #[test]
+    fn backend_names_round_trip_and_unknown_ones_mean_auto() {
+        for b in [Backend::DirectMl, Backend::OnnxCpu, Backend::Rten] {
+            assert_eq!(Backend::from_name(b.name()), b);
+        }
+        assert_eq!(Backend::from_name("auto"), Backend::Auto);
+        assert_eq!(Backend::from_name("cuda"), Backend::Auto);
+        let cfg = serde_json::json!({ "backend": "onnx-cpu" });
+        assert_eq!(Params::from_config(&cfg).backend, Backend::OnnxCpu);
     }
 
     #[test]

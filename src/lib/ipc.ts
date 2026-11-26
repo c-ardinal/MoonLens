@@ -145,10 +145,12 @@ export interface OcrModelsStatus {
   ppocr: boolean;
   /** ocrs (Latin only), the fallback engine. */
   ocrs: boolean;
+  /** PP-OCRv5 の高速実行部品（ONNX Runtime）が取得済み、または当該環境で対象外。 */
+  fast: boolean;
   dir: string;
 }
 export const ocrModelsStatus = () =>
-  safeInvoke<OcrModelsStatus>('ocr_models_status', undefined, { ppocr: false, ocrs: false, dir: '' });
+  safeInvoke<OcrModelsStatus>('ocr_models_status', undefined, { ppocr: false, ocrs: false, fast: false, dir: '' });
 
 /** Fired after settings are saved, so every window can apply them at once. */
 export const onSettingsChanged = (handler: (s: Settings) => void): Promise<UnlistenFn> =>

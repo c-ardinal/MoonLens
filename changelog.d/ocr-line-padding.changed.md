@@ -1,0 +1,1 @@
+- Text recognition pads each line picture with blank space on the right, as the recognition model was trained. Short lines such as menu entries are read more accurately (for example `HEIP` is now read as `Help`).

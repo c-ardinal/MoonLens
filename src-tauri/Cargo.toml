@@ -5,7 +5,7 @@ description = "PC-resident Google Lens-style tool"
 authors = ["MoonLens contributors"]
 license = "MIT"
 edition = "2021"
-rust-version = "1.80"
+rust-version = "1.92"
 
 [lib]
 name = "moonlens_lib"
@@ -74,6 +74,10 @@ rten = { version = "0.28", optional = true, features = ["rten_format"] }
 rten-tensor = { version = "0.28", optional = true }
 flate2 = { version = "1", optional = true }
 tar = { version = "0.4", optional = true }
+# ONNX Runtime for the PP-OCR models. The library is loaded at run time
+# from the models directory (providers/ocr_onnx.rs), never linked or
+# downloaded by the build. `api-24` must match RUNTIME_VERSION there.
+ort = { version = "=2.0.0-rc.15", optional = true, default-features = false, features = ["std", "load-dynamic", "api-24"] }
 rqrr = "0.7"
 
 # audio
@@ -118,7 +122,7 @@ llama-cpp-2 = { version = "0.1.161", default-features = false, optional = true, 
 x11rb = "0.13"
 
 [features]
-default = ["audio", "ocrs-engine", "local-llm", "local-asr"]
+default = ["audio", "ocrs-engine", "ocr-onnx", "local-llm", "local-asr"]
 local-llm = ["dep:llama-cpp-2", "dep:minijinja", "dep:minijinja-contrib"]
 # Built-in speech recognition for live subtitles: whisper.cpp (vendored)
 # linked against llama.cpp's ggml, so GPU features apply to both.
@@ -127,6 +131,8 @@ llm-vulkan = ["local-llm", "llama-cpp-2/vulkan"]
 llm-cuda = ["local-llm", "llama-cpp-2/cuda"]
 audio = ["dep:cpal"]
 ocrs-engine = ["dep:ocrs", "dep:rten", "dep:rten-tensor", "dep:flate2", "dep:tar"]
+# PP-OCR on ONNX Runtime (CPU, and DirectML on Windows) beside rten.
+ocr-onnx = ["ocrs-engine", "dep:ort"]
 
 [dev-dependencies]
 tempfile = "3"
@@ -135,6 +141,9 @@ wat = "1"
 # Windows.Media.Ocr (WinRT): the OS's own OCR engine, used in the OCR
 # chain next to PP-OCR (providers/ocr_windows.rs).
 [target.'cfg(windows)'.dependencies]
+# DirectML: the GPU path of ONNX Runtime on Windows.
+ort = { version = "=2.0.0-rc.15", optional = true, default-features = false, features = ["directml"] }
+libloading = "0.8"
 windows = { version = "0.62", features = [
     "Win32_System_Com",
     "Foundation",
