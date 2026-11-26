@@ -60,7 +60,7 @@ pub const LENS_OPERATE_EVENT: &str = "moonlens://lens-operate";
 
 /// Height of the lens header in CSS pixels (fixed in `routes/lens`), used
 /// to put the header just above a range when a lens opens over it.
-pub const HEADER_CSS: u32 = 34;
+pub const HEADER_CSS: u32 = 32;
 
 /// Width in CSS pixels of the band along the window edges that stays
 /// clickable for resizing while the body lets the mouse through.

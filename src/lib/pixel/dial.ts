@@ -88,11 +88,19 @@ function runeRing(p: Pix, cx: number, cy: number, r: number, n: number, set: rea
   }
 }
 
-/** 斜めの名札（背景つき）。戻り値は幅。 */
-export function chip(p: Pix, x: number, y: number, s: string, fg: Color, bg: Color, pad = 8, k = 0.3) {
-  const w = p.textW(s) + pad * 2;
-  p.slab(x, y, w, 19, k, bg);
-  p.text(s, x + pad + 3, y + 1, fg);
+/** 名札の高さ（論理画素）：文字 16 ＋上下 2（表示 4px）。 */
+export const CHIP_H = 20;
+/** 名札の標識（正方形）の一辺と、文字との間隔（論理画素。表示 16px・8px）。 */
+const MARK = 8;
+const MARK_GAP = 4;
+
+/** 斜めの名札（背景つき）。戻り値は幅。mark 指定時は文字の左へ正方形の標識を描画。 */
+export function chip(p: Pix, x: number, y: number, s: string, fg: Color, bg: Color, mark = false, pad = 8, k = 0.3) {
+  const lead = mark ? MARK + MARK_GAP : 0;
+  const w = p.textW(s) + lead + pad * 2;
+  p.slab(x, y, w, CHIP_H, k, bg);
+  if (mark) p.rect(x + pad + 3, y + (CHIP_H - MARK) / 2, MARK, MARK, fg);
+  p.text(s, x + pad + 3 + lead, y + 2, fg);
   return w;
 }
 
@@ -263,8 +271,8 @@ export function drawDial(p: Pix, s: DialState, reserve = SIDE_WIDTH) {
     const w = p.textW(item.label) + 16 + (lock ? 16 : 0);
     const at = (place: string): Box => {
       const lx = place === 'left' ? x - 24 - w : place === 'right' ? x + 24 : Math.round(x - w / 2);
-      const ly = place === 'above' ? y - 46 : place === 'below' ? y + 26 : y - 9;
-      return { x: Math.max(2, Math.min(limit - w, lx)), y: Math.max(2, Math.min(p.h - 21, ly)), w, h: 19 };
+      const ly = place === 'above' ? y - 46 : place === 'below' ? y + 26 : y - CHIP_H / 2;
+      return { x: Math.max(2, Math.min(limit - w, lx)), y: Math.max(2, Math.min(p.h - CHIP_H - 2, ly)), w, h: CHIP_H };
     };
     // 既定の配置→下→上→左→右の順に、ノード・既存の名札と重ならない位置を採用
     const order = [labelPlacement(angle), 'below', 'above', 'left', 'right'];
@@ -274,9 +282,9 @@ export function drawDial(p: Pix, s: DialState, reserve = SIDE_WIDTH) {
     chip(p, box.x, box.y, item.label, lock ? 3 : hov ? 0 : 5, hov ? 9 : 1);
     if (lock) {
       const ex = box.x + w - 12;
-      p.rect(ex - 2, box.y + 3, 13, 13, 0);
-      p.line(ex, box.y + 5, ex + 8, box.y + 13, 7);
-      p.line(ex + 8, box.y + 5, ex, box.y + 13, 7);
+      p.rect(ex - 2, box.y + 4, 13, 13, 0);
+      p.line(ex, box.y + 6, ex + 8, box.y + 14, 7);
+      p.line(ex + 8, box.y + 6, ex, box.y + 14, 7);
     }
   });
   return geo;

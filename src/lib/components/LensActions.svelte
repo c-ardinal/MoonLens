@@ -160,8 +160,8 @@
   ]);
 
   /** 項目間隔・縦メニューボタンの占有幅（px、CSS の .fit の gap・.tb の寸法・.bar の gap と同値）。 */
-  const GAP = 1;
-  const MORE = 24 + 2;
+  const GAP = 0;
+  const MORE = 24 + 4;
 
   let fitEl: HTMLDivElement;
   /** バーへ表示する項目数（先頭から）。 */
@@ -211,7 +211,7 @@
     <span class="sel">
       <select
         aria-label="翻訳先言語"
-        style="width: calc({languageLabel(targetLanguage).length}em + 6px)"
+        style="width: calc({languageLabel(targetLanguage).length}em + 2px)"
         value={targetLanguage}
         onchange={(e) => onlanguage((e.currentTarget as HTMLSelectElement).value)}
       >
@@ -300,7 +300,6 @@
     display: flex;
     align-items: center;
     justify-content: flex-end;
-    gap: 1px;
     overflow: hidden;
   }
   .item {
@@ -319,7 +318,7 @@
     flex: none;
     display: inline-flex;
     align-items: center;
-    gap: 6px;
+    gap: 4px;
     border-radius: 6px;
     padding: 4px;
     font-size: 11px;
@@ -341,7 +340,7 @@
   .sel {
     display: inline-flex;
     align-items: center;
-    gap: 2px;
+    gap: 4px;
   }
   /* 独自描画（WebKitGTK の既定描画は明背景で文字が不可視） */
   .lang select {
@@ -353,7 +352,7 @@
     outline: none;
     font: inherit;
     cursor: pointer;
-    padding: 0 2px;
+    padding: 0;
   }
   .lang select option {
     color: #111;
@@ -361,16 +360,15 @@
   /* 縦メニュー：タイトルバー直下の右端。窓の高さ不足時は内部スクロール。 */
   .menu {
     position: absolute;
-    top: calc(100% + 2px);
+    top: calc(100% + 4px);
     right: 4px;
     z-index: 10;
     display: flex;
     flex-direction: column;
-    gap: 1px;
     min-width: min(148px, calc(100vw - 8px));
     max-width: calc(100vw - 8px);
-    /* 窓の高さ − タイトルバー（34px）− 上下の余白 */
-    max-height: calc(100vh - 44px);
+    /* 窓の高さ − タイトルバー（32px）− 上下の余白 */
+    max-height: calc(100vh - 40px);
     box-sizing: border-box;
     overflow-y: auto;
     border-radius: 8px;
@@ -384,7 +382,7 @@
     align-items: center;
     gap: 8px;
     border-radius: 6px;
-    padding: 5px 8px;
+    padding: 4px 8px;
     font-size: 12px;
     text-align: left;
     white-space: nowrap;

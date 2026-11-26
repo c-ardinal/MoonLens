@@ -87,6 +87,15 @@ jobs:
       - name: Production build (vite)
         run: npm run build
 
+      # 4px spacing grid: renders the build with a mocked IPC in headless
+      # Chromium and fails on off-grid padding / margin / gaps, icon-text
+      # gaps, glyph icons and off-centre rows (scripts/ui-audit/README.md).
+      - name: Install Chromium (Playwright)
+        run: npx playwright install --with-deps chromium
+
+      - name: UI grid audit (4px)
+        run: npm run audit:grid
+
   rust:
     strategy:
       fail-fast: false
