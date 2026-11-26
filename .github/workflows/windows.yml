@@ -199,11 +199,18 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~\AppData\Local\io.moonlens.app\models
-          key: moonlens-models-v1
+          key: moonlens-models-v2
 
       - name: Download models
         working-directory: src-tauri
         run: cargo run --release --locked --example fetch_models
+
+      # ONNX Runtime (CPU and DirectML) against rten on the fixture
+      # images: same text, plus the backend the automatic choice takes
+      # on this runner and the time each one needs.
+      - name: OCR backends read the same text
+        working-directory: src-tauri
+        run: cargo test --release --locked --lib backends_read_the_same_lines -- --ignored --nocapture
 
       - name: Screen → OCR → translation
         working-directory: src-tauri

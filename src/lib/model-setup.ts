@@ -39,9 +39,11 @@ export interface FeaturePlan {
   enabled: boolean;
 }
 
-/** PP-OCRv5（26 MB）と予備の ocrs（12 MB）を一括取得。 */
+/** PP-OCRv5（26 MB）・予備の ocrs（12 MB）・高速実行部品（ONNX Runtime と専用モデル、約 45 MB）を一括取得。 */
 export const OCR_CHOICE_ID = 'ppocr';
-const OCR_BYTES = 38_000_000;
+const OCR_BYTES = 83_000_000;
+/** 高速実行部品のみ未取得の場合の取得量。 */
+const OCR_FAST_BYTES = 45_000_000;
 
 export const FEATURE_TITLES: Record<Feature, string> = {
   translate: '翻訳',
@@ -51,13 +53,17 @@ export const FEATURE_TITLES: Record<Feature, string> = {
 };
 
 export function ocrChoice(ocr: OcrModelsStatus): Choice {
+  // 文字認識は利用可能、高速実行部品のみ不足（旧版で取得済みの環境）。
+  const fastOnly = ocr.ppocr && ocr.ocrs && !ocr.fast;
   return {
     id: OCR_CHOICE_ID,
     label: 'PP-OCRv5',
-    size: OCR_BYTES,
-    installed: ocr.ppocr && ocr.ocrs,
+    size: fastOnly ? OCR_FAST_BYTES : OCR_BYTES,
+    installed: ocr.ppocr && ocr.ocrs && ocr.fast,
     partial: 0,
-    note: '日本語・中国語・英語に対応（予備の英語専用 ocrs を同梱）'
+    note: fastOnly
+      ? '高速実行部品が未取得（取得後は読取を高速化、環境別の最適構成は自動選択）'
+      : '日本語・中国語・英語に対応（予備の英語専用 ocrs を同梱）'
   };
 }
 

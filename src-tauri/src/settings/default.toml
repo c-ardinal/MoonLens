@@ -260,6 +260,10 @@ detection_threshold = 0.4
 recognition_threshold = 0.5
 
 [providers.configs.ppocr]
+# What runs the networks: "auto" (the fastest that loads on this PC,
+# measured at model load), "directml" (GPU, Windows), "onnx-cpu" or
+# "rten".
+backend = "auto"
 det_max_side = 1600
 det_threshold = 0.3
 box_threshold = 0.6

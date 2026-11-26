@@ -12,6 +12,7 @@ pub mod lang;
 pub mod llm_models;
 pub mod model_store;
 pub mod ocr_ocrs;
+pub mod ocr_onnx;
 pub mod ocr_ppocr;
 #[cfg(windows)]
 pub mod ocr_windows;

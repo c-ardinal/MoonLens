@@ -223,7 +223,7 @@ impl Tracker {
         let changed = self
             .last_thumb
             .as_ref()
-            .map_or(true, |t| t.changed_share(&thumb, None) >= REGION_CHANGED);
+            .is_none_or(|t| t.changed_share(&thumb, None) >= REGION_CHANGED);
         self.last_thumb = Some(thumb.clone());
         // Nothing changed since the last tick and nothing waits to settle.
         // The target language changed in settings: read and translate again.

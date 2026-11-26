@@ -30,6 +30,7 @@ const llm = (installed: boolean, downloading = false): LlmModels => ({
 const ocr = (ppocr: boolean, ocrs = false): OcrModelsStatus => ({
   ppocr,
   ocrs,
+  fast: true,
   dir: ''
 });
 const asr: AsrModels = { selected: '', dir: '', models: [] };

@@ -1129,7 +1129,9 @@ fn builtin_provider(
         ),
         id if id.starts_with("whisper_cpp.") => Arc::new(WhisperCppProvider::new(id, cfg)),
         "ocrs" => Arc::new(OcrsProvider::new(id, cfg)),
-        "ppocr" => Arc::new(crate::providers::ocr_ppocr::PpOcrProvider::new(id, cfg)),
+        "ppocr" => {
+            Arc::new(crate::providers::ocr_ppocr::PpOcrProvider::new(id, cfg).with_gpu(use_gpu))
+        }
         #[cfg(windows)]
         "windows" => Arc::new(crate::providers::ocr_windows::WindowsOcrProvider::new(
             id, cfg,

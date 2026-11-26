@@ -157,7 +157,7 @@ fn pump(ms: u64) {
 fn show(img: &RgbaImage) -> HWND {
     let (w, h) = (img.width() as i32, img.height() as i32);
     let mut bgra = img.as_raw().clone();
-    for p in bgra.chunks_exact_mut(4) {
+    for p in bgra.as_chunks_mut::<4>().0 {
         p.swap(0, 2);
     }
     *PIXELS.lock().unwrap() = (w, h, bgra);

@@ -557,6 +557,12 @@ pub async fn install_ocr_models(app: AppHandle) -> Result<String, String> {
     ocr_ocrs::install_models_with_progress(&dir, Some(&*cb))
         .await
         .map_err(|e| user_error::download(&e))?;
+    // Last: OCR already works without the faster runtime, so a failure
+    // here leaves a working install that reports what is missing.
+    #[cfg(feature = "ocr-onnx")]
+    crate::providers::ocr_onnx::install(&dir, Some(&*cb))
+        .await
+        .map_err(|e| user_error::download(&e))?;
     Ok(dir.display().to_string())
 }
 
@@ -567,6 +573,9 @@ pub struct OcrModelsStatus {
     pub ppocr: bool,
     /// ocrs (Latin only), the fallback engine.
     pub ocrs: bool,
+    /// The faster runtime for PP-OCRv5 (ONNX Runtime and its models)
+    /// is installed, or this platform has none to install.
+    pub fast: bool,
     pub dir: String,
 }
 
@@ -576,6 +585,8 @@ pub async fn ocr_models_status() -> Result<OcrModelsStatus, String> {
     Ok(OcrModelsStatus {
         ppocr: crate::providers::ocr_ppocr::models_installed(&dir),
         ocrs: ocr_ocrs::model_paths(&dir).is_some(),
+        fast: !crate::providers::ocr_onnx::supported()
+            || crate::providers::ocr_onnx::installed(&dir),
         dir: dir.display().to_string(),
     })
 }
