@@ -54,10 +54,10 @@
   }
 </script>
 
-<nav class="mt-3 flex flex-wrap gap-1.5" data-intent={intent ?? 'none'}>
+<nav class="mt-3 flex flex-wrap gap-2" data-intent={intent ?? 'none'}>
   {#each actions as a (a.id)}
     <button
-      class="inline-flex items-center gap-1 rounded-ml-sm border border-border bg-surface px-2.5 py-1 text-[11px] text-ink-muted transition hover:border-accent/50 hover:text-ink"
+      class="inline-flex items-center gap-1 rounded-ml-sm border border-border bg-surface px-3 py-1 text-[11px] text-ink-muted transition hover:border-accent/50 hover:text-ink"
       onclick={() => click(a)}
       data-action={a.id}
     >

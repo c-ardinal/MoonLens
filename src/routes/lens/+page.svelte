@@ -482,12 +482,12 @@
     /* 縦メニュー（LensActions）の配置基準 */
     position: relative;
     box-sizing: border-box;
-    height: 34px;
+    height: 32px;
     flex: none;
     display: flex;
     align-items: center;
     /* 項目間隔：LensActions の MORE（縦メニューボタンの占有幅）と同値 */
-    gap: 2px;
+    gap: 4px;
     padding: 0 4px;
     background: rgba(24, 24, 28, 0.92);
     border-radius: 8px 8px 0 0;
@@ -499,7 +499,7 @@
   }
   .lead {
     flex: none;
-    margin: 0 6px;
+    margin: 0 4px;
   }
   /* 狭い範囲：見出しを省略し操作列へ幅を譲渡 */
   @container (max-width: 300px) {
@@ -578,8 +578,8 @@
   }
   .panel {
     position: absolute;
-    inset: 6px 6px 6px auto;
-    width: min(360px, calc(100% - 12px));
+    inset: 8px 8px 8px auto;
+    width: min(360px, calc(100% - 16px));
     display: flex;
     flex-direction: column;
     border-radius: 10px;
@@ -588,11 +588,11 @@
   }
   .status {
     position: absolute;
-    left: 6px;
-    bottom: 6px;
+    left: 8px;
+    bottom: 8px;
     max-width: calc(100% - 40px);
     border-radius: 6px;
-    padding: 2px 8px;
+    padding: 4px 8px;
     font-size: 11px;
     background: rgba(24, 24, 28, 0.85);
   }

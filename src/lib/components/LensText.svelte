@@ -78,7 +78,7 @@
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 6px 8px 6px 12px;
+    padding: 4px 8px 4px 12px;
     user-select: none;
   }
   .head.drag {
@@ -97,9 +97,9 @@
     flex: none;
     display: inline-flex;
     align-items: center;
-    gap: 2px;
+    gap: 4px;
     border-radius: 6px;
-    padding: 2px 4px 2px 6px;
+    padding: 4px 4px 4px 8px;
     font-size: 11px;
     cursor: pointer;
   }
@@ -125,7 +125,7 @@
   .close {
     flex: none;
     border-radius: 6px;
-    padding: 2px;
+    padding: 4px;
   }
   .content {
     flex: 1;

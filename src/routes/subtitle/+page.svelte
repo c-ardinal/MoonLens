@@ -91,9 +91,9 @@
       title="原文表示"
       onclick={() => (showOriginal = !showOriginal)}
     >
-      {#if showOriginal}<Eye class="h-3.5 w-3.5" />{:else}<EyeOff class="h-3.5 w-3.5" />{/if}
+      {#if showOriginal}<Eye class="h-4 w-4" />{:else}<EyeOff class="h-4 w-4" />{/if}
     </button>
-    <button class="btn" title="閉じる" onclick={close}><X class="h-3.5 w-3.5" /></button>
+    <button class="btn" title="閉じる" onclick={close}><X class="h-4 w-4" /></button>
   </header>
 
   <section class="body" bind:this={scroller} aria-live="polite" aria-label="字幕">
@@ -141,12 +141,12 @@
   /* ウィンドウ翻訳のタイトルバーと同一寸法・配色 */
   .bar {
     box-sizing: border-box;
-    height: 34px;
+    height: 32px;
     flex: none;
     display: flex;
     align-items: center;
-    gap: 2px;
-    padding: 0 4px 0 10px;
+    gap: 4px;
+    padding: 0 4px 0 12px;
     background: rgba(24, 24, 28, 0.92);
     border-radius: 8px 8px 0 0;
     user-select: none;
@@ -161,9 +161,9 @@
   }
   .state {
     flex: none;
-    margin-left: 8px;
+    margin-left: 4px;
     border-radius: 6px;
-    padding: 2px 8px;
+    padding: 4px 8px;
     font-size: 11px;
     white-space: nowrap;
     background: rgba(255, 255, 255, 0.08);
@@ -199,7 +199,7 @@
   .btn {
     flex: none;
     border-radius: 6px;
-    padding: 5px;
+    padding: 4px;
     cursor: pointer;
     opacity: 0.75;
   }
@@ -220,7 +220,7 @@
     -webkit-user-select: text;
   }
   .line + .line {
-    margin-top: 10px;
+    margin-top: 12px;
   }
   .line p {
     margin: 0;

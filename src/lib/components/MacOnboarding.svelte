@@ -117,7 +117,7 @@
           </p>
         </div>
         <button
-          class="inline-flex items-center gap-1.5 rounded-ml-sm border border-border bg-surface px-2 py-1 text-xs text-ink-muted hover:border-accent/60 hover:text-ink"
+          class="inline-flex items-center gap-2 rounded-ml-sm border border-border bg-surface px-2 py-1 text-xs text-ink-muted hover:border-accent/60 hover:text-ink"
           onclick={refreshNow}
           title="権限状態の再確認"
         >
@@ -133,27 +133,27 @@
             class="flex items-center justify-between gap-3 rounded-ml border border-border bg-surface p-3"
           >
             <div class="flex items-start gap-3">
-              <row.icon class="mt-0.5 h-5 w-5 text-ink-muted" />
+              <row.icon class="mt-1 h-5 w-5 text-ink-muted" />
               <div>
                 <p class="flex items-center gap-2 text-sm font-medium">
                   {row.title}
                   {#if st === 'granted'}
                     <span
-                      class="inline-flex items-center gap-1 rounded-full bg-accent-soft px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-accent"
+                      class="inline-flex items-center gap-1 rounded-full bg-accent-soft px-2 py-1 text-[10px] font-medium uppercase tracking-wide text-accent"
                     >
                       <CheckCircle2 class="h-3 w-3" />
                       許可済
                     </span>
                   {:else if st === 'denied'}
                     <span
-                      class="inline-flex items-center gap-1 rounded-full bg-red-500/10 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-red-500"
+                      class="inline-flex items-center gap-1 rounded-full bg-red-500/10 px-2 py-1 text-[10px] font-medium uppercase tracking-wide text-red-500"
                     >
                       <CircleAlert class="h-3 w-3" />
                       未許可
                     </span>
                   {:else}
                     <span
-                      class="inline-flex items-center gap-1 rounded-full bg-surface-muted px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-ink-faint"
+                      class="inline-flex items-center gap-1 rounded-full bg-surface-muted px-2 py-1 text-[10px] font-medium uppercase tracking-wide text-ink-faint"
                     >
                       <CircleHelp class="h-3 w-3" />
                       不明
@@ -185,7 +185,7 @@
 
       <footer class="mt-6 flex items-center justify-end gap-2">
         <button
-          class="rounded-ml-sm bg-accent px-3 py-1.5 text-sm font-medium text-white"
+          class="rounded-ml-sm bg-accent px-3 py-2 text-sm font-medium text-white"
           onclick={dismiss}
         >
           完了／スキップ

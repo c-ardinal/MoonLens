@@ -81,7 +81,8 @@ const COL_W = 296;
 
 /** 右側の情報欄の縦位置。高さ不足時は上端の余白を圧縮。 */
 function column(h: number) {
-  const top = Math.max(6, Math.min(32, h - (h >= HINT_MIN_H ? 337 : 311)));
+  // 偶数へ切捨て：各段の位置を表示 4px の格子へ整列
+  const top = Math.max(6, Math.min(32, h - (h >= HINT_MIN_H ? 337 : 311))) & ~1;
   return { top, chips: top + 74, desc: top + 102, engines: top + 180 };
 }
 
@@ -90,9 +91,9 @@ export function homeRegions(w: number, h: number): Record<HomeRegion, Rect> {
   const mx = w - 640 - RIGHT_MARGIN;
   const c = column(h);
   return {
-    go: { x: mx + 480, y: c.desc + 42, w: 146, h: 22 },
+    go: { x: mx + 480, y: c.desc + 43, w: 146, h: 22 },
     engines: { x: mx + COL_X, y: c.engines, w: COL_W, h: 94 },
-    recent: { x: mx + COL_X, y: h - (h >= HINT_MIN_H ? 52 : 26), w: COL_W, h: 22 }
+    recent: { x: mx + COL_X, y: h - (h >= HINT_MIN_H ? 52 : 26), w: COL_W, h: 20 }
   };
 }
 
@@ -153,7 +154,7 @@ export function drawHome(p: Pix, v: HomeView) {
   // 名札：ショートカット・動作状態
   let x = mx + COL_X;
   if (v.hotkey) x += chip(p, x, c.chips, v.hotkey, 0, 9) + 4;
-  if (v.running) chip(p, x, c.chips, '● 動作中', 8, 1);
+  if (v.running) chip(p, x, c.chips, '動作中', 8, 1, true);
 
   // 説明窓
   p.slantWin(mx + COL_X, c.desc, COL_W, 70, 0.2, { shadow: 2 });
@@ -162,8 +163,8 @@ export function drawHome(p: Pix, v: HomeView) {
   else if (v.preview) p.wrap(v.preview, mx + 352, ty, 260, 3, 18, 1);
   const go = `Enter で${v.running ? '停止' : '開始'}`;
   const goCol = v.hot === 'go' ? 9 : 5;
-  const goW = p.text(go, mx + 612, c.desc + 47, goCol, { align: 'right' });
-  p.tri(mx + 612 - goW - TRI_GAP - TRI_W, triY(p, go, c.desc + 47), goCol);
+  const goW = p.text(go, mx + 612, c.desc + 48, goCol, { align: 'right' });
+  p.tri(mx + 612 - goW - TRI_GAP - TRI_W, triY(p, go, c.desc + 48), goCol);
 
   // エンジン窓
   const E = R.engines;
@@ -177,7 +178,7 @@ export function drawHome(p: Pix, v: HomeView) {
   const stateR = E.x + E.w - 10;
   rows.forEach((r, i) => {
     const [label, col] = STATE_TEXT[r.state];
-    const y = E.y + 20 + i * 17;
+    const y = E.y + 20 + i * 18;
     p.text(r.label, E.x + 22, y, 4);
     p.text(p.fit(r.model, stateR - stateW - 8 - modelX), modelX, y, 5);
     p.text(label, stateR, y, col, { align: 'right' });
@@ -185,7 +186,7 @@ export function drawHome(p: Pix, v: HomeView) {
 
   // 最近の翻訳（下端基準）
   const Rr = R.recent;
-  p.slab(Rr.x, Rr.y, Rr.w, 21, K, 1);
+  p.slab(Rr.x, Rr.y, Rr.w, 20, K, 1);
   p.text('最近', Rr.x + 16, Rr.y + 2, 3);
   // 右端から「履歴」＋三角・時刻の順に右寄せ、本文は残りの幅で省略
   const linkR = Rr.x + Rr.w - 4;

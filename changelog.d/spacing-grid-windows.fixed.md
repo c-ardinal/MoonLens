@@ -1,0 +1,3 @@
+- Spacing now follows the 4px grid outside the main window too: the ウィンドウ翻訳 title bar (32px high), its overflow menu and text panel, the subtitle window and the translation overlay.
+- Home: the 動作中 marker is drawn as a pixel square instead of a font glyph, and chips, engine rows and the recent-translation band sit on the 4px grid.
+- Settings: the gap before the link in the description pane no longer drifts off the grid at 20px / 28px text sizes.

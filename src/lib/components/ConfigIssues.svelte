@@ -60,16 +60,16 @@
         </button>
       {/if}
     </div>
-    <ul class="flex flex-col gap-1.5">
+    <ul class="flex flex-col gap-2">
       {#each issues as i (i.id)}
-        <li class="flex flex-wrap items-center gap-x-2 gap-y-1 border-t border-amber-500/30 pt-1.5">
+        <li class="flex flex-wrap items-center gap-x-2 gap-y-1 border-t border-amber-500/30 pt-2">
           <div class="min-w-0 flex-1">
             <code class="block break-all text-xs text-ink-muted">{i.path}</code>
             <span class="break-words">{i.problem}</span>
           </div>
           {#if i.fix_label}
             <button
-              class="shrink-0 rounded-ml-sm border border-accent/50 px-2 py-0.5 text-xs text-accent hover:bg-accent-soft disabled:opacity-50"
+              class="shrink-0 rounded-ml-sm border border-accent/50 px-2 py-1 text-xs text-accent hover:bg-accent-soft disabled:opacity-50"
               disabled={busy}
               onclick={() => fix([i.id])}
             >

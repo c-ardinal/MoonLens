@@ -277,7 +277,7 @@
     <p class="status" class:done={status === 'saved'} role="status">
       {status === 'saving' ? '保存中…' : status === 'saved' ? '保存完了' : '変更は即時保存'}
     </p>
-    <p class="hint">↑↓項目 ←→タブ PgUp/Dn分類</p>
+    <p class="hint" data-grid-glyph>↑↓項目 ←→タブ PgUp/Dn分類</p>
     <div class="search">
       <Search class="icon" />
       <input id="settings-search" bind:value={query} type="search" placeholder="設定を検索" aria-label="設定を検索" />
@@ -378,10 +378,8 @@
       <section class="px-win desc" aria-live="polite">
         <span class="px-chip px-win-title" data-tone="amber" use:slant>説明</span>
         <p use:replay={{ key: explain, effect: 'type' }}>
-          {explain}
-          {#if rows.link}
-            <a href={rows.link.href} target="_blank" rel="noreferrer">{rows.link.label}</a>
-          {/if}
+          <!-- 文と参照先の間隔は余白トークンで指定（空白文字の幅は文字サイズ設定により 4px 格子から逸脱） -->
+          {explain}{#if rows.link}<a href={rows.link.href} target="_blank" rel="noreferrer">{rows.link.label}</a>{/if}
         </p>
       </section>
       </div>
@@ -531,6 +529,7 @@
     box-sizing: border-box;
   }
   .desc a {
+    margin-left: var(--ml-sp-2);
     color: var(--ml-px-mid);
     text-decoration: underline;
   }

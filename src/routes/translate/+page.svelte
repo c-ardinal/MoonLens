@@ -278,6 +278,7 @@
         />
         <span class="h-5 w-9 rounded-full bg-surface-muted ring-1 ring-border transition peer-checked:bg-accent"></span>
         <span
+          data-grid-exempt
           class="absolute left-0.5 top-0.5 h-4 w-4 rounded-full bg-white shadow transition peer-checked:translate-x-4"
         ></span>
       </span>

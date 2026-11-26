@@ -220,7 +220,7 @@
     <PrivacyBadge {viaCloud} {provider} />
     <div class="flex items-center gap-1 text-ink-faint">
       {#if status === 'processing'}
-        <Sparkles class="h-3.5 w-3.5 animate-pulse" />
+        <Sparkles class="h-4 w-4 animate-pulse" />
       {/if}
       <button
         class="rounded-ml-sm p-1 transition hover:bg-surface-muted disabled:opacity-40"
