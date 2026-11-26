@@ -1,8 +1,18 @@
+<script module lang="ts">
+  import { SvelteSet } from 'svelte/reactivity';
+
+  /**
+   * 削除操作済みの id：取消猶予中は非表示のみ、猶予の満了後に削除を確定。
+   * 画面の実体間で共有：猶予中に他画面へ遷移し再表示した場合も非表示・取消を維持。
+   * id は AUTOINCREMENT で再利用なし：確定後の残置は無害。
+   */
+  const removed = new SvelteSet<number>();
+</script>
+
 <script lang="ts">
   import PixelTitle from '$lib/components/PixelTitle.svelte';
   import { onDestroy, onMount } from 'svelte';
   import { replay, type Effect } from '$lib/pixel/transition';
-  import { SvelteSet } from 'svelte/reactivity';
   import { Search, Trash2, RefreshCw, Cloud, Cpu, Copy } from 'lucide-svelte';
   import { copyText, notify, undoable } from '$lib/toast.svelte';
   import {
@@ -24,8 +34,6 @@
   let q = $state('');
   /** 読込済みの履歴（取消猶予中の削除対象を含む）。 */
   let loaded = $state<HistoryEntry[]>([]);
-  /** 削除操作済みの id：取消猶予中は非表示のみ、猶予の満了後に削除を確定。 */
-  const removed = new SvelteSet<number>();
   const entries = $derived(loaded.filter((e) => !removed.has(e.id)));
   let loading = $state(true);
   let error = $state<string | null>(null);
