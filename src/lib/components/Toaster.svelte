@@ -1,10 +1,7 @@
 <script lang="ts">
   import { X } from 'lucide-svelte';
-  import { close, flush, hold, release, toasts } from '$lib/toast.svelte';
+  import { close, hold, release, toasts } from '$lib/toast.svelte';
 </script>
-
-<!-- ウィンドウの終了・再読込前：取消猶予中の操作を確定 -->
-<svelte:window onpagehide={flush} />
 
 <!--
   共通の通知。画面下端・左寄せへ積層（新規通知は最下段）。

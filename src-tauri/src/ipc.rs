@@ -1008,6 +1008,15 @@ pub async fn delete_history_entry(id: i64, state: State<'_, AppState>) -> Result
     state.storage.delete(id).map_err(|e| e.to_string())
 }
 
+/// 個別削除の取消：削除済みの行を元の id・日時で復元。
+#[tauri::command]
+pub async fn restore_history_entry(
+    entry: crate::storage::HistoryEntry,
+    state: State<'_, AppState>,
+) -> Result<usize, String> {
+    state.storage.restore(&entry).map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 pub async fn clear_history(state: State<'_, AppState>) -> Result<usize, String> {
     state.storage.clear_all().map_err(|e| e.to_string())

@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { MAX_TOASTS, TOAST_MS, close, copyText, flush, hold, release, show, toasts, undoable } from './toast.svelte';
+import { MAX_TOASTS, TOAST_MS, close, copyText, hold, release, show, toasts, undoable } from './toast.svelte';
 
 beforeEach(() => vi.useFakeTimers());
 afterEach(() => {
-  flush();
+  for (const t of [...toasts.items]) close(t.id, 'dismiss');
   vi.useRealTimers();
   vi.unstubAllGlobals();
 });
@@ -53,40 +53,27 @@ describe('toast', () => {
 });
 
 describe('undoable', () => {
-  const setup = (commit = vi.fn(async () => {})) => {
-    const hidden = new Set<number>();
-    const id = undoable({
-      text: '削除完了',
-      failure: '削除失敗',
-      apply: () => hidden.add(1),
-      revert: () => hidden.delete(1),
-      commit
-    });
-    return { hidden, id, commit };
-  };
-
-  it('取消：復元のみ、確定なし', () => {
-    const { hidden, id, commit } = setup();
-    expect(hidden.has(1)).toBe(true);
+  it('取消：undo を 1 回実行', () => {
+    const undo = vi.fn(async () => {});
+    const id = undoable({ text: '削除完了', failure: '復元失敗', undo });
+    expect(toasts.items.at(-1)).toMatchObject({ text: '削除完了', action: '取消' });
     close(id, 'action');
-    expect(hidden.has(1)).toBe(false);
-    expect(commit).not.toHaveBeenCalled();
+    close(id, 'action');
+    expect(undo).toHaveBeenCalledOnce();
   });
 
-  it('満了・閉鎖・flush：確定', () => {
-    for (const end of [() => vi.advanceTimersByTime(TOAST_MS.action), (id: number) => close(id, 'dismiss'), flush]) {
-      const { hidden, id, commit } = setup();
-      end(id);
-      expect(commit).toHaveBeenCalledOnce();
-      expect(hidden.has(1)).toBe(true);
+  it('満了・閉鎖：undo なし', () => {
+    for (const end of [() => vi.advanceTimersByTime(TOAST_MS.action), (id: number) => close(id, 'dismiss')]) {
+      const undo = vi.fn(async () => {});
+      end(undoable({ text: '削除完了', failure: '復元失敗', undo }));
+      expect(undo).not.toHaveBeenCalled();
     }
   });
 
-  it('確定失敗：復元し、失敗を通知', async () => {
-    const { hidden } = setup(vi.fn(async () => Promise.reject(new Error('db'))));
-    vi.advanceTimersByTime(TOAST_MS.action);
-    await vi.waitFor(() => expect(hidden.has(1)).toBe(false));
-    expect(toasts.items.at(-1)).toMatchObject({ kind: 'error', text: '削除失敗：Error: db' });
+  it('取消失敗：失敗を通知', async () => {
+    const id = undoable({ text: '削除完了', failure: '復元失敗', undo: async () => Promise.reject(new Error('db')) });
+    close(id, 'action');
+    await vi.waitFor(() => expect(toasts.items.at(-1)).toMatchObject({ kind: 'error', text: expect.stringMatching(/^復元失敗：.*db/) }));
   });
 });
 
@@ -99,6 +86,6 @@ describe('copyText', () => {
     expect(toasts.items.at(-1)).toMatchObject({ kind: 'info', text: '訳文：コピー完了' });
     writeText.mockRejectedValueOnce('denied');
     expect(await copyText('x', '訳文')).toBe(false);
-    expect(toasts.items.at(-1)).toMatchObject({ kind: 'error', text: 'コピー失敗：denied' });
+    expect(toasts.items.at(-1)).toMatchObject({ kind: 'error', text: expect.stringMatching(/^コピー失敗：.*denied/) });
   });
 });

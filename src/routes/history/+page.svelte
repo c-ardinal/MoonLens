@@ -1,20 +1,20 @@
 <script module lang="ts">
-  import { SvelteSet } from 'svelte/reactivity';
-
   /**
-   * 削除操作済みの id：取消猶予中は非表示のみ、猶予の満了後に削除を確定。
-   * 画面の実体間で共有：猶予中に他画面へ遷移し再表示した場合も非表示・取消を維持。
-   * id は AUTOINCREMENT で再利用なし：確定後の残置は無害。
+   * 取消による復元の発生回数。画面の実体間で共有：
+   * 削除後に他画面へ遷移し再表示した場合も、取消の結果を表示中の一覧へ反映。
    */
-  const removed = new SvelteSet<number>();
+  let restores = $state(0);
+  /** 表示中の「取消」付き通知。全消去時に閉鎖（消去後の単独復元を防止）。 */
+  const undoToasts = new Set<number>();
 </script>
 
 <script lang="ts">
   import PixelTitle from '$lib/components/PixelTitle.svelte';
-  import { onDestroy, onMount } from 'svelte';
+  import { onDestroy, onMount, untrack } from 'svelte';
   import { replay, type Effect } from '$lib/pixel/transition';
   import { Search, Trash2, RefreshCw, Cloud, Cpu, Copy } from 'lucide-svelte';
-  import { copyText, notify, undoable } from '$lib/toast.svelte';
+  import { close as closeToast, copyText, notify, notifyError, undoable } from '$lib/toast.svelte';
+  import { errorText } from '$lib/errors';
   import {
     HISTORY_FILTERS,
     applyFilter,
@@ -27,14 +27,13 @@
     getSettings,
     listHistory,
     deleteHistoryEntry,
+    restoreHistoryEntry,
     clearHistory,
     type HistoryEntry
   } from '$lib/ipc';
 
   let q = $state('');
-  /** 読込済みの履歴（取消猶予中の削除対象を含む）。 */
-  let loaded = $state<HistoryEntry[]>([]);
-  const entries = $derived(loaded.filter((e) => !removed.has(e.id)));
+  let entries = $state<HistoryEntry[]>([]);
   let loading = $state(true);
   let error = $state<string | null>(null);
   let confirmClear = $state(false);
@@ -70,7 +69,7 @@
     loading = true;
     error = null;
     try {
-      loaded = await listHistory({ limit: 500, query });
+      entries = await listHistory({ limit: 500, query });
     } catch (e) {
       error = String(e);
     } finally {
@@ -78,8 +77,12 @@
     }
   }
 
+  // 初回表示・取消による復元の都度、一覧を読込（検索語の変更は入力側で処理）
+  $effect(() => {
+    void restores;
+    untrack(() => refresh());
+  });
   onMount(() => {
-    refresh();
     getSettings()
       .then((s) => (keepHistory = s?.storage?.keep_history ?? true))
       .catch(() => {});
@@ -96,33 +99,40 @@
   }
 
   /**
-   * 個別削除：一覧から即時に除外し、通知の「取消」で復元。
-   * 削除の確定は通知の終了時（画面遷移後も継続）。
+   * 個別削除：即時に削除し、通知の「取消」で元の id・日時のまま復元。
+   * 削除は実行済みのため、通知の表示中にアプリを終了しても削除結果は維持。
    */
-  function remove(id: number) {
+  async function remove(entry: HistoryEntry) {
     // 選択は隣接項目へ移動（先頭への移動を回避）
-    const i = visible.findIndex((e) => e.id === id);
+    const i = visible.findIndex((e) => e.id === entry.id);
     const neighbour = visible[i + 1] ?? visible[i - 1] ?? null;
-    undoable({
+    try {
+      await deleteHistoryEntry(entry.id);
+    } catch (e) {
+      notifyError(`削除失敗：${errorText(e)}`);
+      return;
+    }
+    entries = entries.filter((e) => e.id !== entry.id);
+    selectedId = neighbour?.id ?? null;
+    const toast = undoable({
       text: '履歴 1 件：削除完了',
-      failure: '削除失敗',
-      apply: () => {
-        removed.add(id);
-        if (selectedId === id || current?.id === id) selectedId = neighbour?.id ?? null;
-      },
-      revert: () => {
-        removed.delete(id);
-        selectedId = id;
-      },
-      commit: () => deleteHistoryEntry(id)
+      failure: '復元失敗',
+      undo: async () => {
+        await restoreHistoryEntry($state.snapshot(entry));
+        selectedId = entry.id;
+        restores += 1;
+      }
     });
+    undoToasts.add(toast);
   }
 
   async function wipe() {
     try {
       // 件数は実際の削除行数（検索中・500 件超過時は表示件数と不一致）
       const count = await clearHistory();
-      loaded = [];
+      for (const id of undoToasts) closeToast(id, 'dismiss');
+      undoToasts.clear();
+      entries = [];
       confirmClear = false;
       notify(`履歴 ${count} 件：全消去完了`);
     } catch (e) {
@@ -312,7 +322,7 @@
               class="sbtn icon"
               title="この履歴を削除"
               aria-label="この履歴を削除"
-              onclick={() => current && remove(current.id)}
+              onclick={() => current && remove(current)}
             >
               <Trash2 class="h-3.5 w-3.5" />
             </button>

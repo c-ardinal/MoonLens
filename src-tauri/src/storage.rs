@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use parking_lot::Mutex;
 use rusqlite::Connection;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
 
 pub struct Storage {
@@ -17,7 +17,7 @@ pub struct Storage {
     pub data_dir: PathBuf,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HistoryEntry {
     pub id: i64,
     pub created_at: i64,
@@ -257,6 +257,28 @@ impl Storage {
         Ok(n)
     }
 
+    /// Put a deleted row back under its original id and timestamp (undo
+    /// of [`Storage::delete`]). Returns 0 when the id is already present.
+    pub fn restore(&self, entry: &HistoryEntry) -> Result<usize> {
+        let db = self.db.lock();
+        let n = db.execute(
+            "INSERT OR IGNORE INTO history
+              (id, created_at, kind, source_text, result_text, provider, via_cloud, image_path)
+              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            rusqlite::params![
+                entry.id,
+                entry.created_at,
+                entry.kind,
+                entry.source_text,
+                entry.result_text,
+                entry.provider,
+                entry.via_cloud as i32,
+                entry.image_path
+            ],
+        )?;
+        Ok(n)
+    }
+
     /// Drop every history row. Returns the number of rows removed.
     pub fn clear_all(&self) -> Result<usize> {
         let db = self.db.lock();
@@ -461,6 +483,30 @@ mod tests {
         assert!(!remaining.contains(&ids[1]));
         assert!(remaining.contains(&ids[0]));
         assert!(remaining.contains(&ids[2]));
+    }
+
+    #[test]
+    fn restore_puts_a_deleted_row_back_unchanged() {
+        let s = Storage::open_in_memory().unwrap();
+        for i in 0..3 {
+            s.append(
+                "translate",
+                Some(&format!("s{i}")),
+                Some("r"),
+                Some("p"),
+                false,
+                None,
+            )
+            .unwrap();
+        }
+        let before = s.recent(10).unwrap();
+        let target = before[1].clone();
+        assert_eq!(s.delete(target.id).unwrap(), 1);
+        assert_eq!(s.restore(&target).unwrap(), 1);
+        assert_eq!(s.recent(10).unwrap(), before);
+        // 既存 id への復元は無処理（重複挿入・上書きなし）
+        assert_eq!(s.restore(&target).unwrap(), 0);
+        assert_eq!(s.recent(10).unwrap(), before);
     }
 
     #[test]
