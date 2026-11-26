@@ -3,11 +3,15 @@
  * 左：ルーン魔法陣、右：斜めの見出し帯・説明窓・エンジン窓・最近の翻訳。
  * 右側は画面右端基準、最近の翻訳と案内行は下端基準。縦の余白は高さに応じて圧縮。
  */
-import { Pix, TITLE_FONT_FAMILY } from './pix';
+import { Pix, TITLE_FONT_FAMILY, TRI_H, TRI_W } from './pix';
 import { chip, drawDial, drawDialMotion, type DialItem } from './dial';
 import type { EngineState } from '../engine-status';
 
 const K = 0.3;
+/** 文字と三角の間隔（論理 4 ドット＝表示 8px）。 */
+const TRI_GAP = 4;
+/** 文字 s（描画原点 y）の字面の垂直中心へ三角を揃える描画位置。 */
+const triY = (p: Pix, s: string, y: number) => Math.round(y + p.inkMidY(s) - TRI_H / 2);
 
 /** 配置に必要な最小の論理寸法。これ未満はドットを縮小（homeDot）。 */
 export const HOME_MIN = { w: 560, h: 318 } as const;
@@ -156,8 +160,10 @@ export function drawHome(p: Pix, v: HomeView) {
   let ty = p.wrap(v.desc, mx + 352, c.desc + 10, 260, 6, 18, v.error || v.preview ? 1 : 2);
   if (v.error) ty = p.wrap(v.error, mx + 352, ty, 260, 7, 18, 1);
   else if (v.preview) p.wrap(v.preview, mx + 352, ty, 260, 3, 18, 1);
-  const go = `▶ Enter で${v.running ? '停止' : '開始'}`;
-  p.text(go, mx + 612, c.desc + 47, v.hot === 'go' ? 9 : 5, { align: 'right' });
+  const go = `Enter で${v.running ? '停止' : '開始'}`;
+  const goCol = v.hot === 'go' ? 9 : 5;
+  const goW = p.text(go, mx + 612, c.desc + 47, goCol, { align: 'right' });
+  p.tri(mx + 612 - goW - TRI_GAP - TRI_W, triY(p, go, c.desc + 47), goCol);
 
   // エンジン窓
   const E = R.engines;
@@ -181,9 +187,11 @@ export function drawHome(p: Pix, v: HomeView) {
   const Rr = R.recent;
   p.slab(Rr.x, Rr.y, Rr.w, 21, K, 1);
   p.text('最近', Rr.x + 16, Rr.y + 2, 3);
-  // 右端から「履歴▶」・時刻の順に右寄せ、本文は残りの幅で省略
+  // 右端から「履歴」＋三角・時刻の順に右寄せ、本文は残りの幅で省略
   const linkR = Rr.x + Rr.w - 4;
-  const linkW = p.text('履歴▶', linkR, Rr.y + 2, v.hot === 'recent' ? 9 : 5, { align: 'right' });
+  const linkCol = v.hot === 'recent' ? 9 : 5;
+  p.tri(linkR - TRI_W, triY(p, '履歴', Rr.y + 2), linkCol);
+  const linkW = p.text('履歴', linkR - TRI_W - TRI_GAP, Rr.y + 2, linkCol, { align: 'right' }) + TRI_GAP + TRI_W;
   if (v.recent) {
     const timeR = linkR - linkW - 12;
     const timeW = p.text(v.recent.time, timeR, Rr.y + 2, 3, { align: 'right' });
