@@ -1,6 +1,6 @@
 <script module lang="ts">
   /**
-   * 取消による復元の発生回数。画面の実体間で共有：
+   * 一覧の再読込を要する事象（取消による復元・削除失敗）の発生回数。画面の実体間で共有：
    * 削除後に他画面へ遷移し再表示した場合も、取消の結果を表示中の一覧へ反映。
    */
   let restores = $state(0);
@@ -106,14 +106,19 @@
     // 選択は隣接項目へ移動（先頭への移動を回避）
     const i = visible.findIndex((e) => e.id === entry.id);
     const neighbour = visible[i + 1] ?? visible[i - 1] ?? null;
-    try {
-      await deleteHistoryEntry(entry.id);
-    } catch (e) {
-      notifyError(`削除失敗：${errorText(e)}`);
-      return;
-    }
+    // 応答前に一覧から除外：連打時の同一項目への重複操作を防止
     entries = entries.filter((e) => e.id !== entry.id);
     selectedId = neighbour?.id ?? null;
+    let deleted: number;
+    try {
+      deleted = await deleteHistoryEntry(entry.id);
+    } catch (e) {
+      notifyError(`削除失敗：${errorText(e)}`);
+      restores += 1;
+      return;
+    }
+    // 削除済みの項目（0 行）：取消の対象なし
+    if (deleted === 0) return;
     const toast = undoable({
       text: '履歴 1 件：削除完了',
       failure: '復元失敗',
@@ -129,9 +134,10 @@
   async function wipe() {
     try {
       // 件数は実際の削除行数（検索中・500 件超過時は表示件数と不一致）
-      const count = await clearHistory();
+      // 消去の発行前に「取消」付き通知を閉鎖：消去後の単独復元を防止
       for (const id of undoToasts) closeToast(id, 'dismiss');
       undoToasts.clear();
+      const count = await clearHistory();
       entries = [];
       confirmClear = false;
       notify(`履歴 ${count} 件：全消去完了`);

@@ -51,9 +51,21 @@ fn speech() -> Vec<i16> {
         .collect()
 }
 
-fn setup() -> (Arc<SettingsStore>, Arc<Pipeline>) {
+type Env = (Arc<SettingsStore>, Arc<Pipeline>);
+
+/// Settings and pipeline with the speech model loaded, as the app has
+/// it when the loop starts (`SubtitleService::preflight` preloads it).
+/// Loading takes most of a minute on a CI runner; left to the first
+/// chunk, it would run into the recognition time limit.
+async fn setup() -> Env {
+    use moonlens_lib::providers::{asr_local::LocalWhisperProvider, Provider, TaskInput};
     let tmp = tempfile::tempdir().unwrap();
-    let store = Arc::new(SettingsStore::load_from(tmp.path().join("config.toml")).unwrap());
+    let config = tmp.path().join("config.toml");
+    // A CI runner has no GPU and few cores: a chunk takes 20-45 s there
+    // (one second or less on a GPU), close to the default limit of 60 s.
+    std::fs::write(&config, "[providers.asr]\ntimeout_ms = 180000\n").unwrap();
+    let store = Arc::new(SettingsStore::load_from(config).unwrap());
+    assert_eq!(store.snapshot().providers.asr.timeout_ms, 180_000);
     let plugins =
         Arc::new(PluginRegistry::load_from(tmp.path().join("plugins"), store.clone()).unwrap());
     std::mem::forget(tmp);
@@ -62,13 +74,39 @@ fn setup() -> (Arc<SettingsStore>, Arc<Pipeline>) {
         Arc::new(Storage::open_in_memory().unwrap()),
         plugins,
     );
+    let snap = store.snapshot();
+    let cfg = snap
+        .providers
+        .configs
+        .get("whisper")
+        .cloned()
+        .unwrap_or_else(|| serde_json::json!({}));
+    let provider =
+        LocalWhisperProvider::new("whisper", &cfg, snap.performance.use_gpu_if_available);
+    assert!(
+        provider.is_ready(),
+        "speech model not downloaded: {}",
+        provider.model_path().display()
+    );
+    let started = std::time::Instant::now();
+    provider
+        .run(TaskInput::Asr {
+            audio_pcm16_mono_16k: vec![0; 32_000],
+            language_hint: Some("en".into()),
+        })
+        .await
+        .expect("speech model failed to load");
+    println!(
+        "speech model ready in {:.1} s",
+        started.elapsed().as_secs_f32()
+    );
     (store, Arc::new(pipeline))
 }
 
 /// Run the subtitle loop over `rx` until the channel closes; the events
 /// it emitted.
-async fn subtitles(rx: mpsc::Receiver<Vec<i16>>) -> Vec<SubtitleEvent> {
-    let (settings, pipeline) = setup();
+async fn subtitles(env: Env, rx: mpsc::Receiver<Vec<i16>>) -> Vec<SubtitleEvent> {
+    let (settings, pipeline) = env;
     let events = Arc::new(Mutex::new(Vec::new()));
     let sink = events.clone();
     let emit = move |ev: SubtitleEvent| {
@@ -125,6 +163,7 @@ fn assert_subtitles(events: &[SubtitleEvent]) {
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "needs the downloaded models"]
 async fn english_speech_becomes_japanese_subtitles() {
+    let env = setup().await;
     let (tx, rx) = mpsc::channel::<Vec<i16>>(4096);
     // 10 ms frames at real-time pace, like the capture callback.
     tokio::spawn(async move {
@@ -137,7 +176,7 @@ async fn english_speech_becomes_japanese_subtitles() {
             }
         }
     });
-    assert_subtitles(&subtitles(rx).await);
+    assert_subtitles(&subtitles(env, rx).await);
 }
 
 #[cfg(all(windows, feature = "audio"))]
@@ -203,6 +242,7 @@ mod loopback {
             println!("skipped: no audio output device");
             return;
         }
+        let env = setup().await;
         let pcm = speech();
         let seconds = pcm.len() as u64 / 16_000;
         let (tx, rx) = mpsc::channel::<Vec<i16>>(4096);
@@ -210,7 +250,7 @@ mod loopback {
         println!("capturing \"{}\"", capture.device());
         let playback = play(pcm);
         // Recognition runs while the recording still plays, as in the app.
-        let run = tokio::spawn(subtitles(rx));
+        let run = tokio::spawn(subtitles(env, rx));
         tokio::time::sleep(Duration::from_secs(seconds + 2)).await;
         drop(playback);
         // Closes the frame channel: the loop recognizes the rest and ends.
