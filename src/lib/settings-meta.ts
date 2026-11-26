@@ -321,6 +321,16 @@ export const SECTIONS: Section[] = [
       },
       {
         kind: 'number',
+        path: 'performance.max_concurrent_tasks',
+        label: '並列翻訳数',
+        help: '拡張機能の翻訳エンジン使用時、段落単位の再翻訳の同時要求数。内蔵エンジンは逐次実行のため対象外。',
+        min: 1,
+        max: 8,
+        step: 1,
+        slider: true
+      },
+      {
+        kind: 'number',
         path: 'performance.cache_ttl_seconds',
         label: '翻訳キャッシュ保持期間',
         help: '同一文の再選択時、期間内なら前回の訳文を即時表示。0：アプリ終了まで。',
