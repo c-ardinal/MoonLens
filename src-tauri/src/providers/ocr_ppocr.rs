@@ -452,6 +452,17 @@ pub mod engine {
         pub(super) rect: [u32; 4],
         pub(super) reported: post::DetBox,
         pub(super) key: u64,
+        /// Size of the picture when the crop ends at one of its edges.
+        /// Such a crop has no margin past its glyphs on that side, so it
+        /// stands only in a picture of this size: in a larger one (the
+        /// window was resized) more of the line may show beyond it.
+        pub(super) cut_by: Option<(u32, u32)>,
+    }
+
+    /// See [`Seen::cut_by`].
+    pub(super) fn cut_by(rgb: &RgbImage, [x, y, w, h]: [u32; 4]) -> Option<(u32, u32)> {
+        (x == 0 || y == 0 || x + w >= rgb.width() || y + h >= rgb.height())
+            .then_some(rgb.dimensions())
     }
 
     /// How far (pixels) each edge of a detected crop may lie from a crop
@@ -514,6 +525,7 @@ pub mod engine {
                 .iter()
                 .rev()
                 .filter(|s| same_place(rect, s.rect) && self.map.contains_key(&s.key))
+                .filter(|s| s.cut_by.map_or(true, |size| size == rgb.dimensions()))
                 .find_map(|s| {
                     let image = line_image(rgb, s.rect)?;
                     (Self::key(&image) == s.key).then_some((*s, image))
@@ -602,6 +614,7 @@ pub mod engine {
                         rect: [x, y, w, h],
                         reported,
                         key: 0,
+                        cut_by: cut_by(&rgb, [x, y, w, h]),
                     }
                 })
                 .collect();
@@ -1031,6 +1044,7 @@ mod tests {
                 score: 1.0,
             },
             key: engine::LineCache::key(&engine::line_image(picture, rect).unwrap()),
+            cut_by: engine::cut_by(picture, rect),
         }
     }
 
@@ -1067,6 +1081,25 @@ mod tests {
         // The same place in a smaller picture (the window was resized).
         let small = image::RgbImage::new(100, 40);
         assert!(cache.seen_at(&small, [10, 20, 120, 32]).is_none());
+    }
+
+    #[test]
+    fn a_line_cut_by_the_picture_edge_is_read_again_in_a_larger_picture() {
+        use engine::LineCache;
+        use image::GenericImage;
+        // The line runs into the right edge: its crop has no margin there.
+        let picture = page([20, 30, 180, 12]);
+        let read = seen([10, 20, 190, 32], &picture);
+        let mut cache = LineCache::default();
+        cache.put(read.key, "Hell".into(), 0.9, 8);
+        cache.remember([read], 8);
+        assert!(cache.seen_at(&picture, [10, 20, 190, 32]).is_some());
+
+        // The window grows by three pixels: the old crop is unchanged,
+        // but more of the last glyph shows beside it.
+        let mut wider = image::RgbImage::from_pixel(203, 80, image::Rgb([20, 20, 20]));
+        wider.copy_from(&picture, 0, 0).unwrap();
+        assert!(cache.seen_at(&wider, [10, 20, 193, 32]).is_none());
     }
 
     #[test]
