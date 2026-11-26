@@ -278,6 +278,21 @@
   color: var(--ml-px-black);
 }
 
+/**
+ * 遷移を示す右向きの三角：2px ドットの階段形（Canvas 側は Pix.tri）。
+ * 字形の「▶」は字面の中心が文字より下方へ偏るため不使用。親は flex ＋ align-items: center。
+ */
+.px-tri {
+  flex-shrink: 0;
+  width: 8px;
+  height: 16px;
+  background: currentColor;
+  clip-path: polygon(
+    0 0, 2px 0, 2px 2px, 4px 2px, 4px 4px, 6px 4px, 6px 6px, 8px 6px,
+    8px 10px, 6px 10px, 6px 12px, 4px 12px, 4px 14px, 2px 14px, 2px 16px, 0 16px
+  );
+}
+
 /** 二重枠の窓。 */
 .px-win {
   position: relative;
