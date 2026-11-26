@@ -65,6 +65,9 @@ pub struct Follow {
     lens: Option<Rect>,
     /// Where the companion was last put (or found, once accepted).
     placed: Option<Rect>,
+    /// The companion was seen at `placed` (a placement that never
+    /// arrives was refused by the window system).
+    arrived: bool,
     grace: u8,
 }
 
@@ -81,6 +84,7 @@ impl Follow {
             gap: px(GAP_CSS) as i32,
             lens: None,
             placed: None,
+            arrived: false,
             grace: 0,
         }
     }
@@ -181,6 +185,7 @@ impl Follow {
             return self.put(self.target(lens, monitor), actual);
         }
         if self.placed == Some(actual) {
+            self.arrived = true;
             self.grace = 0;
             return None;
         }
@@ -211,8 +216,9 @@ impl Follow {
     /// and the window system keeps it where it is.
     fn settle(&mut self, lens: Rect, actual: Rect, monitor: Option<Rect>) -> Option<Rect> {
         let target = self.target(lens, monitor);
-        if self.placed == Some(target) {
+        if self.placed == Some(target) && !self.arrived {
             self.placed = Some(actual);
+            self.arrived = true;
             return None;
         }
         self.put(target, actual)
@@ -220,7 +226,8 @@ impl Follow {
 
     fn put(&mut self, target: Rect, actual: Rect) -> Option<Rect> {
         self.placed = Some(target);
-        if target == actual {
+        self.arrived = target == actual;
+        if self.arrived {
             self.grace = 0;
             return None;
         }
@@ -457,6 +464,16 @@ mod tests {
         };
         let back = f.step(LENS, resized, Some(MONITOR)).unwrap();
         assert_eq!(back, Rect { w: 420, ..at });
+    }
+
+    #[test]
+    fn a_docked_companion_resized_across_the_lens_spans_it_again() {
+        // Right dock, grip dragged straight up: only the height changes,
+        // which the dock sets, so the target is the one already placed.
+        let (mut f, at) = placed(Dock::Right);
+        let shorter = Rect { h: at.h - 80, ..at };
+        assert_eq!(f.step(LENS, shorter, Some(MONITOR)), Some(at));
+        assert_eq!(f.step(LENS, at, Some(MONITOR)), None);
     }
 
     #[test]
