@@ -79,6 +79,14 @@ body {
     font: inherit;
     color: inherit;
   }
+
+  /* リンク・画像のドラッグ（デスクトップへのショートカット作成等）を抑止。
+     文字列のドラッグは `ContextMenu.svelte` の dragstart 処理が担当。 */
+  a,
+  img,
+  svg {
+    -webkit-user-drag: none;
+  }
 }
 
 /* Keyboard focus ring only; mouse focus stays quiet. */
