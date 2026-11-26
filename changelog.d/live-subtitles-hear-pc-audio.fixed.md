@@ -1,0 +1,4 @@
+- Live subtitles on Windows now hear what the PC plays. They captured a recording device (a microphone) instead of the speaker output, so the window stayed on "recognizing…" while a video played.
+- The live subtitle window is a real window now: drag its title bar to move it, resize it at the corner, close it with ×, Esc or Alt+F4. It shows what it is doing (waiting for sound, recognizing, translating, or the error that stopped it), names the captured device, and keeps earlier lines instead of replacing them. If recognition fails repeatedly, the window stays up with the reason instead of vanishing.
+- The end of a sentence is recognized after a short pause in the audio instead of waiting for more sound.
+- Main window: animations keep running while live subtitles are on.

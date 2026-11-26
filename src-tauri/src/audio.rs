@@ -240,6 +240,7 @@ pub mod backend {
     pub struct LoopbackStream {
         stop: Arc<std::sync::atomic::AtomicBool>,
         thread: Option<thread::JoinHandle<()>>,
+        device: String,
     }
 
     impl Drop for LoopbackStream {
@@ -260,7 +261,7 @@ pub mod backend {
             let stop_t = stop.clone();
             // Use a oneshot for an early bail-out signal from the spawned
             // thread so we surface device-pick errors synchronously.
-            let (ready_tx, ready_rx) = std::sync::mpsc::channel::<Result<()>>();
+            let (ready_tx, ready_rx) = std::sync::mpsc::channel::<Result<String>>();
             let thread = thread::Builder::new()
                 .name("moonlens-audio".into())
                 .spawn(move || {
@@ -269,27 +270,36 @@ pub mod backend {
                     }
                 })?;
             // Wait for the thread to confirm device selection or fail fast.
-            ready_rx
+            let device = ready_rx
                 .recv_timeout(std::time::Duration::from_millis(2000))
-                .map_err(|e| anyhow!("audio thread did not start: {e}"))??;
+                .map_err(|e| anyhow!("音声取得スレッドの応答なし：{e}"))??;
             Ok(Self {
                 stop,
                 thread: Some(thread),
+                device,
             })
+        }
+
+        /// Name of the device whose audio is captured.
+        pub fn device(&self) -> &str {
+            &self.device
         }
     }
 
     fn run_capture(
         sink: mpsc::Sender<AudioFrame>,
         stop: Arc<std::sync::atomic::AtomicBool>,
-        ready: std::sync::mpsc::Sender<Result<()>>,
+        ready: std::sync::mpsc::Sender<Result<String>>,
     ) -> Result<()> {
         let host = cpal::default_host();
-        let device =
-            pick_loopback_device(&host).context("no suitable loopback input device found")?;
-        let config = device
-            .default_input_config()
-            .context("no default input config for loopback device")?;
+        let (device, config) = pick_loopback(&host)?;
+        let name = device.name().unwrap_or_else(|_| "不明".into());
+        tracing::info!(
+            "audio: capturing \"{name}\" ({} Hz, {} ch, {:?})",
+            config.sample_rate().0,
+            config.channels(),
+            config.sample_format()
+        );
         let source_rate = config.sample_rate().0;
         let source_channels = config.channels();
         let sample_format = config.sample_format();
@@ -331,7 +341,7 @@ pub mod backend {
         stream.play()?;
         // Tell the caller we are running; from here on errors only get
         // logged to keep the audio thread up.
-        let _ = ready.send(Ok(()));
+        let _ = ready.send(Ok(name));
         // Park until told to stop; the cpal callback drives output from
         // the audio backend's own threads.
         while !stop.load(std::sync::atomic::Ordering::Relaxed) {
@@ -382,6 +392,34 @@ pub mod backend {
         dsp::pcm16_from_f32(v)
     }
 
+    /// The device to capture and the stream format to open it with.
+    ///
+    /// Windows (WASAPI): an input stream opened on a *render* device is a
+    /// loopback of what that device plays. cpal reports its format as
+    /// the output config; `default_input_config` fails on a render
+    /// device, so asking for it made the search below fall through to a
+    /// microphone and the subtitles never heard the PC's own sound.
+    #[cfg(windows)]
+    fn pick_loopback(host: &cpal::Host) -> Result<(cpal::Device, cpal::SupportedStreamConfig)> {
+        let device = host.default_output_device().context("再生デバイス未検出")?;
+        let config = device
+            .default_output_config()
+            .context("再生デバイスの音声形式を取得不可")?;
+        Ok((device, config))
+    }
+
+    /// Linux: PulseAudio / PipeWire expose a `*.monitor` source per sink.
+    /// macOS: a virtual loopback driver (BlackHole, Loopback).
+    #[cfg(not(windows))]
+    fn pick_loopback(host: &cpal::Host) -> Result<(cpal::Device, cpal::SupportedStreamConfig)> {
+        let device = pick_loopback_device(host).context("音声取得デバイス未検出")?;
+        let config = device
+            .default_input_config()
+            .context("音声取得デバイスの音声形式を取得不可")?;
+        Ok((device, config))
+    }
+
+    #[cfg(not(windows))]
     fn pick_loopback_device(host: &cpal::Host) -> Option<cpal::Device> {
         if let Some(dev) = host.default_output_device() {
             if dev.default_input_config().is_ok() {
@@ -413,6 +451,9 @@ pub mod backend {
     pub type AudioFrame = Vec<i16>;
     pub struct LoopbackStream;
     impl LoopbackStream {
+        pub fn device(&self) -> &str {
+            ""
+        }
         pub fn start(_sink: mpsc::Sender<AudioFrame>) -> Result<Self> {
             anyhow::bail!("audio feature disabled at compile time")
         }

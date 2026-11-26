@@ -323,9 +323,13 @@ export const onOverlay = (handler: (event: OverlayEvent) => void): Promise<Unlis
 export const onHotkey = (handler: (action: string) => void): Promise<UnlistenFn> =>
   listen<string>('moonlens://hotkey', (e) => handler(e.payload));
 
+/** 音声翻訳の処理段階：音声待機・音声認識・翻訳。 */
+export type SubtitlePhase = 'waiting' | 'recognizing' | 'translating';
+
 export type SubtitleEvent =
-  | { kind: 'started' }
+  | { kind: 'started'; device: string }
   | { kind: 'stopped' }
+  | { kind: 'status'; phase: SubtitlePhase }
   | { kind: 'chunk'; original: string; translated: string }
   | { kind: 'error'; message: string };
 
