@@ -60,7 +60,12 @@ type Env = (Arc<SettingsStore>, Arc<Pipeline>);
 async fn setup() -> Env {
     use moonlens_lib::providers::{asr_local::LocalWhisperProvider, Provider, TaskInput};
     let tmp = tempfile::tempdir().unwrap();
-    let store = Arc::new(SettingsStore::load_from(tmp.path().join("config.toml")).unwrap());
+    let config = tmp.path().join("config.toml");
+    // A CI runner has no GPU and few cores: a chunk takes 20-45 s there
+    // (one second or less on a GPU), close to the default limit of 60 s.
+    std::fs::write(&config, "[providers.asr]\ntimeout_ms = 180000\n").unwrap();
+    let store = Arc::new(SettingsStore::load_from(config).unwrap());
+    assert_eq!(store.snapshot().providers.asr.timeout_ms, 180_000);
     let plugins =
         Arc::new(PluginRegistry::load_from(tmp.path().join("plugins"), store.clone()).unwrap());
     std::mem::forget(tmp);
