@@ -4,6 +4,8 @@
  * saved, so changes show without a restart.
  */
 
+import { applyPalette, normalizeAccent } from './pixel/palette.svelte';
+
 /** 本文画面の文字寸法（CSS px）。ドット書体 16 ドットの整数 px 段階。 */
 export const TEXT_SIZE_PX: Record<string, number> = {
   xsmall: 16,
@@ -21,17 +23,29 @@ export function bodyZoom(textSize: unknown): number {
   return px / DESIGN_TEXT_PX;
 }
 
-const HEX = /^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i;
+/** 「システム設定」選択時の OS 配色監視の解除関数。 */
+let stopSystemWatch: (() => void) | null = null;
 
 export function applyAppearance(settings: any, root: HTMLElement = document.documentElement) {
   const a = settings?.appearance ?? {};
-  root.dataset.theme = a.theme ?? 'system';
+  const theme = a.theme ?? 'dark';
+  root.dataset.theme = theme;
   root.dataset.density = a.density ?? 'normal';
-  if (typeof a.accent === 'string' && HEX.test(a.accent.trim())) {
-    root.style.setProperty('--ml-accent', a.accent.trim());
-  } else {
-    root.style.removeProperty('--ml-accent');
+  // 訳文表示のウィンドウ（ドット絵外観の対象外）用の主色
+  root.style.setProperty('--ml-accent', normalizeAccent(a.accent));
+
+  // ドット絵外観の配色：テーマ（システム設定は OS の配色へ追従）とアクセントカラーから算出
+  stopSystemWatch?.();
+  stopSystemWatch = null;
+  const mq = typeof matchMedia === 'function' ? matchMedia('(prefers-color-scheme: light)') : null;
+  const sync = () =>
+    applyPalette(theme === 'light' || (theme === 'system' && !!mq?.matches) ? 'light' : 'dark', a.accent, root);
+  sync();
+  if (theme === 'system' && mq) {
+    mq.addEventListener('change', sync);
+    stopSystemWatch = () => mq.removeEventListener('change', sync);
   }
+
   root.style.setProperty('--ml-body-zoom', String(bodyZoom(a.text_size)));
   if (a.reduced_motion) root.dataset.reducedMotion = 'true';
   else delete root.dataset.reducedMotion;

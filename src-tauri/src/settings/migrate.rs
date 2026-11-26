@@ -32,9 +32,21 @@ pub const LEGACY_ASR_CHAIN: [&str; 1] = ["whisper_cpp.large_v3_turbo"];
 pub const LEGACY_ASR_TIMEOUT_MS: u32 = 15000;
 pub const ASR_TIMEOUT_MS: u32 = 60000;
 
+/// Accent colour shipped as the default while the main window ignored the
+/// setting (its palette was fixed to amber). The setting now recolours the
+/// main window, so the old default would turn every install violet. The
+/// colour picker writes lower-case hex, so a violet the user picked on
+/// purpose does not match.
+pub const LEGACY_ACCENT: &str = "#8B5CF6";
+pub const ACCENT: &str = "#FFB547";
+
 /// Apply every rule; returns true when anything changed.
 pub fn migrate_legacy_defaults(s: &mut Settings) -> bool {
     let mut changed = false;
+    if s.appearance.accent == LEGACY_ACCENT {
+        s.appearance.accent = ACCENT.into();
+        changed = true;
+    }
     for (id, cfg) in s.providers.configs.iter_mut() {
         let Some(obj) = cfg.as_object_mut() else {
             continue;
@@ -221,5 +233,17 @@ mod tests {
         s.privacy.allow_cloud_globally = true;
         migrate_versioned(&mut s, CONFIG_VERSION);
         assert!(s.privacy.allow_cloud_globally);
+    }
+
+    #[test]
+    fn legacy_default_accent_becomes_amber_and_picked_colours_stay() {
+        let mut s = Settings::default();
+        s.appearance.accent = LEGACY_ACCENT.into();
+        assert!(migrate_legacy_defaults(&mut s));
+        assert_eq!(s.appearance.accent, ACCENT);
+        // The colour picker writes lower-case hex.
+        s.appearance.accent = "#8b5cf6".into();
+        assert!(!migrate_legacy_defaults(&mut s));
+        assert_eq!(s.appearance.accent, "#8b5cf6");
     }
 }

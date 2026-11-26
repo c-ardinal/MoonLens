@@ -1,0 +1,2 @@
+- Window translation header: actions that do not fit the window width now move into a vertical overflow menu instead of scrolling sideways. Maximize sits next to Close, and Add window moved to the left end.
+- Window translation no longer captures, recognizes or translates while a window is being dragged or resized, even when the pointer pauses mid-drag. Reading starts as soon as the mouse button is released.

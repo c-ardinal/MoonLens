@@ -13,7 +13,7 @@
 //! [`set_continuous`] runs the change-driven [`Tracker`], so OCR runs
 //! only when the pixels change and only text not shown yet goes to the
 //! model. While the lens is dragged or resized no capture is taken;
-//! reading resumes once it holds still. With continuous reading switched
+//! reading resumes once it is dropped. With continuous reading switched
 //! off the lens is read on request only.
 //!
 //! The capture flow:
@@ -45,6 +45,8 @@ use tauri::{
 
 use crate::{
     capture::CaptureRect,
+    lens_drag::{self, DragGate},
+    lens_text::{self, Follow},
     pipeline::Pipeline,
     region_watcher::{Frame, Geometry, LiveEvent, Tick, TickEnv, Tracker},
     settings::SettingsStore,
@@ -53,9 +55,6 @@ use crate::{
 /// Event with [`LiveEvent`]s for one lens window.
 pub const LENS_LIVE_EVENT: &str = "moonlens://lens-live";
 
-/// Event telling every window whether any lens reads continuously (the
-/// main window pauses its animations meanwhile).
-pub const LENS_ACTIVE_EVENT: &str = "moonlens://lens-active";
 /// Operate mode on (`true`) / off for a lens window (operate hotkey).
 pub const LENS_OPERATE_EVENT: &str = "moonlens://lens-operate";
 
@@ -411,6 +410,8 @@ struct LensEntry {
     /// Operate mode as the user set it (button or hotkey). Separate from
     /// `interactive`, which the text view also turns on.
     operate: bool,
+    /// Text view shown outside the window (see [`crate::lens_text`]).
+    text: Option<Follow>,
 }
 
 /// Where a lens opens: the range to observe and the language to show.
@@ -479,13 +480,9 @@ impl LensRegistry {
                 target_language,
                 interactive: false,
                 operate: false,
+                text: None,
             },
         ));
-    }
-
-    /// Whether any lens reads continuously.
-    pub fn any_continuous(&self) -> bool {
-        self.entries.lock().iter().any(|(_, e)| e.watch.is_some())
     }
 
     pub fn target_language(&self, id: &str) -> Option<String> {
@@ -527,6 +524,21 @@ impl LensRegistry {
             .iter()
             .find(|(i, _)| i == id)
             .map(|(_, e)| e.interactive)
+    }
+
+    /// Set or drop the placement of the lens's outside text view.
+    pub fn set_text(&self, id: &str, follow: Option<Follow>) {
+        if let Some((_, e)) = self.entries.lock().iter_mut().find(|(i, _)| i == id) {
+            e.text = follow;
+        }
+    }
+
+    /// Run `f` on the placement of the lens's outside text view. `None`
+    /// without one.
+    pub fn with_text<R>(&self, id: &str, f: impl FnOnce(&mut Follow) -> R) -> Option<R> {
+        let mut entries = self.entries.lock();
+        let (_, e) = entries.iter_mut().find(|(i, _)| i == id)?;
+        e.text.as_mut().map(f)
     }
 
     pub fn untrack(&self, id: &str) {
@@ -782,7 +794,8 @@ fn place_beside(win: &WebviewWindow, source: &WebviewWindow) -> Result<()> {
 
 /// Let the mouse through the lens body to the app underneath, but keep
 /// the header, the resize edges and the grip clickable. Windows can only
-/// ignore the cursor as a whole, so the pointer position decides.
+/// ignore the cursor as a whole, so the pointer position decides. The
+/// same poll keeps an outside text view next to the lens.
 async fn run_passthrough(app: AppHandle, registry: LensRegistryHandle, id: String) {
     let mut applied: Option<bool> = None;
     let mut since_apply = 0u32;
@@ -794,6 +807,7 @@ async fn run_passthrough(app: AppHandle, registry: LensRegistryHandle, id: Strin
         let Some(body_interactive) = registry.interactive(&id) else {
             break;
         };
+        lens_text::follow(&app, &registry, &id, &win);
         let take = body_interactive || pointer_on_controls(&app, &win, &registry, &id);
         since_apply += 1;
         // Re-apply now and then: hiding and showing the window for a
@@ -805,6 +819,8 @@ async fn run_passthrough(app: AppHandle, registry: LensRegistryHandle, id: Strin
             since_apply = 0;
         }
     }
+    // The lens is gone, however it was closed: so is its text view.
+    lens_text::close(&app, &id);
 }
 
 fn pointer_on_controls(
@@ -873,11 +889,11 @@ fn pointer_position(app: &AppHandle) -> Option<(i32, i32)> {
 }
 
 pub fn close(app: &AppHandle, registry: &LensRegistryHandle, id: &str) -> Result<()> {
+    lens_text::close(app, id);
     if let Some(win) = app.get_webview_window(id) {
         win.close().ok();
     }
     registry.untrack(id);
-    emit_active(app, registry);
     Ok(())
 }
 
@@ -899,7 +915,7 @@ pub fn inner_rect(win: &WebviewWindow) -> Result<geometry::LensOuterRect> {
 /// Platforms where content protection removes the window from screen
 /// captures (Windows 10 2004+: `WDA_EXCLUDEFROMCAPTURE`; macOS:
 /// `NSWindowSharingNone`). Elsewhere the window is hidden for the grab.
-const EXCLUDED_FROM_CAPTURE: bool = cfg!(any(target_os = "windows", target_os = "macos"));
+pub const EXCLUDED_FROM_CAPTURE: bool = cfg!(any(target_os = "windows", target_os = "macos"));
 
 /// Convert the renderer's CSS-pixel insets to physical pixels. The outer
 /// rect is physical, so at 150 % scaling unscaled insets left part of the
@@ -977,7 +993,6 @@ pub fn set_continuous(
 ) {
     if !on {
         registry.set_watch(id, None);
-        emit_active(app, registry);
         return;
     }
     let stop = Arc::new(tokio::sync::Notify::new());
@@ -992,12 +1007,6 @@ pub fn set_continuous(
         kick.clone(),
     ));
     registry.set_watch(id, Some(Watch { handle, stop, kick }));
-    emit_active(app, registry);
-}
-
-/// Tell the windows whether any lens reads continuously now.
-pub fn emit_active(app: &AppHandle, registry: &LensRegistryHandle) {
-    let _ = app.emit(LENS_ACTIVE_EVENT, registry.any_continuous());
 }
 
 /// Continuous reading of one lens: every `region_watcher_poll_ms` (or on
@@ -1027,6 +1036,7 @@ async fn run_watch(
 
     let mut tracker = Tracker::new();
     let mut last: Option<Geometry> = None;
+    let mut gate = DragGate::default();
     // The first reading happens at once, as on a manual refresh.
     let mut first = true;
     // New text waits to be confirmed and reading it took an interval
@@ -1046,7 +1056,14 @@ async fn run_watch(
             interval = interval.max(HIDDEN_CAPTURE_MIN_MS);
         }
         if !manual {
-            let pause = if confirming { 0 } else { interval };
+            // Mid-drag nothing is captured: poll fast to catch the drop.
+            let pause = if gate.moving() {
+                lens_drag::MOVING_POLL_MS
+            } else if confirming {
+                0
+            } else {
+                interval
+            };
             tokio::select! {
                 _ = stop.notified() => break,
                 _ = kick.notified() => manual = true,
@@ -1065,18 +1082,24 @@ async fn run_watch(
         };
 
         // Where the lens is now. No capture while it is being dragged
-        // or resized (and no hiding it mid-drag where that is needed).
+        // or resized (and no hiding it mid-drag where that is needed):
+        // reading waits for the drop, however long the hand pauses.
         let now = match observed(&app, &registry, &id) {
             Ok(r) => as_geometry(r),
             Err(_) if app.get_webview_window(&id).is_none() => break,
             Err(_) => continue, // collapsed to the header
         };
-        if last.is_some_and(|g| g != now) {
-            last = Some(now);
+        let moved = last.is_some_and(|g| g != now);
+        last = Some(now);
+        if moved {
             tracker.region_moved(now, &env);
+        }
+        let was_moving = gate.moving();
+        if !gate.allow(moved, lens_drag::button_down()) {
             continue;
         }
-        last = Some(now);
+        // Dropped: read the new spot at once, like a manual refresh.
+        manual |= was_moving;
 
         let (a, r, i) = (app.clone(), registry.clone(), id.clone());
         let started = std::time::Instant::now();
@@ -1258,7 +1281,6 @@ mod tests {
         // Gone: the click-through loop stops.
         r.untrack("a");
         assert_eq!(r.interactive("a"), None);
-        assert!(!r.any_continuous());
     }
 
     #[test]

@@ -1,7 +1,9 @@
 <script lang="ts">
+  import { onMount, type Snippet } from 'svelte';
   import {
     ChevronDown,
     ClipboardCopy,
+    EllipsisVertical,
     Eye,
     EyeOff,
     Languages,
@@ -16,24 +18,25 @@
     X
   } from 'lucide-svelte';
   import { LANGUAGES, languageLabel } from '$lib/lens-overlay';
+  import { fitCount } from '$lib/lens-bar';
 
   /**
-   * ウィンドウ翻訳の窓の操作列。配色は親要素の CSS 変数（--la-hover・--la-pressed）で指定。
-   * compact：アイコンのみ（狭い窓向け、項目名は title へ表示）。幅不足時は横スクロール（ホイール対応）、
-   * 「閉じる」は右端へ固定。
+   * ウィンドウ翻訳のタイトルバー。左端：ウィンドウ追加・見出し（lead）、右端：最大化・閉じる（常時表示）。
+   * 中間の操作項目は幅へ収納可能な数のみ表示し、残余は縦メニューへ収納。
+   * 配色は親要素の CSS 変数（--la-hover・--la-pressed・--la-bg）で指定。
    */
   let {
     continuous,
     showOriginal,
     showText,
-    sourceLanguage = null,
     targetLanguage,
     hasText = true,
     busy = false,
-    compact = false,
     maximized = false,
     operate = false,
     operateKey = '',
+    menuOpen = $bindable(false),
+    lead,
     oncontinuous,
     onrefresh,
     onoriginal,
@@ -49,175 +52,296 @@
     continuous: boolean;
     showOriginal: boolean;
     showText: boolean;
-    sourceLanguage?: string | null;
     targetLanguage: string;
     /** 翻訳対象の文字あり（原文切替・コピー・説明の可否）。 */
     hasText?: boolean;
     busy?: boolean;
-    compact?: boolean;
     /** 窓が最大化中（全画面翻訳）。 */
     maximized?: boolean;
     /** 操作モード（訳文の選択・コピー可）。false は透過モード（クリックは背面へ）。 */
     operate?: boolean;
     /** 操作モード切替のショートカット表記（title へ併記）。 */
     operateKey?: string;
+    /** 縦メニューの表示中（表示中は窓本体でのマウス操作の受付が必要）。 */
+    menuOpen?: boolean;
+    /** 見出し（ウィンドウ追加ボタンの右隣）。 */
+    lead?: Snippet;
     oncontinuous: () => void;
-    /** 再取得。省略時は非表示（静止画上では範囲の再選択で代替）。 */
-    onrefresh?: () => void;
+    onrefresh: () => void;
     onoriginal: () => void;
     onlanguage: (code: string) => void;
     oncopy: () => void;
     ontext: () => void;
     onexplain: () => void;
-    /** 最大化／元のサイズ。省略時は非表示。 */
-    onmaximize?: () => void;
-    /** 透過／操作モードの切替。省略時は非表示。 */
-    onoperate?: () => void;
-    /** ウィンドウの追加。省略時は非表示。 */
-    onadd?: () => void;
+    onmaximize: () => void;
+    onoperate: () => void;
+    onadd: () => void;
     onclose: () => void;
   } = $props();
 
-  /** compact 時の縦ホイールを横スクロールへ変換（幅不足で隠れた項目へ到達）。 */
-  function wheel(e: WheelEvent) {
-    const el = e.currentTarget as HTMLElement;
-    if (!compact || el.scrollWidth <= el.clientWidth || Math.abs(e.deltaX) > Math.abs(e.deltaY)) return;
-    el.scrollLeft += e.deltaY;
-    e.preventDefault();
+  interface Action {
+    key: string;
+    icon: typeof X;
+    label: string;
+    title: string;
+    pressed?: boolean;
+    disabled?: boolean;
+    spin?: boolean;
+    run: () => void;
+  }
+
+  /** 操作項目（表示順 = 収納の優先順：後方から縦メニューへ収納）。 */
+  const actions = $derived<(Action | 'language')[]>([
+    {
+      key: 'continuous',
+      icon: Radio,
+      label: '常時翻訳',
+      title: continuous
+        ? '常時翻訳：ON（画面変化時に再翻訳）'
+        : '常時翻訳：OFF（クリックで画面変化へ追従）',
+      pressed: continuous,
+      run: oncontinuous
+    },
+    {
+      key: 'operate',
+      icon: operate ? MousePointerClick : MousePointerBan,
+      label: operate ? '操作モード' : '透過モード',
+      title:
+        (operate
+          ? '操作モード：訳文の選択・コピー可（クリックで透過モードへ）'
+          : '透過モード：窓上のクリックは背面へ（クリックで操作モードへ）') +
+        (operateKey ? ` (${operateKey})` : ''),
+      pressed: operate,
+      run: onoperate
+    },
+    {
+      key: 'refresh',
+      icon: RefreshCw,
+      label: '再取得',
+      title: '再取得',
+      disabled: busy,
+      spin: busy,
+      run: onrefresh
+    },
+    {
+      key: 'original',
+      icon: showOriginal ? Eye : EyeOff,
+      label: showOriginal ? '訳文表示' : '原文表示',
+      title: '原文／訳文の切替',
+      pressed: showOriginal,
+      disabled: !hasText,
+      run: onoriginal
+    },
+    'language',
+    {
+      key: 'copy',
+      icon: ClipboardCopy,
+      label: 'コピー',
+      title: 'コピー (Ctrl+C)',
+      disabled: !hasText,
+      run: oncopy
+    },
+    {
+      key: 'text',
+      icon: TextSelect,
+      label: 'テキスト表示',
+      title: 'テキスト表示',
+      pressed: showText,
+      run: ontext
+    },
+    {
+      key: 'explain',
+      icon: Languages,
+      label: '内容説明',
+      title: '内容説明',
+      disabled: !hasText,
+      run: onexplain
+    }
+  ]);
+
+  /** 項目間隔・縦メニューボタンの占有幅（px、CSS の .fit の gap・.tb の寸法・.bar の gap と同値）。 */
+  const GAP = 1;
+  const MORE = 24 + 2;
+
+  let fitEl: HTMLDivElement;
+  /** バーへ表示する項目数（先頭から）。 */
+  let shown = $state(Number.MAX_SAFE_INTEGER);
+  const overflow = $derived(shown < actions.length);
+
+  function measure() {
+    if (!fitEl) return;
+    const widths = [...fitEl.querySelectorAll<HTMLElement>(':scope > [data-item]')].map(
+      (el) => el.offsetWidth
+    );
+    // 縦メニューボタンの表示中は、その占有幅も収納可能な幅へ算入（表示有無による振動の防止）
+    const available = fitEl.clientWidth + (overflow ? MORE : 0);
+    shown = fitCount(widths, GAP, available, MORE);
+  }
+
+  onMount(() => {
+    const ro = new ResizeObserver(measure);
+    ro.observe(fitEl);
+    return () => ro.disconnect();
+  });
+  // 項目の幅が変化する更新（言語名など）の後に再計測
+  $effect(() => {
+    void actions;
+    void targetLanguage;
+    measure();
+  });
+  $effect(() => {
+    if (!overflow) menuOpen = false;
+  });
+
+  function outside(e: PointerEvent) {
+    if (menuOpen && !(e.target as Element | null)?.closest?.('.menu, .more')) menuOpen = false;
+  }
+
+  function run(a: Action, fromMenu: boolean) {
+    a.run();
+    if (fromMenu) menuOpen = false;
   }
 </script>
 
-<div class="la" class:compact role="group" aria-label="ウィンドウ翻訳の操作" onwheel={wheel}>
-  <button
-    class="tb"
-    aria-pressed={continuous}
-    onclick={oncontinuous}
-    title={continuous ? '常時翻訳：ON（画面変化時に再翻訳）' : '常時翻訳：OFF（クリックで画面変化へ追従）'}
-  >
-    <Radio class="h-4 w-4" /><span class="lb">常時</span>
-  </button>
-  {#if onoperate}
-    <button
-      class="tb"
-      aria-pressed={operate}
-      onclick={onoperate}
-      title={(operate
-        ? '操作モード：訳文の選択・コピー可（クリックで透過モードへ）'
-        : '透過モード：窓上のクリックは背面へ（クリックで操作モードへ）') + (operateKey ? ` (${operateKey})` : '')}
-    >
-      {#if operate}<MousePointerClick class="h-4 w-4" />{:else}<MousePointerBan class="h-4 w-4" />{/if}<span
-        class="lb">{operate ? '操作' : '透過'}</span
+<svelte:window onpointerdown={outside} onblur={() => (menuOpen = false)} />
+
+{#snippet language(inMenu: boolean)}
+  <label class={inMenu ? 'mi lang' : 'tb lang'} title="翻訳先言語">
+    {#if inMenu}<Languages class="h-4 w-4" /><span class="lb">翻訳先</span>{/if}
+    <span class="sel">
+      <select
+        aria-label="翻訳先言語"
+        style="width: calc({languageLabel(targetLanguage).length}em + 6px)"
+        value={targetLanguage}
+        onchange={(e) => onlanguage((e.currentTarget as HTMLSelectElement).value)}
       >
-    </button>
-  {/if}
-  {#if onrefresh}
-    <button class="tb" onclick={onrefresh} disabled={busy} title="再取得">
-      <RefreshCw class="h-4 w-4 {busy ? 'animate-spin' : ''}" /><span class="lb">再取得</span>
-    </button>
-  {/if}
-  <button
-    class="tb"
-    aria-pressed={showOriginal}
-    disabled={!hasText}
-    onclick={onoriginal}
-    title="原文／訳文の切替"
-  >
-    {#if showOriginal}<Eye class="h-4 w-4" /><span class="lb">訳文</span>{:else}<EyeOff class="h-4 w-4" /><span class="lb">原文</span>{/if}
-  </button>
-  <label class="tb lang" title="翻訳先言語">
-    {#if !compact}<span class="opacity-70">{languageLabel(sourceLanguage) || '自動'} →</span>{/if}
-    <select
-      style="width: calc({languageLabel(targetLanguage).length}em + 6px)"
-      value={targetLanguage}
-      onchange={(e) => onlanguage((e.currentTarget as HTMLSelectElement).value)}
-    >
-      {#if !LANGUAGES.some((l) => l.code === targetLanguage)}
-        <option value={targetLanguage}>{languageLabel(targetLanguage)}</option>
-      {/if}
-      {#each LANGUAGES as l (l.code)}
-        <option value={l.code}>{l.label}</option>
-      {/each}
-    </select>
-    <ChevronDown class="h-3 w-3 opacity-70" />
+        {#if !LANGUAGES.some((l) => l.code === targetLanguage)}
+          <option value={targetLanguage}>{languageLabel(targetLanguage)}</option>
+        {/if}
+        {#each LANGUAGES as l (l.code)}
+          <option value={l.code}>{l.label}</option>
+        {/each}
+      </select>
+      <ChevronDown class="h-3 w-3 opacity-70" />
+    </span>
   </label>
-  <button class="tb" disabled={!hasText} onclick={oncopy} title="コピー (Ctrl+C)">
-    <ClipboardCopy class="h-4 w-4" /><span class="lb">コピー</span>
-  </button>
-  <button class="tb" aria-pressed={showText} onclick={ontext} title="テキスト表示">
-    <TextSelect class="h-4 w-4" /><span class="lb">テキスト</span>
-  </button>
-  <button class="tb" disabled={!hasText} onclick={onexplain} title="内容説明">
-    <Languages class="h-4 w-4" /><span class="lb">説明</span>
-  </button>
-  {#if onmaximize}
-    <button
-      class="tb"
-      onclick={onmaximize}
-      title={maximized ? '元のサイズ' : '最大化（全画面翻訳）'}
-    >
-      {#if maximized}<Minimize2 class="h-4 w-4" />{:else}<Maximize2 class="h-4 w-4" />{/if}<span class="lb"
-        >{maximized ? '元のサイズ' : '最大化'}</span
+{/snippet}
+
+<button class="tb" onclick={onadd} title="ウィンドウ追加（同一サイズで隣へ配置）">
+  <Plus class="h-4 w-4" />
+</button>
+{@render lead?.()}
+
+<div class="fit" bind:this={fitEl} role="group" aria-label="ウィンドウ翻訳の操作" data-tauri-drag-region>
+  {#each actions as a, i (a === 'language' ? a : a.key)}
+    {#if a === 'language'}
+      <span class="item" class:off={i >= shown} data-item>{@render language(false)}</span>
+    {:else}
+      <button
+        class="tb"
+        class:off={i >= shown}
+        data-item
+        aria-pressed={a.pressed}
+        disabled={a.disabled}
+        onclick={() => run(a, false)}
+        title={a.title}
       >
-    </button>
-  {/if}
-  {#if onadd}
-    <button class="tb" onclick={onadd} title="ウィンドウ追加（同一サイズで隣へ配置）">
-      <Plus class="h-4 w-4" /><span class="lb">追加</span>
-    </button>
-  {/if}
-  <button class="tb close" onclick={onclose} title="閉じる (Esc)"><X class="h-4 w-4" /></button>
+        <a.icon class="h-4 w-4 {a.spin ? 'animate-spin' : ''}" />
+      </button>
+    {/if}
+  {/each}
 </div>
 
+{#if overflow}
+  <button
+    class="tb more"
+    aria-haspopup="menu"
+    aria-expanded={menuOpen}
+    aria-pressed={menuOpen}
+    onclick={() => (menuOpen = !menuOpen)}
+    title="他の操作"
+  >
+    <EllipsisVertical class="h-4 w-4" />
+  </button>
+{/if}
+<button class="tb" onclick={onmaximize} title={maximized ? '元のサイズ' : '最大化（全画面翻訳）'}>
+  {#if maximized}<Minimize2 class="h-4 w-4" />{:else}<Maximize2 class="h-4 w-4" />{/if}
+</button>
+<button class="tb" onclick={onclose} title="閉じる (Esc)"><X class="h-4 w-4" /></button>
+
+{#if menuOpen && overflow}
+  <div class="menu" role="menu" aria-label="他の操作">
+    {#each actions.slice(shown) as a (a === 'language' ? a : a.key)}
+      {#if a === 'language'}
+        {@render language(true)}
+      {:else}
+        <button
+          class="mi"
+          role={a.pressed === undefined ? 'menuitem' : 'menuitemcheckbox'}
+          aria-checked={a.pressed}
+          disabled={a.disabled}
+          onclick={() => run(a, true)}
+          title={a.title}
+        >
+          <a.icon class="h-4 w-4 {a.spin ? 'animate-spin' : ''}" /><span class="lb">{a.label}</span>
+        </button>
+      {/if}
+    {/each}
+  </div>
+{/if}
+
 <style>
-  .la {
+  /* 収納可能な項目の表示域。余白はウィンドウのドラッグ領域。 */
+  .fit {
+    position: relative;
+    flex: 1 1 0;
+    min-width: 0;
+    align-self: stretch;
     display: flex;
     align-items: center;
-    gap: 4px;
-  }
-  .la.compact {
+    justify-content: flex-end;
     gap: 1px;
-    min-width: 0;
-    overflow-x: auto;
-    scrollbar-width: none;
+    overflow: hidden;
   }
-  .la.compact::-webkit-scrollbar {
-    display: none;
-  }
-  .la.compact .tb {
+  .item {
     flex: none;
+    display: inline-flex;
   }
-  /* 幅不足時も「閉じる」は常時表示 */
-  .la.compact .close {
-    position: sticky;
-    right: 0;
-    background: var(--la-bg, #18181c);
+  /* 縦メニューへ収納中の項目：幅の計測用に配置は維持し、表示・操作の対象から除外 */
+  .off {
+    position: absolute;
+    left: 0;
+    top: 0;
+    visibility: hidden;
+    pointer-events: none;
   }
   .tb {
+    flex: none;
     display: inline-flex;
     align-items: center;
     gap: 6px;
-    border-radius: 10px;
-    padding: 6px 10px;
-    font-size: 13px;
-    white-space: nowrap;
-    transition: background 120ms;
-  }
-  .compact .tb {
     border-radius: 6px;
     padding: 4px;
     font-size: 11px;
+    white-space: nowrap;
+    transition: background 120ms;
   }
-  .compact .lb {
-    display: none;
-  }
-  .tb:hover:not(:disabled) {
+  .tb:hover:not(:disabled),
+  .mi:hover:not(:disabled) {
     background: var(--la-hover, rgba(255, 255, 255, 0.1));
   }
-  .tb[aria-pressed='true'] {
+  .tb[aria-pressed='true'],
+  .mi[aria-checked='true'] {
     background: var(--la-pressed, rgba(139, 92, 246, 0.35));
   }
-  .tb:disabled {
+  .tb:disabled,
+  .mi:disabled {
     opacity: 0.4;
+  }
+  .sel {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
   }
   /* 独自描画（WebKitGTK の既定描画は明背景で文字が不可視） */
   .lang select {
@@ -233,5 +357,43 @@
   }
   .lang select option {
     color: #111;
+  }
+  /* 縦メニュー：タイトルバー直下の右端。窓の高さ不足時は内部スクロール。 */
+  .menu {
+    position: absolute;
+    top: calc(100% + 2px);
+    right: 4px;
+    z-index: 10;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    min-width: min(148px, calc(100vw - 8px));
+    max-width: calc(100vw - 8px);
+    /* 窓の高さ − タイトルバー（34px）− 上下の余白 */
+    max-height: calc(100vh - 44px);
+    box-sizing: border-box;
+    overflow-y: auto;
+    border-radius: 8px;
+    padding: 4px;
+    background: var(--la-bg, rgb(24, 24, 28));
+    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.4);
+  }
+  .mi {
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    border-radius: 6px;
+    padding: 5px 8px;
+    font-size: 12px;
+    text-align: left;
+    white-space: nowrap;
+    transition: background 120ms;
+  }
+  .mi :global(svg) {
+    flex: none;
+  }
+  .mi.lang .sel {
+    margin-left: auto;
   }
 </style>

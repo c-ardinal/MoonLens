@@ -221,7 +221,7 @@
         {#each visible as e (e.id)}
           <li>
             <button
-              class="w-full rounded-ml border p-2.5 text-left transition {current?.id === e.id
+              class="w-full rounded-ml border px-2.5 py-[var(--ml-row-pad)] text-left transition {current?.id === e.id
                 ? 'border-accent/60 bg-accent-soft'
                 : 'border-border bg-surface-elevated hover:border-accent/40'}"
               aria-current={current?.id === e.id ? 'true' : undefined}

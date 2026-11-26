@@ -209,74 +209,6 @@ export const SECTIONS: Section[] = [
     ]
   },
   {
-    id: 'popup',
-    title: 'ポップアップ',
-    description: '翻訳結果表示用の小型ウィンドウの外観。',
-    fields: [
-      {
-        kind: 'number',
-        path: 'overlay.font_size_px',
-        label: '文字サイズ',
-        min: 10,
-        max: 28,
-        step: 1,
-        unit: 'px',
-        slider: true
-      },
-      {
-        kind: 'number',
-        path: 'overlay.line_height',
-        label: '行間',
-        min: 1.1,
-        max: 2,
-        step: 0.05,
-        unit: '倍',
-        slider: true
-      },
-      {
-        kind: 'number',
-        path: 'overlay.max_width_px',
-        label: '最大幅',
-        min: 240,
-        max: 480,
-        step: 10,
-        unit: 'px',
-        slider: true
-      },
-      {
-        kind: 'number',
-        path: 'overlay.opacity',
-        label: '背景不透明度',
-        min: 0.5,
-        max: 1,
-        step: 0.02,
-        slider: true
-      },
-      {
-        kind: 'number',
-        path: 'overlay.blur_px',
-        label: '背景ぼかし',
-        min: 0,
-        max: 40,
-        step: 1,
-        unit: 'px',
-        slider: true
-      },
-      {
-        kind: 'number',
-        path: 'overlay.auto_hide_ms',
-        label: '自動非表示',
-        help: '表示後、指定時間で非表示。ホバー中は無効。0：無効。',
-        min: 0,
-        max: 30000,
-        step: 500,
-        unit: 'ミリ秒',
-        slider: true,
-        zeroLabel: '無効'
-      }
-    ]
-  },
-  {
     id: 'clipboard',
     title: '自動コピー',
     description: '翻訳・認識の結果をクリップボードへ自動コピー。',
@@ -331,6 +263,7 @@ export const SECTIONS: Section[] = [
         kind: 'select',
         path: 'appearance.theme',
         label: 'テーマ',
+        help: 'メインウィンドウの配色。システム設定：OS の配色へ追従。',
         options: [
           { value: 'system', label: 'システム設定' },
           { value: 'light', label: 'ライト' },
@@ -354,13 +287,19 @@ export const SECTIONS: Section[] = [
         kind: 'select',
         path: 'appearance.density',
         label: '表示密度',
+        help: '設定・履歴の行間と区画間隔。文字・操作部の寸法は「文字サイズ」で変更。',
         options: [
           { value: 'compact', label: 'コンパクト' },
           { value: 'normal', label: '標準' },
           { value: 'comfortable', label: 'ワイド' }
         ]
       },
-      { kind: 'color', path: 'appearance.accent', label: 'アクセントカラー' },
+      {
+        kind: 'color',
+        path: 'appearance.accent',
+        label: 'アクセントカラー',
+        help: 'メインウィンドウの基調色。色相・彩度を反映、明度はテーマ単位で固定（可読性維持）。'
+      },
       {
         kind: 'toggle',
         path: 'appearance.reduced_motion',
@@ -384,7 +323,7 @@ export const SECTIONS: Section[] = [
         kind: 'number',
         path: 'performance.max_concurrent_tasks',
         label: '並列翻訳数',
-        help: '段落単位の再翻訳時の同時処理数。低メモリ環境では減少推奨。',
+        help: '拡張機能の翻訳エンジン使用時、段落単位の再翻訳の同時要求数。内蔵エンジンは逐次実行のため対象外。',
         min: 1,
         max: 8,
         step: 1,
@@ -438,7 +377,7 @@ export const SECTIONS: Section[] = [
 ];
 
 export const GROUPS: Group[] = [
-  { id: 'translation', title: '翻訳', sections: ['translation', 'glossary', 'pin', 'popup'] },
+  { id: 'translation', title: '翻訳', sections: ['translation', 'glossary', 'pin'] },
   { id: 'subtitle', title: '音声翻訳', sections: ['subtitle'] },
   { id: 'models', title: 'モデル', sections: ['models', 'model-assist', 'model-ocr', 'model-asr'] },
   { id: 'output', title: '履歴・コピー', sections: ['history', 'clipboard'] },

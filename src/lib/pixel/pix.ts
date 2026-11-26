@@ -4,8 +4,8 @@
  * 文字は DotGothic16 を 16px で描いて 2 値化し、補間なしで打点する。
  */
 
-/** 限定パレット（番号で参照）。 */
-export const PAL = [
+/** 限定パレット（番号で参照）。外観設定の変更時は palette.svelte.ts が全色を差替え。 */
+export const PAL: string[] = [
   '#0b0805', // 0 黒
   '#1c1207', // 1 焦茶
   '#3a2810', // 2 暗琥珀
@@ -16,7 +16,7 @@ export const PAL = [
   '#ff6a4a', // 7 異常
   '#d6ef8a', // 8 正常
   '#fbfbf8' // 9 骨白
-] as const;
+];
 
 export type Color = number | string;
 type Bitmap = readonly string[];

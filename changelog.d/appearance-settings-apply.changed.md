@@ -1,0 +1,3 @@
+- Default theme is dark and the default accent colour is amber (the look the main window always had). A config that still holds the old default accent `#8B5CF6` is moved to amber once.
+- Settings: the description box at the bottom keeps a fixed two-line height.
+- Settings no longer lists the pop-up window appearance: no feature opens that window any more. The parallel translation count now says it only applies to translation engines from extensions (the built-in engine runs one request at a time).

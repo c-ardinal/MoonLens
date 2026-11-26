@@ -29,6 +29,8 @@
   --ml-font-ui: 'DotGothic16 UI', 'DotGothic16', 'Yu Gothic UI', 'Hiragino Sans', monospace;
   --ml-font-mono: 'DotGothic16 UI', 'DotGothic16', ui-monospace, monospace;
 
+  /* 配色の既定値（暗色・琥珀）。実行時は外観設定から算出した値を root の style で上書き
+   * （src/lib/pixel/palette.svelte.ts）。 */
   --ml-px-black: #0b0805;
   --ml-px-brown: #1c1207;
   --ml-px-dim: #3a2810;
@@ -41,15 +43,15 @@
   --ml-px-green: #d6ef8a;
 
   --ml-surface: var(--ml-px-black);
-  --ml-surface-elevated: #140e07;
+  --ml-surface-elevated: color-mix(in oklab, var(--ml-px-black) 60%, var(--ml-px-brown));
   --ml-surface-muted: var(--ml-px-brown);
   --ml-border: var(--ml-px-dim);
   --ml-ink: var(--ml-px-cream);
   --ml-ink-muted: var(--ml-px-mid);
   --ml-ink-faint: var(--ml-px-faint);
-  /* 外観設定のアクセントカラー（root の style 指定）より優先：配色は琥珀へ固定 */
+  /* 主色は配色（--ml-px-amber）へ統一。root の style 指定（訳文表示のウィンドウ用）より優先 */
   --ml-accent: var(--ml-px-amber) !important;
-  --ml-accent-soft: rgba(255, 181, 71, 0.2) !important;
+  --ml-accent-soft: color-mix(in oklab, var(--ml-px-amber) 20%, transparent) !important;
 
   --ml-radius: 0;
   --ml-radius-sm: 0;
@@ -57,6 +59,10 @@
   --ml-shadow-lg: 6px 6px 0 var(--ml-px-dim);
   /** ナビゲーションの高さ（ロゴ帯 32 ドット）。 */
   --ml-nav-h: 64px;
+}
+
+:root[data-skin='pixel'][data-scheme='light'] {
+  color-scheme: light;
 }
 
 [data-skin='pixel'] body {
@@ -102,6 +108,10 @@
   z-index: 100;
   pointer-events: none;
   background: repeating-linear-gradient(0deg, rgba(0, 0, 0, 0.16) 0 1px, transparent 1px 2px);
+}
+/* 明色：走査線を減光（紙面の濁り防止） */
+[data-skin='pixel'][data-scheme='light'] body::after {
+  background: repeating-linear-gradient(0deg, rgba(0, 0, 0, 0.05) 0 1px, transparent 1px 2px);
 }
 
 /* 文字は 16 ドット格子の整数倍へ統一（中間寸法の滲み防止） */
@@ -181,6 +191,14 @@
  * --ml-z：適用範囲の実効拡縮率（等倍領域 1、本文画面・保存バー・対話窓は設定値）。 */
 :root[data-skin='pixel'] {
   --ml-z: 1;
+  /* 表示密度（外観設定）：標準 0、コンパクト -1、ワイド +1。行・一覧の余白を 4px 段階で増減 */
+  --ml-ds: 0;
+}
+:root[data-skin='pixel'][data-density='compact'] {
+  --ml-ds: -1;
+}
+:root[data-skin='pixel'][data-density='comfortable'] {
+  --ml-ds: 1;
 }
 [data-skin='pixel'] :is(.px-body, .px-zoom, [role='dialog']:not(.px-body *)) {
   --ml-z: var(--ml-body-zoom, 0.75);
@@ -207,6 +225,12 @@
   --ml-sp-14: calc(max(4px, round(56px * var(--ml-z), 4px)) / var(--ml-z));
   --ml-sp-15: calc(max(4px, round(60px * var(--ml-z), 4px)) / var(--ml-z));
   --ml-sp-16: calc(max(4px, round(64px * var(--ml-z), 4px)) / var(--ml-z));
+  /* 表示密度へ追従する余白（描画寸法：コンパクト／標準／ワイド）。
+   * 行の最小高 -8／0／+8px、行の上下余白 4／8／12px、区画の間隔 -4／0／+4px。
+   * 文字・操作部の寸法は対象外（文字サイズ設定の管轄）。 */
+  --ml-row-min: calc((round(60px * var(--ml-z), 4px) + var(--ml-ds) * 8px) / var(--ml-z));
+  --ml-row-pad: calc((8px + var(--ml-ds) * 4px) / var(--ml-z));
+  --ml-flow: calc((max(4px, round(16px * var(--ml-z), 4px)) + var(--ml-ds) * 4px) / var(--ml-z));
   /* 画面外周の余白：文字サイズ設定に依存しない固定値（描画寸法 上 16px・左右 40px） */
   --ml-page-y: calc(16px / var(--ml-z));
   --ml-page-x: calc(40px / var(--ml-z));
@@ -325,6 +349,11 @@
   padding: var(--ml-page-y) var(--ml-page-x) calc(var(--ml-page-y) * 2);
 }
 
+/* 本文画面の区画間隔：表示密度へ追従 */
+[data-skin='pixel'] main.px-body.flex-col {
+  gap: var(--ml-flow);
+}
+
 /* 図標：32px 文字に対し 16px は過小。24px（12 ドット）へ統一 */
 [data-skin='pixel'] svg:is(.h-5, .h-4, .h-3\.5, .h-3) {
   width: 24px;
@@ -438,7 +467,7 @@
   align-items: center;
   justify-content: space-between;
   gap: var(--ml-sp-4);
-  min-height: var(--ml-sp-15);
+  min-height: var(--ml-row-min);
   padding: var(--ml-sp-1) 0;
 }
 .srow .row-label {
