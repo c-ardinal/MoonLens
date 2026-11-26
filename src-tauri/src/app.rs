@@ -242,6 +242,18 @@ pub fn build() -> Result<()> {
                     let _ = window.hide();
                 }
             }
+            // The subtitle window is kept for the next start: closing it
+            // (its × button goes through `stop_subtitle`; this is Alt+F4)
+            // stops the subtitles and hides it.
+            if window.label() == "subtitle" {
+                if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                    api.prevent_close();
+                    let app = window.app_handle();
+                    if let Some(state) = app.try_state::<AppState>() {
+                        let _ = state.subtitle.stop(app);
+                    }
+                }
+            }
         })
         .invoke_handler(all_commands!())
         .run(tauri::generate_context!())?;

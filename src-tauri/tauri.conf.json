@@ -42,9 +42,11 @@
       },
       {
         "label": "subtitle",
-        "title": "MoonLens Subtitle",
+        "title": "MoonLens 音声翻訳",
         "width": 900,
-        "height": 160,
+        "height": 190,
+        "minWidth": 220,
+        "minHeight": 96,
         "decorations": false,
         "transparent": true,
         "alwaysOnTop": true,
