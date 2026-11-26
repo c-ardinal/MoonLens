@@ -13,6 +13,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "audit:grid": "node scripts/ui-audit/grid-audit.mjs build",
+    "audit:overflow": "node scripts/ui-audit/overflow-audit.mjs build",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build"

@@ -96,6 +96,12 @@ jobs:
       - name: UI grid audit (4px)
         run: npm run audit:grid
 
+      # Viewport overflow: every main-window state at 5 text sizes x 3 window
+      # sizes; fails on horizontal scroll, clipped content, elements outside
+      # the window and overlapping siblings.
+      - name: UI overflow audit
+        run: npm run audit:overflow
+
   rust:
     strategy:
       fail-fast: false
