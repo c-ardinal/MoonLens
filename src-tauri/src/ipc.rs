@@ -10,7 +10,7 @@ use crate::{
     capture::{self, CaptureRect},
     clipboard, hotkey, intent,
     lens::{self, geometry::LensInsets, LensDescriptor},
-    overlay,
+    lens_text, overlay,
     pipeline::{CaptureFlowResult, TaskResult, LOCAL_ASSIST_ID, LOCAL_LLM_ID},
     plugins::PluginDescriptor,
     providers::{
@@ -1264,6 +1264,29 @@ pub async fn set_lens_interactive(
 ) -> Result<(), String> {
     state.lenses.set_interactive(&id, on);
     Ok(())
+}
+
+/// Show a lens window's text view outside of it, docked at `dock`
+/// (`top` / `bottom` / `left` / `right`) or placed freely (`free`);
+/// `None` closes the outside view (the text is shown inside the window).
+#[tauri::command]
+pub async fn set_lens_text_dock(
+    id: String,
+    dock: Option<lens_text::Dock>,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    // Window creation must run on the main thread (see `open_lens`).
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    let lenses = state.lenses.clone();
+    let app_main = app.clone();
+    app.run_on_main_thread(move || {
+        let _ = tx.send(lens_text::set_dock(&app_main, &lenses, &id, dock));
+    })
+    .map_err(|e| e.to_string())?;
+    rx.await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())
 }
 
 fn clean_language(lang: Option<String>) -> Option<String> {
