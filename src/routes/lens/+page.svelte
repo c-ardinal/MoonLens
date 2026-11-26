@@ -1,12 +1,12 @@
 <script lang="ts">
   import { onDestroy, onMount, tick } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
-  import type { UnlistenFn } from '@tauri-apps/api/event';
   import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
-  import { X } from 'lucide-svelte';
+  import { emitTo, type UnlistenFn } from '@tauri-apps/api/event';
   import PrivacyBadge from '$lib/components/PrivacyBadge.svelte';
   import FlowText from '$lib/components/FlowText.svelte';
   import LensActions from '$lib/components/LensActions.svelte';
+  import LensText from '$lib/components/LensText.svelte';
   import {
     getSettings,
     listLensWindows,
@@ -15,11 +15,23 @@
     setLensInteractive,
     setLensOperate,
     setLensLanguage,
+    setLensTextDock,
     type CaptureFlowResult,
     type LensBlock
   } from '$lib/ipc';
   import { joinedText, languageLabel, rgb } from '$lib/lens-overlay';
   import { liveBoxes, liveText, type LensLiveEvent } from '$lib/live';
+  import {
+    TEXT_COMMAND_EVENT,
+    TEXT_READY_EVENT,
+    TEXT_VIEW_EVENT,
+    loadPlacement,
+    savePlacement,
+    textWindowLabel,
+    type TextCommand,
+    type TextPlacement,
+    type TextView
+  } from '$lib/lens-text';
   import { extractText } from '$lib/result';
   import { errorText } from '$lib/errors';
   import { displayAccelerator } from '$lib/hotkey';
@@ -28,7 +40,8 @@
   // range: the header above it can be dragged, the edges and the corner
   // grip resize it, and the body lets the mouse through to the app
   // underneath (the backend switches that by pointer position). Shows the
-  // translations in place over the range, or as text in the text view.
+  // translations in place over the range, or as text in the text view:
+  // a panel inside the window, or a window of its own outside of it.
 
   const params = new URLSearchParams(
     typeof window !== 'undefined' ? window.location.search : ''
@@ -210,13 +223,38 @@
     }
   });
 
+  /** Where the text view goes: inside the window, or outside of it (a
+   * window of its own that follows this one; see `lens_text.rs`). */
+  let placement = $state<TextPlacement>(loadPlacement());
+  const textInside = $derived(showText && placement === 'inside');
+  const textOutside = $derived(showText && placement !== 'inside');
+  const textView = $derived<TextView>({ blocks, translation, source, explanation, placement });
+  /** Bumped when the outside text window reports it is listening. */
+  let textReady = $state(0);
+  function setPlacement(p: TextPlacement) {
+    placement = p;
+    savePlacement(p);
+  }
+  $effect(() => {
+    setLensTextDock(id, showText && placement !== 'inside' ? placement : null).catch(() => {});
+  });
+  $effect(() => {
+    void textReady;
+    if (!textOutside) return;
+    emitTo(textWindowLabel(id), TEXT_VIEW_EVENT, $state.snapshot(textView)).catch(() => {});
+  });
+
+  /** The overflow menu of the header is open (it hangs into the body). */
+  let menuOpen = $state(false);
+
   /** Operate mode: the body takes the mouse, so the translation can be
    * selected and copied. Off (default): clicks go to the app underneath.
-   * The text view has controls of its own, so it takes the mouse too. */
+   * The text panel and the open menu have controls of their own, so the
+   * body takes the mouse for them too. */
   let operate = $state(false);
   let operateKey = $state('');
   $effect(() => {
-    setLensInteractive(id, operate || showText).catch(() => {});
+    setLensInteractive(id, operate || textInside || menuOpen).catch(() => {});
   });
   function setOperate(on: boolean) {
     operate = on;
@@ -256,7 +294,9 @@
     window.addEventListener('resize', onResize);
     unlisteners.push(() => window.removeEventListener('resize', onResize));
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') close();
+      if (e.key !== 'Escape') return;
+      if (menuOpen) menuOpen = false;
+      else close();
     };
     window.addEventListener('keydown', onKey);
     unlisteners.push(() => window.removeEventListener('keydown', onKey));
@@ -278,6 +318,15 @@
       );
       // Operate-mode hotkey (all windows at once).
       unlisteners.push(await win.listen<boolean>('moonlens://lens-operate', (e) => setOperate(e.payload)));
+      // Outside text window: it asks for the content once it listens,
+      // and passes on what the user does there.
+      unlisteners.push(await win.listen(TEXT_READY_EVENT, () => textReady++));
+      unlisteners.push(
+        await win.listen<TextCommand>(TEXT_COMMAND_EVENT, ({ payload: c }) => {
+          if (c.kind === 'placement') setPlacement(c.value);
+          else showText = false;
+        })
+      );
       unlisteners.push(
         await win.listen<LensLiveEvent>('moonlens://lens-live', (e) => {
           if (continuous) applyLive(e.payload);
@@ -340,18 +389,11 @@
 
 <main class="lens">
   <header bind:this={headerEl} data-tauri-drag-region class="bar">
-    <div class="lead pointer-events-none flex min-w-0 items-center gap-2" data-tauri-drag-region>
-      <span class="title">ウィンドウ翻訳</span>
-      {#if hasText}
-        <PrivacyBadge {viaCloud} {provider} />
-      {/if}
-    </div>
     <LensActions
-      compact
+      bind:menuOpen
       {continuous}
       {showOriginal}
       {showText}
-      {sourceLanguage}
       {targetLanguage}
       {hasText}
       busy={working}
@@ -369,7 +411,16 @@
       onmaximize={toggleMaximize}
       onadd={() => openLensBeside(id).catch(() => {})}
       onclose={close}
-    />
+    >
+      {#snippet lead()}
+        <div class="lead pointer-events-none flex items-center gap-2" data-tauri-drag-region>
+          <span class="title">ウィンドウ翻訳</span>
+          {#if hasText}
+            <PrivacyBadge {viaCloud} {provider} />
+          {/if}
+        </div>
+      {/snippet}
+    </LensActions>
   </header>
 
   <!-- The observed range. Transparent; the mouse passes through it. -->
@@ -396,32 +447,9 @@
       {/each}
     {/if}
 
-    {#if showText}
+    {#if textInside}
       <aside class="panel" aria-label="テキスト">
-        <header class="flex items-center justify-between px-3 py-1.5">
-          <span class="text-xs font-medium">テキスト</span>
-          <button class="close" onclick={() => (showText = false)} title="閉じる"><X class="h-3.5 w-3.5" /></button>
-        </header>
-        <div class="flex-1 select-text overflow-auto px-3 pb-3 text-sm leading-relaxed">
-          {#if explanation}
-            <section class="mb-3 whitespace-pre-wrap rounded-md bg-white/5 p-2">{explanation}</section>
-          {/if}
-          {#if blocks.length > 0}
-            {#each blocks as b, i (i)}
-              {#if b.same_language}
-                <p class="mb-3 whitespace-pre-wrap">{b.source}</p>
-              {:else}
-                <p class="mb-1 whitespace-pre-wrap">{b.translation ?? '（翻訳中）'}</p>
-                <p class="mb-3 whitespace-pre-wrap text-xs opacity-60">{b.source}</p>
-              {/if}
-            {/each}
-          {:else if hasText}
-            <p class="whitespace-pre-wrap">{translation}</p>
-            {#if source}<p class="mt-1 whitespace-pre-wrap text-xs opacity-60">{source}</p>{/if}
-          {:else}
-            <p class="opacity-60">文字なし</p>
-          {/if}
-        </div>
+        <LensText view={textView} onplacement={setPlacement} onclose={() => (showText = false)} />
       </aside>
     {/if}
 
@@ -451,14 +479,16 @@
   /* Fixed height: the backend puts this header right above the range
      (lens::HEADER_CSS). */
   .bar {
+    /* 縦メニュー（LensActions）の配置基準 */
+    position: relative;
     box-sizing: border-box;
     height: 34px;
     flex: none;
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    gap: 8px;
-    padding: 0 4px 0 10px;
+    /* 項目間隔：LensActions の MORE（縦メニューボタンの占有幅）と同値 */
+    gap: 2px;
+    padding: 0 4px;
     background: rgba(24, 24, 28, 0.92);
     border-radius: 8px 8px 0 0;
     user-select: none;
@@ -466,6 +496,10 @@
     --la-pressed: rgba(139, 92, 246, 0.45);
     --la-bg: rgb(24, 24, 28);
     container-type: inline-size;
+  }
+  .lead {
+    flex: none;
+    margin: 0 6px;
   }
   /* 狭い範囲：見出しを省略し操作列へ幅を譲渡 */
   @container (max-width: 300px) {
@@ -551,13 +585,6 @@
     border-radius: 10px;
     background: rgba(24, 24, 28, 0.94);
     box-shadow: 0 8px 28px rgba(0, 0, 0, 0.4);
-  }
-  .close {
-    border-radius: 6px;
-    padding: 2px;
-  }
-  .close:hover {
-    background: rgba(255, 255, 255, 0.12);
   }
   .status {
     position: absolute;

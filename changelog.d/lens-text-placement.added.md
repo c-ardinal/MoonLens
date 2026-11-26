@@ -1,0 +1,1 @@
+- The text view of a window translation window can be shown outside the window: docked above, below, left or right of it, or placed freely. The outside view follows the window as it moves or resizes, and the choice is remembered for new windows.
