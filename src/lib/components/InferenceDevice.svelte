@@ -5,7 +5,7 @@
   import { systemProfile } from '$lib/system-profile.svelte';
 
   interface Props {
-    /** 「GPU 使用」の現在値（未保存の変更を含む）。 */
+    /** 「GPU 使用」の現在値（保存前の変更を含む）。 */
     useGpu: boolean;
   }
   let { useGpu }: Props = $props();

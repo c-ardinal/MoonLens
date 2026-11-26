@@ -3,6 +3,8 @@ import { describe, expect, it } from 'vitest';
 import {
   allFields,
   changedPaths,
+  savable,
+  saveDelay,
   duplicateHotkeys,
   fieldMatches,
   GROUPS,
@@ -66,6 +68,39 @@ describe('settings-meta', () => {
     const a = { appearance: { theme: 'system' }, clipboard: { auto_copy_qr: true } };
     const b = setPath(a, 'appearance.theme', 'dark');
     expect(changedPaths(a, b)).toEqual(['appearance.theme']);
+  });
+
+  it('ignores f32 rounding when listing changes', () => {
+    const a = { subtitle: { overlap_seconds: 0.1 } };
+    const b = { subtitle: { overlap_seconds: 0.10000000149011612 } };
+    expect(changedPaths(a, b)).toEqual([]);
+    expect(changedPaths(a, { subtitle: { overlap_seconds: 0.2 } })).toEqual(['subtitle.overlap_seconds']);
+  });
+
+  it('keeps clashing hotkeys and blank glossary rows out of what is saved', () => {
+    const saved = {
+      hotkeys: { capture_region: 'Alt+A', open_history: 'Alt+H' },
+      appearance: { theme: 'dark' },
+      translation: { glossary: [] }
+    };
+    const draft = {
+      hotkeys: { capture_region: 'Alt+H', open_history: 'Alt+H' },
+      appearance: { theme: 'light' },
+      translation: { glossary: [{ source: '', target: '', lang: 'ja' }, { source: 'Lens', target: 'レンズ', lang: 'ja' }] }
+    };
+    const next = savable(saved, draft);
+    expect(next.hotkeys).toEqual(saved.hotkeys);
+    expect(next.appearance.theme).toBe('light');
+    expect(next.translation.glossary).toEqual([{ source: 'Lens', target: 'レンズ', lang: 'ja' }]);
+    expect(changedPaths(saved, next)).toEqual(['translation.glossary', 'appearance.theme']);
+  });
+
+  it('delays saving only for continuous inputs', () => {
+    expect(saveDelay('appearance.theme')).toBe(0);
+    expect(saveDelay('hotkeys.open_history')).toBe(0);
+    expect(saveDelay('subtitle.font_size_px')).toBeGreaterThan(0);
+    expect(saveDelay('appearance.accent')).toBeGreaterThan(0);
+    expect(saveDelay('translation.glossary')).toBeGreaterThan(0);
   });
 
   it('finds hotkeys bound to the same shortcut', () => {

@@ -12,7 +12,18 @@
     setSettings,
     type Settings
   } from '$lib/ipc';
-  import { GROUPS, SECTIONS, changedPaths, duplicateHotkeys, fieldMatches, getPath, setPath } from '$lib/settings-meta';
+  import {
+    GROUPS,
+    SECTIONS,
+    changedPaths,
+    duplicateHotkeys,
+    fieldMatches,
+    getPath,
+    savable,
+    saveDelay,
+    setPath
+  } from '$lib/settings-meta';
+  import { createAutosave } from '$lib/autosave';
   import { errorText } from '$lib/errors';
   import SettingField from '$lib/components/SettingField.svelte';
   import SettingRow from '$lib/components/SettingRow.svelte';
@@ -24,7 +35,6 @@
   import Plugins from '$lib/components/Plugins.svelte';
   import GlossaryEditor from '$lib/components/GlossaryEditor.svelte';
   import InferenceDevice from '$lib/components/InferenceDevice.svelte';
-  import { compactGlossary } from '$lib/glossary';
   import { replay, wheelStep, type Effect } from '$lib/pixel/transition';
 
   /** The selector remembers the language last picked in its toolbar. */
@@ -39,12 +49,13 @@
   let saved = $state<Settings | null>(null);
   let draft = $state<Settings | null>(null);
   let query = $state('');
-  let saving = $state(false);
-  let message = $state<{ kind: 'ok' | 'error'; text: string } | null>(null);
+  /** 保存状況（見出し横の表示）。'saved' は一定時間後に 'idle' へ復帰。 */
+  let status = $state<'idle' | 'saving' | 'saved'>('idle');
+  let statusTimer: ReturnType<typeof setTimeout> | undefined;
+  let saveError = $state<string | null>(null);
   let loadError = $state<string | null>(null);
   let current = $state(SECTIONS[0].id);
 
-  const changed = $derived(saved && draft ? changedPaths(saved, draft) : []);
   /** Shortcuts bound twice: only one of each pair could be registered. */
   const clashes = $derived(draft ? duplicateHotkeys(draft) : []);
   const visible = $derived(
@@ -64,10 +75,11 @@
       [defaults, saved] = await Promise.all([getDefaultSettings(), getSettings()]);
       draft = structuredClone($state.snapshot(saved));
       // Settings can change while this screen is open (a model picked
-      // below, config.toml edited by hand). Take the new values and keep
-      // the user's unsaved edits on top, so saving never reverts them.
+      // below, config.toml edited by hand, this screen's own save). Take
+      // the new values and keep the edits not saved yet on top, so the
+      // next save never reverts them.
       unlisten = await onSettingsChanged((next) => {
-        const edits = changed.map((p) => [p, getPath(draft, p)] as const);
+        const edits = changedPaths(saved, draft).map((p) => [p, getPath(draft, p)] as const);
         saved = next;
         let d = structuredClone(next);
         for (const [p, v] of edits) d = setPath(d, p, v);
@@ -86,37 +98,40 @@
     }
   });
 
-  // Leaving would silently drop the edits; ask for a decision in the save
-  // bar instead (WebView dialogs are not reliable inside Tauri).
   onDestroy(() => {
     unlisten?.();
+    clearTimeout(statusTimer);
+    void autosave.flush();
   });
 
-  beforeNavigate((nav) => {
-    if (changed.length > 0 && nav.type !== 'leave') {
-      nav.cancel();
-      message = { kind: 'error', text: '未保存の変更あり。「保存」か「破棄」を選択。' };
-    }
+  // 待機中の保存（スライダー・用語集）は画面離脱前に実行
+  beforeNavigate(() => {
+    void autosave.flush();
   });
+
+  const autosave = createAutosave(save);
 
   function update(path: string, value: any) {
     draft = setPath(draft, path, value);
-    message = null;
+    saveError = null;
+    autosave.schedule(saveDelay(path));
   }
 
+  /**
+   * 変更の即時保存。重複中のショートカットは対象外（解消後に保存）。
+   * 編集中の値（draft）は保持：保存中の追加入力・用語集の空行を維持。
+   */
   async function save() {
-    if (!draft || saving || clashes.length > 0) return;
-    saving = true;
-    message = null;
-    let next = $state.snapshot(draft);
-    // Rows added but never filled in are not worth keeping.
-    next = setPath(next, 'translation.glossary', compactGlossary(getPath(next, 'translation.glossary')));
-    const languageChanged = changed.includes('subtitle.target_language');
+    if (!saved || !draft) return;
+    const next = savable($state.snapshot(saved), $state.snapshot(draft));
+    const changed = changedPaths(saved, next);
+    if (changed.length === 0) return;
+    clearTimeout(statusTimer);
+    status = 'saving';
     try {
       await setSettings(next);
-      saved = structuredClone(next);
-      draft = structuredClone(next);
-      if (languageChanged) {
+      saved = next;
+      if (changed.includes('subtitle.target_language')) {
         // A language picked in the selector toolbar would otherwise keep
         // overriding the one chosen here.
         try {
@@ -125,23 +140,18 @@
           /* storage unavailable */
         }
       }
-      message = { kind: 'ok', text: '保存完了' };
+      status = 'saved';
+      statusTimer = setTimeout(() => (status = 'idle'), 2000);
     } catch (e) {
       // Saved, but e.g. a shortcut could not be registered.
-      message = { kind: 'error', text: errorText(e) };
+      status = 'idle';
+      saveError = errorText(e);
       try {
         saved = await getSettings();
       } catch {
         /* keep the previous snapshot */
       }
-    } finally {
-      saving = false;
     }
-  }
-
-  function revert() {
-    if (saved) draft = structuredClone($state.snapshot(saved));
-    message = null;
   }
 
   /** 表示中の小分類（検索結果に含まれない場合は先頭）。 */
@@ -252,9 +262,12 @@
 
 <svelte:window onkeydown={onKey} />
 
-<div class="cfg px-body" class:with-bar={changed.length > 0 || !!message}>
+<div class="cfg px-body" class:with-bar={clashes.length > 0 || !!saveError}>
   <header class="head">
     <div class="page-title"><PixelTitle text="設定" tag="h1" height={40} fit /></div>
+    <p class="status" class:done={status === 'saved'} role="status">
+      {status === 'saving' ? '保存中…' : status === 'saved' ? '保存完了' : '変更は即時保存'}
+    </p>
     <p class="hint">↑↓項目 ←→タブ PgUp/Dn分類</p>
     <div class="search">
       <Search class="icon" />
@@ -368,27 +381,16 @@
   {/if}
 </div>
 
-{#if changed.length > 0 || message}
-  <!-- 保存バー：画面下端固定。本文と同じ左右余白で整列 -->
+{#if clashes.length > 0 || saveError}
+  <!-- 通知バー：保存不可の変更・保存時のエラー。画面下端固定。本文と同じ左右余白で整列 -->
   <div class="savebar px-zoom">
-    <p class="msg" class:error={message?.kind === 'error'} role="status">
-      {#if message && changed.length === 0}
-        {message.text}
-      {:else}
-        未保存の変更：{changed.length} 件
-        {#if clashes.length > 0}<br /><span class="error">ショートカット重複あり。重複の解消が必要</span>{/if}
-        {#if message?.kind === 'error'}<br />{message.text}{/if}
-      {/if}
+    <p class="msg error" role="alert">
+      {#if clashes.length > 0}ショートカット重複：該当項目は未保存。重複解消後に自動保存。{/if}
+      {#if clashes.length > 0 && saveError}<br />{/if}
+      {#if saveError}{saveError}{/if}
     </p>
-    {#if changed.length > 0}
-      <div class="actions">
-        <button class="px-btn" onclick={revert}>破棄</button>
-        <button class="px-btn primary" onclick={save} disabled={saving || clashes.length > 0}>
-          {saving ? '保存中…' : '保存'}
-        </button>
-      </div>
-    {:else}
-      <button class="px-btn" onclick={() => (message = null)}>閉じる</button>
+    {#if saveError}
+      <button class="px-btn" onclick={() => (saveError = null)}>閉じる</button>
     {/if}
   </div>
 {/if}
@@ -402,7 +404,7 @@
     padding: var(--ml-page-y) var(--ml-page-x);
     box-sizing: border-box;
   }
-  /* 保存バー（画面下端固定）表示中：説明窓との重複を回避 */
+  /* 通知バー（画面下端固定）表示中：説明窓との重複を回避 */
   .cfg.with-bar {
     padding-bottom: calc(var(--ml-sp-16) + var(--ml-page-y));
   }
@@ -536,6 +538,15 @@
     margin: 0;
     overflow-y: auto;
   }
+  .status {
+    flex-shrink: 0;
+    margin: 0;
+    color: var(--ml-px-faint);
+    white-space: nowrap;
+  }
+  .status.done {
+    color: var(--ml-px-amber);
+  }
   .hint {
     min-width: 0;
     margin: 0 0 0 auto;
@@ -566,11 +577,6 @@
   .savebar .error {
     color: var(--ml-px-red);
   }
-  .savebar .actions {
-    display: flex;
-    flex-shrink: 0;
-    gap: var(--ml-sp-2);
-  }
   .px-btn {
     flex-shrink: 0;
     height: var(--ml-sp-12);
@@ -582,14 +588,6 @@
   .px-btn:hover {
     color: var(--ml-px-cream);
     border-color: var(--ml-px-faint);
-  }
-  .px-btn.primary {
-    border-color: var(--ml-px-amber);
-    background: var(--ml-px-amber);
-    color: var(--ml-px-black);
-  }
-  .px-btn:disabled {
-    opacity: 0.4;
   }
   /* 枠内の部品（モデル管理・データ）：外枠と二重化する独自の窓枠を解除 */
   .scroll :global(section.rounded-ml.border) {
