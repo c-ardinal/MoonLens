@@ -653,6 +653,19 @@ pub mod engine {
             .clamp(1, 6)
     }
 
+    /// Why `backend` cannot be used with the models in `dir`: the load
+    /// error, or the error of its first reading.
+    #[cfg(test)]
+    pub(super) fn unavailable(dir: &Path, backend: Backend) -> String {
+        match networks(dir, backend) {
+            Err(e) => format!("load: {e:#}"),
+            Ok(n) => match n.det(vec![0.0; 3 * 320 * 480], 320, 480) {
+                Err(e) => format!("run: {e:#}"),
+                Ok(_) => "loads and runs".to_string(),
+            },
+        }
+    }
+
     fn networks(dir: &Path, backend: Backend) -> Result<Box<dyn Networks>> {
         match backend {
             Backend::Rten => Ok(Box::new(RtenNetworks::load(dir)?)),
@@ -1428,7 +1441,10 @@ mod tests {
         if directml.backend() == Backend::DirectMl {
             others.push(("directml", directml));
         } else {
-            println!("directml: not available here");
+            println!(
+                "directml: not available here ({})",
+                engine::unavailable(&dir, Backend::DirectMl)
+            );
         }
         println!("auto chooses: {}", on(Backend::Auto, true).backend().name());
 
