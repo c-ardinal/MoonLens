@@ -6989,6 +6989,12 @@ int whisper_full_with_state(
         }
     }
 
+    // MoonLens: language detection below encodes the window at offset 0;
+    // the first pass of the main loop reuses that encoding when it starts
+    // at the same offset with the same audio context.
+    bool lang_detect_encoded = false;
+    const int lang_detect_audio_ctx = state->exp_n_audio_ctx;
+
     // auto-detect language if not specified
     if (params.language == nullptr || strlen(params.language) == 0 || strcmp(params.language, "auto") == 0 || params.detect_language) {
         std::vector<float> probs(whisper_lang_max_id() + 1, 0.0f);
@@ -7007,6 +7013,7 @@ int whisper_full_with_state(
         }
         state->lang_id = lang_id;
         params.language = whisper_lang_str(lang_id);
+        lang_detect_encoded = true;
 
         WHISPER_LOG_INFO("%s: auto-detected language: %s (p = %f)\n", __func__, params.language, probs[whisper_lang_id(params.language)]);
         if (params.detect_language) {
@@ -7212,7 +7219,10 @@ int whisper_full_with_state(
         }
 
         // encode audio features starting at offset seek
-        if (!whisper_encode_internal(*ctx, *state, seek, params.n_threads, params.abort_callback, params.abort_callback_user_data)) {
+        // (MoonLens: unless language detection has just encoded this window)
+        const bool reuse_encoding = lang_detect_encoded && seek == 0 && lang_detect_audio_ctx == state->exp_n_audio_ctx;
+        lang_detect_encoded = false;
+        if (!reuse_encoding && !whisper_encode_internal(*ctx, *state, seek, params.n_threads, params.abort_callback, params.abort_callback_user_data)) {
             WHISPER_LOG_ERROR("%s: failed to encode\n", __func__);
             return -6;
         }

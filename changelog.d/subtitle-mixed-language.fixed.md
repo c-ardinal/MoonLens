@@ -1,0 +1,1 @@
+- Live subtitles: with the audio language set to automatic, a short passage in another language (a Japanese aside in an English talk) no longer makes the following speech come out in that language. The language is now detected for every chunk instead of being reused for the next few.
