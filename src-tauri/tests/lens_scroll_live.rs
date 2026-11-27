@@ -109,7 +109,7 @@ fn blocks_of(events: &[LiveEvent], last: bool) -> Option<Vec<LensBlock>> {
         _ => None,
     });
     if last {
-        all.last()
+        all.next_back()
     } else {
         all.next()
     }
@@ -122,7 +122,7 @@ fn head(s: &str) -> String {
 /// The same paragraph in two readings: one may lack the rows above the
 /// region, and recognition may differ in a character or two.
 fn alike(a: &str, b: &str) -> bool {
-    let start = |s: &str| s.chars().take(24).collect::<String>();
+    let start = |s: &str| s.chars().take(12).collect::<String>();
     a.contains(b) || b.contains(a) || start(a) == start(b)
 }
 
