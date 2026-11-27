@@ -18,6 +18,11 @@
 //!    for every chunk, so the English that follows the Japanese must come
 //!    out as English again (it used to be decoded as Japanese).
 //!
+//! 4. `each_window_hears_only_its_application` (Windows): two processes
+//!    play at the same time, one English and one Japanese speech. Two
+//!    captures, one per process, run their own subtitle loops, as two
+//!    subtitle windows do: each must recognize its own application only.
+//!
 //! `#[ignore]` because all need the downloaded models (about 2 GB):
 //!
 //! ```sh
@@ -371,5 +376,140 @@ mod loopback {
             .await
             .unwrap();
         assert_subtitles(&run.await.unwrap());
+    }
+
+    /// A process playing a recording; killed when the test ends early.
+    struct Player(std::process::Child);
+
+    impl Drop for Player {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+
+    /// Start a process that waits `delay` seconds and then plays the
+    /// fixture `name` `times` times on the default output device.
+    fn player(name: &str, delay: u32, times: u32) -> Player {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/audio")
+            .join(name);
+        let script = format!(
+            "Start-Sleep -Seconds {delay}; \
+             $p = New-Object System.Media.SoundPlayer '{}'; \
+             1..{times} | ForEach-Object {{ $p.PlaySync() }}",
+            path.display()
+        );
+        let child = std::process::Command::new("powershell")
+            .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+            .spawn()
+            .expect("powershell did not start");
+        Player(child)
+    }
+
+    fn originals(events: &[SubtitleEvent]) -> String {
+        events
+            .iter()
+            .filter_map(|ev| match ev {
+                SubtitleEvent::Chunk { original, .. } => Some(original.to_lowercase()),
+                SubtitleEvent::Error { message } => panic!("error event: {message}"),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    #[ignore = "needs the downloaded models and an audio output device"]
+    async fn each_window_hears_only_its_application() {
+        use moonlens_lib::audio::AudioSource;
+        use moonlens_lib::audio_apps;
+
+        if cpal::default_host().default_output_device().is_none() {
+            assert!(
+                std::env::var_os("MOONLENS_REQUIRE_AUDIO").is_none(),
+                "no audio output device"
+            );
+            println!("skipped: no audio output device");
+            return;
+        }
+        let env = setup().await;
+        // Both start playing after the captures are up. The Japanese
+        // recording is shorter: repeated, it covers the English one.
+        let english = player("jfk.wav", 6, 1);
+        let japanese = player("ja-moldova.wav", 6, 3);
+        let (en_pid, ja_pid) = (english.0.id(), japanese.0.id());
+
+        let (en_tx, en_rx) = mpsc::channel::<Vec<i16>>(4096);
+        let (ja_tx, ja_rx) = mpsc::channel::<Vec<i16>>(4096);
+        let en_capture = LoopbackStream::start_with(AudioSource::App { pid: en_pid }, en_tx)
+            .expect("capture of the English player failed to start");
+        let ja_capture = LoopbackStream::start_with(AudioSource::App { pid: ja_pid }, ja_tx)
+            .expect("capture of the Japanese player failed to start");
+        println!(
+            "capturing \"{}\" (PID {en_pid}) and \"{}\" (PID {ja_pid})",
+            en_capture.device(),
+            ja_capture.device()
+        );
+        assert_eq!(en_capture.device(), "powershell");
+        let (en_lost, ja_lost) = (en_capture.lost(), ja_capture.lost());
+
+        // Two windows: two loops on the shared models.
+        let en_run = tokio::spawn(subtitles(env.clone(), en_rx));
+        let ja_run = tokio::spawn(subtitles(env, ja_rx));
+
+        // While they play, the source menu lists both as playing.
+        let mut listed = Vec::new();
+        for _ in 0..40 {
+            tokio::time::sleep(Duration::from_millis(500)).await;
+            let found = tokio::task::spawn_blocking(audio_apps::list).await.unwrap();
+            assert!(found.supported);
+            listed = found.apps;
+            let playing = |pid| listed.iter().any(|a| a.pid == pid && a.playing);
+            if playing(en_pid) && playing(ja_pid) {
+                break;
+            }
+        }
+        println!("audio applications: {listed:?}");
+        for pid in [en_pid, ja_pid] {
+            let app = listed
+                .iter()
+                .find(|a| a.pid == pid)
+                .unwrap_or_else(|| panic!("player {pid} not listed"));
+            assert!(app.playing, "player {pid} not listed as playing");
+            assert_eq!(app.name, "powershell");
+        }
+
+        // The players exit when done; each capture notices, closes its
+        // frame channel, and the loop recognizes the rest and ends.
+        let en_events = tokio::time::timeout(Duration::from_secs(900), en_run)
+            .await
+            .expect("the English capture did not end with its application")
+            .unwrap();
+        let ja_events = tokio::time::timeout(Duration::from_secs(900), ja_run)
+            .await
+            .expect("the Japanese capture did not end with its application")
+            .unwrap();
+        use std::sync::atomic::Ordering::Relaxed;
+        assert!(en_lost.load(Relaxed) && ja_lost.load(Relaxed));
+        tokio::task::spawn_blocking(move || drop((en_capture, ja_capture)))
+            .await
+            .unwrap();
+
+        assert_subtitles(&en_events);
+        let (en, ja) = (originals(&en_events), originals(&ja_events));
+        println!("English window: {en}\nJapanese window: {ja}");
+        assert!(
+            !has_japanese(&en),
+            "the English window heard the Japanese player: {en:?}"
+        );
+        assert!(
+            ja.contains("宗教") || ja.contains("キリスト"),
+            "the Japanese window did not recognize its player: {ja:?}"
+        );
+        assert!(
+            !ja.contains("country"),
+            "the Japanese window heard the English player: {ja:?}"
+        );
     }
 }

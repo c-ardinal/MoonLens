@@ -5,6 +5,7 @@
 
 pub mod app;
 pub mod audio;
+pub mod audio_apps;
 pub mod capture;
 pub mod clipboard;
 pub mod gpu;

@@ -1024,8 +1024,8 @@ pub async fn clear_history(state: State<'_, AppState>) -> Result<usize, String> 
 
 #[tauri::command]
 pub async fn toggle_subtitle(app: AppHandle, state: State<'_, AppState>) -> Result<bool, String> {
-    if state.subtitle.is_running() {
-        state.subtitle.stop(&app).map_err(|e| e.to_string())?;
+    if state.subtitle.has_windows() {
+        state.subtitle.stop(&app);
         return Ok(false);
     }
     start_subtitle(app, state).await.map(|_| true)
@@ -1036,22 +1036,88 @@ pub async fn subtitle_state(state: State<'_, AppState>) -> Result<bool, String> 
     Ok(state.subtitle.is_running())
 }
 
+/// Stop and close every subtitle window.
 #[tauri::command]
 pub async fn stop_subtitle(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
-    state.subtitle.stop(&app).map_err(|e| e.to_string())
+    state.subtitle.stop(&app);
+    Ok(())
 }
 
 #[tauri::command]
 pub async fn start_subtitle(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
-    // Check the speech recognition engine before opening the subtitle
-    // window, instead of failing every few seconds once it is open.
-    state.subtitle.preflight().await?;
-    state
-        .subtitle
-        .start(app)
-        .map_err(|e| user_error::coded("error", format!("音声取得の開始失敗：{e:#}")))?;
+    // The speech recognition engine is checked before a subtitle window
+    // opens, instead of failing every few seconds once it is open.
+    state.subtitle.start(&app).await?;
     crate::notices::clear("subtitle_unavailable");
     Ok(())
+}
+
+fn subtitle_failure(e: anyhow::Error) -> String {
+    user_error::coded("error", format!("音声取得の開始失敗：{e:#}"))
+}
+
+/// One more subtitle window, opened from the window `window` (its ＋
+/// button) and placed next to it. Returns the new window's label.
+#[tauri::command]
+pub async fn open_subtitle_window(
+    app: AppHandle,
+    window: tauri::WebviewWindow,
+    state: State<'_, AppState>,
+    source: Option<crate::audio::AudioSource>,
+) -> Result<String, String> {
+    state.subtitle.preflight().await?;
+    let beside = crate::subtitle::is_window(window.label()).then(|| window.label());
+    state
+        .subtitle
+        .open(&app, source.unwrap_or_default(), beside)
+        .map_err(subtitle_failure)
+}
+
+/// Stop and close the calling subtitle window.
+#[tauri::command]
+pub async fn close_subtitle_window(
+    app: AppHandle,
+    window: tauri::WebviewWindow,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    state.subtitle.close(&app, window.label());
+    Ok(())
+}
+
+/// Switch the calling subtitle window to another audio source, or
+/// restart its current one after it stopped.
+#[tauri::command]
+pub async fn set_subtitle_source(
+    app: AppHandle,
+    window: tauri::WebviewWindow,
+    state: State<'_, AppState>,
+    source: crate::audio::AudioSource,
+) -> Result<(), String> {
+    state.subtitle.preflight().await?;
+    let (subtitle, label) = (state.subtitle.clone(), window.label().to_string());
+    // Opening a source waits for the capture thread: off the async
+    // runtime.
+    tauri::async_runtime::spawn_blocking(move || subtitle.set_source(&app, &label, source))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(subtitle_failure)
+}
+
+/// Source and state of the calling subtitle window.
+#[tauri::command]
+pub async fn subtitle_session(
+    window: tauri::WebviewWindow,
+    state: State<'_, AppState>,
+) -> Result<Option<crate::subtitle::SessionInfo>, String> {
+    Ok(state.subtitle.session(window.label()))
+}
+
+/// The applications a subtitle window can listen to.
+#[tauri::command]
+pub async fn list_audio_apps() -> Result<crate::audio_apps::AudioApps, String> {
+    tauri::async_runtime::spawn_blocking(crate::audio_apps::list)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 /// Describes which first-run guidance the UI should show. Exposed as a
