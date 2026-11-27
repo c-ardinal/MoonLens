@@ -4,6 +4,7 @@
 //! library makes it easier to embed in tests or alternate frontends.
 
 pub mod app;
+pub mod app_identity;
 pub mod attach;
 pub mod audio;
 pub mod capture;
