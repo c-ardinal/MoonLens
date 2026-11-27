@@ -17,7 +17,7 @@ on:
 
 permissions:
   contents: read
-  # Reads the results artifact of an earlier run (SEED_RUN_ID).
+  # Reads the results artifacts of earlier runs (SEED_RUN_IDS).
   actions: read
 
 concurrency:
@@ -30,10 +30,10 @@ env:
   # Release speed for whisper.cpp without the shipping profile's LTO link.
   CARGO_PROFILE_RELEASE_LTO: 'false'
   CARGO_PROFILE_RELEASE_CODEGEN_UNITS: '16'
-  # A run of this workflow whose recognitions are reused where its jobs
+  # Runs of this workflow whose recognitions are reused where their jobs
   # (recording, condition, prompt) are the same as this run's, so a
   # change to the scoring does not cost two hours again. Empty = none.
-  SEED_RUN_ID: '45950404118'
+  SEED_RUN_IDS: '45950404118 45973250850'
 
 jobs:
   bench:
@@ -104,30 +104,30 @@ jobs:
       - name: Prepare recordings and jobs
         run: python3 bench/asr-bias/prepare.py asr-bias-work ${{ matrix.run.prepare }}
 
-      - name: Earlier results
-        if: env.SEED_RUN_ID != ''
-        continue-on-error: true
-        uses: actions/download-artifact@v4
-        with:
-          name: asr-bias-${{ matrix.run.name }}
-          path: asr-bias-seed
-          run-id: ${{ env.SEED_RUN_ID }}
-          github-token: ${{ github.token }}
-
-      # Reused only when the sentences and prompts are exactly the same.
+      # Recognitions are reused only when the sentences and prompts are
+      # exactly the same. A run that was cancelled half-way still uploads
+      # what it finished, so several runs can add up.
       - name: Reuse earlier results
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
+          for run in $SEED_RUN_IDS; do
+            gh run download "$run" --repo "$GITHUB_REPOSITORY" \
+              --name "asr-bias-${{ matrix.run.name }}" --dir "asr-bias-seed/$run" || true
+          done
           for dir in asr-bias-work/*/; do
             name=$(basename "$dir")
-            # One language per artifact: its files sit at the root.
-            seed="asr-bias-seed/$name"
-            [ -d "$seed" ] || seed="asr-bias-seed"
-            if [ -f "$seed/results.jsonl" ] && cmp -s "$seed/manifest.json" "$dir/manifest.json"; then
-              cp "$seed/results.jsonl" "$dir/results.jsonl"
-              echo "$name: reusing $(wc -l < "$dir/results.jsonl") results"
-            else
-              echo "$name: nothing to reuse"
-            fi
+            [ -f "$dir/manifest.json" ] || continue
+            for run in $SEED_RUN_IDS; do
+              # One language per artifact: its files sit at the root.
+              seed="asr-bias-seed/$run/$name"
+              [ -d "$seed" ] || seed="asr-bias-seed/$run"
+              if [ -f "$seed/results.jsonl" ] && cmp -s "$seed/manifest.json" "$dir/manifest.json"; then
+                cat "$seed/results.jsonl" >> "$dir/results.jsonl"
+                echo >> "$dir/results.jsonl"
+                echo "$name: reusing run $run ($(wc -l < "$seed/results.jsonl") lines)"
+              fi
+            done
           done
 
       - name: Recognize

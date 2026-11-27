@@ -167,6 +167,26 @@ def report(directory: Path, results_name: str) -> dict:
             f"| {pct(entry['intruded'])} | {pct(entry['foreign'])} | {entry['seconds']:.1f} |"
         )
         summary[cond] = entry
+    # Where a prompt hurt most: what was said, and what came out.
+    for cond, rows in by_cond.items():
+        if cond == "none":
+            continue
+        shared = [i for i in rows if i in by_cond["none"]]
+        better = sum(rows[i]["edits"] < by_cond["none"][i]["edits"] for i in shared)
+        fewer = sum(rows[i]["edits"] > by_cond["none"][i]["edits"] for i in shared)
+        print(f"\n`{cond}`：改善 {better} 文、悪化 {fewer} 文、同一 {len(shared) - better - fewer} 文")
+        worse = sorted(
+            shared,
+            key=lambda i: by_cond["none"][i]["edits"] - rows[i]["edits"],
+        )[:4]
+        worse = [i for i in worse if rows[i]["edits"] > by_cond["none"][i]["edits"]]
+        if worse:
+            print(f"\n悪化上位（誤り数 none → {cond}）\n")
+        for i in worse:
+            print(f"- {i}（{by_cond['none'][i]['edits']} → {rows[i]['edits']} / {rows[i]['ref']}）")
+            print(f"  - 原文：{manifest[i]['reference']}")
+            print(f"  - none：{by_cond['none'][i]['text']}")
+            print(f"  - {cond}：{rows[i]['text']}")
     return {"lang": lang, "results": results_name, "conditions": summary, "sentences": by_cond}
 
 
