@@ -25,7 +25,8 @@
 //!    platforms Rust hides the window for the moment of the grab.
 //! 3. Rust resolves the window's client bounds, shrinks them by the
 //!    header the renderer tells us about (CSS pixels, scaled to physical
-//!    pixels here), and feeds the resulting rect to
+//!    pixels here), widens the result by the scan margin so text cut by
+//!    the frame is read whole ([`scan_margin`]), and feeds that rect to
 //!    [`crate::capture::capture_global_rect`].
 //! 4. Pipeline runs as usual; the translation appears in the lens body.
 //!
@@ -53,6 +54,7 @@ use crate::{
     lens_text::{self, Follow},
     pipeline::Pipeline,
     region_watcher::{Frame, Geometry, LiveEvent, ReadMode, Tick, TickEnv, Tracker},
+    scan_margin::{self, Visible},
     settings::SettingsStore,
 };
 
@@ -972,7 +974,7 @@ fn handle(_win: &WebviewWindow) -> Option<lens_shield::Handle> {
 }
 
 /// Handles of the translation windows (text windows included) that a
-/// capture of `observed` by lens `id` would show: its own, and any
+/// capture of `observed` (the rect captured) by lens `id` would show: its own, and any
 /// other one lying over that rect. All of them with `observed` unset.
 fn shield(
     app: &AppHandle,
@@ -1041,39 +1043,71 @@ fn as_geometry(r: geometry::LensOuterRect) -> Geometry {
     [r.x, r.y, r.w as i32, r.h as i32]
 }
 
-/// Capture the observed rect without the lens window in the frame.
-pub fn grab(
-    app: &AppHandle,
-    registry: &LensRegistryHandle,
-    id: &str,
-) -> Result<(DynamicImage, geometry::LensOuterRect)> {
-    use crate::capture;
+/// One capture for a lens.
+pub struct Grab {
+    pub image: DynamicImage,
+    /// The rect the lens observes (see [`observed`]).
+    pub observed: geometry::LensOuterRect,
+    /// Where that rect lies in `image`.
+    pub visible: Visible,
+}
+
+/// Capture the observed rect, `margin` CSS pixels wider on every side
+/// (see [`scan_margin`]), without the lens window in the frame.
+pub fn grab(app: &AppHandle, registry: &LensRegistryHandle, id: &str, margin: u32) -> Result<Grab> {
+    use crate::capture::{self, rect::GlobalRect};
 
     let observed = observed(app, registry, id)?;
-    if EXCLUDED_FROM_CAPTURE {
-        let windows = shield(app, registry, Some((id, observed)));
-        let image = lens_shield::excluded(&windows, hidden_from_captures(app), || {
-            capture::capture_global_rect(observed.x, observed.y, observed.w, observed.h)
-        })?;
-        return Ok((image, observed));
-    }
     let win = app
         .get_webview_window(id)
         .ok_or_else(|| anyhow!("lens window {id} not found"))?;
-    // No content protection: hide the window for the moment of the grab,
-    // with a brief pause so the compositor unmaps it first.
-    win.hide().ok();
-    std::thread::sleep(std::time::Duration::from_millis(60));
-    let result = capture::capture_global_rect(observed.x, observed.y, observed.w, observed.h);
-    win.show().ok();
-    Ok((result?, observed))
+    let margin = (margin as f64 * win.scale_factor().unwrap_or(1.0)).round() as u32;
+    let region = GlobalRect {
+        x: observed.x,
+        y: observed.y,
+        w: observed.w,
+        h: observed.h,
+    };
+    let wanted = scan_margin::widened(region, margin);
+    let captured = if EXCLUDED_FROM_CAPTURE {
+        // Every translation window the wider capture would show.
+        let covered = geometry::LensOuterRect {
+            x: wanted.x,
+            y: wanted.y,
+            w: wanted.w,
+            h: wanted.h,
+        };
+        let windows = shield(app, registry, Some((id, covered)));
+        lens_shield::excluded(&windows, hidden_from_captures(app), || {
+            capture::capture_global_rect_clipped(wanted)
+        })
+    } else {
+        // No content protection: hide the window for the moment of the
+        // grab, with a brief pause so the compositor unmaps it first.
+        win.hide().ok();
+        std::thread::sleep(std::time::Duration::from_millis(60));
+        let result = capture::capture_global_rect_clipped(wanted);
+        win.show().ok();
+        result
+    };
+    let (image, covered) = captured?;
+    Ok(Grab {
+        image,
+        observed,
+        visible: scan_margin::visible_in(region, covered),
+    })
 }
 
 /// Compute the observed rect and capture it without the lens window in
-/// the frame. Returns the captured PNG.
-pub fn capture_lens(app: &AppHandle, registry: &LensRegistryHandle, id: &str) -> Result<Vec<u8>> {
-    let (image, _) = grab(app, registry, id)?;
-    crate::capture::png_bytes(&image)
+/// the frame. Returns the captured PNG and where the lens lies in it.
+pub fn capture_lens(
+    app: &AppHandle,
+    registry: &LensRegistryHandle,
+    id: &str,
+    margin: u32,
+) -> Result<(Vec<u8>, Visible)> {
+    let grab = grab(app, registry, id, margin)?;
+    Ok((crate::capture::png_bytes(&grab.image)?, grab.visible))
 }
 
 /// Switch continuous reading of a lens on or off.
@@ -1207,9 +1241,10 @@ async fn run_watch(
 
         let (a, r, i) = (app.clone(), registry.clone(), id.clone());
         let started = std::time::Instant::now();
-        let grabbed = tokio::task::spawn_blocking(move || grab(&a, &r, &i)).await;
+        let margin = settings.snapshot().performance.scan_margin_px;
+        let grabbed = tokio::task::spawn_blocking(move || grab(&a, &r, &i, margin)).await;
         let capture_ms = started.elapsed().as_millis();
-        let (image, rect) = match grabbed {
+        let grab = match grabbed {
             Ok(Ok(g)) => g,
             Ok(Err(e)) => {
                 tracing::debug!("lens {id} capture: {e}");
@@ -1218,8 +1253,9 @@ async fn run_watch(
             Err(_) => break,
         };
         let frame = Frame {
-            image,
-            geometry: as_geometry(rect),
+            image: grab.image,
+            geometry: as_geometry(grab.observed),
+            visible: Some(grab.visible),
         };
         let (width, height) = (frame.image.width(), frame.image.height());
         let started = std::time::Instant::now();

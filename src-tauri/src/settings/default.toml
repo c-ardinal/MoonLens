@@ -80,6 +80,7 @@ save_capture_images = true
 [performance]
 streaming_debounce_ms = 50
 region_watcher_poll_ms = 250
+scan_margin_px = 32
 max_concurrent_tasks = 4
 cache_ttl_seconds = 3600
 use_gpu_if_available = true

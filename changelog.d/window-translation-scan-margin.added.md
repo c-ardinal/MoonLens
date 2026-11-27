@@ -1,0 +1,1 @@
+- Window translation: a window now reads a little beyond its frame (32 px by default), so words and rows the frame cuts are recognised whole. Text lying outside the window is not translated, and translations are still drawn inside the window only. Width: Settings → 翻訳 → 常時翻訳 → 読取余白 (`performance.scan_margin_px`, 0 turns it off).

@@ -61,6 +61,11 @@ macro_rules! all_commands {
             ipc::subtitle_state,
             ipc::stop_subtitle,
             ipc::start_subtitle,
+            ipc::open_subtitle_window,
+            ipc::close_subtitle_window,
+            ipc::set_subtitle_source,
+            ipc::subtitle_session,
+            ipc::list_audio_apps,
             ipc::get_onboarding_status,
             ipc::get_system_profile,
             ipc::complete_setup,
@@ -227,10 +232,6 @@ pub fn build() -> Result<()> {
                 // the hotkeys still work.
                 tracing::warn!("tray unavailable: {e}");
             }
-            // tauri.conf.json carries the Japanese title.
-            if let Some(w) = handle.get_webview_window("subtitle") {
-                let _ = w.set_title(&subtitle_title());
-            }
 
             app.manage(AppState {
                 settings,
@@ -257,15 +258,13 @@ pub fn build() -> Result<()> {
                     let _ = window.hide();
                 }
             }
-            // The subtitle window is kept for the next start: closing it
-            // (its × button goes through `stop_subtitle`; this is Alt+F4)
-            // stops the subtitles and hides it.
-            if window.label() == "subtitle" {
-                if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                    api.prevent_close();
+            // A subtitle window closing by itself (Alt+F4; its × button
+            // goes through `close_subtitle_window`): stop its recognition.
+            if crate::subtitle::is_window(window.label()) {
+                if let tauri::WindowEvent::CloseRequested { .. } = event {
                     let app = window.app_handle();
                     if let Some(state) = app.try_state::<AppState>() {
-                        let _ = state.subtitle.stop(app);
+                        state.subtitle.forget(app, window.label());
                     }
                 }
             }
@@ -295,11 +294,7 @@ fn tray_menu(app: &AppHandle) -> Result<Menu<tauri::Wry>> {
 }
 
 /// Title of the audio translation window (also its taskbar entry).
-fn subtitle_title() -> String {
-    tr!("MoonLens 音声翻訳", "MoonLens Audio Translation")
-}
-
-/// Re-word the tray menu and the audio translation window's title after
+/// Re-word the tray menu and the audio translation windows' titles after
 /// the display language changed. Window contents follow
 /// `moonlens://settings-changed`; translation windows have no visible
 /// title (frameless, off the taskbar) and take the language when opened.
@@ -312,8 +307,11 @@ fn retitle(app: &AppHandle) {
             Err(e) => tracing::warn!("tray menu rebuild failed: {e}"),
         }
     }
-    if let Some(w) = app.get_webview_window("subtitle") {
-        let _ = w.set_title(&subtitle_title());
+    let title = crate::subtitle::window_title();
+    for (label, w) in app.webview_windows() {
+        if crate::subtitle::is_window(&label) {
+            let _ = w.set_title(&title);
+        }
     }
 }
 

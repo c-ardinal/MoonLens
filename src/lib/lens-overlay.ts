@@ -205,9 +205,18 @@ export function applyStreaming(
   return out;
 }
 
-/** Target languages offered in the selector's toolbar. label は日本語の原文（表示時は `t()`／`languageLabel`）。 */
-export const LANGUAGES: { code: string; label: string }[] = [
+/** Easy Japanese: a target-only variant of Japanese (PLaMo's `ja-easy`). */
+export const EASY_JAPANESE = 'ja-easy';
+
+/**
+ * Target languages offered in the selector's toolbar. label は日本語の原文
+ * （表示時は `t()`／`languageLabel`）。 `targetOnly`
+ * entries are ways of writing a language, not languages a source text
+ * or a glossary entry can be in: see {@link SOURCE_LANGUAGES}.
+ */
+export const LANGUAGES: { code: string; label: string; targetOnly?: boolean }[] = [
   { code: 'ja', label: '日本語' },
+  { code: EASY_JAPANESE, label: 'やさしい日本語', targetOnly: true },
   { code: 'en', label: '英語' },
   { code: 'zh-Hans', label: '中国語（簡体）' },
   { code: 'zh-Hant', label: '中国語（繁体）' },
@@ -222,6 +231,18 @@ export const LANGUAGES: { code: string; label: string }[] = [
   { code: 'th', label: 'タイ語' },
   { code: 'id', label: 'インドネシア語' }
 ];
+
+/** Languages a text can be written in (source pickers, glossary rows). */
+export const SOURCE_LANGUAGES = LANGUAGES.filter((l) => !l.targetOnly);
+
+/**
+ * The language a target is written in: itself, or the base language of
+ * a target-only variant (`ja-easy` → `ja`).
+ */
+export function writtenLanguage(code: string): string {
+  const hit = LANGUAGES.find((l) => l.code === code);
+  return hit?.targetOnly ? code.split('-')[0] : code;
+}
 
 /** 言語名（日本語の原文、LLM プロンプト用）。地域付きの指定（en-US 等）は主言語で解決、未知の言語は空文字。 */
 export function languageName(code: string | null | undefined): string {

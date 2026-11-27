@@ -108,19 +108,24 @@ pub fn run_ocr(image_png: &[u8], preferred: Option<&str>) -> Result<Vec<OcrLine>
     // per-run is simpler than threading an init through the whole
     // provider lifecycle and the perf cost is negligible vs. the OCR
     // itself (tens of microseconds).
-    unsafe {
+    let mut lap = Lap::start();
+    let hr = unsafe {
         use windows::Win32::System::Com::{CoInitializeEx, COINIT_MULTITHREADED};
-        let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
-    }
+        CoInitializeEx(None, COINIT_MULTITHREADED)
+    };
+    lap.mark(&format!("CoInitializeEx {hr:?}"));
 
     let engine = try_create_engine(preferred)?;
-    let bitmap = decode_png_to_software_bitmap(image_png)?;
+    lap.mark("engine");
+    let bitmap = decode_png_to_software_bitmap(image_png, &mut lap)?;
     let op: IAsyncOperation<OcrResult> = engine
         .RecognizeAsync(&bitmap)
         .map_err(|e| ProviderError::Other(format!("RecognizeAsync: {e}")))?;
+    lap.mark("RecognizeAsync started");
     let result = op
         .join()
         .map_err(|e| ProviderError::Other(format!("OCR wait: {e}")))?;
+    lap.mark("RecognizeAsync done");
 
     let mut out: Vec<OcrLine> = Vec::new();
     let lines = result
@@ -216,6 +221,24 @@ pub fn run_ocr(image_png: &[u8], preferred: Option<&str>) -> Result<Vec<OcrLine>
         }
     }
     Ok(out)
+}
+
+/// Stage timer for [`run_ocr`]: one debug line per finished stage, so a
+/// stalled call shows the stage it never left.
+struct Lap(std::time::Instant);
+
+impl Lap {
+    fn start() -> Self {
+        Self(std::time::Instant::now())
+    }
+    fn mark(&mut self, stage: &str) {
+        tracing::debug!(
+            "WindowsOcr[{:?}]: {stage}: {} ms",
+            std::thread::current().id(),
+            self.0.elapsed().as_millis()
+        );
+        self.0 = std::time::Instant::now();
+    }
 }
 
 /// Per-word language class for grouping. A run of `Japanese` words
@@ -355,7 +378,10 @@ fn log_available_languages_once() {
 
 /// Decode PNG bytes into a `SoftwareBitmap` in the 8-bpc BGRA
 /// pixel format that `OcrEngine::RecognizeAsync` accepts.
-fn decode_png_to_software_bitmap(png: &[u8]) -> Result<SoftwareBitmap, ProviderError> {
+fn decode_png_to_software_bitmap(
+    png: &[u8],
+    lap: &mut Lap,
+) -> Result<SoftwareBitmap, ProviderError> {
     // In-memory stream so we don't touch the filesystem just to hand
     // bytes to the decoder.
     let stream = InMemoryRandomAccessStream::new()
@@ -373,10 +399,12 @@ fn decode_png_to_software_bitmap(png: &[u8]) -> Result<SoftwareBitmap, ProviderE
         .StoreAsync()
         .and_then(|op| op.join())
         .map_err(|e| ProviderError::Other(format!("StoreAsync: {e}")))?;
+    lap.mark("StoreAsync");
     writer
         .FlushAsync()
         .and_then(|op| op.join())
         .map_err(|e| ProviderError::Other(format!("FlushAsync: {e}")))?;
+    lap.mark("FlushAsync");
     // Detaching the stream from the writer prevents it from closing
     // when the writer drops.
     let _ = writer.DetachStream();
@@ -387,10 +415,12 @@ fn decode_png_to_software_bitmap(png: &[u8]) -> Result<SoftwareBitmap, ProviderE
     let decoder = BitmapDecoder::CreateAsync(&stream)
         .and_then(|op| op.join())
         .map_err(|e| ProviderError::Other(format!("BitmapDecoder::Create: {e}")))?;
+    lap.mark("BitmapDecoder::CreateAsync");
     let bitmap = decoder
         .GetSoftwareBitmapAsync()
         .and_then(|op| op.join())
         .map_err(|e| ProviderError::Other(format!("GetSoftwareBitmap: {e}")))?;
+    lap.mark("GetSoftwareBitmapAsync");
     Ok(bitmap)
 }
 

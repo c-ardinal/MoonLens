@@ -9,7 +9,7 @@
  */
 
 import { compactGlossary } from './glossary';
-import { LANGUAGES } from './lens-overlay';
+import { LANGUAGES, SOURCE_LANGUAGES } from './lens-overlay';
 import { t } from './i18n';
 
 export type Option = { value: string; label: string };
@@ -50,6 +50,10 @@ export type SectionComponent = 'llm-translate' | 'llm-assist' | 'ocr' | 'asr' | 
 export type Group = { id: string; title: string; sections: string[] };
 
 const LANGUAGE_OPTIONS: Option[] = LANGUAGES.map((l) => ({ value: l.code, label: l.label }));
+const SOURCE_LANGUAGE_OPTIONS: Option[] = SOURCE_LANGUAGES.map((l) => ({
+  value: l.code,
+  label: l.label
+}));
 
 export const SECTIONS: Section[] = [
   {
@@ -68,7 +72,7 @@ export const SECTIONS: Section[] = [
         kind: 'select',
         path: 'translation.style',
         label: '文体',
-        help: '日本語への翻訳時のみ適用。',
+        help: '日本語への翻訳時のみ適用。やさしい日本語は対象外。',
         options: [
           { value: 'auto', label: '自動' },
           { value: 'polite', label: '敬体（です・ます）' },
@@ -151,7 +155,7 @@ export const SECTIONS: Section[] = [
         kind: 'select',
         path: 'subtitle.source_language',
         label: '音声言語',
-        options: [{ value: 'auto', label: '自動判定' }, ...LANGUAGE_OPTIONS]
+        options: [{ value: 'auto', label: '自動判定' }, ...SOURCE_LANGUAGE_OPTIONS]
       },
       {
         kind: 'toggle',
@@ -198,6 +202,18 @@ export const SECTIONS: Section[] = [
     title: '常時翻訳',
     description: 'ウィンドウ翻訳の常時モード。画面変化へ追従して再翻訳。',
     fields: [
+      {
+        kind: 'number',
+        path: 'performance.scan_margin_px',
+        label: '読取余白',
+        help: 'ウィンドウ枠の外側へ加算する読取幅。枠で分断された文字を完全な形で認識。訳文の表示はウィンドウ内に限定。',
+        min: 0,
+        max: 128,
+        step: 4,
+        unit: 'px',
+        zeroLabel: '無効',
+        slider: true
+      },
       {
         kind: 'number',
         path: 'performance.region_watcher_poll_ms',
@@ -371,7 +387,7 @@ export const SECTIONS: Section[] = [
   {
     id: 'data',
     title: 'データ',
-    description: '保存先と使用容量。完全削除：アンインストール後、各保存先を削除。',
+    description: '保存先と使用容量。完全削除：本体の削除後、各保存先を削除。',
     component: 'data'
   },
   {

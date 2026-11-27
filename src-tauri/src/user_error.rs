@@ -69,6 +69,11 @@ pub fn provider(e: &ProviderError, cap: Capability) -> String {
                 ),
             ),
         },
+        // Explain / summarize read the text already on screen: there is
+        // no range to shrink, and the UI offers the retry.
+        ProviderError::Timeout(_) if matches!(cap, Capability::Explain | Capability::Summarize) => {
+            coded("timeout", tr!("制限時間超過", "Timed out"))
+        }
         ProviderError::Timeout(ms) if *ms > 0 => coded(
             "timeout",
             tr!(
@@ -91,6 +96,9 @@ pub fn provider(e: &ProviderError, cap: Capability) -> String {
                         "文字認識の制限時間超過。範囲を縮小して再試行",
                         "Text recognition timed out. Try a smaller area."
                     ),
+                    Capability::Explain | Capability::Summarize => {
+                        tr!("制限時間超過", "Timed out")
+                    }
                     _ => timeout_message(),
                 },
             )
@@ -186,6 +194,20 @@ mod tests {
         );
         assert!(provider(&e, Capability::Ocr).starts_with("model_missing|OCR"));
         assert!(provider(&e, Capability::Explain).starts_with("model_missing|説明用"));
+    }
+
+    #[test]
+    fn explain_timeouts_do_not_ask_for_a_smaller_range() {
+        for e in [
+            ProviderError::Timeout(180_000),
+            ProviderError::Other("all providers failed: llamacpp.assistant: timeout".into()),
+        ] {
+            assert_eq!(provider(&e, Capability::Explain), "timeout|制限時間超過");
+        }
+        assert!(
+            provider(&ProviderError::Timeout(15_000), Capability::Translate)
+                .ends_with("範囲を縮小して再試行")
+        );
     }
 
     #[test]

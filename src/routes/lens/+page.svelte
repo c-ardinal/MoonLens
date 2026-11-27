@@ -42,6 +42,7 @@
     loadPlacement,
     savePlacement,
     textWindowLabel,
+    type Explanation,
     type TextCommand,
     type TextPlacement,
     type TextView
@@ -85,7 +86,7 @@
   /** Show the original (translations off) / the text view. */
   let showOriginal = $state(false);
   let showText = $state(false);
-  let explanation = $state<string | null>(null);
+  let explanation = $state<Explanation | null>(null);
   let sourceLanguage = $state<string | null>(null);
   let targetLanguage = $state('ja');
   let readMode = $state<LensReadMode>('subtitle');
@@ -225,15 +226,17 @@
     const src = source?.trim() || joinedText(blocks, 'source');
     if (!src) return;
     showText = true;
-    explanation = t('説明を生成中…');
+    // One request at a time: the model serves them in turn anyway.
+    if (explanation?.status === 'pending') return;
+    explanation = { status: 'pending' };
     try {
       const r = await runExplain(
         // copy-lint-ignore i18n-ignore（LLM プロンプト。言語名は日本語の原文）
         `次のテキストの内容を${languageName(targetLanguage) || '日本語'}で簡潔に説明してください:\n\n${src}`
       );
-      explanation = extractText(r);
+      explanation = { status: 'done', text: extractText(r) };
     } catch (e) {
-      explanation = t('説明の生成に失敗：{error}', { error: errorText(e) });
+      explanation = { status: 'failed', message: errorText(e) };
     }
   }
 
@@ -446,6 +449,7 @@
       unlisteners.push(
         await win.listen<TextCommand>(TEXT_COMMAND_EVENT, ({ payload: c }) => {
           if (c.kind === 'placement') setPlacement(c.value);
+          else if (c.kind === 'explain') explain();
           else showText = false;
         })
       );
@@ -583,7 +587,11 @@
 
     {#if textInside}
       <aside class="panel" aria-label={t('テキスト')}>
-        <LensText view={textView} onplacement={setPlacement} onclose={() => (showText = false)} />
+        <LensText
+          view={textView}
+          onplacement={setPlacement}
+          onexplain={explain}
+          onclose={() => (showText = false)} />
       </aside>
     {/if}
 
