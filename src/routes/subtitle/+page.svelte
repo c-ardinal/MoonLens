@@ -2,24 +2,52 @@
   import { onDestroy, onMount, tick } from 'svelte';
   import { type UnlistenFn } from '@tauri-apps/api/event';
   import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
-  import { Eye, EyeOff, X } from 'lucide-svelte';
+  import { AppWindow, Check, ChevronDown, Eye, EyeOff, Magnet, Monitor, Plus, RotateCw, X } from 'lucide-svelte';
   import {
+    blockSubtitlePhrase,
+    closeSubtitleWindow,
     getSettings,
+    listAudioApps,
     onSettingsChanged,
     onSubtitle,
     onSubtitleLevel,
-    stopSubtitle,
-    subtitleState,
+    openSubtitleWindow,
+    setSubtitleSource,
+    subtitleSession,
+    windowAttachment,
+    type AudioApp,
+    type AudioSource,
     type Settings
   } from '$lib/ipc';
   import { errorText } from '$lib/errors';
+  import AttachMenu from '$lib/components/AttachMenu.svelte';
+  import { ATTACH_EVENT, DETACHED, targetName, type Attachment } from '$lib/attach';
+  import {
+    SUBTITLE_DOCKS,
+    SourceLinker
+  } from '$lib/subtitle-attach';
   import { languageLabel } from '$lib/lens-overlay';
-  import { initialView, inputHint, reduce, statusLabel } from '$lib/subtitle';
+  import {
+    initialView,
+    inputHint,
+    reduce,
+    restore,
+    sameSource,
+    settle,
+    sourceLabel,
+    sourceOptions,
+    statusLabel
+  } from '$lib/subtitle';
   import { LevelScope, levelRatio, type InputState } from '$lib/subtitle-level';
 
-  // 音声翻訳ウィンドウ。タイトルバーのドラッグで移動、右下隅で寸法変更、
-  // × で音声翻訳を停止。字幕は時系列で蓄積し、最新行へ自動スクロール。
+  // 音声翻訳ウィンドウ（複数可）。タイトルバーのドラッグで移動、右下隅で寸法変更、
+  // × で当該ウィンドウを停止・閉鎖、＋ でウィンドウ追加。音源（PC 全体／アプリ単位）は
+  // ウィンドウ単位で選択。字幕は時系列で蓄積し、最新行へ自動スクロール。
+  // 吸着：他アプリのウィンドウへ割当て、移動・サイズ変更へ追従（音源も当該アプリへ連動）。
   // 背景：入力波形と認識閾値。入力の有無・音量の過不足を常時表示。
+
+  /** 音源メニュー表示中のアプリ一覧の更新間隔。 */
+  const APPS_REFRESH_MS = 1500;
 
   let view = $state(initialView());
   let input = $state<InputState>('none');
@@ -30,8 +58,43 @@
   let showOriginal = $state(true);
   let fontSize = $state(22);
   let targetLanguage = $state('ja');
-  let scroller: HTMLElement;
+  let scroller = $state<HTMLElement>();
   const unlisteners: (UnlistenFn | undefined)[] = [];
+
+  // 音源メニュー
+  let menuOpen = $state(false);
+  let apps = $state<AudioApp[]>([]);
+  let appsSupported = $state(true);
+  let appsLoaded = $state(false);
+  /** 切替処理中の音源（多重操作の防止、行内の進行表示）。 */
+  let switching = $state<AudioSource | null>(null);
+  let menuError = $state<string | null>(null);
+  let menu = $state<HTMLElement>();
+  let sourceButton = $state<HTMLElement>();
+  const options = $derived(sourceOptions(apps, view));
+  const source = $derived(sourceLabel(view));
+
+  // 吸着（他アプリのウィンドウへの割当て）
+  let label = $state('');
+  let attachment = $state<Attachment>(DETACHED);
+  let attachOpen = $state(false);
+  /** 吸着先アプリへの音源連動（音声出力なし・非対応の環境では音源を維持）。 */
+  const linker = new SourceLinker({
+    current: async () => (await subtitleSession())?.source ?? view.source,
+    apps: async () => (await listAudioApps()).apps,
+    set: (source) => setSubtitleSource(source)
+  });
+
+  function applyAttachment(next: Attachment) {
+    const before = attachment.target;
+    attachment = next;
+    if ((next.target?.id ?? null) !== (before?.id ?? null)) linker.follow(next.target);
+  }
+
+  function toggleAttach() {
+    attachOpen = !attachOpen;
+    if (attachOpen) menuOpen = false;
+  }
 
   function applySettings(s: Settings) {
     showOriginal = s?.subtitle?.show_original ?? true;
@@ -124,7 +187,78 @@
   });
 
   function close() {
-    stopSubtitle().catch(() => {});
+    closeSubtitleWindow().catch(() => {});
+  }
+
+  function addWindow() {
+    openSubtitleWindow().catch((e) => (view = { ...view, error: errorText(e) }));
+  }
+
+  async function refreshApps() {
+    try {
+      const found = await listAudioApps();
+      apps = found.apps;
+      appsSupported = found.supported;
+    } catch {
+      /* 一覧の取得失敗：前回の一覧を維持 */
+    }
+    appsLoaded = true;
+  }
+
+  async function toggleMenu() {
+    menuOpen = !menuOpen;
+    menuError = null;
+    if (menuOpen) attachOpen = false;
+    if (!menuOpen) return;
+    refreshApps();
+    await tick();
+    menu?.querySelector<HTMLElement>('[aria-checked="true"]')?.focus();
+  }
+
+  function closeMenu() {
+    menuOpen = false;
+    sourceButton?.focus();
+  }
+
+  /** 音源を変更。失敗時は従来の音源を継続し、理由をメニュー内へ表示。 */
+  async function choose(next: AudioSource) {
+    if (switching) return;
+    switching = next;
+    menuError = null;
+    try {
+      await setSubtitleSource(next);
+      closeMenu();
+    } catch (e) {
+      menuError = errorText(e);
+      refreshApps();
+    } finally {
+      switching = null;
+    }
+  }
+
+  /** 停止後（連続失敗・アプリ終了）：同一音源で再開。 */
+  function restart() {
+    setSubtitleSource(view.source).catch((e) => (view = { ...view, error: errorText(e) }));
+  }
+
+  function onMenuKey(e: KeyboardEvent) {
+    if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+    e.preventDefault();
+    const items = [...(menu?.querySelectorAll<HTMLElement>('[role="menuitemradio"]') ?? [])];
+    const at = items.indexOf(document.activeElement as HTMLElement);
+    const step = e.key === 'ArrowDown' ? 1 : -1;
+    items[(at + step + items.length) % items.length]?.focus();
+  }
+
+  // 反復検出の候補：遮断リストへの追加は利用者の承認時のみ。
+  const candidate = $derived(view.candidates[0]);
+  async function block(phrase: string) {
+    try {
+      await blockSubtitlePhrase(phrase);
+      view = settle(view, phrase, true);
+    } catch (e) {
+      view = { ...view, error: `遮断リストへの追加失敗：${e}` };
+    }
   }
 
   function startResize(e: PointerEvent) {
@@ -133,35 +267,60 @@
     getCurrentWebviewWindow().startResizeDragging('SouthEast').catch(() => {});
   }
 
-  // 最新の字幕・エラーを表示範囲へ。
+  // 最新の字幕・エラーを表示範囲へ（補正による行の置換時も同様）。
   $effect(() => {
-    void view.lines.length;
+    void view.lines;
     void view.error;
     tick().then(() => scroller?.scrollTo({ top: scroller.scrollHeight }));
   });
 
+  // メニュー表示中：再生状況を定期更新。
+  $effect(() => {
+    if (!menuOpen) return;
+    const timer = setInterval(refreshApps, APPS_REFRESH_MS);
+    return () => clearInterval(timer);
+  });
+
   onMount(async () => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') close();
+      if (e.key !== 'Escape') return;
+      if (attachOpen) attachOpen = false;
+      else if (menuOpen) closeMenu();
+      else close();
     };
     window.addEventListener('keydown', onKey);
     unlisteners.push(() => window.removeEventListener('keydown', onKey));
+    // 吸着メニュー：メニュー外の押下で閉鎖。
+    const onDown = (e: PointerEvent) => {
+      const el = e.target as HTMLElement | null;
+      if (attachOpen && !el?.closest?.('.am, [data-action="attach"]')) attachOpen = false;
+    };
+    window.addEventListener('pointerdown', onDown, true);
+    unlisteners.push(() => window.removeEventListener('pointerdown', onDown, true));
     getSettings().then(applySettings).catch(() => {});
     const resize = new ResizeObserver(fitCanvas);
     if (canvas) resize.observe(canvas);
     unlisteners.push(() => resize.disconnect());
     unlisteners.push(() => cancelAnimationFrame(raf));
     try {
+      const win = getCurrentWebviewWindow();
+      label = win.label;
       unlisteners.push(await onSettingsChanged(applySettings));
-      unlisteners.push(await onSubtitle((ev) => (view = reduce(view, ev))));
+      unlisteners.push(
+        await onSubtitle((ev) => {
+          if (ev.window === label) view = reduce(view, ev);
+        })
+      );
       unlisteners.push(
         await onSubtitleLevel((ev) => {
           scope.receive(ev, performance.now());
           schedule();
         })
       );
-      // 再読込時：開始イベントは受信済みのため、現況を照会。
-      if (!view.running && (await subtitleState())) view = { ...view, running: true };
+      // 開始イベントは受信登録より先行：現況を照会。
+      if (!view.running) view = restore(view, await subtitleSession());
+      unlisteners.push(await win.listen<Attachment>(ATTACH_EVENT, (e) => applyAttachment(e.payload)));
+      applyAttachment(await windowAttachment(label));
     } catch {
       /* not running inside Tauri */
     }
@@ -171,7 +330,42 @@
 
 <main class="sub">
   <header class="bar" data-tauri-drag-region>
+    <button class="btn" title="音声翻訳ウィンドウ追加" aria-label="音声翻訳ウィンドウ追加" onclick={addWindow}>
+      <Plus class="h-4 w-4" />
+    </button>
     <span class="title" data-tauri-drag-region>音声翻訳</span>
+    <button
+      class="source"
+      class:open={menuOpen}
+      bind:this={sourceButton}
+      title="音源選択：{source}"
+      aria-haspopup="menu"
+      aria-expanded={menuOpen}
+      onclick={toggleMenu}
+    >
+      {#if view.source.kind === 'system'}
+        <Monitor class="h-3.5 w-3.5 flex-none" />
+      {:else}
+        <AppWindow class="h-3.5 w-3.5 flex-none" />
+      {/if}
+      <span class="source-name">{source}</span>
+      <ChevronDown class="chevron h-3 w-3 flex-none" />
+    </button>
+    <button
+      class="btn"
+      class:on={!!attachment.target || attachOpen}
+      class:attached={!!attachment.target}
+      data-action="attach"
+      aria-haspopup="dialog"
+      aria-expanded={attachOpen}
+      title={attachment.target
+        ? `吸着中：${targetName(attachment.target)}`
+        : '他アプリのウィンドウへ吸着'}
+      aria-label="吸着"
+      onclick={toggleAttach}
+    >
+      <Magnet class="h-4 w-4" />
+    </button>
     <span
       class="state"
       class:busy
@@ -216,7 +410,7 @@
   {/if}
   <section class="body" bind:this={scroller} aria-live="polite" aria-label="字幕">
     {#each view.lines as line (line.id)}
-      <div class="line">
+      <div class="line" class:revised={line.revised}>
         {#if showOriginal && line.translated}
           <p class="src" style="font-size: {Math.round(fontSize * 0.55)}px">{line.original}</p>
         {/if}
@@ -225,15 +419,90 @@
     {:else}
       {#if !view.error}
         <p class="hint">
-          {view.running ? inputHint(input) : '音声翻訳は停止中。'}
-          {#if view.running && view.device}<br />音声取得：{view.device}{/if}
+          {#if !view.running}
+            音声翻訳は停止中。
+          {:else}
+            {inputHint(input, view.source.kind === 'app' ? source : null)}
+            {#if view.source.kind === 'system' && view.device}<br />音声取得：{view.device}{/if}
+          {/if}
         </p>
       {/if}
     {/each}
     {#if view.error}
       <p class="err" role="alert">{errorText(view.error)}</p>
     {/if}
+    {#if !view.running}
+      <button class="restart" onclick={restart}><RotateCw class="h-3.5 w-3.5" />再開</button>
+    {/if}
   </section>
+  {#if candidate}
+    <aside class="cand" aria-label="遮断候補">
+      <span class="cand-label" title="同一文の反復を検出。誤認識の場合は遮断を選択">反復検出</span>
+      <span class="cand-text" title={candidate}>{candidate}</span>
+      <button class="cand-btn primary" title="以後、字幕から除外（設定 → 音声翻訳で解除可能）" onclick={() => block(candidate)}>
+        遮断
+      </button>
+      <button class="cand-btn" title="今回の音声翻訳中は再提示なし" onclick={() => (view = settle(view, candidate, false))}>
+        無視
+      </button>
+    </aside>
+  {/if}
+
+  {#if menuOpen}
+    <!-- 小寸法のウィンドウでも一覧可能とするため、字幕領域全面へ表示 -->
+    <div class="menu" role="menu" tabindex="-1" aria-label="音源選択" bind:this={menu} onkeydown={onMenuKey}>
+      {#each options as option (option.source.kind === 'app' ? option.source.pid : 'system')}
+        {@const pending = !!switching && sameSource(switching, option.source)}
+        <button
+          class="option"
+          class:selected={option.selected}
+          role="menuitemradio"
+          aria-checked={option.selected}
+          disabled={!!switching}
+          onclick={() => choose(option.source)}
+        >
+          {#if option.source.kind === 'system'}
+            <Monitor class="h-4 w-4 flex-none" />
+          {:else}
+            <AppWindow class="h-4 w-4 flex-none" />
+          {/if}
+          <span class="option-text">
+            <span class="option-name">{option.label}</span>
+            {#if option.detail}<span class="option-detail">{option.detail}</span>{/if}
+          </span>
+          <span class="bars" class:playing={option.playing} title={option.playing ? '再生中' : '無音'} aria-label={option.playing ? '再生中' : '無音'}>
+            <i></i><i></i><i></i>
+          </span>
+          <span class="mark">
+            {#if pending}
+              <span class="spin"></span>
+            {:else if option.selected}
+              <Check class="h-4 w-4" />
+            {/if}
+          </span>
+        </button>
+      {/each}
+      {#if !appsSupported}
+        <p class="note">アプリ単位の音声取得は Windows 限定。</p>
+      {:else if appsLoaded && apps.length === 0}
+        <p class="note">音声出力中のアプリなし。再生開始後、自動で一覧へ追加。</p>
+      {/if}
+      {#if menuError}
+        <p class="note bad" role="alert">{menuError}</p>
+      {/if}
+    </div>
+  {/if}
+  {#if attachOpen}
+    <!-- タイトルバーと同位置の基準枠：メニューは直下へ表示（字幕・波形より前面） -->
+    <div class="attach-pop">
+      <AttachMenu
+        {label}
+        {attachment}
+        docks={SUBTITLE_DOCKS}
+        onclose={() => (attachOpen = false)}
+      />
+    </div>
+  {/if}
   <div class="grip" role="presentation" title="サイズ変更" onpointerdown={startResize}></div>
 </main>
 
@@ -264,7 +533,7 @@
     display: flex;
     align-items: center;
     gap: 4px;
-    padding: 0 4px 0 12px;
+    padding: 0 4px;
     background: rgba(24, 24, 28, 0.92);
     border-radius: 8px 8px 0 0;
     user-select: none;
@@ -276,6 +545,38 @@
     font-size: 11px;
     opacity: 0.75;
     white-space: nowrap;
+  }
+  /* 音源選択：現在の音源名を常時表示、幅不足時は省略表記 */
+  .source {
+    flex: 0 1 auto;
+    min-width: 44px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin-left: 4px;
+    border-radius: 6px;
+    padding: 4px 8px;
+    font-size: 11px;
+    cursor: pointer;
+    background: rgba(255, 255, 255, 0.08);
+    transition: background-color 120ms;
+  }
+  .source:hover,
+  .source.open {
+    background: color-mix(in srgb, var(--ml-accent, #8b5cf6) 45%, transparent);
+  }
+  .source-name {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .source :global(.chevron) {
+    opacity: 0.75;
+    transition: transform 120ms;
+  }
+  .source.open :global(.chevron) {
+    transform: rotate(180deg);
   }
   .state {
     flex: none;
@@ -341,15 +642,17 @@
     opacity: 0.75;
     white-space: nowrap;
   }
-  /* 狭幅：見出し・翻訳先言語を省略し、状態表記と操作を優先 */
-  @container (max-width: 300px) {
+  /* 狭幅：見出し・翻訳先言語を省略し、音源・状態表記と操作を優先 */
+  @container (max-width: 400px) {
     .title,
     .lang,
     .meter {
       display: none;
     }
+  }
+  @container (max-width: 260px) {
     .state {
-      margin-left: 0;
+      display: none;
     }
   }
   .btn {
@@ -365,6 +668,20 @@
   .btn:hover {
     opacity: 1;
     background: rgba(255, 255, 255, 0.12);
+  }
+  .btn.attached {
+    color: var(--ml-accent);
+  }
+  /* 吸着メニューの基準枠：タイトルバーと同位置。枠自体は操作を透過 */
+  .attach-pop {
+    position: absolute;
+    inset: 0 0 auto;
+    height: 32px;
+    z-index: 2;
+    pointer-events: none;
+  }
+  .attach-pop :global(.am) {
+    pointer-events: auto;
   }
   /* 入力波形（字幕の背景）。字幕表示中は減光し、可読性を優先 */
   .wave {
@@ -426,6 +743,23 @@
     font-weight: 600;
     line-height: 1.35;
   }
+  /* 補正による訳文の更新を明示（1 回のみ） */
+  .line.revised .text {
+    animation: revised 0.9s ease-out;
+  }
+  @keyframes revised {
+    from {
+      background: rgba(139, 92, 246, 0.45);
+    }
+    to {
+      background: transparent;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .line.revised .text {
+      animation: none;
+    }
+  }
   /* 過去の字幕は減光、最新行を強調 */
   .line:not(:last-of-type) {
     opacity: 0.6;
@@ -444,7 +778,209 @@
     color: #fca5a5;
     overflow-wrap: anywhere;
   }
+  .restart {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    margin-top: 8px;
+    border-radius: 6px;
+    padding: 4px 12px;
+    font-size: 12px;
+    cursor: pointer;
+    background: color-mix(in srgb, var(--ml-accent, #8b5cf6) 45%, transparent);
+  }
+  .restart:hover {
+    background: color-mix(in srgb, var(--ml-accent, #8b5cf6) 65%, transparent);
+  }
+  /* 音源メニュー：字幕領域全面 */
+  .menu {
+    position: absolute;
+    inset: 32px 0 0;
+    z-index: 1;
+    overflow-y: auto;
+    padding: 4px;
+    border-radius: 0 0 8px 8px;
+    background: rgba(24, 24, 28, 0.97);
+    animation: menu-in 120ms ease-out;
+  }
+  @keyframes menu-in {
+    from {
+      opacity: 0;
+      transform: translateY(-4px);
+    }
+  }
+  .option {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    border-radius: 6px;
+    padding: 4px 8px;
+    min-height: 32px;
+    text-align: left;
+    cursor: pointer;
+  }
+  .option:hover:not(:disabled),
+  .option:focus-visible {
+    outline: none;
+    background: rgba(255, 255, 255, 0.1);
+  }
+  .option.selected {
+    background: color-mix(in srgb, var(--ml-accent, #8b5cf6) 30%, transparent);
+  }
+  .option:disabled {
+    cursor: progress;
+  }
+  .option-text {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+  }
+  .option-name {
+    flex: none;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 13px;
+    font-weight: 600;
+  }
+  .option-detail {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 11px;
+    opacity: 0.6;
+  }
+  /* 再生状況：再生中は 3 本のバーを伸縮、無音時は減光・静止 */
+  .bars {
+    flex: none;
+    display: flex;
+    align-items: flex-end;
+    gap: 2px;
+    height: 12px;
+    opacity: 0.3;
+  }
+  .bars i {
+    width: 2px;
+    height: 4px;
+    border-radius: 1px;
+    background: currentColor;
+  }
+  .bars.playing {
+    opacity: 1;
+    color: var(--ml-accent, #8b5cf6);
+  }
+  .bars.playing i {
+    height: 12px;
+    transform-origin: bottom;
+    animation: meter 900ms ease-in-out infinite;
+  }
+  .bars.playing i:nth-child(2) {
+    animation-delay: -300ms;
+  }
+  .bars.playing i:nth-child(3) {
+    animation-delay: -600ms;
+  }
+  @keyframes meter {
+    0%,
+    100% {
+      transform: scaleY(0.3);
+    }
+    50% {
+      transform: scaleY(1);
+    }
+  }
+  .mark {
+    flex: none;
+    width: 16px;
+    height: 16px;
+  }
+  .spin {
+    display: block;
+    width: 12px;
+    height: 12px;
+    margin: 2px;
+    border-radius: 50%;
+    border: 2px solid rgba(255, 255, 255, 0.25);
+    border-top-color: #fff;
+    animation: spin 700ms linear infinite;
+  }
+  @keyframes spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+  .note {
+    margin: 0;
+    padding: 4px 8px;
+    font-size: 11px;
+    line-height: 1.6;
+    opacity: 0.7;
+  }
+  .note.bad {
+    opacity: 1;
+    color: #fca5a5;
+    overflow-wrap: anywhere;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .menu,
+    .bars.playing i,
+    .source :global(.chevron) {
+      animation: none;
+      transition: none;
+    }
+  }
+  /* 遮断候補：字幕の下端へ固定（字幕のスクロール対象外） */
+  .cand {
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    /* 右端：寸法変更の把手を回避 */
+    padding: 4px 16px 4px 12px;
+    font-size: 12px;
+    line-height: 16px;
+    background: rgba(24, 24, 28, 0.92);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12);
+    border-radius: 0 0 8px 8px;
+  }
+  .cand-label {
+    flex: none;
+    opacity: 0.75;
+    white-space: nowrap;
+  }
+  .cand-text {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-weight: 600;
+  }
+  .cand-btn {
+    flex: none;
+    border-radius: 6px;
+    padding: 4px 8px;
+    line-height: 16px;
+    cursor: pointer;
+    white-space: nowrap;
+    background: rgba(255, 255, 255, 0.08);
+  }
+  .cand-btn:hover {
+    background: rgba(255, 255, 255, 0.16);
+  }
+  .cand-btn.primary {
+    background: color-mix(in srgb, var(--ml-accent) 45%, transparent);
+  }
+  .cand-btn.primary:hover {
+    background: color-mix(in srgb, var(--ml-accent) 65%, transparent);
+  }
   .grip {
+    z-index: 2;
     position: absolute;
     right: 0;
     bottom: 0;

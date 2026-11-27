@@ -127,6 +127,12 @@ pub struct Hotkeys {
     /// Window translation: switch every window between letting the mouse
     /// through (default) and taking it (select / copy the translation).
     pub toggle_window_operate: String,
+    /// Window translation: stop reading and translating in every window
+    /// (the windows stay), or resume.
+    pub toggle_window_pause: String,
+    /// Window translation: while held, every window hides its
+    /// translations so the original on screen can be read.
+    pub hold_window_original: String,
     pub toggle_subtitle: String,
     pub open_command_palette: String,
     pub open_history: String,
@@ -142,6 +148,8 @@ impl Default for Hotkeys {
             capture_window: "CommandOrControl+Shift+W".into(),
             toggle_pin_overlay: "CommandOrControl+Shift+P".into(),
             toggle_window_operate: "CommandOrControl+Shift+E".into(),
+            toggle_window_pause: "CommandOrControl+Shift+X".into(),
+            hold_window_original: "CommandOrControl+Shift+O".into(),
             toggle_subtitle: "CommandOrControl+Shift+S".into(),
             open_command_palette: "CommandOrControl+K".into(),
             open_history: "CommandOrControl+Shift+H".into(),
@@ -172,6 +180,10 @@ pub struct OverlaySettings {
     pub follow_source: bool,
     pub auto_hide_ms: Option<u32>,
     pub position: OverlayPosition,
+    /// Translation windows appear in screenshots and recordings
+    /// (Windows; they are excluded only while MoonLens reads the
+    /// screen). Off: excluded from every capture.
+    pub show_in_screenshots: bool,
 }
 
 impl Default for OverlaySettings {
@@ -186,6 +198,7 @@ impl Default for OverlaySettings {
             follow_source: true,
             auto_hide_ms: None,
             position: OverlayPosition::NearSource,
+            show_in_screenshots: true,
         }
     }
 }
@@ -217,6 +230,19 @@ pub struct SubtitleSettings {
     pub show_original: bool,
     #[schemars(range(min = 14, max = 48))]
     pub font_size_px: u32,
+    /// Translate each sentence again as a whole as soon as it ends.
+    pub realtime_correction: bool,
+    /// Translate the sentences not yet corrected again when the speech
+    /// pauses or the audio ends.
+    pub batch_correction: bool,
+    /// Remove stock misrecognitions (video sign-offs, subtitle credits,
+    /// sound annotations) before they are shown or translated; see
+    /// `subtitle_filter`.
+    pub block_stock_phrases: bool,
+    /// The user's additions to the bundled list of stock phrases. Only
+    /// ever changed by the user (settings screen, or approving a
+    /// suggestion in the subtitle window).
+    pub blocked_phrases: Vec<String>,
 }
 
 impl Default for SubtitleSettings {
@@ -231,6 +257,10 @@ impl Default for SubtitleSettings {
             overlap_seconds: 0.5,
             show_original: true,
             font_size_px: 22,
+            realtime_correction: true,
+            batch_correction: true,
+            block_stock_phrases: true,
+            blocked_phrases: Vec::new(),
         }
     }
 }
@@ -338,6 +368,9 @@ pub enum LogLevel {
 #[serde(default, deny_unknown_fields)]
 pub struct StorageSettings {
     pub keep_history: bool,
+    /// Keep translations on disk so text seen before shows at once after
+    /// a restart too. Off: they are kept until the app exits.
+    pub keep_translation_cache: bool,
     #[schemars(range(min = 0, max = 3650))]
     pub retention_days: u32,
     #[schemars(range(min = 0, max = 1000000))]
@@ -350,6 +383,7 @@ impl Default for StorageSettings {
     fn default() -> Self {
         Self {
             keep_history: true,
+            keep_translation_cache: true,
             retention_days: 90,
             max_entries: 10_000,
             encrypt_at_rest: false,
@@ -366,10 +400,13 @@ pub struct PerformanceSettings {
     pub streaming_debounce_ms: u32,
     #[schemars(range(min = 100, max = 2000))]
     pub region_watcher_poll_ms: u32,
+    /// Width (CSS pixels) a translation window reads beyond its frame
+    /// on every side, so text the frame cuts is read whole. Translations
+    /// stay inside the window. 0: read the window only.
+    #[schemars(range(min = 0, max = 128))]
+    pub scan_margin_px: u32,
     #[schemars(range(min = 1, max = 8))]
     pub max_concurrent_tasks: u32,
-    #[schemars(range(min = 0, max = 604800))]
-    pub cache_ttl_seconds: u32,
     pub use_gpu_if_available: bool,
 }
 
@@ -378,8 +415,8 @@ impl Default for PerformanceSettings {
         Self {
             streaming_debounce_ms: 50,
             region_watcher_poll_ms: 250,
+            scan_margin_px: 32,
             max_concurrent_tasks: 4,
-            cache_ttl_seconds: 3600,
             use_gpu_if_available: true,
         }
     }

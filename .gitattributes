@@ -1,0 +1,2 @@
+# 認識辞書：1 行 1 文字（空白文字のみの行を含む）。改行・空白の変換は不可。
+src-tauri/src/providers/ocr_dicts/*.txt -text

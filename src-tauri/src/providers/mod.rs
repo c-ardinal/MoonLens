@@ -14,6 +14,7 @@ pub mod model_store;
 pub mod ocr_ocrs;
 pub mod ocr_onnx;
 pub mod ocr_ppocr;
+pub mod ocr_scripts;
 #[cfg(windows)]
 pub mod ocr_windows;
 pub mod qr_rqrr;

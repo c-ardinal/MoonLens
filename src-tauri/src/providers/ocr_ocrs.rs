@@ -33,8 +33,7 @@ const LEGACY_DETECTION_FILE: &str = "text-detection.rten";
 const LEGACY_RECOGNITION_FILE: &str = "text-recognition.rten";
 
 /// Bundle identifier from `tauri.conf.json`. Tauri names the app's data
-/// folders after it, and installers (the Windows uninstaller's "delete
-/// app data" option) clean up exactly those folders.
+/// folders after it; README's removal steps list exactly those folders.
 pub const APP_IDENTIFIER: &str = "io.moonlens.app";
 
 /// Where every model lives: `<local app data>/io.moonlens.app/models`

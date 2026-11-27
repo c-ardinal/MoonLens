@@ -14,11 +14,12 @@ name: release
 on:
   push:
     tags: ['v*']
-  # Installer builds for a PR, on demand: label the PR
-  # `installer:windows` and/or `installer:macos`. Nothing is published;
-  # the installers are kept as run artifacts for 7 days. Used for test
+  # Package builds for a PR, on demand: label the PR
+  # `installer:windows` (portable zip) and/or `installer:macos` (dmg).
+  # Nothing is published; the packages are kept as run artifacts for
+  # 7 days. Used for test
   # builds of unreleased work and to dry-run changes to this file.
-  # Without a label only the (seconds-long) guard job runs.
+  # Without a label every job is skipped (no runner is taken).
   pull_request:
     types: [opened, synchronize, reopened, labeled]
   workflow_dispatch:
@@ -45,9 +46,14 @@ env:
 
 jobs:
   guard:
+    # A PR without an `installer:*` label has nothing to build: skip
+    # here so the run does not wait for (or hold) a runner.
+    if: >-
+      github.event_name != 'pull_request'
+      || contains(join(github.event.pull_request.labels.*.name, ','), 'installer:')
     runs-on: ubuntu-latest
     outputs:
-      notes: ${{ steps.notes.outputs.notes }}
+      release_id: ${{ steps.release.outputs.id }}
       matrix: ${{ steps.matrix.outputs.matrix }}
     steps:
       # Platforms to build: all three for a tag, the labelled ones for a
@@ -62,7 +68,9 @@ jobs:
           ADDED: ${{ github.event.label.name }}
         run: |
           linux='{"name":"linux","os":"ubuntu-latest","bundle":"deb,appimage,rpm"}'
-          windows='{"name":"windows","os":"windows-latest","bundle":"msi,nsis"}'
+          # Windows ships no installer: a portable zip only (see the
+          # "Portable zip" step), so there is nothing for the bundler.
+          windows='{"name":"windows","os":"windows-latest","bundle":""}'
           macos='{"name":"macos","os":"macos-latest","bundle":"app,dmg"}'
           if [ "$EVENT" != pull_request ]; then
             list="$linux,$windows,$macos"
@@ -113,20 +121,47 @@ jobs:
         env:
           TAG: ${{ github.event.inputs.tag || github.ref_name }}
         run: node scripts/check-release.mjs "$TAG"
-      # This version's CHANGELOG.md section (folded from changelog.d/ by
-      # `scripts/changelog.mjs release`) goes into the draft's body.
-      - name: Release notes from CHANGELOG.md
-        id: notes
+      # The draft release every build job uploads to. Created here, once,
+      # so the three platforms do not race to create it. Its body ends
+      # with this version's CHANGELOG.md section (folded from
+      # changelog.d/ by `scripts/changelog.mjs release`). A re-run finds
+      # the existing release and leaves its (possibly edited) body alone.
+      # Check the assets and notes, then press "Publish release" (see
+      # docs/RELEASING.md).
+      - name: Draft release
+        id: release
         if: github.event_name != 'pull_request'
         shell: bash
         env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ github.event.inputs.tag || github.ref_name }}
         run: |
-          {
-            echo 'notes<<__NOTES_EOF__'
-            node scripts/changelog.mjs notes "$TAG"
-            echo '__NOTES_EOF__'
-          } >> "$GITHUB_OUTPUT"
+          find_id() {
+            gh api "repos/$GITHUB_REPOSITORY/releases" --paginate \
+              --jq ".[] | select(.tag_name == \"$TAG\") | .id" | head -n 1
+          }
+          id=$(find_id)
+          if [ -z "$id" ]; then
+            {
+              cat .github/release-body.md
+              echo
+              echo '## 変更内容'
+              node scripts/changelog.mjs notes "$TAG"
+              echo
+              echo '過去の変更履歴は `CHANGELOG.md`、同梱ライブラリ・モデルのライセンスは'
+              echo '`THIRD_PARTY_LICENSES.html` を参照してください。'
+              echo
+              echo 'Built with PLaMo.'
+            } > "$RUNNER_TEMP/body.md"
+            flags=()
+            # A tag like `v0.1.0-rc.1` contains a `-`; flag as pre-release.
+            case "$TAG" in *-*) flags+=(--prerelease) ;; esac
+            gh release create "$TAG" --draft --verify-tag "${flags[@]}" \
+              --title "MoonLens $TAG" --notes-file "$RUNNER_TEMP/body.md"
+            id=$(find_id)
+          fi
+          [ -n "$id" ] || { echo "::error::no release for $TAG"; exit 1; }
+          echo "id=$id" >> "$GITHUB_OUTPUT"
 
   build:
     needs: guard
@@ -232,8 +267,8 @@ jobs:
 
       # Licence texts of every Rust crate and npm package compiled into
       # the app, plus llama.cpp and the downloadable models. Bundled into
-      # the installer via tauri.release.conf.json and attached to the
-      # release as a separate file.
+      # the packages (tauri.release.conf.json, scripts/portable-zip.mjs)
+      # and attached to the release as a separate file.
       - name: Third-party licences
         run: node scripts/third-party-licenses.mjs
 
@@ -260,69 +295,60 @@ jobs:
             fi
           done
 
-      - name: Build Tauri bundle
+      - name: Build Tauri bundle (linux, macos)
+        if: matrix.name != 'windows'
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Unsigned bundles without signing secrets: SmartScreen warning
-          # on Windows, Gatekeeper warning on macOS (ad-hoc signed, see
-          # tauri.conf.json). Apple secrets are exported by the step
-          # above when present.
+          # Unsigned without signing secrets: Gatekeeper warning on macOS
+          # (ad-hoc signed, see tauri.conf.json). Apple secrets are
+          # exported by the step above when present.
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           projectPath: .
-          # Empty on a PR dry run: build only, no release.
-          tagName: ${{ github.event_name != 'pull_request' && (github.event.inputs.tag || github.ref_name) || '' }}
-          releaseName: 'MoonLens ${{ github.event.inputs.tag || github.ref_name }}'
-          # Created as a draft: check the assets and notes, then press
-          # "Publish release" (see docs/RELEASING.md).
-          releaseBody: |
-            MoonLens は画面上の文字を端末内で OCR・翻訳する常駐ツールです。
-            翻訳・OCR は全処理をローカルで実行し、画像・テキストの外部送信はありません。
-
-            ## 導入
-            | OS | ファイル |
-            | --- | --- |
-            | Windows | `MoonLens_*_x64-setup.exe`（推奨）または `*.msi` |
-            | macOS（Apple シリコン） | `MoonLens_*_aarch64.dmg` |
-            | Linux | `*.AppImage`（実行権限の付与後に起動）、`*.deb`、`*.rpm` |
-
-            初回起動後、ホーム画面の「モデル準備」で翻訳モデル・OCR モデルを取得してください
-            （既定の翻訳モデル PLaMo 3 Translate 2B は約 1.8 GB）。通信の発生は取得時のみです。
-
-            インストーラーは未署名です。
-            - Windows：SmartScreen 表示時は「詳細情報 → 実行」で起動。
-            - macOS：初回起動の拒否後、「システム設定 → プライバシーとセキュリティ」の「このまま開く」で起動。
-              「壊れている」表示の場合は `xattr -dr com.apple.quarantine /Applications/MoonLens.app` を実行。
-
-            ## 変更内容
-            ${{ needs.guard.outputs.notes }}
-
-            過去の変更履歴は `CHANGELOG.md`、同梱ライブラリ・モデルのライセンスは
-            `THIRD_PARTY_LICENSES.html` を参照してください。
-
-            Built with PLaMo.
-          releaseDraft: true
-          # A tag like `v0.1.0-rc.1` contains a `-`; flag as pre-release.
-          prerelease: ${{ contains(github.event.inputs.tag || github.ref_name, '-') }}
+          # The draft the guard job made. Empty on a PR dry run: build
+          # only, no upload.
+          releaseId: ${{ needs.guard.outputs.release_id }}
           # No auto-updater: MoonLens makes no network calls except model
           # downloads the user starts. Users update from the release page.
           includeUpdaterJson: false
           args: --bundles ${{ matrix.bundle }} --config src-tauri/tauri.release.conf.json
 
-      - name: Keep the installers (dry run, windows)
+      # Windows: the bare executable (it needs no installed files or
+      # registry entries), zipped with the licence files. Unsigned:
+      # SmartScreen warns on first start.
+      # Default shell (PowerShell) on purpose: Git Bash puts its own
+      # `link.exe` (GNU coreutils) ahead of the MSVC linker on PATH.
+      - name: Build (windows)
+        if: matrix.name == 'windows'
+        run: npx tauri build --no-bundle --config src-tauri/tauri.release.conf.json
+      - name: Portable zip (windows)
+        if: matrix.name == 'windows'
+        shell: bash
+        run: node scripts/portable-zip.mjs "$CARGO_TARGET_DIR/release" dist
+      - name: Attach the portable zip to the release (windows)
+        if: matrix.name == 'windows' && github.event_name != 'pull_request'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: gh release upload "$TAG" dist/*.zip --clobber
+
+      # The unpacked folder, so the artifact (itself a zip) is not a zip
+      # in a zip.
+      - name: Keep the package (dry run, windows)
         if: github.event_name == 'pull_request' && matrix.name == 'windows'
         uses: actions/upload-artifact@v4
         with:
-          name: moonlens-windows-installers
+          name: moonlens-windows-portable
           path: |
-            D:/t/release/bundle/msi/*.msi
-            D:/t/release/bundle/nsis/*.exe
+            dist/
+            !dist/*.zip
           if-no-files-found: error
           retention-days: 7
 
-      - name: Keep the installers (dry run, macos)
+      - name: Keep the package (dry run, macos)
         if: github.event_name == 'pull_request' && matrix.name == 'macos'
         uses: actions/upload-artifact@v4
         with:

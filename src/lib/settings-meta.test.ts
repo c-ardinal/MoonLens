@@ -149,3 +149,14 @@ describe('settings-meta', () => {
     expect(fieldMatches(gpu, section, '字幕')).toBe(false);
   });
 });
+
+describe('音声翻訳の遮断文', () => {
+  it('空行は保存対象外、入力の間は保存を待機', () => {
+    const saved = { subtitle: { blocked_phrases: [] } };
+    const draft = { subtitle: { blocked_phrases: ['Thank you.', '', '  '] } };
+    expect(savable(saved, draft).subtitle.blocked_phrases).toEqual(['Thank you.']);
+    expect(saveDelay('subtitle.blocked_phrases')).toBeGreaterThan(0);
+    // 項目のない設定（旧版の保存値）へは追加なし。
+    expect(savable({}, { appearance: {} })).not.toHaveProperty('subtitle');
+  });
+});

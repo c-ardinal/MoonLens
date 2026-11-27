@@ -1,7 +1,8 @@
 //! Download the models the live tests need into the app's models folder
-//! (the same place the app downloads to): PP-OCRv5, ocrs, the default
-//! translation model and the default speech recognition model. Already
-//! installed models are skipped.
+//! (the same place the app downloads to): PP-OCR with the models of
+//! every additional script, ocrs, the default translation model and
+//! the default speech recognition model. Already installed models are
+//! skipped.
 //!
 //! ```sh
 //! cd src-tauri
@@ -19,6 +20,9 @@ async fn main() -> anyhow::Result<()> {
         None,
     )
     .await?;
+    for script in &moonlens_lib::providers::ocr_scripts::SCRIPTS {
+        script.model.install(&ocr_dir, None).await?;
+    }
     ocr_ocrs::install_models_with_progress(&ocr_dir, None).await?;
     #[cfg(feature = "ocr-onnx")]
     moonlens_lib::providers::ocr_onnx::install(&ocr_dir, None).await?;
