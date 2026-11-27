@@ -183,14 +183,22 @@
     }
   }
 
+  /** Counts pauses: a one-off capture started before one is discarded. */
+  let pauseEpoch = 0;
+  /** Resumed while a one-off capture was running: read again after it. */
+  let rereadQueued = false;
+
   function setPaused(on: boolean) {
+    if (on && !paused) pauseEpoch += 1;
     paused = on;
     // Resumed: the reader reads at once; what was shown before the pause
     // stays hidden until then.
     if (on) return;
     hidden = new Set(blocks.map((_, i) => i));
     // Without continuous reading nothing reads on its own.
-    if (!continuous) refresh();
+    if (continuous) return;
+    if (busy) rereadQueued = true;
+    else refresh();
   }
 
   async function refresh() {
@@ -206,13 +214,19 @@
     busy = true;
     lastError = null;
     const at = (captureGeometry = geometry);
+    const epoch = pauseEpoch;
     try {
       const r = (await invoke('capture_lens_now', { id })) as CaptureFlowResult;
-      apply(r, at);
+      // Paused meanwhile: the screen changed unseen, the result is stale.
+      if (epoch === pauseEpoch) apply(r, at);
     } catch (e) {
-      lastError = errorText(e);
+      if (epoch === pauseEpoch) lastError = errorText(e);
     } finally {
       busy = false;
+    }
+    if (rereadQueued) {
+      rereadQueued = false;
+      refresh();
     }
   }
 
