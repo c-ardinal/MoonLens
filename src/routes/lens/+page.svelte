@@ -29,6 +29,7 @@
     setLensLanguage,
     setLensReadMode,
     setLensTextDock,
+    setLensView,
     windowAttachment,
     setStream,
     setStreamPaint,
@@ -39,7 +40,7 @@
     type LensDescriptor,
     type LensReadMode
   } from '$lib/ipc';
-  import { joinedText, languageName, maskClip, rgb } from '$lib/lens-overlay';
+  import { blockPaint, joinedText, languageLabel, languageName, maskClip, rgb } from '$lib/lens-overlay';
   import {
     addSample,
     observed,
@@ -64,6 +65,7 @@
   } from '$lib/lens-text';
   import { extractText } from '$lib/result';
   import { errorText } from '$lib/errors';
+  import { parseView } from '$lib/layout-sets';
   import { displayAccelerator } from '$lib/hotkey';
 
   // Window translation, continuous. The window sits over the observed
@@ -285,7 +287,12 @@
     }
   }
 
+  /** The view state this window was opened with is applied (a window
+   * restored from a layout set starts in the saved one). Until then
+   * nothing is started or reported. */
+  let viewReady = $state(false);
   $effect(() => {
+    if (!viewReady) return;
     invoke('set_lens_continuous', { id, on: continuous }).catch(() => {});
     if (!continuous) {
       translating = false;
@@ -320,7 +327,13 @@
     savePlacement(p);
   }
   $effect(() => {
+    if (!viewReady) return;
     setLensTextDock(id, showText && placement !== 'inside' ? placement : null).catch(() => {});
+  });
+  // What a layout set saves of this window.
+  $effect(() => {
+    if (!viewReady) return;
+    setLensView(id, { continuous, text: showText, placement }).catch(() => {});
   });
   $effect(() => {
     void textReady;
@@ -548,12 +561,19 @@
         const me = lenses.find((l) => l.id === id);
         targetLanguage = me?.target_language ?? s?.subtitle?.target_language ?? 'ja';
         readMode = me?.read_mode ?? 'subtitle';
+        const view = parseView(me?.view, { continuous, text: showText, placement });
+        continuous = view.continuous;
+        showText = view.text;
+        placement = view.placement;
         const k = s?.hotkeys?.toggle_window_operate;
         operateKey = k ? displayAccelerator(k) : '';
         const p = s?.hotkeys?.toggle_window_pause;
         pauseKey = p ? displayAccelerator(p) : '';
       })
-      .catch(() => {});
+      .catch(() => {})
+      // Also when the view could not be read: the window then runs in
+      // its default view instead of never starting.
+      .finally(() => (viewReady = true));
     try {
       // Only this window's events: with several windows open, the global
       // `listen` would also paint the other windows' results here.
@@ -740,14 +760,25 @@
   >
     {#if !showOriginal && !peek && !paused}
       {#each boxes as b (b.rect.key)}
+        {@const paint = blockPaint(b.block, dpr)}
         <div
           class="box"
           class:pending={b.pending}
           style="left: {b.rect.left}px; top: {b.rect.top}px; width: {b.rect.width}px; height: {b.rect.height}px;
-                 background: {rgb(b.block.colors?.background, 'rgba(255,255,255,0.96)')};
-                 color: {rgb(b.block.colors?.foreground, '#111')};
-                 clip-path: {maskClip(b.block, dpr) || 'none'};"
+                 background: {paint.background};
+                 color: {paint.color};
+                 clip-path: {paint.clip};"
         >
+          {#if paint.erase}
+            <img
+              class="erase"
+              src={paint.erase.src}
+              alt=""
+              draggable="false"
+              style="left: {paint.erase.rect.left}px; top: {paint.erase.rect.top}px;
+                     width: {paint.erase.rect.width}px; height: {paint.erase.rect.height}px"
+            />
+          {/if}
           {#if !b.pending}
             <FlowText
               block={b.block}
@@ -755,7 +786,8 @@
               scale={dpr}
               grow={b.grow}
               onlayout={(l) => placed(b.rect.key, l)}
-              background={rgb(b.block.colors?.background, 'rgba(255,255,255,0.96)')}
+              background={paint.background}
+              outline={paint.outline}
             />
           {/if}
         </div>
@@ -882,6 +914,13 @@
   .box {
     position: absolute;
     border-radius: 3px;
+  }
+  /* 写真・グラデーション上：文字画素のみの補完画像 */
+  .box .erase {
+    position: absolute;
+    max-width: none;
+    pointer-events: none;
+    user-select: none;
   }
   .body.operate .box {
     user-select: text;

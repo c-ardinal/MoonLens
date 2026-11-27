@@ -9,6 +9,7 @@
   import {
     getDefaultSettings,
     getSettings,
+    listWindowApps,
     onSettingsChanged,
     setSettings,
     type Settings
@@ -35,8 +36,11 @@
   import OcrModels from '$lib/components/OcrModels.svelte';
   import DataLocations from '$lib/components/DataLocations.svelte';
   import Plugins from '$lib/components/Plugins.svelte';
+  import LayoutSets from '$lib/components/LayoutSets.svelte';
+  import AppGlossaries from '$lib/components/AppGlossaries.svelte';
   import GlossaryEditor from '$lib/components/GlossaryEditor.svelte';
   import PhraseList from '$lib/components/PhraseList.svelte';
+  import { glossaryOf, insertApp, isBlankApp, removeApp, setGlossary, type AppGlossary } from '$lib/app-glossary';
   import { createRemovalLog, isBlankEntry, type GlossaryEntry } from '$lib/glossary';
   import { close as closeToast, undoable } from '$lib/toast.svelte';
   import InferenceDevice from '$lib/components/InferenceDevice.svelte';
@@ -133,27 +137,79 @@
     autosave.schedule(saveDelay(path));
   }
 
+  /** アプリ別用語集の追加候補：ウィンドウを表示中のアプリ。用語集の表示時に取得。 */
+  let windowApps = $state<string[]>([]);
+  $effect(() => {
+    if (shown?.section.id !== 'glossary') return;
+    listWindowApps()
+      .then((apps) => (windowApps = apps.map((a) => a.name)))
+      .catch(() => {});
+  });
+
   /** 表示中の「取消」付き通知（用語集の行削除）。 */
   const glossaryUndo = new Set<number>();
-  /** 削除済みの行の復元位置（複数行の削除・取消の順序に非依存）。 */
-  const glossaryRemovals = createRemovalLog();
+  /** 削除済みの行の復元位置（複数行の削除・取消の順序に非依存）。用語集単位。 */
+  const glossaryRemovals = new Map<string, ReturnType<typeof createRemovalLog>>();
+
+  /** 編集対象の用語集：共通（設定の path）またはアプリ別（アプリの識別キー）。 */
+  type GlossaryRef = { path: string } | { app: string };
+  const APP_GLOSSARIES = 'translation.app_glossaries';
+
+  function appGlossaries(): AppGlossary[] {
+    return $state.snapshot(getPath(draft, APP_GLOSSARIES)) ?? [];
+  }
+
+  /** 用語集の現在の内容。削除済みアプリの用語集は undefined。 */
+  function readGlossary(ref: GlossaryRef): GlossaryEntry[] | undefined {
+    if ('app' in ref) return glossaryOf(appGlossaries(), ref.app);
+    return $state.snapshot(getPath(draft, ref.path)) ?? [];
+  }
+
+  function writeGlossary(ref: GlossaryRef, list: GlossaryEntry[]) {
+    if ('app' in ref) update(APP_GLOSSARIES, setGlossary(appGlossaries(), ref.app, list));
+    else update(ref.path, list);
+  }
 
   /**
    * 用語集の行削除。即時に削除・保存し、通知の「取消」で元の位置へ再挿入。
    * 未入力の行は通知なし（喪失する内容なし）。
    */
-  function removeGlossaryRow(path: string, index: number) {
-    const current: GlossaryEntry[] = $state.snapshot(getPath(draft, path)) ?? [];
-    if (index >= current.length) return;
-    const { list, row } = glossaryRemovals.remove(current, index);
-    update(path, list);
+  function removeGlossaryRow(ref: GlossaryRef, index: number) {
+    const current = readGlossary(ref);
+    if (!current || index >= current.length) return;
+    const key = 'app' in ref ? `app:${ref.app}` : ref.path;
+    const log = glossaryRemovals.get(key) ?? createRemovalLog();
+    glossaryRemovals.set(key, log);
+    const { list, row } = log.remove(current, index);
+    writeGlossary(ref, list);
     if (isBlankEntry(row.entry)) return;
     const id = undoable({
       text: t('settings:1_term_deleted'),
       failure: t('common:restore_failed'),
       undo: async () => {
         glossaryUndo.delete(id);
-        update(path, glossaryRemovals.restore($state.snapshot(getPath(draft, path)) ?? [], row));
+        const now = readGlossary(ref);
+        if (now) writeGlossary(ref, log.restore(now, row));
+      }
+    });
+    glossaryUndo.add(id);
+  }
+
+  /** アプリ別用語集の削除。用語の登録済みアプリは通知の「取消」で復元。 */
+  function removeAppGlossary(app: string) {
+    const list = appGlossaries();
+    const index = list.findIndex((a) => a.app === app);
+    if (index < 0) return;
+    const removed = list[index];
+    update(APP_GLOSSARIES, removeApp(list, app));
+    glossaryRemovals.delete(`app:${app}`);
+    if (isBlankApp(removed)) return;
+    const id = undoable({
+      text: t('settings:app_glossary_deleted', { name: removed.name || removed.app }),
+      failure: t('common:restore_failed'),
+      undo: async () => {
+        glossaryUndo.delete(id);
+        update(APP_GLOSSARIES, insertApp(appGlossaries(), index, removed));
       }
     });
     glossaryUndo.add(id);
@@ -378,6 +434,8 @@
             <DataLocations />
           {:else if component === 'plugins'}
             <Plugins />
+          {:else if component === 'layout-sets'}
+            <LayoutSets />
           {:else if !component}
             {#each shown.fields as field (field.path)}
               <SettingRow id={field.path} help={field.help ? t(field.help) : null}>
@@ -387,7 +445,17 @@
                     value={getPath(draft, field.path)}
                     defaultLang={getPath(draft, 'subtitle.target_language') ?? 'ja'}
                     onChange={(v) => update(field.path, v)}
-                    onRemove={(i) => removeGlossaryRow(field.path, i)}
+                    onRemove={(i) => removeGlossaryRow({ path: field.path }, i)}
+                  />
+                {:else if field.kind === 'app-glossaries'}
+                  <AppGlossaries
+                    label={t(field.label)}
+                    value={getPath(draft, field.path)}
+                    defaultLang={getPath(draft, 'subtitle.target_language') ?? 'ja'}
+                    onChange={(v) => update(field.path, v)}
+                    suggestions={windowApps}
+                    onRemoveRow={(app, i) => removeGlossaryRow({ app }, i)}
+                    onRemoveApp={removeAppGlossary}
                   />
                 {:else if field.kind === 'phrases'}
                   <PhraseList

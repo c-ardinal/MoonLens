@@ -71,6 +71,11 @@ style = "auto"
 #   glossary = [{ source = "Dashboard", target = "管理画面", lang = "ja" }]
 # `lang` is the target language of the rendering ("" = any).
 glossary = []
+# Glossaries of single applications, used on top of `glossary` for text
+# translated from that application, e.g.
+#   app_glossaries = [{ app = "game", name = "Game", glossary = [{ source = "Ether", target = "エーテル", lang = "" }] }]
+# `app` is the name of its executable, lowercased, without ".exe".
+app_glossaries = []
 
 [privacy]
 # Cloud providers (deepl, gemini) are refused unless this is turned on.
@@ -96,6 +101,8 @@ region_watcher_poll_ms = 250
 scan_margin_px = 32
 max_concurrent_tasks = 4
 use_gpu_if_available = true
+# 未使用モデルの自動解放までの時間（分）。0：無効（常駐）。
+model_idle_unload_minutes = 10
 
 [startup]
 launch_at_login = false

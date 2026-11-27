@@ -116,6 +116,7 @@ fn translate_context(mut history: Vec<(String, String)>) -> crate::providers::Tr
     crate::providers::TranslateContext {
         history,
         reference: None,
+        app: None,
     }
 }
 

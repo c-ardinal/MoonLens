@@ -13,13 +13,18 @@
     Mic,
     MicOff,
     Pause,
-    Power
+    Power,
+    LayoutGrid,
+    Save
   } from 'lucide-svelte';
   import {
     getSettings,
     onHotkey,
     quitApp,
     openLens,
+    listLayoutSets,
+    restoreLayoutSet,
+    saveLayoutSet,
     startSubtitle,
     stopSubtitle,
     subtitleState,
@@ -27,6 +32,8 @@
   } from '$lib/ipc';
   import { displayAccelerator } from '$lib/hotkey';
   import { errorText } from '$lib/errors';
+  import { notify } from '$lib/toast.svelte';
+  import type { LayoutSet } from '$lib/layout-sets';
 
   type Command = {
     id: string;
@@ -46,6 +53,21 @@
   async function openWindow() {
     open = false;
     await openLens();
+  }
+
+  /** 保存済みの配置セット（表示時に取得）。 */
+  let layoutSets = $state<LayoutSet[]>([]);
+
+  async function saveLayout() {
+    const saved = await saveLayoutSet();
+    open = false;
+    notify(t('common:layout_saved', { name: saved.name, n: saved.windows.length }));
+  }
+
+  async function restoreLayout(set: LayoutSet) {
+    const count = await restoreLayoutSet(set.id);
+    open = false;
+    notify(t('common:layout_restored', { name: set.name, n: count }));
   }
 
   async function toggleSub() {
@@ -86,6 +108,13 @@
       icon: subtitleRunning ? MicOff : Mic,
       run: toggleSub
     },
+    { id: 'layout-save', label: t('command-palette:save_layout_set'), icon: Save, run: saveLayout },
+    ...layoutSets.map((set) => ({
+      id: `layout-restore:${set.id}`,
+      label: t('command-palette:restore_layout_set', { name: set.name }),
+      icon: LayoutGrid,
+      run: () => restoreLayout(set)
+    })),
     { id: 'home', label: t('common:home'), icon: Home, run: go('/') },
     { id: 'image', label: t('common:image_translation'), icon: ImageIcon, run: go('/image/') },
     { id: 'translate', label: t('common:text_translation'), icon: Languages, run: go('/translate/') },
@@ -118,6 +147,9 @@
     q = '';
     getSettings()
       .then((s) => (hotkeys = s?.hotkeys ?? {}))
+      .catch(() => {});
+    listLayoutSets()
+      .then((sets) => (layoutSets = sets))
       .catch(() => {});
   }
 

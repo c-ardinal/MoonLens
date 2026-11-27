@@ -116,6 +116,16 @@ impl Follow {
         self
     }
 
+    /// A follower that is at `at` while its anchor is at `anchor`, and
+    /// is to stay there: free placement keeps that offset and size from
+    /// the first [`step`](Self::step) on.
+    pub fn keeping(mut self, anchor: Rect, at: Rect) -> Self {
+        self.adopt(anchor, at);
+        self.anchor = Some(anchor);
+        self.arrived = true;
+        self
+    }
+
     /// Start from the follower's own size (physical pixels) instead of
     /// the default one: a dock keeps it along the axis it leaves free.
     pub fn with_size(mut self, width: u32, height: u32) -> Self {
@@ -544,6 +554,17 @@ mod tests {
             .expect("first placement");
         assert_eq!(f.step(LENS, at, Some(MONITOR)), None);
         (f, at)
+    }
+
+    #[test]
+    fn a_follower_kept_in_place_stays_and_goes_along_from_there() {
+        let mut f = Follow::new(Dock::Free, 1.0).keeping(LENS, ELSEWHERE);
+        assert_eq!(f.step(LENS, ELSEWHERE, Some(MONITOR)), None);
+        let moved = shifted(LENS, 30, 20);
+        assert_eq!(
+            f.step(moved, ELSEWHERE, Some(MONITOR)),
+            Some(shifted(ELSEWHERE, 30, 20))
+        );
     }
 
     #[test]

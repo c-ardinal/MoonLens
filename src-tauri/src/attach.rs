@@ -174,6 +174,12 @@ pub fn attach(
     if let Some((width, height)) = own {
         follow = follow.with_size(width, height);
     }
+    if dock == Dock::Free {
+        // Free placement keeps the window where it is on its target.
+        if let Ok(at) = lens::inner_rect(&win) {
+            follow = follow.keeping(target.rect, at);
+        }
+    }
     let serial = registry.serial.fetch_add(1, Ordering::Relaxed) + 1;
     let was_hidden = registry
         .entries
@@ -407,6 +413,26 @@ pub async fn list_attach_targets(label: String, app: AppHandle) -> Result<Vec<Ca
         .map_err(|e| e.to_string())
 }
 
+/// The applications that show a window now, by name: what a glossary
+/// of an application can be added for without typing its executable.
+#[tauri::command]
+pub async fn list_window_apps() -> Result<Vec<AppIdentity>, String> {
+    tokio::task::spawn_blocking(|| window_apps(&foreign_window::list()))
+        .await
+        .map_err(|e| e.to_string())
+}
+
+fn window_apps(windows: &[ForeignWindow]) -> Vec<AppIdentity> {
+    let mut apps: Vec<AppIdentity> = Vec::new();
+    for app in windows.iter().filter_map(identity_of) {
+        if !apps.iter().any(|a| a.key == app.key) {
+            apps.push(app);
+        }
+    }
+    apps.sort_by(|a, b| a.key.cmp(&b.key));
+    apps
+}
+
 /// Attach window `label` to window `target` (an id from
 /// [`list_attach_targets`]) at `dock`, or change the dock of the
 /// attachment it has to that window.
@@ -522,5 +548,26 @@ mod tests {
         );
         let ids: Vec<u64> = list.iter().map(|c| c.window.id).collect();
         assert_eq!(ids, [7, 5, 9]);
+    }
+    #[test]
+    fn each_app_with_a_window_is_listed_once_by_key() {
+        let named = |id: u64, app: &str| ForeignWindow {
+            app: app.into(),
+            // No such process: the name the window list gives is used.
+            pid: u32::MAX - 1,
+            ..window(
+                id,
+                Rect {
+                    x: 0,
+                    y: 0,
+                    w: 10,
+                    h: 10,
+                },
+            )
+        };
+        let apps = window_apps(&[named(1, "Novel.exe"), named(2, "game"), named(3, "novel")]);
+        let keys: Vec<&str> = apps.iter().map(|a| a.key.as_str()).collect();
+        assert_eq!(keys, ["game", "novel"]);
+        assert_eq!(apps[1].name, "Novel");
     }
 }

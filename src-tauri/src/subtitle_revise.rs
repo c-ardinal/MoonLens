@@ -481,7 +481,7 @@ impl Reviser {
         }
         let context = TranslateContext {
             history: self.history.clone(),
-            reference: None,
+            ..Default::default()
         };
         // A rest nobody waits to replace is worth translating: it stays
         // on screen until its sentence ends.

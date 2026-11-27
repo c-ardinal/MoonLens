@@ -65,7 +65,7 @@ impl Visible {
 
     /// Whether the row at `rect` is one the window shows: enough of it
     /// lies inside, not just a sliver at the frame.
-    fn shows(&self, rect: [f32; 4]) -> bool {
+    pub fn shows(&self, rect: [f32; 4]) -> bool {
         let need = MIN_SHARE * rect[2].min(rect[3]).max(0.0);
         self.cut(rect)
             .is_some_and(|[_, _, w, h]| w >= need && h >= need)
@@ -75,6 +75,17 @@ impl Visible {
     fn local(&self, rect: [f32; 4]) -> Option<[f32; 4]> {
         self.cut(rect)
             .map(|[x, y, w, h]| [x - self.x as f32, y - self.y as f32, w, h])
+    }
+
+    /// `rect` above or below the window, in window pixels and cut to
+    /// the window's sides. `None` when it lies beside the window or
+    /// reaches into it.
+    fn out_of_view(&self, rect: [f32; 4]) -> Option<[f32; 4]> {
+        let [x, y, w, h] = rect;
+        let x0 = x.max(self.x as f32);
+        let x1 = (x + w).min(self.x as f32 + self.w as f32);
+        let outside = y + h <= self.y as f32 || y >= self.y as f32 + self.h as f32;
+        (x1 > x0 && outside).then_some([x0 - self.x as f32, y - self.y as f32, x1 - x0, h])
     }
 
     /// `rect` (window pixels) back in capture pixels.
@@ -108,28 +119,46 @@ impl Visible {
     /// Move blocks read in the capture to window pixels and cut their
     /// boxes to the window: the text keeps what was read beyond the
     /// frame, the place it is drawn at does not leave the window.
+    /// Rows above or below the window (a scroll took them out of view,
+    /// their paragraph is still shown in part) keep their place, so the
+    /// translation stays laid out over the whole paragraph.
     pub fn to_window(&self, blocks: &mut Vec<LensBlock>) {
         blocks.retain_mut(|b| {
             if !placed(b.bbox) {
                 return true;
             }
-            let Some(bbox) = self.local(b.bbox) else {
+            let Some(mut bbox) = self.local(b.bbox) else {
                 return false;
             };
-            b.bbox = bbox;
+            // The erase picture keeps its size: what lies beyond the
+            // frame is not drawn by the window.
+            if let Some(e) = &mut b.erase {
+                e.rect[0] -= self.x;
+                e.rect[1] -= self.y;
+            }
             // `row_limits` runs parallel to `lines`: a row that takes no
             // place in the window takes its limit along.
             let limited = b.row_limits.len() == b.lines.len();
             let rows = std::mem::take(&mut b.lines);
             let limits = std::mem::take(&mut b.row_limits);
             for (i, row) in rows.into_iter().enumerate() {
-                let Some(row) = self.local(row) else { continue };
+                let row = match (self.local(row), self.out_of_view(row)) {
+                    (Some(row), _) => row,
+                    (None, Some(row)) => {
+                        let bottom = (bbox[1] + bbox[3]).max(row[1] + row[3]);
+                        bbox[1] = bbox[1].min(row[1]);
+                        bbox[3] = bottom - bbox[1];
+                        row
+                    }
+                    (None, None) => continue,
+                };
                 b.lines.push(row);
                 if limited {
                     b.row_limits
                         .push((limits[i] - self.x as f32).clamp(0.0, self.w as f32));
                 }
             }
+            b.bbox = bbox;
             true
         });
     }
@@ -164,7 +193,23 @@ mod tests {
             bold: false,
             lines,
             row_limits: vec![],
+            erase: None,
         }
+    }
+
+    #[test]
+    fn the_erase_picture_moves_to_window_pixels_with_its_block() {
+        let mut b = block([20.0, 40.0, 100.0, 20.0], vec![]);
+        b.erase = Some(crate::erase::ErasePatch {
+            rect: [18, 38, 104, 24],
+            image: String::new(),
+            outline: false,
+            foreground: [0, 0, 0],
+        });
+        let mut blocks = vec![b];
+        window().to_window(&mut blocks);
+        // Starts 12 px left of the frame; the size stays.
+        assert_eq!(blocks[0].erase.as_ref().unwrap().rect, [-12, 8, 104, 24]);
     }
 
     /// A 200x100 window read with a 30 px margin.
@@ -293,6 +338,31 @@ mod tests {
             assert!(x >= 0.0 && y >= 0.0 && x + w <= 200.0 && y + h <= 100.0);
         }
         assert_eq!(v.in_capture(b.bbox), [30.0, 30.0, 200.0, 50.0]);
+    }
+
+    #[test]
+    fn rows_a_scroll_took_out_of_view_keep_their_place() {
+        let v = window();
+        // Two rows above the window, one inside.
+        let mut blocks = vec![block(
+            [40.0, -10.0, 100.0, 60.0],
+            vec![
+                [40.0, -10.0, 100.0, 20.0],
+                [40.0, 10.0, 100.0, 20.0],
+                [40.0, 30.0, 100.0, 20.0],
+            ],
+        )];
+        v.to_window(&mut blocks);
+        let b = &blocks[0];
+        assert_eq!(
+            b.lines,
+            [
+                [10.0, -40.0, 100.0, 20.0],
+                [10.0, -20.0, 100.0, 20.0],
+                [10.0, 0.0, 100.0, 20.0]
+            ]
+        );
+        assert_eq!(b.bbox, [10.0, -40.0, 100.0, 60.0]);
     }
 
     #[test]

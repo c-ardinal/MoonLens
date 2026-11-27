@@ -1,0 +1,2 @@
+- Text on a photo or a gradient is no longer covered by a one-colour box in image translation and window translation. Only the pixels of the source text (with its outline or drop shadow) are repainted from the picture around them, and the translation is written straight onto the picture, outlined where the background varies. Text on a plain background is shown as before.
+- In window translation this applies while the picture behind the text holds still. Over a video the one-colour box stays, as before.

@@ -15,7 +15,10 @@
 //! otherwise bloat every prompt and nudge small models into inserting
 //! terms that are not there.
 
-use crate::settings::schema::{JaStyle, TranslationSettings};
+use std::collections::BTreeMap;
+
+use crate::app_identity::normalize_key;
+use crate::settings::schema::{GlossaryEntry, JaStyle, TranslationSettings};
 
 /// Matched terms sent per request at most (keeps the prompt bounded).
 pub const MAX_TERMS_PER_REQUEST: usize = 40;
@@ -24,6 +27,11 @@ pub const MAX_TERMS_PER_REQUEST: usize = 40;
 pub struct TranslateOptions {
     pub style: JaStyle,
     terms: Vec<Term>,
+    /// The options for text from single applications, by application
+    /// key: their own terms ahead of the common ones. Ordered, so that
+    /// the same settings always print the same (the translation cache
+    /// tells a changed glossary by it).
+    apps: BTreeMap<String, TranslateOptions>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -38,34 +46,53 @@ struct Term {
 
 impl TranslateOptions {
     pub fn from_settings(s: &TranslationSettings) -> Self {
-        let mut terms: Vec<Term> = s
-            .glossary
-            .iter()
-            .filter_map(|e| {
-                let source = sanitize(&e.source);
-                let target = sanitize(&e.target);
-                if source.is_empty() || target.is_empty() {
-                    return None;
-                }
-                Some(Term {
-                    needle: source.to_lowercase(),
-                    source,
-                    target,
-                    lang: norm_lang(&e.lang),
-                })
-            })
-            .collect();
-        // Longer terms first, so "Project Manager" wins over "Project"
-        // when both match.
-        terms.sort_by_key(|t| std::cmp::Reverse(t.source.chars().count()));
+        let common = terms_of(&s.glossary);
+        let mut apps: BTreeMap<String, TranslateOptions> = BTreeMap::new();
+        for g in &s.app_glossaries {
+            let key = normalize_key(&g.app);
+            let own = terms_of(&g.glossary);
+            if key.is_empty() || own.is_empty() {
+                continue;
+            }
+            // Listed twice: one application all the same.
+            let options = apps.entry(key).or_insert_with(|| TranslateOptions {
+                style: s.style,
+                ..Default::default()
+            });
+            options.terms.extend(own);
+        }
+        for options in apps.values_mut() {
+            // Its own terms first: a term both lists name is taken from
+            // the application's (see `terms_for`).
+            options.terms.sort_by_key(by_length);
+            options.terms.extend(common.iter().cloned());
+        }
         Self {
             style: s.style,
-            terms,
+            terms: common,
+            apps,
+        }
+    }
+
+    /// The options for text that comes from application `app` (a key,
+    /// see [`crate::app_identity`]): these, unless the application has
+    /// a glossary of its own.
+    pub fn for_app(&self, app: Option<&str>) -> &TranslateOptions {
+        app.and_then(|key| self.apps.get(key)).unwrap_or(self)
+    }
+
+    /// What applies to text from application `app`, and nothing else:
+    /// equal before and after a change to another application's
+    /// glossary.
+    pub fn effective(&self, app: Option<&str>) -> TranslateOptions {
+        TranslateOptions {
+            apps: BTreeMap::new(),
+            ..self.for_app(app).clone()
         }
     }
 
     pub fn is_empty(&self) -> bool {
-        self.style == JaStyle::Auto && self.terms.is_empty()
+        self.style == JaStyle::Auto && self.terms.is_empty() && self.apps.is_empty()
     }
 
     /// Glossary pairs that apply to translating `text` into `target`.
@@ -148,6 +175,34 @@ impl TranslateOptions {
         }
         (!parts.is_empty()).then(|| parts.join("\n"))
     }
+}
+
+/// Longer terms first, so "Project Manager" wins over "Project" when
+/// both match.
+fn by_length(t: &Term) -> std::cmp::Reverse<usize> {
+    std::cmp::Reverse(t.source.chars().count())
+}
+
+/// The usable entries of a glossary, longer terms first.
+fn terms_of(entries: &[GlossaryEntry]) -> Vec<Term> {
+    let mut terms: Vec<Term> = entries
+        .iter()
+        .filter_map(|e| {
+            let source = sanitize(&e.source);
+            let target = sanitize(&e.target);
+            if source.is_empty() || target.is_empty() {
+                return None;
+            }
+            Some(Term {
+                needle: source.to_lowercase(),
+                source,
+                target,
+                lang: norm_lang(&e.lang),
+            })
+        })
+        .collect();
+    terms.sort_by_key(by_length);
+    terms
 }
 
 /// PFML3 `glossary` element (empty string when there are no terms).
@@ -249,7 +304,103 @@ mod tests {
                     lang: l.to_string(),
                 })
                 .collect(),
+            ..Default::default()
         })
+    }
+
+    fn entry(source: &str, target: &str) -> GlossaryEntry {
+        GlossaryEntry {
+            source: source.to_string(),
+            target: target.to_string(),
+            lang: String::new(),
+        }
+    }
+
+    fn with_apps(common: &[(&str, &str)], apps: &[(&str, &[(&str, &str)])]) -> TranslateOptions {
+        TranslateOptions::from_settings(&TranslationSettings {
+            glossary: common.iter().map(|(s, t)| entry(s, t)).collect(),
+            app_glossaries: apps
+                .iter()
+                .map(|(app, g)| crate::settings::schema::AppGlossary {
+                    app: app.to_string(),
+                    name: app.to_string(),
+                    glossary: g.iter().map(|(s, t)| entry(s, t)).collect(),
+                })
+                .collect(),
+            ..Default::default()
+        })
+    }
+
+    fn pairs(v: &[(&str, &str)]) -> Vec<(String, String)> {
+        v.iter()
+            .map(|(s, t)| (s.to_string(), t.to_string()))
+            .collect()
+    }
+
+    #[test]
+    fn an_application_adds_its_terms_to_the_common_ones() {
+        let o = with_apps(
+            &[("Potion", "ポーション")],
+            &[("game", &[("Ether", "エーテル")])],
+        );
+        let text = "Potion and Ether";
+        assert_eq!(
+            o.for_app(Some("game")).terms_for(text, "ja"),
+            pairs(&[("Ether", "エーテル"), ("Potion", "ポーション")])
+        );
+        // Text from anywhere else gets the common terms alone.
+        for app in [None, Some("other")] {
+            assert_eq!(
+                o.for_app(app).terms_for(text, "ja"),
+                pairs(&[("Potion", "ポーション")]),
+                "{app:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_application_term_wins_over_the_common_one() {
+        let o = with_apps(&[("Mana", "マナ")], &[("game", &[("mana", "魔力")])]);
+        assert_eq!(
+            o.for_app(Some("game")).terms_for("Mana: 10", "ja"),
+            pairs(&[("mana", "魔力")])
+        );
+        assert_eq!(
+            o.for_app(None).terms_for("Mana: 10", "ja"),
+            pairs(&[("Mana", "マナ")])
+        );
+    }
+
+    #[test]
+    fn an_application_is_found_however_its_executable_is_written() {
+        let o = with_apps(
+            &[],
+            &[
+                (r"C:\Games\Game.EXE", &[("Ether", "エーテル")]),
+                ("game", &[("Elixir", "エリクサー")]),
+                ("", &[("Lost", "無効")]),
+            ],
+        );
+        assert_eq!(
+            o.for_app(Some("game"))
+                .terms_for("Ether, Elixir, Lost", "ja"),
+            pairs(&[("Elixir", "エリクサー"), ("Ether", "エーテル")])
+        );
+    }
+
+    #[test]
+    fn an_application_keeps_the_style() {
+        let mut s = TranslationSettings {
+            style: JaStyle::Polite,
+            ..Default::default()
+        };
+        s.app_glossaries.push(crate::settings::schema::AppGlossary {
+            app: "game".into(),
+            name: "Game".into(),
+            glossary: vec![entry("Ether", "エーテル")],
+        });
+        let o = TranslateOptions::from_settings(&s);
+        assert_eq!(o.for_app(Some("game")).form_for("ja"), Some("polite"));
     }
 
     #[test]
@@ -387,6 +538,7 @@ mod tests {
                     lang,
                 })
                 .collect(),
+            ..Default::default()
         });
         assert_eq!(o.terms_for(&text, "ja").len(), MAX_TERMS_PER_REQUEST);
     }

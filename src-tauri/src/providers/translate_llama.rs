@@ -210,9 +210,10 @@ pub fn build_job_with(
                 text,
                 source_language,
                 target_language,
-                ..
+                context,
             },
         ) => {
+            let opts = opts.for_app(context.app.as_deref());
             let (system, user) =
                 translation_prompt_with(&text, &source_language, &target_language, opts);
             Ok(Job::Chat { system, user })
@@ -235,13 +236,16 @@ pub fn build_job_with(
                 context,
                 ..
             },
-        ) => Ok(Job::Pfml3 {
-            glossary: opts.terms_for(&text, &target_language),
-            form: opts.form_for(&target_language),
-            text,
-            target: pfml3_lang(&target_language),
-            context,
-        }),
+        ) => {
+            let opts = opts.for_app(context.app.as_deref());
+            Ok(Job::Pfml3 {
+                glossary: opts.terms_for(&text, &target_language),
+                form: opts.form_for(&target_language),
+                text,
+                target: pfml3_lang(&target_language),
+                context,
+            })
+        }
         (PromptStyle::Pfml3, _) => Err(ProviderError::Other(
             "this local model only translates".into(),
         )),
@@ -496,12 +500,72 @@ pub fn preload(path: PathBuf, use_gpu: bool, cfg: &serde_json::Value) {
     let _ = (path, use_gpu, cfg);
 }
 
+/// Count `path` as used now, so [`unload_idle`] keeps it: for a model
+/// that is waiting for work (an open translation window) rather than
+/// running.
+pub fn touch(path: &Path) {
+    #[cfg(feature = "local-llm")]
+    engine::touch(path);
+    #[cfg(not(feature = "local-llm"))]
+    let _ = path;
+}
+
+/// Free every loaded model not used for `limit` and not running now.
+/// Returns the files freed; the next request loads them again.
+pub fn unload_idle(limit: std::time::Duration) -> Vec<PathBuf> {
+    #[cfg(feature = "local-llm")]
+    {
+        engine::unload_idle(limit)
+    }
+    #[cfg(not(feature = "local-llm"))]
+    {
+        let _ = limit;
+        Vec::new()
+    }
+}
+
 /// Drop the cached model if it is `path` (before deleting the file).
 pub fn unload(path: &Path) {
     #[cfg(feature = "local-llm")]
     engine::unload(path);
     #[cfg(not(feature = "local-llm"))]
     let _ = path;
+}
+
+/// GPU memory kept free next to the weights: the context (KV cache and
+/// compute buffers at the default `n_ctx`) plus headroom for whatever
+/// else is drawing on the card.
+const GPU_RESERVE_BYTES: u64 = 1 << 30;
+
+/// Whether a model file of `model_bytes` fits a GPU with `free` bytes.
+#[cfg_attr(not(feature = "local-llm"), allow(dead_code))]
+fn fits_gpu(model_bytes: u64, free: u64) -> bool {
+    model_bytes.saturating_add(GPU_RESERVE_BYTES) <= free
+}
+
+/// Layers to offload when the whole model does not fit the GPU: as many
+/// as the free memory holds (the rest run on the CPU), instead of giving
+/// up on the GPU altogether. `n_layer` counts the transformer blocks;
+/// the output layer is one more. An explicit `requested` below the fit
+/// is kept.
+#[cfg_attr(not(feature = "local-llm"), allow(dead_code))]
+fn plan_gpu_layers(requested: u32, n_layer: u32, model_bytes: u64, free: u64) -> u32 {
+    let total = n_layer as u64 + 1;
+    let per_layer = (model_bytes / total).max(1);
+    let fit = free.saturating_sub(GPU_RESERVE_BYTES) / per_layer;
+    requested.min(fit.min(total) as u32)
+}
+
+/// GGUF metadata key holding the number of transformer blocks.
+#[cfg_attr(not(feature = "local-llm"), allow(dead_code))]
+fn block_count_key(arch: &str) -> String {
+    format!("{}.block_count", arch.trim())
+}
+
+/// The block count as GGUF metadata prints it; 0 is not a count.
+#[cfg_attr(not(feature = "local-llm"), allow(dead_code))]
+fn parse_block_count(value: &str) -> Option<u32> {
+    value.trim().parse().ok().filter(|n| *n > 0)
 }
 
 #[cfg(feature = "local-llm")]
@@ -523,8 +587,8 @@ mod engine {
     use parking_lot::Mutex;
 
     use super::{
-        clean_output, pfml3_prompt_in_context, render_chat_template, take_utf8, ChunkSink,
-        GenParams, Job, STOP_STRINGS,
+        block_count_key, clean_output, fits_gpu, parse_block_count, pfml3_prompt_in_context,
+        plan_gpu_layers, render_chat_template, take_utf8, ChunkSink, GenParams, Job, STOP_STRINGS,
     };
     use crate::providers::ProviderError;
 
@@ -644,12 +708,48 @@ mod engine {
             let mp = LlamaModelParams::default().with_n_gpu_layers(layers);
             LlamaModel::load_from_file(backend, path, &mp)
         };
-        let mut on_gpu = params.n_gpu_layers > 0 && !crate::gpu::offload_devices().is_empty();
-        let model = match load(params.n_gpu_layers) {
+        let gpu_free = (params.n_gpu_layers > 0)
+            .then(crate::gpu::offload_memory_free)
+            .flatten();
+        let model_bytes = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+        // The layer count is only needed when the weights do not fit;
+        // reading it costs a metadata-only load. Such a load skips the
+        // hyperparameters (`n_layer()` stays 0), so the count is taken
+        // from the GGUF metadata, which it does keep.
+        let n_layer = || {
+            let mp = LlamaModelParams::default().with_vocab_only(true);
+            LlamaModel::load_from_file(backend, path, &mp)
+                .ok()
+                .and_then(|m| {
+                    let arch = m.meta_val_str("general.architecture").ok()?;
+                    let blocks = m.meta_val_str(&block_count_key(&arch)).ok()?;
+                    parse_block_count(&blocks)
+                })
+        };
+        let layers = match gpu_free {
+            Some(free) if !fits_gpu(model_bytes, free) => match n_layer() {
+                Some(total) => {
+                    let fit = plan_gpu_layers(params.n_gpu_layers, total, model_bytes, free);
+                    tracing::info!(
+                        "{} does not fit the GPU ({:.1} GB free): {fit} of {} layers on the GPU",
+                        path.display(),
+                        free as f64 / 1e9,
+                        total + 1
+                    );
+                    fit
+                }
+                // Layer count unknown: try the whole model as before
+                // (a failed GPU load still falls back to the CPU).
+                None => params.n_gpu_layers,
+            },
+            _ => params.n_gpu_layers,
+        };
+        let mut on_gpu = layers > 0 && !crate::gpu::offload_devices().is_empty();
+        let model = match load(layers) {
             Ok(m) => Ok(m),
-            // Not enough GPU memory, or a driver that cannot run the
-            // backend: the CPU still translates, just more slowly.
-            Err(e) if params.n_gpu_layers > 0 => {
+            // Not enough GPU memory after all, or a driver that cannot
+            // run the backend: the CPU still translates, just more slowly.
+            Err(e) if layers > 0 => {
                 tracing::warn!(
                     "loading {} on the GPU failed ({e}); using the CPU",
                     path.display()
@@ -697,6 +797,35 @@ mod engine {
         }
     }
 
+    pub fn touch(path: &Path) {
+        if let Some(e) = cache().lock().iter_mut().find(|e| e.0 == path) {
+            e.2 = Instant::now();
+        }
+    }
+
+    pub fn unload_idle(limit: std::time::Duration) -> Vec<PathBuf> {
+        let mut freed = Vec::new();
+        {
+            let mut c = cache().lock();
+            let mut i = 0;
+            while i < c.len() {
+                // A cell somebody else holds is loading or generating.
+                let unused = Arc::strong_count(&c[i].1) == 1 && c[i].2.elapsed() >= limit;
+                if unused {
+                    freed.push(c.remove(i));
+                } else {
+                    i += 1;
+                }
+            }
+        }
+        // The weights go with the cells, outside the cache lock.
+        freed
+            .into_iter()
+            .filter(|(_, cell, _)| cell.lock().is_some())
+            .map(|(path, _, _)| path)
+            .collect()
+    }
+
     fn thread_count(requested: u32) -> i32 {
         if requested > 0 {
             return requested as i32;
@@ -733,6 +862,8 @@ mod engine {
             return Ok(String::new());
         }
         let res = run_session(loaded, params, &tokens, sink, cancel);
+        // Idle time counts from the end of the work, not its start.
+        touch(path);
         if res.is_err() {
             // The KV state may be half-written; start clean next time.
             loaded.session = None;
@@ -930,6 +1061,45 @@ mod engine {
             .map(|d| d.subsec_nanos())
             .unwrap_or(0)
     }
+
+    #[cfg(test)]
+    mod idle_tests {
+        use super::*;
+        use std::time::Duration;
+
+        fn is_cached(path: &Path) -> bool {
+            cache().lock().iter().any(|e| e.0 == path)
+        }
+
+        #[test]
+        fn only_models_unused_for_the_limit_and_not_running_are_freed() {
+            let running = PathBuf::from("idle-test-running.gguf");
+            let unused = PathBuf::from("idle-test-unused.gguf");
+            let held = cell_for(&running);
+            drop(cell_for(&unused));
+            std::thread::sleep(Duration::from_millis(30));
+
+            // Recently used: both stay.
+            unload_idle(Duration::from_secs(60));
+            assert!(is_cached(&running) && is_cached(&unused));
+
+            // Past the limit: the one a request still holds stays.
+            unload_idle(Duration::from_millis(10));
+            assert!(is_cached(&running), "freed while a request held it");
+            assert!(!is_cached(&unused), "kept although unused");
+
+            // Waiting for work counts as use.
+            drop(held);
+            std::thread::sleep(Duration::from_millis(30));
+            touch(&running);
+            unload_idle(Duration::from_millis(20));
+            assert!(is_cached(&running), "freed right after touch");
+
+            std::thread::sleep(Duration::from_millis(30));
+            unload_idle(Duration::from_millis(20));
+            assert!(!is_cached(&running));
+        }
+    }
 }
 
 #[cfg(test)]
@@ -994,6 +1164,7 @@ mod tests {
                     lang: String::new(),
                 })
                 .collect(),
+            ..Default::default()
         })
     }
 
@@ -1058,6 +1229,42 @@ mod tests {
     }
 
     #[test]
+    fn text_from_an_app_gets_that_apps_terms() {
+        use crate::settings::schema::{AppGlossary, GlossaryEntry, TranslationSettings};
+        let entry = |source: &str, target: &str| GlossaryEntry {
+            source: source.into(),
+            target: target.into(),
+            lang: String::new(),
+        };
+        let o = TranslateOptions::from_settings(&TranslationSettings {
+            glossary: vec![entry("Potion", "ポーション")],
+            app_glossaries: vec![AppGlossary {
+                app: "game".into(),
+                name: "Game".into(),
+                glossary: vec![entry("Ether", "エーテル")],
+            }],
+            ..Default::default()
+        });
+        let prompt = |app: Option<&str>| {
+            let input = TaskInput::Translate {
+                text: "Potion and Ether".into(),
+                source_language: "auto".into(),
+                target_language: "ja".into(),
+                context: TranslateContext::of_app(app),
+            };
+            rendered(build_job_with(PromptStyle::Pfml3, input, &o).unwrap())
+        };
+        let own = "<|plamo:index|>Ether<|plamo:item|>エーテル";
+        let common = "<|plamo:index|>Potion<|plamo:item|>ポーション";
+        assert!(prompt(Some("game")).contains(own));
+        assert!(prompt(Some("game")).contains(common));
+        for app in [None, Some("novel")] {
+            assert!(!prompt(app).contains(own), "{app:?}");
+            assert!(prompt(app).contains(common), "{app:?}");
+        }
+    }
+
+    #[test]
     fn chat_job_carries_glossary_in_the_system_prompt() {
         use crate::settings::schema::JaStyle;
         let o = opts(JaStyle::Polite, &[("dashboard", "管理画面")]);
@@ -1082,6 +1289,7 @@ mod tests {
         let ctx = TranslateContext {
             history: vec![("Theme".into(), "テーマ".into())],
             reference: Some("Light\n\nDark".into()),
+            app: None,
         };
         let p = pfml3_prompt_in_context("System", "ja", &[], None, &ctx);
         assert_eq!(
@@ -1157,6 +1365,32 @@ mod tests {
         assert_eq!(p.n_ctx, 512);
         assert_eq!(p.temperature, 0.0);
         assert_eq!(GenParams::from_config(&cfg, true).n_gpu_layers, 20);
+    }
+
+    #[test]
+    fn a_model_larger_than_the_gpu_is_split_not_dropped() {
+        const GB: u64 = 1 << 30;
+        // 8B (5.3 GB, 32 blocks) on an 8 GB card with 6 GB free: fits.
+        assert!(fits_gpu(5_280_445_728, 7 * GB));
+        // 4 GB free: 3 GB after the reserve holds 20 of 33 layers.
+        assert!(!fits_gpu(5_280_445_728, 4 * GB));
+        assert_eq!(plan_gpu_layers(999, 32, 5_280_445_728, 4 * GB), 20);
+        // Nothing but the reserve free: CPU.
+        assert_eq!(plan_gpu_layers(999, 32, 5_280_445_728, GB), 0);
+        // An explicit lower setting wins; never more than the model has.
+        assert_eq!(plan_gpu_layers(4, 32, 5_280_445_728, 4 * GB), 4);
+        assert_eq!(plan_gpu_layers(999, 32, 5_280_445_728, 64 * GB), 33);
+        // Unreadable metadata (0 blocks, 0 bytes) must not divide by zero.
+        assert_eq!(plan_gpu_layers(999, 0, 0, 4 * GB), 1);
+    }
+
+    #[test]
+    fn the_block_count_comes_from_the_gguf_metadata() {
+        assert_eq!(block_count_key("plamo2"), "plamo2.block_count");
+        assert_eq!(parse_block_count("32"), Some(32));
+        assert_eq!(parse_block_count(" 32\n"), Some(32));
+        assert_eq!(parse_block_count("0"), None);
+        assert_eq!(parse_block_count(""), None);
     }
 
     #[tokio::test]

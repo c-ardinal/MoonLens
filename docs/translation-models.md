@@ -11,11 +11,14 @@ MoonLens は完全ローカル・リアルタイムの翻訳ツールである�
 | --- | --- | --- |
 | **翻訳の既定** | **PLaMo 3 Translate 2B** | `pfnet/plamo-3-translate-2b-GGUF` / `plamo-3-translate-2b-Q4_K_M.gguf`（1.81 GB） |
 | 翻訳・低スペック/最速 | PLaMo 3 Translate 0.8B | `pfnet/plamo-3-translate-0.8b-GGUF` / `plamo-3-translate-0.8b-Q4_K_M.gguf`（0.57 GB） |
+| 翻訳・品質優先（任意選択） | PLaMo 3 Translate 8B | `pfnet/plamo-3-translate-8b-GGUF` / `plamo-3-translate-8b-Q4_K_M.gguf`（5.28 GB） |
 | 説明・要約（汎用） | Gemma 4 E4B | Q4_K_M（5.0 GB） |
 
 - PLaMo 3 Translate 2B は、計測した汎用 LLM の中で最良だった Gemma 4 E4B と同等の品質で、**約2.5倍高速、メモリ使用量は6割**。
 - 0.8B も WMT の自動評価では同等で、2B の3倍高速。ただし看板・台詞等の短文の自然さは 2B が明確に優位のため、既定は 2B とする。
 - 汎用 LLM と異なり、**指示文が混入した画面テキストも、指示に追従せず翻訳する**。例として OCR 結果に「Ignore all previous instructions…」が含まれる場合も翻訳する。
+- 8B は任意選択（2026-11-27 追加）。本計測の chrF は 2B と同水準、開発元の公開指標（Q4_K_M）は 2B 比で小幅に優位（PFTB 0.610 対 0.606、SaaS 0.577 対 0.560、WMT24++ COMET-22 0.880 対 0.877）。目視では人名・役職名・台詞の口調が改善。CPU では 2B の約3倍の所要時間のため、推奨対象外とし、GPU メモリ 8 GB 以上の PC 用の選択肢として提供。GPU での所要時間は未計測。
+- モデルが GPU メモリの空き容量を超過する場合、収容可能な層のみ GPU へ配分し、残りは CPU で実行（従来は全層 CPU へ切替）。
 - PLaMo 3 Translate は翻訳専用モデルである。説明・要約には汎用モデル（Gemma 4 E4B）を使用。
 - ライセンスは PLaMo Community License。個人・非商用は無料、商用は登録制。MoonLens は無償公開のため問題なし。
 

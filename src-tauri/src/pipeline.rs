@@ -14,7 +14,7 @@ use tokio::time::timeout;
 use futures::StreamExt;
 
 use crate::{
-    intent, lang, layout,
+    erase, intent, lang, layout,
     plugins::PluginRegistry,
     providers::{
         asr_whisper::WhisperCppProvider, glossary::TranslateOptions, ocr_ocrs::OcrsProvider,
@@ -266,7 +266,9 @@ impl Pipeline {
             .collect();
         CacheStamp {
             engine: engine_fingerprint(&s, &plugins),
-            options: TranslateOptions::from_settings(&s.translation),
+            // The glossary of the app the text was read from.
+            options: TranslateOptions::from_settings(&s.translation)
+                .effective(bundle.app.as_deref()),
             context,
             persist: s.storage.keep_translation_cache,
         }
@@ -286,7 +288,10 @@ impl Pipeline {
             .filter(|p| p.enabled)
             .map(|p| (p.id, p.version))
             .collect();
-        let options = format!("{:?}", TranslateOptions::from_settings(&s.translation));
+        // The app's own glossary where it has one: editing another
+        // app's leaves this one's translations as they are.
+        let options = TranslateOptions::from_settings(&s.translation);
+        let options = format!("{:?}", options.effective(app));
         translation_cache::fingerprint([
             engine_fingerprint(&s, &plugins).as_str(),
             options.as_str(),
@@ -394,21 +399,48 @@ impl Pipeline {
     /// multi-second load. Set `preload = false` in its config to skip.
     pub fn preload_local_llm(&self) {
         let s = self.settings.snapshot();
-        if !pick_chain(&s, Capability::Translate)
-            .chain
-            .iter()
-            .any(|id| id == LOCAL_LLM_ID)
-        {
+        let Some((path, cfg)) = local_llm(&s) else {
             return;
-        }
-        let empty = serde_json::Value::Object(Default::default());
-        let cfg = s.providers.configs.get(LOCAL_LLM_ID).unwrap_or(&empty);
+        };
         if cfg.get("preload").and_then(|v| v.as_bool()) == Some(false) {
             return;
         }
         let use_gpu = s.performance.use_gpu_if_available;
-        let p = LlamaTranslator::new(LOCAL_LLM_ID, cfg, use_gpu);
-        crate::providers::translate_llama::preload(p.model_path().to_path_buf(), use_gpu, cfg);
+        crate::providers::translate_llama::preload(path, use_gpu, &cfg);
+    }
+
+    /// The file of the built-in translation model when the translate
+    /// chain uses it.
+    pub fn local_llm_path(&self) -> Option<std::path::PathBuf> {
+        local_llm(&self.settings.snapshot()).map(|(path, _)| path)
+    }
+
+    /// Load what reading the screen needs (the translation model and
+    /// the first installed local text recogniser) in the background: both may
+    /// have been freed while unused (see [`crate::model_idle`]), and a
+    /// window that opens should not wait for them at its first reading.
+    pub fn preload_for_reading(&self) {
+        self.preload_local_llm();
+        let s = self.settings.snapshot();
+        let providers = self.providers.read();
+        // In chain order, as `run` falls through: the first local
+        // recogniser that loads is the one a reading will use.
+        let chain: Vec<ProviderHandle> = pick_chain(&s, Capability::Ocr)
+            .chain
+            .iter()
+            .filter_map(|id| providers.get(id))
+            .filter(|p| p.is_local())
+            .cloned()
+            .collect();
+        tauri::async_runtime::spawn(async move {
+            for p in chain {
+                match p.warm_up().await {
+                    Ok(()) => break,
+                    Err(ProviderError::NotInstalled(_)) => {}
+                    Err(e) => tracing::warn!("loading {} ahead of use failed: {e}", p.id()),
+                }
+            }
+        });
     }
 
     /// Run a task through the configured chain, respecting privacy gates,
@@ -545,19 +577,21 @@ impl Pipeline {
         image_png: Vec<u8>,
         visible: Option<Visible>,
     ) -> Result<CaptureFlowResult, ProviderError> {
-        // Cheap heuristic classifier. A plugin-provided classifier can
-        // override through the `intent_classifier` chain in future work.
+        Ok(self.analyze_capture_lines(image_png, visible).await?.0)
+    }
+
+    /// [`Self::analyze_capture_in`], with every OCR line of the capture
+    /// (in capture pixels, the margin included; empty for a QR code).
+    /// A caller that follows a region keeps them: after a scroll it
+    /// reads only the rows that came into view ([`Self::read_lines`])
+    /// and lays out old and new lines together ([`Self::lay_out`]).
+    pub async fn analyze_capture_lines(
+        &self,
+        image_png: Vec<u8>,
+        visible: Option<Visible>,
+    ) -> Result<(CaptureFlowResult, Vec<OcrLine>), ProviderError> {
         let img =
             image::load_from_memory(&image_png).map_err(|e| ProviderError::Other(e.to_string()))?;
-        let stats = intent::image_stats(&img);
-        let intent = stats.map_or(Intent::Unknown, intent::classify_stats);
-        tracing::info!(
-            "capture {}x{}: luma mean {:.1} std {:.1}, intent {intent:?}",
-            img.width(),
-            img.height(),
-            stats.map_or(0.0, |s| s.mean),
-            stats.map_or(0.0, |s| s.std),
-        );
 
         // 1) Try QR — decoding is almost free and short-circuits the rest.
         //    Only inside the window: a code in the scan margin belongs
@@ -567,49 +601,86 @@ impl Pipeline {
                 .map_err(|e| ProviderError::Other(e.to_string()))?,
             _ => image_png.clone(),
         };
-        if let Ok(res) = self
-            .run(
-                Capability::QrHandler,
-                TaskInput::IntentClassifier { image_png: qr_png },
-            )
-            .await
-        {
-            if let TaskOutput::Text(payload) = &res.output {
-                self.record_history(
-                    history_kind::QR,
-                    None,
-                    Some(payload),
-                    Some(&res.used_provider),
-                    res.via_cloud,
-                );
-                return Ok(CaptureFlowResult {
-                    intent: Intent::Qr,
-                    source_text: None,
-                    result: res,
-                    source_rect: None,
-                    blocks: vec![],
-                    image_size: Some(visible.map_or([img.width(), img.height()], |v| [v.w, v.h])),
-                    source_language: None,
-                    target_language: None,
-                    app: None,
-                    earlier: Vec::new(),
-                    on_screen: Vec::new(),
-                });
-            }
+        let image_size = visible.map_or([img.width(), img.height()], |v| [v.w, v.h]);
+        if let Some(bundle) = self.qr_bundle(qr_png, image_size).await {
+            return Ok((bundle, vec![]));
         }
 
         // 2) OCR → layout → translate. Always attempted for text-like or
         //    unknown regions.
+        let lines = self.read_lines(image_png).await?;
+        let bundle = match visible {
+            Some(v) => self.blocks_of(&img, &v.keep_lines(lines.clone()), visible, false),
+            None => self.blocks_of(&img, &lines, None, false),
+        };
+        Ok((bundle, lines))
+    }
+
+    /// The QR code in `img`, as the bundle of a capture that shows one
+    /// (see [`Self::analyze_capture_in`]). For a caller that reads a
+    /// capture in parts.
+    pub async fn decode_qr(
+        &self,
+        img: &image::DynamicImage,
+        visible: Option<Visible>,
+    ) -> Result<Option<CaptureFlowResult>, ProviderError> {
+        let inside = visible.and_then(|v| v.crop(img));
+        let image_png = crate::capture::png_bytes(inside.as_ref().unwrap_or(img))
+            .map_err(|e| ProviderError::Other(e.to_string()))?;
+        let image_size = visible.map_or([img.width(), img.height()], |v| [v.w, v.h]);
+        Ok(self.qr_bundle(image_png, image_size).await)
+    }
+
+    async fn qr_bundle(
+        &self,
+        image_png: Vec<u8>,
+        image_size: [u32; 2],
+    ) -> Option<CaptureFlowResult> {
+        let res = self
+            .run(
+                Capability::QrHandler,
+                TaskInput::IntentClassifier { image_png },
+            )
+            .await
+            .ok()?;
+        let TaskOutput::Text(payload) = &res.output else {
+            return None;
+        };
+        self.record_history(
+            history_kind::QR,
+            None,
+            Some(payload),
+            Some(&res.used_provider),
+            res.via_cloud,
+        );
+        Some(CaptureFlowResult {
+            intent: Intent::Qr,
+            source_text: None,
+            result: res,
+            source_rect: None,
+            blocks: vec![],
+            image_size: Some(image_size),
+            source_language: None,
+            target_language: None,
+            app: None,
+            earlier: Vec::new(),
+            on_screen: Vec::new(),
+        })
+    }
+
+    /// Text recognition alone: the lines of a picture, positioned in its
+    /// pixels. Empty when every engine ran and found no text.
+    pub async fn read_lines(&self, image_png: Vec<u8>) -> Result<Vec<OcrLine>, ProviderError> {
         let ocr_res = self
             .run(
                 Capability::Ocr,
                 TaskInput::Ocr {
-                    image_png: image_png.clone(),
+                    image_png,
                     languages: vec![],
                 },
             )
             .await;
-        let lines: Vec<OcrLine> = match ocr_res {
+        match ocr_res {
             Ok(TaskResult {
                 output: TaskOutput::Ocr { lines },
                 used_provider,
@@ -621,38 +692,82 @@ impl Pipeline {
                     "OCR: {} lines via {used_provider} in {latency_ms} ms (fallbacks {fallback_reasons:?})",
                     lines.len()
                 );
-                lines
+                Ok(lines)
             }
             Ok(other) => {
                 tracing::warn!("OCR returned unexpected output: {:?}", other.output);
-                vec![]
+                Ok(vec![])
             }
             // No OCR engine at all: "no text found" would be a lie.
-            Err(e @ ProviderError::NotInstalled(_)) => return Err(e),
+            Err(e @ ProviderError::NotInstalled(_)) => Err(e),
             // Every engine ran and found nothing: a real "no text".
             Err(e) if ocr_found_nothing(&e) => {
                 tracing::info!("OCR found no text: {e}");
-                vec![]
+                Ok(vec![])
             }
             // Timeout or engine failure: report it instead of claiming
-            // the region has no text.
+            // the picture has no text.
             Err(e) => {
                 tracing::warn!("OCR failed: {e}");
-                return Err(e);
+                Err(e)
             }
-        };
-        let lines = match visible {
-            Some(v) => v.keep_lines(lines),
-            None => lines,
-        };
-        let text_blocks = layout::group_lines(&lines);
+        }
+    }
+
+    /// Paragraph blocks of OCR `lines` positioned in `img`, without
+    /// translations. `lines` are the ones to show (of a capture wider
+    /// than its window: [`Visible::keep_lines`]). They may lie outside
+    /// the window or the picture (rows a scroll took out of view, kept
+    /// so their paragraph stays whole): a paragraph with no row left in
+    /// view is dropped. With `visible`, blocks come back in window
+    /// pixels.
+    pub fn lay_out(
+        &self,
+        img: &image::DynamicImage,
+        lines: &[OcrLine],
+        visible: Option<Visible>,
+    ) -> CaptureFlowResult {
+        self.blocks_of(img, lines, visible, true)
+    }
+
+    /// [`Self::lay_out`]. `in_view_only`: drop paragraphs with no row
+    /// in view (lines of one reading all are).
+    fn blocks_of(
+        &self,
+        img: &image::DynamicImage,
+        lines: &[OcrLine],
+        visible: Option<Visible>,
+        in_view_only: bool,
+    ) -> CaptureFlowResult {
+        // Cheap heuristic classifier. A plugin-provided classifier can
+        // override through the `intent_classifier` chain in future work.
+        let stats = intent::image_stats(img);
+        let intent = stats.map_or(Intent::Unknown, intent::classify_stats);
+        tracing::info!(
+            "capture {}x{}: luma mean {:.1} std {:.1}, intent {intent:?}",
+            img.width(),
+            img.height(),
+            stats.map_or(0.0, |s| s.mean),
+            stats.map_or(0.0, |s| s.std),
+        );
+        let mut text_blocks = layout::group_lines(lines);
+        let height = img.height() as f32;
+        let (view_top, view_bottom) =
+            visible.map_or((0.0, height), |v| (v.y as f32, v.y as f32 + v.h as f32));
+        text_blocks.retain(|b| {
+            !in_view_only
+                || b.lines
+                    .iter()
+                    .chain(std::iter::once(&b.bbox).filter(|_| b.lines.is_empty()))
+                    .any(|r| r[1] + r[3] / 2.0 >= view_top && r[1] + r[3] / 2.0 <= view_bottom)
+        });
         let ocr_text = layout::join_blocks(&text_blocks);
         let image_size = Some(visible.map_or([img.width(), img.height()], |v| [v.w, v.h]));
 
         if ocr_text.trim().is_empty() {
             // Nothing text-like detected. Return the intent so the UI can
             // offer actions (reverse image search, explain, ...).
-            return Ok(CaptureFlowResult {
+            return CaptureFlowResult {
                 intent,
                 source_text: None,
                 source_rect: None,
@@ -671,16 +786,31 @@ impl Pipeline {
                     latency_ms: 0,
                     fallback_reasons: vec![],
                 },
-            });
+            };
         }
 
         let rgba = img.to_rgba8();
+        let erase_time = std::cell::Cell::new(Duration::ZERO);
         let mut blocks: Vec<LensBlock> = text_blocks
             .iter()
             .map(|b| {
                 // Colours and stroke weight are read from one row: the
                 // box of a paragraph may also hold a picture beside it.
-                let sample = layout::sample_row(b);
+                // Of the rows in the picture: a scroll may have taken
+                // the others out of view.
+                let in_picture = layout::TextBlock {
+                    lines: b
+                        .lines
+                        .iter()
+                        .filter(|r| r[1] >= 0.0 && r[1] + r[3] <= height)
+                        .copied()
+                        .collect(),
+                    ..b.clone()
+                };
+                let sample = match in_picture.lines.is_empty() {
+                    true => b.bbox,
+                    false => layout::sample_row(&in_picture),
+                };
                 let colors = (b.bbox[2] > 0.0).then(|| layout::estimate_colors(&rgba, sample));
                 let bold = colors.is_some_and(|c| {
                     layout::looks_bold(
@@ -691,6 +821,31 @@ impl Pipeline {
                 let row_limits = colors
                     .map(|c| layout::row_limits(&rgba, b, c.background))
                     .unwrap_or_default();
+                // Text on a picture or gradient: repaint the text pixels
+                // only (see `erase`). `None` on a plain background.
+                let rows: &[layout::BBox] = if b.lines.is_empty() {
+                    std::slice::from_ref(&b.bbox)
+                } else {
+                    &b.lines
+                };
+                let started = Instant::now();
+                let erase = colors.and_then(|c| {
+                    erase::patch(
+                        &rgba,
+                        &erase::Target {
+                            rows,
+                            limits: &row_limits,
+                            line_height: b.line_height,
+                            foreground: c.foreground,
+                        },
+                    )
+                });
+                erase_time.set(erase_time.get() + started.elapsed());
+                // On a picture the erase reads the text colour better.
+                let colors = colors.map(|c| layout::BlockColors {
+                    foreground: erase.as_ref().map_or(c.foreground, |e| e.foreground),
+                    ..c
+                });
                 LensBlock {
                     bbox: b.bbox,
                     line_height: b.line_height,
@@ -703,9 +858,16 @@ impl Pipeline {
                     bold,
                     lines: b.lines.clone(),
                     row_limits,
+                    erase,
                 }
             })
             .collect();
+        tracing::debug!(
+            "text-only erase: {} of {} blocks, {:.1} ms",
+            blocks.iter().filter(|b| b.erase.is_some()).count(),
+            blocks.len(),
+            erase_time.get().as_secs_f64() * 1e3
+        );
         if let Some(v) = visible {
             v.to_window(&mut blocks);
         }
@@ -733,7 +895,7 @@ impl Pipeline {
         };
         let target = self.settings.snapshot().subtitle.target_language.clone();
         self.prepare_translation(&mut bundle, &target);
-        Ok(bundle)
+        bundle
     }
 
     /// Set the target language on an analysed bundle, flag the blocks
@@ -856,6 +1018,7 @@ impl Pipeline {
             .collect();
         let target_language = target_language.to_string();
         let scope = bundle.app.clone().unwrap_or_default();
+        let app = bundle.app.clone();
         let chosen = pick_chain(&s, Capability::Translate)
             .chain
             .into_iter()
@@ -945,6 +1108,7 @@ impl Pipeline {
             let context = TranslateContext {
                 history: history.clone(),
                 reference: reference.clone(),
+                app: bundle.app.clone(),
             };
             let translate = match self
                 .run(
@@ -1030,7 +1194,7 @@ impl Pipeline {
                                 text: text.clone(),
                                 source_language: "auto".into(),
                                 target_language: target_language.clone(),
-                                context: TranslateContext::default(),
+                                context: TranslateContext::of_app(app.as_deref()),
                             })
                             .collect();
                         let out: Vec<Option<Answer>> = futures::stream::iter(inputs)
@@ -1297,6 +1461,11 @@ pub struct LensBlock {
     /// the overlay keeps the translation and its mask off the picture.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub row_limits: Vec<f32>,
+    /// Set when the text stands on a picture or gradient: the text
+    /// pixels repainted from their surroundings. The overlay draws it
+    /// instead of the one-colour box.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub erase: Option<erase::ErasePatch>,
 }
 
 impl LensBlock {
@@ -1414,6 +1583,30 @@ fn upgrade_llm_chain(mut chain: TaskChain, local_id: &str) -> TaskChain {
         chain.chain = vec![local_id.to_string()];
     }
     chain
+}
+
+/// The built-in translation model (file and provider config) when the
+/// translate chain uses it.
+fn local_llm(
+    s: &crate::settings::schema::Settings,
+) -> Option<(std::path::PathBuf, serde_json::Value)> {
+    if !pick_chain(s, Capability::Translate)
+        .chain
+        .iter()
+        .any(|id| id == LOCAL_LLM_ID)
+    {
+        return None;
+    }
+    let cfg = s
+        .providers
+        .configs
+        .get(LOCAL_LLM_ID)
+        .cloned()
+        .unwrap_or_else(|| serde_json::Value::Object(Default::default()));
+    let path = LlamaTranslator::new(LOCAL_LLM_ID, &cfg, s.performance.use_gpu_if_available)
+        .model_path()
+        .to_path_buf();
+    Some((path, cfg))
 }
 
 /// One paragraph's translation and the engine that made it.

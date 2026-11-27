@@ -10,6 +10,7 @@ import {
   SOURCE_LANGUAGES,
   languageLabel,
   languageName,
+  blockPaint,
   maskClip,
   rgb,
   splitStreaming,
@@ -229,5 +230,38 @@ describe('maskClip', () => {
   it('scales with the device pixel ratio', () => {
     const clip = maskClip({ ...base, row_limits: [200, 200, 390] }, 2);
     expect(clip.startsWith('polygon(0px 0px, 99px 0px, 99px 14.5px')).toBe(true);
+  });
+});
+
+describe('blockPaint', () => {
+  const base = block({
+    bbox: [100, 50, 300, 40],
+    colors: { background: [10, 20, 30], foreground: [250, 250, 250] }
+  });
+
+  it('fills the box with the background colour on a plain background', () => {
+    const p = blockPaint(base, 1);
+    expect(p.background).toBe('rgb(10, 20, 30)');
+    expect(p.color).toBe('rgb(250, 250, 250)');
+    expect(p.erase).toBeNull();
+    expect(p.outline).toBeNull();
+  });
+
+  it('leaves the box clear and places the erase picture on a picture', () => {
+    const erase = { rect: [92, 44, 316, 52] as [number, number, number, number], image: 'data:x', outline: true };
+    const p = blockPaint({ ...base, erase, row_limits: [200], lines: [[100, 50, 300, 40]] }, 2);
+    expect(p.background).toBe('transparent');
+    expect(p.clip).toBe('none');
+    // Box origin = bbox / scale - pad: the picture starts 4 px left of it.
+    expect(p.erase).toEqual({ src: 'data:x', rect: { left: -2, top: -1, width: 158, height: 26 } });
+    // Light text gets a dark outline.
+    expect(p.outline).toBe('rgba(0,0,0,0.85)');
+  });
+
+  it('outlines dark text in white, and only where the background varies', () => {
+    const erase = { rect: [0, 0, 1, 1] as [number, number, number, number], image: 'data:x', outline: true };
+    const dark = { ...base, colors: { background: [200, 200, 200], foreground: [20, 20, 20] } as LensBlock['colors'] };
+    expect(blockPaint({ ...dark, erase }, 1).outline).toBe('rgba(255,255,255,0.9)');
+    expect(blockPaint({ ...dark, erase: { ...erase, outline: false } }, 1).outline).toBeNull();
   });
 });

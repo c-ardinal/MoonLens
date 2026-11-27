@@ -369,3 +369,69 @@ async fn lens_reads_continuously_and_retranslates_only_changes() {
         "translated into Chinese, not the Japanese kept: {zh}"
     );
 }
+
+/// The text of `synth_title_body` in white on a picture: a diagonal
+/// colour gradient, moved by `shift` pixels (a video behind a caption).
+fn on_picture(shift: u32) -> DynamicImage {
+    let text = fixture("synth_title_body").to_rgba8();
+    let img = RgbaImage::from_fn(text.width(), text.height(), |x, y| {
+        let t = (x + y + shift) % 256;
+        let v = (if t < 128 { t } else { 255 - t } * 2) as f32;
+        let back = [v / 2.0, 40.0 + v / 3.0, 150.0 - v / 2.0];
+        // Black-on-white glyphs become white ink, edges kept smooth.
+        let ink = 1.0 - text.get_pixel(x, y)[0] as f32 / 255.0;
+        let c = back.map(|b| (b + (255.0 - b) * ink) as u8);
+        Rgba([c[0], c[1], c[2], 255])
+    });
+    DynamicImage::ImageRgba8(img)
+}
+
+fn erased(ev: &[LiveEvent]) -> Option<usize> {
+    ev.iter().rev().find_map(|e| match e {
+        LiveEvent::Blocks { blocks, .. } => {
+            Some(blocks.iter().filter(|b| b.erase.is_some()).count())
+        }
+        _ => None,
+    })
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "live: needs the PP-OCR and plamo-3-translate-2b models"]
+async fn text_on_a_picture_is_erased_only_while_the_picture_holds_still() {
+    let size = fixture("synth_title_body");
+    let mut run = Run {
+        pipeline: pipeline(),
+        tracker: Tracker::new(),
+        events: Arc::default(),
+        geometry: Arc::new(Mutex::new([
+            0,
+            0,
+            size.width() as i32,
+            size.height() as i32,
+        ])),
+        target: "ja",
+    };
+
+    // A still picture: the text is erased pixel by pixel.
+    let (t, _, _) = run.tick("1a picture first", on_picture(0)).await;
+    assert_eq!(t, Tick::Settling);
+    let (t, ev, _) = run.tick("1b picture again", on_picture(0)).await;
+    assert!(requested(&t));
+    assert!(
+        erased(&ev).is_some_and(|n| n > 0),
+        "text on a still picture gets the erase picture"
+    );
+
+    // The picture moves behind the text, tick after tick: whatever is
+    // shown from now on is the one-colour box. (Text recognition may or
+    // may not read the same text again over the moved picture; both
+    // paths have to drop the still erase picture.)
+    let mut shown = None;
+    for step in 1..=4 {
+        let (_, ev, _) = run
+            .tick(&format!("2 picture moved #{step}"), on_picture(step * 64))
+            .await;
+        shown = erased(&ev).or(shown);
+    }
+    assert_eq!(shown, Some(0), "no still picture over a moving one");
+}

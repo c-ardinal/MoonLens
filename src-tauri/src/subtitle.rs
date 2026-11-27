@@ -20,13 +20,14 @@ use tokio::sync::mpsc;
 
 use crate::tr;
 use crate::{
+    app_identity::AppIdentity,
     audio::{
         backend::{AudioFrame, LoopbackStream},
         level, AudioSource,
     },
     clipboard, overlay,
     pipeline::Pipeline,
-    providers::{Capability, TaskInput, TaskOutput},
+    providers::{Capability, TaskInput, TaskOutput, TranslateContext},
     settings::SettingsStore,
     storage::Storage,
     subtitle_filter::StockFilter,
@@ -364,6 +365,8 @@ impl SubtitleService {
         if window == Window::Open && !self.sessions.lock().contains_key(label) {
             return Err(missing());
         }
+        // It may have been freed while unused (see `model_idle`).
+        self.pipeline.preload_local_llm();
         // Frames keep arriving while a chunk is being recognized; the
         // capture callback drops what does not fit, so leave room for a
         // long decode (callbacks deliver ~10 ms each).
@@ -387,6 +390,10 @@ impl SubtitleService {
         let app_emit = app.clone();
         let recorder = Recorder::new(self.storage.clone(), self.settings.clone());
         let id = label.to_string();
+        let audio_app = match source {
+            AudioSource::App { pid } => AppIdentity::of_pid(pid).map(|a| a.key),
+            _ => None,
+        };
         let started = SubtitleEvent::Started {
             device: device.clone(),
             source,
@@ -426,7 +433,7 @@ impl SubtitleService {
                 }
             };
             emit(started);
-            let gave_up = run_loop(&emit, settings, pipeline, rx, stop_in).await;
+            let gave_up = run_loop(&emit, settings, pipeline, rx, stop_in, audio_app).await;
             // The loop also ends when the capture closes the frame
             // channel: the application exited or its stream failed.
             let lost = lost.load(Ordering::Relaxed);
@@ -632,13 +639,15 @@ fn beside_y(y: i32, height: i32, gap: i32, top: i32) -> i32 {
 /// The subtitle loop: audio frames in, [`SubtitleEvent`]s out. Runs
 /// until `stop` fires or the frame channel closes (what is still
 /// buffered is recognized first). Returns `true` when it gave up after
-/// repeated recognition failures.
+/// repeated recognition failures. `app`: key of the application the
+/// audio comes from, when it is one application's (its glossary is used).
 pub async fn run_loop(
     emit: &(impl Fn(SubtitleEvent) + Sync),
     settings: Arc<SettingsStore>,
     pipeline: Arc<Pipeline>,
     mut rx: mpsc::Receiver<AudioFrame>,
     stop: Arc<tokio::sync::Notify>,
+    app: Option<String>,
 ) -> bool {
     let mut failures = 0u32;
     let mut buffer: Vec<i16> = Vec::with_capacity(16_000 * 4);
@@ -659,7 +668,7 @@ pub async fn run_loop(
     let mut heard_until = Duration::ZERO;
     let mut stock = StockFilter::default();
     let mut lines = Assembler::default();
-    let mut reviser = Reviser::new(translator(pipeline.clone()));
+    let mut reviser = Reviser::new(translator(pipeline.clone(), app.clone()));
     // A sentence approved for blocking after its chunks were shown must
     // not come back as a correction: its lines go (empty text), the
     // start of the next sentence stays.
@@ -848,7 +857,7 @@ pub async fn run_loop(
                         text: original.clone(),
                         source_language: source_lang.clone(),
                         target_language: target_lang.clone(),
-                        context: Default::default(),
+                        context: TranslateContext::of_app(app.as_deref()),
                     },
                 );
                 let translated = match translation.await {
@@ -942,10 +951,15 @@ fn pause(lines: &mut Assembler, reviser: &mut Reviser, languages: &Languages) {
     reviser.release();
 }
 
-/// Sentence translation for [`Reviser`] through the provider chain.
-fn translator(pipeline: Arc<Pipeline>) -> Translator {
+/// Sentence translation for [`Reviser`] through the provider chain,
+/// with the glossary of application `app` when the audio is its.
+fn translator(pipeline: Arc<Pipeline>, app: Option<String>) -> Translator {
     Arc::new(move |text, languages: Languages, context| {
         let pipeline = pipeline.clone();
+        let context = TranslateContext {
+            app: app.clone(),
+            ..context
+        };
         Box::pin(async move {
             let input = TaskInput::Translate {
                 text,

@@ -8,6 +8,7 @@
  * nothing. When a field starts doing something, add it here.
  */
 
+import { compactAppGlossaries } from './app-glossary';
 import { compactGlossary } from './glossary';
 import { LANGUAGES, SOURCE_LANGUAGES } from './lens-overlay';
 import { LOCALES, t } from './i18n';
@@ -36,14 +37,23 @@ export type Field =
   /** Editable term list (rendered by GlossaryEditor). */
   | { kind: 'glossary'; path: string; label: string; help?: string }
   /** Editable list of phrases (rendered by PhraseList). */
-  | { kind: 'phrases'; path: string; label: string; help?: string; placeholder?: string };
+  | { kind: 'phrases'; path: string; label: string; help?: string; placeholder?: string }
+  /** Glossaries of single applications (rendered by AppGlossaries). */
+  | { kind: 'app-glossaries'; path: string; label: string; help?: string };
 
 export type Section =
   | { id: string; title: string; description?: string; fields: Field[] }
   /** A section rendered by a dedicated component. */
   | { id: string; title: string; description?: string; component: SectionComponent };
 
-export type SectionComponent = 'llm-translate' | 'llm-assist' | 'ocr' | 'asr' | 'data' | 'plugins';
+export type SectionComponent =
+  | 'llm-translate'
+  | 'llm-assist'
+  | 'ocr'
+  | 'asr'
+  | 'data'
+  | 'plugins'
+  | 'layout-sets';
 
 /**
  * 大分類（左の一覧）。各分類は SECTIONS の小分類（右枠上部のタブ）を束ねる。
@@ -93,8 +103,20 @@ export const SECTIONS: Section[] = [
         path: 'translation.glossary',
         label: 'settings:glossary',
         help: 'settings:pins_terms_in_the_source_to_the'
+      },
+      {
+        kind: 'app-glossaries',
+        path: 'translation.app_glossaries',
+        label: 'settings:app_glossaries',
+        help: 'settings:app_glossaries_help'
       }
     ]
+  },
+  {
+    id: 'layout-sets',
+    title: 'settings:layout_sets',
+    description: 'settings:layout_sets_description',
+    component: 'layout-sets'
   },
   {
     id: 'models',
@@ -395,6 +417,17 @@ export const SECTIONS: Section[] = [
       },
       {
         kind: 'number',
+        path: 'performance.model_idle_unload_minutes',
+        label: 'settings:model_idle_unload',
+        help: 'settings:model_idle_unload_help',
+        min: 0,
+        max: 240,
+        step: 1,
+        unit: 'settings:min',
+        zeroLabel: 'settings:off'
+      },
+      {
+        kind: 'number',
         path: 'performance.max_concurrent_tasks',
         label: 'settings:parallel_translations',
         help: 'settings:concurrent_per_paragraph_requests_when_an',
@@ -459,7 +492,7 @@ export const SECTIONS: Section[] = [
 ];
 
 export const GROUPS: Group[] = [
-  { id: 'translation', title: 'common:translation', sections: ['translation', 'glossary', 'pin'] },
+  { id: 'translation', title: 'common:translation', sections: ['translation', 'glossary', 'layout-sets', 'pin'] },
   // `#group`：英語表示は帯幅内の短縮名（Audio）
   { id: 'subtitle', title: 'settings:audio_group', sections: ['subtitle'] },
   { id: 'models', title: 'common:models', sections: ['models', 'model-assist', 'model-ocr', 'model-asr'] },
@@ -534,9 +567,12 @@ export function savable<T>(saved: T, draft: T): T {
   next = setPath(next, 'translation.glossary', compactGlossary(getPath(next, 'translation.glossary')));
   // 遮断文の空行も保存対象外（設定に項目の存在する場合のみ）。
   const phrases = getPath(next, 'subtitle.blocked_phrases');
-  return Array.isArray(phrases)
-    ? setPath(next, 'subtitle.blocked_phrases', phrases.filter((p: string) => p.trim() !== ''))
-    : next;
+  if (Array.isArray(phrases)) {
+    next = setPath(next, 'subtitle.blocked_phrases', phrases.filter((p: string) => p.trim() !== ''));
+  }
+  // 旧版の設定（項目なし）は項目を追加しない
+  const apps = getPath(next, 'translation.app_glossaries');
+  return apps == null ? next : setPath(next, 'translation.app_glossaries', compactAppGlossaries(apps));
 }
 
 /** 保存対象外のショートカット（重複の解消まで保存済の値を維持する項目）。 */
@@ -550,7 +586,7 @@ export function heldHotkeys(saved: any, draft: any): string[] {
 /** 連続入力の項目（スライダー・色・用語集）：保存までの待機時間（ミリ秒）。 */
 export function saveDelay(path: string): number {
   const f = allFields().find((x) => x.path === path);
-  if (f?.kind === 'glossary' || f?.kind === 'phrases') return 600;
+  if (f?.kind === 'glossary' || f?.kind === 'phrases' || f?.kind === 'app-glossaries') return 600;
   return f?.kind === 'color' || (f?.kind === 'number' && f.slider) ? 300 : 0;
 }
 

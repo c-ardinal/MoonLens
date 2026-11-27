@@ -310,6 +310,24 @@ pub struct TranslationSettings {
     /// Fixed renderings for terms. An entry is used only when its source
     /// term occurs in the text and its `lang` matches the target.
     pub glossary: Vec<GlossaryEntry>,
+    /// Glossaries of single applications: used on top of `glossary`
+    /// for what is translated from that application (a window attached
+    /// to one of its windows, its audio).
+    pub app_glossaries: Vec<AppGlossary>,
+}
+
+/// The glossary of one application.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(default, deny_unknown_fields)]
+pub struct AppGlossary {
+    /// Key of the application (`app_identity::normalize_key`): the name
+    /// of its executable, lowercased, without `.exe`.
+    pub app: String,
+    /// Name shown for the application.
+    pub name: String,
+    /// Where its entries and the common ones name the same term, these
+    /// win.
+    pub glossary: Vec<GlossaryEntry>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, Default, PartialEq, Eq)]
@@ -419,6 +437,10 @@ pub struct PerformanceSettings {
     #[schemars(range(min = 1, max = 8))]
     pub max_concurrent_tasks: u32,
     pub use_gpu_if_available: bool,
+    /// Minutes without use after which loaded models are freed
+    /// (0 = keep them loaded).
+    #[schemars(range(min = 0, max = 240))]
+    pub model_idle_unload_minutes: u32,
 }
 
 impl Default for PerformanceSettings {
@@ -429,6 +451,7 @@ impl Default for PerformanceSettings {
             scan_margin_px: 32,
             max_concurrent_tasks: 4,
             use_gpu_if_available: true,
+            model_idle_unload_minutes: 10,
         }
     }
 }
