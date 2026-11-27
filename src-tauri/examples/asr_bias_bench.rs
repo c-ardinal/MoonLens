@@ -84,8 +84,8 @@ fn main() -> anyhow::Result<()> {
     );
     let params = DecodeParams::from_config(&cfg, gpu);
 
-    let done: HashSet<(String, String)> = std::fs::read_to_string(out_path)
-        .unwrap_or_default()
+    let earlier = std::fs::read_to_string(out_path).unwrap_or_default();
+    let done: HashSet<(String, String)> = earlier
         .lines()
         .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
         .map(|v| {
@@ -99,6 +99,11 @@ fn main() -> anyhow::Result<()> {
         .create(true)
         .append(true)
         .open(out_path)?;
+    // A run stopped mid-write leaves half a line; keep it apart from
+    // what follows (the scorer skips it, the job runs again).
+    if !earlier.is_empty() && !earlier.ends_with('\n') {
+        writeln!(out)?;
+    }
 
     let jobs: Vec<Job> = std::fs::read_to_string(jobs_path)?
         .lines()

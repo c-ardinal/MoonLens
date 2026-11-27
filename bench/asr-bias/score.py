@@ -93,7 +93,10 @@ def report_nonspeech(directory: Path, results_name: str, manifest: dict) -> dict
     """Sounds without speech: any text is wrong, prompt terms in it doubly so."""
     by_cond: dict[str, list[dict]] = {}
     for line in (directory / results_name).read_text("utf-8").splitlines():
-        r = json.loads(line)
+        try:
+            r = json.loads(line)
+        except json.JSONDecodeError:
+            continue  # half a line left by a run that was stopped
         item = manifest[r["key"].split("-", 1)[1]]
         units = normalize("ja", r["text"])
         echoed = any(
@@ -125,7 +128,10 @@ def report(directory: Path, results_name: str) -> dict:
         return report_nonspeech(directory, results_name, manifest)
     by_cond: dict[str, dict[str, dict]] = {}
     for line in (directory / results_name).read_text("utf-8").splitlines():
-        r = json.loads(line)
+        try:
+            r = json.loads(line)
+        except json.JSONDecodeError:
+            continue  # half a line left by a run that was stopped
         sid = r["key"].split("-", 1)[1]
         s = score(lang, manifest[sid], r["text"])
         s.update(text=r["text"], spent=r["spent_s"])
