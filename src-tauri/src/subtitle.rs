@@ -167,6 +167,8 @@ impl SubtitleService {
         if self.is_running() {
             return Ok(());
         }
+        // It may have been freed while unused (see `model_idle`).
+        self.pipeline.preload_local_llm();
         // Frames keep arriving while a chunk is being recognized; the
         // capture callback drops what does not fit, so leave room for a
         // long decode (callbacks deliver ~10 ms each).

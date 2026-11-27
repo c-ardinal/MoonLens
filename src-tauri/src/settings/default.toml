@@ -82,6 +82,8 @@ region_watcher_poll_ms = 250
 max_concurrent_tasks = 4
 cache_ttl_seconds = 3600
 use_gpu_if_available = true
+# 未使用モデルの自動解放までの時間（分）。0：無効（常駐）。
+model_idle_unload_minutes = 10
 
 # ---------------------------------------------------------------------------
 # Providers

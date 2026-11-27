@@ -322,6 +322,17 @@ export const SECTIONS: Section[] = [
       },
       {
         kind: 'number',
+        path: 'performance.model_idle_unload_minutes',
+        label: '未使用モデルの自動解放',
+        help: '一定時間未使用のモデルを解放し、メモリーと VRAM を返却。翻訳ウィンドウ・音声翻訳の使用中は保持。',
+        min: 0,
+        max: 240,
+        step: 1,
+        unit: '分',
+        zeroLabel: '無効'
+      },
+      {
+        kind: 'number',
         path: 'performance.max_concurrent_tasks',
         label: '並列翻訳数',
         help: '拡張機能の翻訳エンジン使用時、段落単位の再翻訳の同時要求数。内蔵エンジンは逐次実行のため対象外。',

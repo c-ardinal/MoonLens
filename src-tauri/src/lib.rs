@@ -17,6 +17,7 @@ pub mod lens;
 pub mod lens_drag;
 pub mod lens_text;
 pub mod macos_permissions;
+pub mod model_idle;
 pub mod notices;
 pub mod overlay;
 pub mod pipeline;
