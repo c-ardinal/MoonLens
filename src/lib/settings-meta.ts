@@ -221,6 +221,12 @@ export const SECTIONS: Section[] = [
         step: 50,
         unit: 'ミリ秒',
         slider: true
+      },
+      {
+        kind: 'toggle',
+        path: 'overlay.show_in_screenshots',
+        label: '撮影への表示',
+        help: 'スクリーンショット・録画へ翻訳ウィンドウを表示。OFF：常時除外。Windows 専用。'
       }
     ]
   },

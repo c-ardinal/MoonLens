@@ -18,9 +18,11 @@
 //!
 //! The capture flow:
 //! 1. The watcher (or the frontend, on request) captures a given lens id.
-//! 2. The captured frame must not include the lens UI. Windows and macOS
-//!    exclude the window from screen capture (content protection); on
-//!    other platforms Rust hides the window for the moment of the grab.
+//! 2. The captured frame must not include the lens UI. Windows excludes
+//!    the windows from screen capture for the moment of the grab only
+//!    ([`lens_shield`]), so the user's screenshots still show them;
+//!    macOS excludes them for good (content protection); on other
+//!    platforms Rust hides the window for the moment of the grab.
 //! 3. Rust resolves the window's client bounds, shrinks them by the
 //!    header the renderer tells us about (CSS pixels, scaled to physical
 //!    pixels here), and feeds the resulting rect to
@@ -46,6 +48,7 @@ use tauri::{
 use crate::{
     capture::CaptureRect,
     lens_drag::{self, DragGate},
+    lens_shield,
     lens_text::{self, Follow},
     pipeline::Pipeline,
     region_watcher::{Frame, Geometry, LiveEvent, Tick, TickEnv, Tracker},
@@ -627,7 +630,8 @@ pub fn create(
         // instead does not work on Windows: `hide()` returns before DWM
         // has faded the window out, so the grab read the lens itself
         // (its own Japanese placeholder) and nothing got translated.
-        .content_protected(EXCLUDED_FROM_CAPTURE)
+        // Windows excludes the window per grab instead (see `grab`).
+        .content_protected(hidden_from_captures(app))
         .visible(false)
         .build()
         .context("create lens window")?;
@@ -917,6 +921,66 @@ pub fn inner_rect(win: &WebviewWindow) -> Result<geometry::LensOuterRect> {
 /// `NSWindowSharingNone`). Elsewhere the window is hidden for the grab.
 pub const EXCLUDED_FROM_CAPTURE: bool = cfg!(any(target_os = "windows", target_os = "macos"));
 
+/// Whether the translation windows stay out of *every* screen capture,
+/// the user's screenshots and recordings included. macOS: always (no
+/// per-grab switch there). Windows: only with
+/// `overlay.show_in_screenshots` off; otherwise [`grab`] excludes them
+/// just for its own capture.
+pub fn hidden_from_captures(app: &AppHandle) -> bool {
+    if !cfg!(windows) {
+        return cfg!(target_os = "macos");
+    }
+    app.try_state::<crate::app::AppState>()
+        .is_some_and(|s| !s.settings.snapshot().overlay.show_in_screenshots)
+}
+
+#[cfg(windows)]
+fn handle(win: &WebviewWindow) -> Option<lens_shield::Handle> {
+    win.hwnd().ok().map(|h| h.0 as lens_shield::Handle)
+}
+
+#[cfg(not(windows))]
+fn handle(_win: &WebviewWindow) -> Option<lens_shield::Handle> {
+    None
+}
+
+/// Handles of the translation windows (text windows included) that a
+/// capture of `observed` by lens `id` would show: its own, and any
+/// other one lying over that rect. All of them with `observed` unset.
+fn shield(
+    app: &AppHandle,
+    registry: &LensRegistryHandle,
+    observed: Option<(&str, geometry::LensOuterRect)>,
+) -> Vec<lens_shield::Handle> {
+    let over = |win: &WebviewWindow| {
+        let Some((id, r)) = observed else { return true };
+        if win.label() == id || win.label() == lens_text::label(id) {
+            return true;
+        }
+        let (Ok(p), Ok(s)) = (win.outer_position(), win.outer_size()) else {
+            return true;
+        };
+        (p.x as i64) < r.x as i64 + r.w as i64
+            && (r.x as i64) < p.x as i64 + s.width as i64
+            && (p.y as i64) < r.y as i64 + r.h as i64
+            && (r.y as i64) < p.y as i64 + s.height as i64
+    };
+    registry
+        .list()
+        .iter()
+        .flat_map(|l| [l.id.clone(), lens_text::label(&l.id)])
+        .filter_map(|label| app.get_webview_window(&label))
+        .filter(over)
+        .filter_map(|win| handle(&win))
+        .collect()
+}
+
+/// Apply `overlay.show_in_screenshots` to the open translation windows
+/// (after a settings change).
+pub fn apply_capture_visibility(app: &AppHandle, registry: &LensRegistryHandle) {
+    lens_shield::persist(&shield(app, registry, None), hidden_from_captures(app));
+}
+
 /// Convert the renderer's CSS-pixel insets to physical pixels. The outer
 /// rect is physical, so at 150 % scaling unscaled insets left part of the
 /// header inside the captured region.
@@ -960,7 +1024,10 @@ pub fn grab(
 
     let observed = observed(app, registry, id)?;
     if EXCLUDED_FROM_CAPTURE {
-        let image = capture::capture_global_rect(observed.x, observed.y, observed.w, observed.h)?;
+        let windows = shield(app, registry, Some((id, observed)));
+        let image = lens_shield::excluded(&windows, hidden_from_captures(app), || {
+            capture::capture_global_rect(observed.x, observed.y, observed.w, observed.h)
+        })?;
         return Ok((image, observed));
     }
     let win = app
@@ -1044,6 +1111,8 @@ async fn run_watch(
     // capture follows without another pause. Only once in a row, so a
     // region that never settles is not read back to back.
     let mut confirm_now = false;
+    // A reading on request that a screenshot tool held back.
+    let mut held = false;
     loop {
         let mut manual = std::mem::take(&mut first);
         let confirming = std::mem::take(&mut confirm_now) && EXCLUDED_FROM_CAPTURE;
@@ -1099,7 +1168,14 @@ async fn run_watch(
             continue;
         }
         // Dropped: read the new spot at once, like a manual refresh.
-        manual |= was_moving;
+        manual |= was_moving | std::mem::take(&mut held);
+        // A screenshot tool shows a still of the screen, translations
+        // included: reading it would hide the translations and
+        // translate the still. Reading goes on once the tool is gone.
+        if lens_shield::capture_tool_active() {
+            held = manual;
+            continue;
+        }
 
         let (a, r, i) = (app.clone(), registry.clone(), id.clone());
         let started = std::time::Instant::now();
