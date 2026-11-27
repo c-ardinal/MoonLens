@@ -15,7 +15,10 @@ use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::mpsc;
 
 use crate::{
-    audio::backend::{AudioFrame, LoopbackStream},
+    audio::{
+        backend::{AudioFrame, LoopbackStream},
+        level,
+    },
     clipboard, overlay,
     pipeline::Pipeline,
     providers::{Capability, TaskInput, TaskOutput},
@@ -56,6 +59,16 @@ pub enum Phase {
     Waiting,
     Recognizing,
     Translating,
+}
+
+/// Input level for the window's waveform (`moonlens://subtitle-level`).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct LevelEvent {
+    /// RMS level per 25 ms of captured audio in dBFS, oldest first.
+    /// Empty when the capture device delivers nothing.
+    pub bins: Vec<i8>,
+    /// Level below which the loop treats audio as silence, in dBFS.
+    pub gate_db: f32,
 }
 
 pub struct SubtitleService {
@@ -164,7 +177,14 @@ impl SubtitleService {
         // capture callback drops what does not fit, so leave room for a
         // long decode (callbacks deliver ~10 ms each).
         let (tx, rx) = mpsc::channel::<AudioFrame>(FRAME_QUEUE);
-        let stream = LoopbackStream::start(tx)?;
+        // The loop does not read frames while a chunk is recognized, so
+        // the level for the window's waveform is measured on the way in.
+        let (tap_tx, tap_rx) = mpsc::channel::<AudioFrame>(TAP_QUEUE);
+        let stream = LoopbackStream::start(tap_tx)?;
+        let app_level = app.clone();
+        tauri::async_runtime::spawn(meter_relay(tap_rx, tx, move |ev| {
+            let _ = app_level.emit_to("subtitle", "moonlens://subtitle-level", ev);
+        }));
         let device = stream.device().to_string();
         tracing::info!("subtitle: started (device: {device})");
         if let Some(win) = app.get_webview_window("subtitle") {
@@ -494,6 +514,61 @@ pub async fn run_loop(
     false
 }
 
+/// Passes captured frames on to the subtitle loop and reports their
+/// level every [`LEVEL_INTERVAL`]. When the device delivers nothing (a
+/// loopback is silent while nothing plays), one event with no bins says
+/// so and reporting pauses until audio returns. Ends when the capture
+/// stops; the loop then sees its channel close.
+pub async fn meter_relay(
+    mut rx: mpsc::Receiver<AudioFrame>,
+    tx: mpsc::Sender<AudioFrame>,
+    emit: impl Fn(LevelEvent),
+) {
+    let gate_db = level::dbfs(SILENCE_RMS);
+    let mut meter = level::Meter::default();
+    let mut tick = tokio::time::interval(LEVEL_INTERVAL);
+    tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let mut empty_ticks = 0u32;
+    let mut idle = false;
+    loop {
+        tokio::select! {
+            maybe = rx.recv() => match maybe {
+                Some(frame) => {
+                    meter.push(&frame);
+                    // A full queue drops the frame, as the capture
+                    // callback did before the meter sat in between.
+                    let _ = tx.try_send(frame);
+                }
+                None => break,
+            },
+            _ = tick.tick() => {
+                let bins = meter.take();
+                if !bins.is_empty() {
+                    empty_ticks = 0;
+                    idle = false;
+                    emit(LevelEvent { bins, gate_db });
+                } else if !idle {
+                    empty_ticks += 1;
+                    if empty_ticks >= IDLE_TICKS {
+                        idle = true;
+                        emit(LevelEvent { bins, gate_db });
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// How often the input level is sent to the window.
+const LEVEL_INTERVAL: Duration = Duration::from_millis(50);
+
+/// Level reports without audio before the input counts as absent.
+const IDLE_TICKS: u32 = 3;
+
+/// Frames buffered between the capture thread and the meter, which
+/// reads them at once.
+const TAP_QUEUE: usize = 256;
+
 /// Stop after this many chunks in a row fail, instead of repeating the
 /// same error every few seconds.
 const MAX_CONSECUTIVE_FAILURES: u32 = 3;
@@ -534,6 +609,55 @@ fn pcm16_to_bytes(samples: &[i16]) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test(start_paused = true)]
+    async fn meter_relay_forwards_frames_and_reports_level_then_absence() {
+        let (tap_tx, tap_rx) = mpsc::channel::<AudioFrame>(64);
+        let (tx, mut rx) = mpsc::channel::<AudioFrame>(64);
+        let events = Arc::new(Mutex::new(Vec::<LevelEvent>::new()));
+        let sink = events.clone();
+        let relay = tokio::spawn(meter_relay(tap_rx, tx, move |ev| sink.lock().push(ev)));
+
+        // 50 ms of a steady tone in 10 ms frames, as a capture delivers.
+        let frame: Vec<i16> = (0..160)
+            .map(|i| if i % 2 == 0 { 1000 } else { -1000 })
+            .collect();
+        for _ in 0..5 {
+            tap_tx.send(frame.clone()).await.unwrap();
+        }
+        tokio::time::sleep(Duration::from_millis(60)).await;
+        let mut forwarded = 0;
+        while rx.try_recv().is_ok() {
+            forwarded += 1;
+        }
+        assert_eq!(forwarded, 5);
+        {
+            let seen = events.lock();
+            let bins: Vec<i8> = seen.iter().flat_map(|e| e.bins.clone()).collect();
+            assert_eq!(bins, vec![-30; 2]);
+            assert!((seen[0].gate_db + 50.3).abs() < 0.1);
+        }
+
+        // Nothing plays: one empty report, then no more.
+        tokio::time::sleep(Duration::from_millis(1000)).await;
+        {
+            let seen = events.lock();
+            let empty = seen.iter().filter(|e| e.bins.is_empty()).count();
+            assert_eq!(empty, 1);
+            assert!(seen.last().unwrap().bins.is_empty());
+        }
+
+        // Audio returns, then the capture stops.
+        for _ in 0..5 {
+            tap_tx.send(frame.clone()).await.unwrap();
+        }
+        tokio::time::sleep(Duration::from_millis(60)).await;
+        assert!(!events.lock().last().unwrap().bins.is_empty());
+        drop(tap_tx);
+        relay.await.unwrap();
+        while rx.try_recv().is_ok() {}
+        assert!(rx.recv().await.is_none());
+    }
 
     #[test]
     fn silence_gate() {

@@ -183,7 +183,9 @@
     }
     if (a === 'explain') {
       const prompt = source
+        // copy-lint-ignore（LLM プロンプト）
         ? `次のテキストを簡潔に説明してください:\n\n${source}`
+        // copy-lint-ignore（LLM プロンプト）
         : `次の翻訳結果について背景を簡潔に説明してください:\n\n${translation}`;
       status = 'processing';
       statusMessage = '説明中…';
