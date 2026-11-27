@@ -9,7 +9,8 @@
 //!   restart, so the menus of a game read yesterday cost nothing today.
 //!
 //! An entry is keyed by scope (the app a window follows; empty = no
-//! app), target language and exact source paragraph, and carries a
+//! app), target language, exact source paragraph and the lines it was
+//! translated after (empty = none), and carries a
 //! fingerprint of everything that shaped its translation (engine setup,
 //! style, the glossary terms that occur in the paragraph). A lookup with
 //! another fingerprint is a miss, so a changed model or glossary term is
@@ -41,6 +42,11 @@ pub struct Lookup<'a> {
     pub scope: &'a str,
     pub target: &'a str,
     pub source: &'a str,
+    /// Digest of the lines the text was translated after
+    /// ([`crate::pipeline::CaptureFlowResult::earlier`]); empty for text
+    /// that stands alone. The same words after other lines are another
+    /// entry: they can mean something else.
+    pub context: &'a str,
     /// See [`fingerprint`].
     pub fingerprint: &'a str,
     /// Settings → storage.keep_translation_cache: read and write the
@@ -48,7 +54,7 @@ pub struct Lookup<'a> {
     pub persist: bool,
 }
 
-type Key = (String, String, String);
+type Key = (String, String, String, String);
 
 impl Lookup<'_> {
     fn key(&self) -> Key {
@@ -56,6 +62,7 @@ impl Lookup<'_> {
             self.scope.to_string(),
             self.target.trim().to_ascii_lowercase(),
             self.source.trim().to_string(),
+            self.context.to_string(),
         )
     }
 }
@@ -300,12 +307,13 @@ impl DiskCache {
                 scope TEXT NOT NULL,
                 target TEXT NOT NULL,
                 source TEXT NOT NULL,
+                context TEXT NOT NULL,
                 fingerprint TEXT NOT NULL,
                 text TEXT NOT NULL,
                 provider TEXT NOT NULL,
                 via_cloud INTEGER NOT NULL,
                 last_used INTEGER NOT NULL,
-                PRIMARY KEY (scope, target, source)
+                PRIMARY KEY (scope, target, source, context)
              ) WITHOUT ROWID;
              CREATE INDEX IF NOT EXISTS entries_last_used ON entries(last_used);",
         )?;
@@ -319,8 +327,9 @@ impl DiskCache {
         let row = db
             .query_row(
                 "SELECT text, provider, via_cloud, last_used FROM entries
-                 WHERE scope = ?1 AND target = ?2 AND source = ?3 AND fingerprint = ?4",
-                params![key.0, key.1, key.2, fingerprint],
+                 WHERE scope = ?1 AND target = ?2 AND source = ?3 AND context = ?4
+                   AND fingerprint = ?5",
+                params![key.0, key.1, key.2, key.3, fingerprint],
                 |r| {
                     Ok((
                         CachedTranslation {
@@ -337,9 +346,9 @@ impl DiskCache {
             Ok(Some((value, last_used))) => {
                 if now - last_used > Self::TOUCH_AFTER_SECS {
                     let _ = db.execute(
-                        "UPDATE entries SET last_used = ?4
-                         WHERE scope = ?1 AND target = ?2 AND source = ?3",
-                        params![key.0, key.1, key.2, now],
+                        "UPDATE entries SET last_used = ?5
+                         WHERE scope = ?1 AND target = ?2 AND source = ?3 AND context = ?4",
+                        params![key.0, key.1, key.2, key.3, now],
                     );
                 }
                 Some(value)
@@ -356,12 +365,13 @@ impl DiskCache {
         let db = self.db.lock();
         let stored = db.execute(
             "INSERT OR REPLACE INTO entries
-                (scope, target, source, fingerprint, text, provider, via_cloud, last_used)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                (scope, target, source, context, fingerprint, text, provider, via_cloud, last_used)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
             params![
                 key.0,
                 key.1,
                 key.2,
+                key.3,
                 fingerprint,
                 value.text,
                 value.provider,
@@ -388,8 +398,8 @@ impl DiskCache {
             return Ok(0);
         }
         db.execute(
-            "DELETE FROM entries WHERE (scope, target, source) IN (
-                SELECT scope, target, source FROM entries
+            "DELETE FROM entries WHERE (scope, target, source, context) IN (
+                SELECT scope, target, source, context FROM entries
                 ORDER BY last_used ASC LIMIT ?1)",
             params![count - max],
         )
@@ -471,6 +481,7 @@ mod tests {
             scope,
             target,
             source,
+            context: "",
             fingerprint: fp,
             persist: true,
         }
@@ -605,7 +616,11 @@ mod tests {
     fn trims_least_recently_used_beyond_the_limit() {
         let disk = DiskCache::open_in_memory().unwrap().with_max_entries(10);
         for i in 0..DiskCache::TRIM_EVERY {
-            disk.put(&("".into(), "ja".into(), format!("s{i}")), "f", &v("t"));
+            disk.put(
+                &("".into(), "ja".into(), format!("s{i}"), "".into()),
+                "f",
+                &v("t"),
+            );
         }
         assert_eq!(disk.usage().unwrap().entries, 10);
     }
@@ -619,6 +634,21 @@ mod tests {
         c.put(at("", "ja", "a", "f"), v("A"), true);
         c.clear_memory();
         assert_eq!(c.get(at("", "ja", "a", "f")).unwrap().text, "A");
+    }
+
+    #[test]
+    fn the_same_text_after_other_lines_is_another_entry() {
+        let c = on_disk();
+        let after = |context| Lookup {
+            context,
+            ..at("", "ja", "Left an hour ago.", "f")
+        };
+        c.put(after(""), v("出発は 1 時間前。"), true);
+        c.put(after("tom"), v("彼は 1 時間前に出た。"), true);
+        assert!(c.get(after("me")).is_none());
+        c.clear_memory();
+        assert_eq!(c.get(after("tom")).unwrap().text, "彼は 1 時間前に出た。");
+        assert_eq!(c.get(after("")).unwrap().text, "出発は 1 時間前。");
     }
 
     #[test]

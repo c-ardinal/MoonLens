@@ -228,8 +228,8 @@ impl Pipeline {
     fn cache_stamp(&self, bundle: &CaptureFlowResult) -> CacheStamp {
         let s = self.settings.snapshot();
         // What the translator is shown with the text shapes the result
-        // (who "he" is, which subject was left out): a translation made
-        // after other lines is used again only after the same lines.
+        // (who "he" is, which subject was left out): the same words after
+        // other lines are another cache entry.
         let context = if bundle.earlier.is_empty() || !self.translator_takes_context() {
             String::new()
         } else {
@@ -697,6 +697,7 @@ impl Pipeline {
                 scope: &scope,
                 target,
                 source: &b.source,
+                context: &stamp.context,
                 fingerprint: &fingerprint,
                 persist: stamp.persist,
             }) {
@@ -795,6 +796,7 @@ impl Pipeline {
                         scope: &scope,
                         target: &target_language,
                         source: &b.source,
+                        context: &stamp.context,
                         fingerprint: &fingerprint,
                         persist: stamp.persist,
                     })
@@ -958,6 +960,7 @@ impl Pipeline {
                             scope: &scope,
                             target: &target_language,
                             source,
+                            context: &stamp.context,
                             fingerprint: &fingerprint,
                             persist: stamp.persist,
                         },
@@ -1329,9 +1332,7 @@ impl CacheStamp {
     fn fingerprint(&self, source: &str, target: &str) -> String {
         let signature = self.options.signature_for(source, target);
         translation_cache::fingerprint(
-            [self.engine.as_str(), self.context.as_str()]
-                .into_iter()
-                .chain(signature.iter().map(String::as_str)),
+            std::iter::once(self.engine.as_str()).chain(signature.iter().map(String::as_str)),
         )
     }
 }
