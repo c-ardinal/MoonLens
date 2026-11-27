@@ -117,6 +117,14 @@ impl Follow {
         self
     }
 
+    /// A docked follower that is `w` × `h` already and keeps that size
+    /// along the axis its dock leaves free (height above, below and
+    /// inside the anchor, width beside it).
+    pub fn sized(mut self, w: u32, h: u32) -> Self {
+        self.size = (w, h);
+        self
+    }
+
     /// Change the header strip (the display scale changed); the next
     /// [`step`](Self::step) places the window anew.
     pub fn set_header(&mut self, header: u32) {
@@ -474,6 +482,16 @@ mod tests {
             f.step(moved, ELSEWHERE, Some(MONITOR)),
             Some(shifted(ELSEWHERE, 30, 20))
         );
+    }
+
+    #[test]
+    fn a_docked_follower_keeps_the_size_it_came_with() {
+        let mut below = Follow::new(Dock::Bottom, 1.0).sized(500, 77);
+        let at = below.step(LENS, ELSEWHERE, Some(MONITOR)).unwrap();
+        assert_eq!((at.w, at.h), (LENS.w, 77));
+        let mut beside = Follow::new(Dock::Right, 1.0).sized(123, 500);
+        let at = beside.step(LENS, ELSEWHERE, Some(MONITOR)).unwrap();
+        assert_eq!((at.w, at.h), (123, LENS.h));
     }
 
     #[test]

@@ -492,7 +492,10 @@
         const k = s?.hotkeys?.toggle_window_operate;
         operateKey = k ? displayAccelerator(k) : '';
       })
-      .catch(() => {});
+      .catch(() => {})
+      // Also when the view could not be read: the window then runs in
+      // its default view instead of never starting.
+      .finally(() => (viewReady = true));
     try {
       // Only this window's events: with several windows open, the global
       // `listen` would also paint the other windows' results here.

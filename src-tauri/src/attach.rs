@@ -148,11 +148,15 @@ pub fn attach(
     }
     let scale = win.scale_factor().unwrap_or(1.0);
     let mut follow = Follow::new(dock, scale).with_header(header_px(header_css, scale));
-    if dock == Dock::Free {
-        // Free placement keeps the window where it is on its target.
-        if let Ok(at) = lens::inner_rect(&win) {
-            follow = follow.keeping(target.rect, at);
-        }
+    if let Ok(at) = lens::inner_rect(&win) {
+        follow = match dock {
+            // Free placement keeps the window where it is on its target.
+            Dock::Free => follow.keeping(target.rect, at),
+            Dock::Cover => follow,
+            // A dock keeps the size the window has (one restored from a
+            // layout set comes at its saved size).
+            _ => follow.sized(at.w, at.h),
+        };
     }
     let serial = registry.serial.fetch_add(1, Ordering::Relaxed) + 1;
     let was_hidden = registry
