@@ -131,10 +131,21 @@ fn png_dimensions(png: &[u8]) -> Option<(u32, u32)> {
     Some((w, h))
 }
 
+/// Least time a local explain / summarize request gets. The general
+/// model (about 5 GB) is loaded on the first request, not at launch, and
+/// the answer is free text whose length does not follow the input: the
+/// chain's 10 s ran out during the load itself.
+const LOCAL_ASSIST_MIN_MS: u64 = 180_000;
+
+/// Time a local explain / summarize request gets per prompt character
+/// (reading the prompt), on top of [`LOCAL_ASSIST_MIN_MS`].
+const LOCAL_ASSIST_MS_PER_CHAR: u64 = 40;
+
 /// Timeout for one provider call. Local translation scales with the
 /// text length (generation time grows with it), local OCR with the image
-/// area; everything else, and any cloud provider, keeps the chain's
-/// fixed timeout.
+/// area, local explain / summarize get the time a model load plus a free
+/// text answer needs; everything else, and any cloud provider, keeps the
+/// chain's fixed timeout.
 pub fn effective_timeout(chain_ms: u32, input: &TaskInput, is_local: bool) -> Duration {
     let floor = u64::from(chain_ms);
     let ms = match input {
@@ -147,6 +158,9 @@ pub fn effective_timeout(chain_ms: u32, input: &TaskInput, is_local: bool) -> Du
             }
             None => floor,
         },
+        TaskInput::Explain { prompt: text, .. } | TaskInput::Summarize { text } if is_local => {
+            floor.max(LOCAL_ASSIST_MIN_MS + text.chars().count() as u64 * LOCAL_ASSIST_MS_PER_CHAR)
+        }
         _ => floor,
     };
     Duration::from_millis(ms)
