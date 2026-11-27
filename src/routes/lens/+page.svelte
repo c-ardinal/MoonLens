@@ -23,12 +23,15 @@
     setLensInteractive,
     setLensOperate,
     setLensLanguage,
+    setLensReadMode,
     setLensTextDock,
     windowAttachment,
     type CaptureFlowResult,
-    type LensBlock
+    type LensBlock,
+    type LensDescriptor,
+    type LensReadMode
   } from '$lib/ipc';
-  import { joinedText, languageLabel, rgb } from '$lib/lens-overlay';
+  import { joinedText, languageLabel, maskClip, rgb } from '$lib/lens-overlay';
   import { liveBoxes, liveText, type LensLiveEvent } from '$lib/live';
   import {
     TEXT_COMMAND_EVENT,
@@ -83,6 +86,7 @@
   let explanation = $state<string | null>(null);
   let sourceLanguage = $state<string | null>(null);
   let targetLanguage = $state('ja');
+  let readMode = $state<LensReadMode>('subtitle');
   let dpr = $state(typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1);
   let vw = $state(typeof window !== 'undefined' ? window.innerWidth : 0);
   const boxes = $derived(liveBoxes(blocks, hidden, dpr, vw * dpr));
@@ -207,6 +211,11 @@
     await setLensLanguage(id, code).catch(() => {});
     // One-off mode: nothing re-reads on its own.
     if (!continuous) refresh();
+  }
+
+  function changeReadMode(mode: LensReadMode) {
+    readMode = mode;
+    setLensReadMode(id, mode).catch(() => {});
   }
 
   async function explain() {
@@ -346,9 +355,10 @@
     });
     // Language: the one this lens was opened with, else the configured one.
     Promise.all([listLensWindows(), getSettings()])
-      .then(([lenses, s]: [{ id: string; target_language: string | null }[], any]) => {
-        targetLanguage =
-          lenses.find((l) => l.id === id)?.target_language ?? s?.subtitle?.target_language ?? 'ja';
+      .then(([lenses, s]: [LensDescriptor[], any]) => {
+        const me = lenses.find((l) => l.id === id);
+        targetLanguage = me?.target_language ?? s?.subtitle?.target_language ?? 'ja';
+        readMode = me?.read_mode ?? 'subtitle';
         const k = s?.hotkeys?.toggle_window_operate;
         operateKey = k ? displayAccelerator(k) : '';
       })
@@ -443,6 +453,8 @@
       {showOriginal}
       {showText}
       {targetLanguage}
+      {readMode}
+      onreadmode={changeReadMode}
       {hasText}
       busy={working}
       oncontinuous={() => (continuous = !continuous)}
@@ -493,7 +505,8 @@
           class:pending={b.pending}
           style="left: {b.rect.left}px; top: {b.rect.top}px; width: {b.rect.width}px; height: {b.rect.height}px;
                  background: {rgb(b.block.colors?.background, 'rgba(255,255,255,0.96)')};
-                 color: {rgb(b.block.colors?.foreground, '#111')};"
+                 color: {rgb(b.block.colors?.foreground, '#111')};
+                 clip-path: {maskClip(b.block, dpr) || 'none'};"
         >
           {#if !b.pending}
             <FlowText
