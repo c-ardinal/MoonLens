@@ -632,8 +632,8 @@ impl Pipeline {
         //    unknown regions.
         let lines = self.read_lines(image_png).await?;
         let bundle = match visible {
-            Some(v) => self.lay_out(&img, &v.keep_lines(lines.clone()), visible),
-            None => self.lay_out(&img, &lines, None),
+            Some(v) => self.blocks_of(&img, &v.keep_lines(lines.clone()), visible, false),
+            None => self.blocks_of(&img, &lines, None, false),
         };
         Ok((bundle, lines))
     }
@@ -697,6 +697,18 @@ impl Pipeline {
         lines: &[OcrLine],
         visible: Option<Visible>,
     ) -> CaptureFlowResult {
+        self.blocks_of(img, lines, visible, true)
+    }
+
+    /// [`Self::lay_out`]. `in_view_only`: drop paragraphs with no row
+    /// in view (lines of one reading all are).
+    fn blocks_of(
+        &self,
+        img: &image::DynamicImage,
+        lines: &[OcrLine],
+        visible: Option<Visible>,
+        in_view_only: bool,
+    ) -> CaptureFlowResult {
         // Cheap heuristic classifier. A plugin-provided classifier can
         // override through the `intent_classifier` chain in future work.
         let stats = intent::image_stats(img);
@@ -713,10 +725,11 @@ impl Pipeline {
         let (view_top, view_bottom) =
             visible.map_or((0.0, height), |v| (v.y as f32, v.y as f32 + v.h as f32));
         text_blocks.retain(|b| {
-            b.lines
-                .iter()
-                .chain(std::iter::once(&b.bbox).filter(|_| b.lines.is_empty()))
-                .any(|r| r[1] + r[3] / 2.0 >= view_top && r[1] + r[3] / 2.0 <= view_bottom)
+            !in_view_only
+                || b.lines
+                    .iter()
+                    .chain(std::iter::once(&b.bbox).filter(|_| b.lines.is_empty()))
+                    .any(|r| r[1] + r[3] / 2.0 >= view_top && r[1] + r[3] / 2.0 <= view_bottom)
         });
         let ocr_text = layout::join_blocks(&text_blocks);
         let image_size = Some(visible.map_or([img.width(), img.height()], |v| [v.w, v.h]));
