@@ -106,6 +106,7 @@ fn capture(texts: &[&str], earlier: &[(&str, &str)]) -> CaptureFlowResult {
                 align: Default::default(),
                 bold: false,
                 lines: Vec::new(),
+                row_limits: Vec::new(),
             })
             .collect(),
         image_size: None,

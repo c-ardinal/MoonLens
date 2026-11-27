@@ -69,6 +69,7 @@ macro_rules! all_commands {
             ipc::macos_request_screen_capture,
             ipc::open_lens,
             ipc::set_lens_language,
+            ipc::set_lens_read_mode,
             ipc::set_lens_interactive,
             ipc::set_lens_operate,
             ipc::set_lens_text_dock,
@@ -154,6 +155,7 @@ pub fn build() -> Result<()> {
                     // or font changes, whether saved here or edited on disk.
                     let _ = reload_handle.emit("moonlens://settings-changed", &*snapshot);
                     let state = reload_handle.state::<AppState>();
+                    crate::lens::apply_capture_visibility(&reload_handle, &state.lenses);
                     if let Err(e) = state.storage.apply_retention(
                         snapshot.storage.retention_days,
                         snapshot.storage.max_entries,
