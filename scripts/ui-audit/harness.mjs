@@ -131,6 +131,16 @@ const IMAGE_RESULT = {
     result: { task: 'translate', output: { Text: IMAGE_BLOCKS.map((b) => b.translation).join('\n') }, used_provider: 'PLaMo', via_cloud: false, latency_ms: 2140, fallback_reasons: [] }
   }
 };
+/** ファイル字幕の進行通知：長時間・長名称のファイル、字幕 12 件（長文を含む）。 */
+const FILE_STATUS = { phase: 'running', name: 'conference-keynote-2026-11-27-full-recording-1080p.mp4', duration_ms: 3 * 3600_000 + 754_000, done_ms: 3600_000 + 125_000, cues: 12, error: null };
+const FILE_UPDATES = Array.from({ length: 12 }, (_, i) => ({
+  status: { ...FILE_STATUS, cues: i + 1 },
+  cue: {
+    start_ms: 3600_000 + i * 9_000, end_ms: 3600_000 + i * 9_000 + 8_000,
+    original: i % 3 ? 'And so, my fellow Americans, ask not what your country can do for you.' : 'We are excited to announce the reopening of the restaurant after extensive renovations, with a modern design and a farm-to-table concept starting next month.',
+    translated: i % 4 === 3 ? '' : 'そして、同胞であるアメリカ国民の皆さん、国が皆さんのために何を成し得るかを問うのではありません。'
+  }
+}));
 /** 画像翻訳の入力画像（900×700、白地に罫線）。ページ内の Canvas で生成。 */
 const imageFile = async (pg) => ({
   name: 'image.png', mimeType: 'image/png',
@@ -145,6 +155,7 @@ const imageFile = async (pg) => ({
 /**
  * メインウィンドウの全状態を巡回し、各状態で visit(page, 状態名) を実行。
  * 状態：ホーム・パレット・テキスト翻訳（結果・通知・右クリックメニュー）・画像翻訳（空・結果）・
+ * ファイル字幕（空・生成中・完了・失敗）・
  * 履歴（音声翻訳の記録・通知・確認）・初期設定（許諾確認を含む）・設定の全分類（許諾確認を含む）。
  */
 export async function walkMain(browser, url, { textSize = 'medium', width = 1280, height = 800, scale = 1, lang = 'ja' } = {}, visit) {
@@ -162,6 +173,11 @@ export async function walkMain(browser, url, { textSize = 'medium', width = 1280
   await pg.close();
   pg = await open('/image/'); await visit(pg, 'image');
   await reach('image-result', async () => { await pg.locator('input[type=file]').setInputFiles(await imageFile(pg)); await pg.getByText('Phone: 555-0123').first().waitFor({ timeout: 5000 }); await wait(pg, 300); }); await visit(pg, 'image-result');
+  await pg.close();
+  pg = await open('/file/'); await visit(pg, 'file');
+  await reach('file-running', async () => { await pg.evaluate((updates) => updates.forEach((u) => window.__emit('moonlens://file-subtitle', u)), FILE_UPDATES); await pg.locator('ol li').nth(FILE_UPDATES.length - 1).waitFor({ timeout: 2000 }); }); await visit(pg, 'file-running');
+  await reach('file-done', async () => { await pg.evaluate((u) => window.__emit('moonlens://file-subtitle', u), { status: { ...FILE_STATUS, phase: 'done', done_ms: FILE_STATUS.duration_ms }, cue: null }); await pg.getByRole('button', { name: l('file-subtitle:save_srt') }).waitFor({ timeout: 2000 }); }); await visit(pg, 'file-done');
+  await reach('file-failed', async () => { await pg.evaluate((u) => window.__emit('moonlens://file-subtitle', u), { status: { ...FILE_STATUS, phase: 'failed', error: l('subtitle:speech_recognition_model_not_downloaded') }, cue: null }); await pg.getByRole('alert').waitFor({ timeout: 2000 }); }); await visit(pg, 'file-failed');
   await pg.close();
   pg = await open('/history/'); await visit(pg, 'history');
   await reach('history-subtitle', async () => { await pg.locator('li button').filter({ hasText: l('common:audio_translation') }).first().click({ timeout: 2000 }); await pg.getByText(l('subtitle-record-detail:audio_source').split('{')[0]).first().waitFor({ timeout: 2000 }); await wait(pg, 300); }); await visit(pg, 'history-subtitle');

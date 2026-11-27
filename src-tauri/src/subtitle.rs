@@ -1057,7 +1057,7 @@ const MIN_FLUSH_SAMPLES: usize = 8_000;
 /// RMS level below which a chunk counts as silence (about -50 dBFS).
 const SILENCE_RMS: f64 = 100.0;
 
-fn is_silent(samples: &[i16]) -> bool {
+pub(crate) fn is_silent(samples: &[i16]) -> bool {
     if samples.is_empty() {
         return true;
     }
@@ -1065,7 +1065,7 @@ fn is_silent(samples: &[i16]) -> bool {
     (sum / samples.len() as f64).sqrt() < SILENCE_RMS
 }
 
-fn pcm16_to_bytes(samples: &[i16]) -> Vec<u8> {
+pub(crate) fn pcm16_to_bytes(samples: &[i16]) -> Vec<u8> {
     let mut out = Vec::with_capacity(samples.len() * 2);
     for s in samples {
         out.extend_from_slice(&s.to_le_bytes());

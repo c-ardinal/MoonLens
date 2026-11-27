@@ -126,7 +126,7 @@
     }
   }
 
-  /** 魔法陣の 4 機能。順序は数字キー（1〜4）と一致。 */
+  /** 魔法陣の 5 機能。順序は数字キー（1〜5）と一致。 */
   const functions = $derived([
     {
       label: t('common:window'),
@@ -151,6 +151,14 @@
       desc: t('home:translates_typed_text_with_glossary_and'),
       hotkey: '',
       run: () => goto('/translate/')
+    },
+    {
+      label: t('common:file'),
+      title: t('common:file_subtitles'),
+      icon: 'film',
+      desc: t('home:subtitles_for_video_and_audio_files'),
+      hotkey: '',
+      run: () => goto('/file/')
     },
     {
       label: t('common:audio'),

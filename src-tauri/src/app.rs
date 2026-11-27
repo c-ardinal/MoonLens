@@ -115,6 +115,11 @@ macro_rules! all_commands {
             ipc::get_subtitle_record,
             ipc::replace_subtitle_lines,
             ipc::export_subtitle_record,
+            ipc::pick_media_file,
+            ipc::start_file_subtitle,
+            ipc::cancel_file_subtitle,
+            ipc::file_subtitle_status,
+            ipc::export_file_subtitle,
             ipc::clear_history,
             ipc::translation_cache_usage,
             ipc::clear_translation_cache,
@@ -141,6 +146,7 @@ pub struct AppState {
     pub plugins: Arc<PluginRegistry>,
     pub pipeline: Arc<Pipeline>,
     pub subtitle: Arc<SubtitleService>,
+    pub file_subtitle: Arc<crate::file_subtitle::FileSubtitleService>,
     pub lenses: LensRegistryHandle,
     /// Background watcher that re-reads `config.toml` when the user
     /// edits it outside of the app. Held here so its thread stays alive
@@ -254,6 +260,11 @@ pub fn build() -> Result<()> {
                 pipeline.clone(),
                 storage.clone(),
             ));
+            let file_subtitle = Arc::new(crate::file_subtitle::FileSubtitleService::new(
+                settings.clone(),
+                pipeline.clone(),
+                storage.clone(),
+            ));
             let lenses: LensRegistryHandle = Arc::new(LensRegistry::new());
 
             crate::model_idle::spawn(
@@ -289,6 +300,7 @@ pub fn build() -> Result<()> {
                 plugins,
                 pipeline,
                 subtitle,
+                file_subtitle,
                 lenses,
                 _settings_watcher: settings_watcher,
             });

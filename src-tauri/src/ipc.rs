@@ -1180,6 +1180,111 @@ pub async fn export_subtitle_record(
     Ok(Some(path.to_string_lossy().to_string()))
 }
 
+/// Extensions offered by the file dialog of file subtitles. Other
+/// files can still be dropped: the content decides, not the name.
+const MEDIA_EXTENSIONS: &[&str] = &[
+    "mp4", "m4v", "mov", "mkv", "webm", "mp3", "m4a", "aac", "wav", "flac", "ogg", "oga", "aiff",
+    "aif", "caf",
+];
+
+/// 字幕生成の対象ファイルを選択。取消は `None`。
+#[tauri::command]
+pub async fn pick_media_file(app: AppHandle) -> Result<Option<String>, String> {
+    use tauri_plugin_dialog::DialogExt;
+    let dialog = app.dialog().clone();
+    let label = crate::tr!("file-subtitle:video_and_audio_files");
+    let chosen = tokio::task::spawn_blocking(move || {
+        dialog
+            .file()
+            .add_filter(label, MEDIA_EXTENSIONS)
+            .blocking_pick_file()
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+    let Some(file) = chosen else { return Ok(None) };
+    let path = file.into_path().map_err(|e| e.to_string())?;
+    Ok(Some(path.to_string_lossy().to_string()))
+}
+
+/// ファイルの字幕生成を開始。進行は `moonlens://file-subtitle` で通知。
+#[tauri::command]
+pub async fn start_file_subtitle(
+    path: String,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<crate::file_subtitle::Status, String> {
+    state.subtitle.preflight().await?;
+    let notify = std::sync::Arc::new(move |update: crate::file_subtitle::Update| {
+        if update.status.phase != crate::file_subtitle::Phase::Running {
+            release_speech_model(&app);
+        }
+        let _ = app.emit(crate::file_subtitle::EVENT, update);
+    });
+    state
+        .file_subtitle
+        .start(std::path::Path::new(&path), notify)
+}
+
+/// The file job ended: give back the ~1 GB the speech model holds,
+/// unless live subtitles are recognizing with it. Off this thread: it
+/// waits for an aborted decode to wind down.
+fn release_speech_model(app: &AppHandle) {
+    if !app.state::<AppState>().subtitle.is_running() {
+        std::thread::spawn(crate::providers::asr_local::release);
+    }
+}
+
+#[tauri::command]
+pub async fn cancel_file_subtitle(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<crate::file_subtitle::Status, String> {
+    let status = state.file_subtitle.cancel();
+    release_speech_model(&app);
+    Ok(status)
+}
+
+#[tauri::command]
+pub async fn file_subtitle_status(
+    state: State<'_, AppState>,
+) -> Result<crate::file_subtitle::Status, String> {
+    Ok(state.file_subtitle.status())
+}
+
+/// 生成済みの字幕を SRT・テキストで保存（中止・失敗時は途中まで）。
+/// 保存先ダイアログの取消は `None`。
+#[tauri::command]
+pub async fn export_file_subtitle(
+    format: crate::subtitle_record::ExportFormat,
+    content: crate::subtitle_record::ExportContent,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<Option<String>, String> {
+    use tauri_plugin_dialog::DialogExt;
+    let export = state.file_subtitle.export(format, content);
+    let label = match format {
+        crate::subtitle_record::ExportFormat::Srt => crate::tr!("ipc:srt_subtitles"),
+        crate::subtitle_record::ExportFormat::Txt => crate::tr!("common:text"),
+    };
+    let dialog = app.dialog().clone();
+    let chosen = tokio::task::spawn_blocking(move || {
+        let mut dialog = dialog
+            .file()
+            .set_file_name(export.name)
+            .add_filter(label, &[format.extension()]);
+        if let Some(folder) = export.folder {
+            dialog = dialog.set_directory(folder);
+        }
+        dialog.blocking_save_file()
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+    let Some(file) = chosen else { return Ok(None) };
+    let path = file.into_path().map_err(|e| e.to_string())?;
+    std::fs::write(&path, export.text).map_err(|e| e.to_string())?;
+    Ok(Some(path.to_string_lossy().to_string()))
+}
+
 #[tauri::command]
 pub async fn clear_history(state: State<'_, AppState>) -> Result<usize, String> {
     state.storage.clear_all().map_err(|e| e.to_string())

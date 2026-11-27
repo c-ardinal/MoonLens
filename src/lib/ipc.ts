@@ -691,6 +691,28 @@ export const exportSubtitleRecord = (
   content: SubtitleExportContent
 ) => safeInvoke<string | null>('export_subtitle_record', { id, format, content }, null);
 
+/** 字幕生成の対象ファイルを選択。取消は null。 */
+export const pickMediaFile = () => safeInvoke<string | null>('pick_media_file', undefined, null);
+
+/** ファイルの字幕生成を開始。進行は `onFileSubtitle` で受信。 */
+export const startFileSubtitle = (path: string) =>
+  safeInvoke<import('./file-subtitle').FileSubtitleStatus>('start_file_subtitle', { path });
+
+export const cancelFileSubtitle = () =>
+  safeInvoke<import('./file-subtitle').FileSubtitleStatus>('cancel_file_subtitle');
+
+export const fileSubtitleStatus = () =>
+  safeInvoke<import('./file-subtitle').FileSubtitleStatus | null>('file_subtitle_status', undefined, null);
+
+/** 生成済みの字幕の書出し。戻り値は保存先、保存先の選択を取消した場合は null。 */
+export const exportFileSubtitle = (format: SubtitleExportFormat, content: SubtitleExportContent) =>
+  safeInvoke<string | null>('export_file_subtitle', { format, content }, null);
+
+export const onFileSubtitle = (
+  handler: (update: import('./file-subtitle').FileSubtitleUpdate) => void
+): Promise<UnlistenFn> =>
+  listen<import('./file-subtitle').FileSubtitleUpdate>('moonlens://file-subtitle', (e) => handler(e.payload));
+
 export const clearHistory = () => safeInvoke<number>('clear_history', undefined, 0);
 
 /** 訳文キャッシュの使用量（端末内保存分）。 */
