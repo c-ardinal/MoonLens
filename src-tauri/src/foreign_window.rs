@@ -75,7 +75,7 @@ pub fn probe(id: u64) -> Probe {
 
     #[repr(C)]
     #[derive(Default)]
-    struct RECT {
+    struct Bounds {
         left: i32,
         top: i32,
         right: i32,
@@ -86,7 +86,7 @@ pub fn probe(id: u64) -> Probe {
         fn IsWindow(hwnd: *mut c_void) -> i32;
         fn IsWindowVisible(hwnd: *mut c_void) -> i32;
         fn IsIconic(hwnd: *mut c_void) -> i32;
-        fn GetWindowRect(hwnd: *mut c_void, rect: *mut RECT) -> i32;
+        fn GetWindowRect(hwnd: *mut c_void, rect: *mut Bounds) -> i32;
     }
     #[link(name = "dwmapi")]
     extern "system" {
@@ -122,12 +122,12 @@ pub fn probe(id: u64) -> Probe {
         }
         // The frame as drawn: `GetWindowRect` adds the invisible resize
         // border of Windows 10 and later.
-        let mut r = RECT::default();
+        let mut r = Bounds::default();
         let got = DwmGetWindowAttribute(
             hwnd,
             DWMWA_EXTENDED_FRAME_BOUNDS,
             (&raw mut r).cast(),
-            std::mem::size_of::<RECT>() as u32,
+            std::mem::size_of::<Bounds>() as u32,
         );
         if got != 0 && GetWindowRect(hwnd, &raw mut r) == 0 {
             return Probe::Gone;
