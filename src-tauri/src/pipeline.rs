@@ -411,26 +411,31 @@ impl Pipeline {
     }
 
     /// Load what reading the screen needs (the translation model and
-    /// the first local text recogniser) in the background: both may
+    /// the first installed local text recogniser) in the background: both may
     /// have been freed while unused (see [`crate::model_idle`]), and a
     /// window that opens should not wait for them at its first reading.
     pub fn preload_for_reading(&self) {
         self.preload_local_llm();
         let s = self.settings.snapshot();
         let providers = self.providers.read();
-        let ocr = pick_chain(&s, Capability::Ocr)
+        // In chain order, as `run` falls through: the first local
+        // recogniser that loads is the one a reading will use.
+        let chain: Vec<ProviderHandle> = pick_chain(&s, Capability::Ocr)
             .chain
             .iter()
             .filter_map(|id| providers.get(id))
-            .find(|p| p.is_local())
-            .cloned();
-        if let Some(p) = ocr {
-            tauri::async_runtime::spawn(async move {
-                if let Err(e) = p.warm_up().await {
-                    tracing::warn!("loading {} ahead of use failed: {e}", p.id());
+            .filter(|p| p.is_local())
+            .cloned()
+            .collect();
+        tauri::async_runtime::spawn(async move {
+            for p in chain {
+                match p.warm_up().await {
+                    Ok(()) => break,
+                    Err(ProviderError::NotInstalled(_)) => {}
+                    Err(e) => tracing::warn!("loading {} ahead of use failed: {e}", p.id()),
                 }
-            });
-        }
+            }
+        });
     }
 
     /// Run a task through the configured chain, respecting privacy gates,

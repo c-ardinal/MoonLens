@@ -309,6 +309,18 @@ impl Provider for OcrsProvider {
         true
     }
 
+    async fn warm_up(&self) -> Result<(), ProviderError> {
+        #[cfg(feature = "ocrs-engine")]
+        if model_paths(&self.models_dir).is_some() {
+            let dir = self.models_dir.clone();
+            return tokio::task::spawn_blocking(move || engine_for(&dir).map(|_| ()))
+                .await
+                .map_err(|e| ProviderError::Other(e.to_string()))?
+                .map_err(|e| ProviderError::Other(format!("{e:#}")));
+        }
+        Err(ProviderError::NotInstalled("ocrs".into()))
+    }
+
     async fn run(&self, input: TaskInput) -> Result<TaskOutput, ProviderError> {
         let TaskInput::Ocr { image_png, .. } = input else {
             return Err(ProviderError::Other("OcrsProvider handles Ocr only".into()));

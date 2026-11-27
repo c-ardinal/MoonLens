@@ -1701,12 +1701,13 @@ impl Provider for PpOcrProvider {
                 backend: self.params.backend,
                 gpu: self.use_gpu,
             };
-            tokio::task::spawn_blocking(move || engine::engine_for(&dir, want).map(|_| ()))
+            return tokio::task::spawn_blocking(move || engine::engine_for(&dir, want).map(|_| ()))
                 .await
                 .map_err(|e| ProviderError::Other(e.to_string()))?
-                .map_err(|e| ProviderError::Other(format!("{e:#}")))?;
+                .map_err(|e| ProviderError::Other(format!("{e:#}")));
         }
-        Ok(())
+        // The caller warms the next recogniser of the chain instead.
+        Err(ProviderError::NotInstalled("PP-OCR".into()))
     }
 
     async fn run(&self, input: TaskInput) -> Result<TaskOutput, ProviderError> {
