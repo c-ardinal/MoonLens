@@ -90,6 +90,8 @@ macro_rules! all_commands {
             ipc::set_lens_insets,
             ipc::set_lens_continuous,
             ipc::refresh_lens,
+            ipc::toggle_lens_pause,
+            ipc::lens_controls,
             ipc::fit_lens,
             ipc::restore_lens,
             ipc::capture_lens_now,
@@ -279,6 +281,13 @@ pub fn build() -> Result<()> {
 fn build_tray(app: &AppHandle) -> Result<()> {
     let open = MenuItem::with_id(app, "open", "MoonLens 表示", true, None::<&str>)?;
     let capture = MenuItem::with_id(app, "capture", "ウィンドウ翻訳", true, None::<&str>)?;
+    let pause = MenuItem::with_id(
+        app,
+        "pause",
+        "ウィンドウ翻訳 一時停止／再開",
+        true,
+        None::<&str>,
+    )?;
     let subtitle = MenuItem::with_id(app, "subtitle", "音声翻訳 開始／停止", true, None::<&str>)?;
     let plugins = MenuItem::with_id(app, "plugins", "拡張機能", true, None::<&str>)?;
     let history = MenuItem::with_id(app, "history", "履歴", true, None::<&str>)?;
@@ -287,7 +296,9 @@ fn build_tray(app: &AppHandle) -> Result<()> {
 
     let menu = Menu::with_items(
         app,
-        &[&open, &capture, &subtitle, &plugins, &history, &sep, &quit],
+        &[
+            &open, &capture, &pause, &subtitle, &plugins, &history, &sep, &quit,
+        ],
     )?;
 
     TrayIconBuilder::with_id("moonlens-tray")
@@ -301,6 +312,10 @@ fn build_tray(app: &AppHandle) -> Result<()> {
         .on_menu_event(move |app, event| match event.id.as_ref() {
             "open" => show_main_window(app),
             "capture" => crate::lens::open_new(app),
+            "pause" => {
+                let state = app.state::<AppState>();
+                crate::lens::toggle_pause(app, &state.lenses);
+            }
             "subtitle" => {
                 let state = app.state::<AppState>();
                 state.subtitle.toggle_checked(app);

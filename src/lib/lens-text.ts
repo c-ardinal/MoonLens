@@ -52,7 +52,11 @@ export interface TextView {
   source: string | null;
   explanation: Explanation | null;
   placement: TextPlacement;
+  /** 全ウィンドウ共通の状態。`original`：原文表示キーの押下中（原文のみ表示）、`paused`：一時停止中（内容は非表示）。 */
+  mode?: TextMode;
 }
+
+export type TextMode = 'normal' | 'original' | 'paused';
 
 /** ウィンドウ外表示から本体への操作。 */
 export type TextCommand =
