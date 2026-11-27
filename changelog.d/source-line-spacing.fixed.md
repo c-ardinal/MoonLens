@@ -1,0 +1,4 @@
+- Window translation (and image translation) keeps the line spacing of the source in more layouts: a paragraph is no longer cut in the middle when one of its rows ends short of the others, and widely spaced text (line height around 2) is no longer handled one row at a time. The translation of a paragraph now flows over all of its rows.
+- Headings and speaker names above a paragraph, and the items of a bulleted or numbered list, are translated and placed separately instead of running into the neighbouring text.
+- Paragraphs of the same body text get the same font size.
+- Rows that stand beside a picture end at the picture: the translation and its background no longer cover the part of the picture next to them, and the text colour is no longer taken from the picture.

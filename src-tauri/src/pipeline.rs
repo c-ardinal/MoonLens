@@ -585,13 +585,19 @@ impl Pipeline {
         let mut blocks: Vec<LensBlock> = text_blocks
             .iter()
             .map(|b| {
-                let colors = (b.bbox[2] > 0.0).then(|| layout::estimate_colors(&rgba, b.bbox));
+                // Colours and stroke weight are read from one row: the
+                // box of a paragraph may also hold a picture beside it.
+                let sample = layout::sample_row(b);
+                let colors = (b.bbox[2] > 0.0).then(|| layout::estimate_colors(&rgba, sample));
                 let bold = colors.is_some_and(|c| {
                     layout::looks_bold(
                         &b.text,
-                        layout::stroke_ratio(&rgba, b.bbox, c, b.line_height),
+                        layout::stroke_ratio(&rgba, sample, c, b.line_height),
                     )
                 });
+                let row_limits = colors
+                    .map(|c| layout::row_limits(&rgba, b, c.background))
+                    .unwrap_or_default();
                 LensBlock {
                     bbox: b.bbox,
                     line_height: b.line_height,
@@ -603,6 +609,7 @@ impl Pipeline {
                     align: b.align,
                     bold,
                     lines: b.lines.clone(),
+                    row_limits,
                 }
             })
             .collect();
@@ -1095,6 +1102,11 @@ pub struct LensBlock {
     /// pixels), top to bottom. The overlay lays the translation over them.
     #[serde(default)]
     pub lines: Vec<[f32; 4]>,
+    /// Right edge (captured-image px) the text of each row may reach.
+    /// Set only when a picture stands beside some rows of the block, so
+    /// the overlay keeps the translation and its mask off the picture.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub row_limits: Vec<f32>,
 }
 
 impl LensBlock {

@@ -117,7 +117,19 @@ impl Visible {
                 return false;
             };
             b.bbox = bbox;
-            b.lines = b.lines.iter().filter_map(|l| self.local(*l)).collect();
+            // `row_limits` runs parallel to `lines`: a row that takes no
+            // place in the window takes its limit along.
+            let limited = b.row_limits.len() == b.lines.len();
+            let rows = std::mem::take(&mut b.lines);
+            let limits = std::mem::take(&mut b.row_limits);
+            for (i, row) in rows.into_iter().enumerate() {
+                let Some(row) = self.local(row) else { continue };
+                b.lines.push(row);
+                if limited {
+                    b.row_limits
+                        .push((limits[i] - self.x as f32).clamp(0.0, self.w as f32));
+                }
+            }
             true
         });
     }
@@ -151,6 +163,7 @@ mod tests {
             align: Default::default(),
             bold: false,
             lines,
+            row_limits: vec![],
         }
     }
 
@@ -298,6 +311,25 @@ mod tests {
             h: 10,
         };
         assert!(off.crop(&capture).is_none());
+    }
+
+    #[test]
+    fn row_limits_follow_their_rows_into_the_window() {
+        let v = window();
+        let mut b = block(
+            [5.0, 20.0, 250.0, 60.0],
+            vec![
+                [5.0, 20.0, 250.0, 20.0],
+                [5.0, 40.0, 100.0, 20.0],
+                [5.0, 60.0, 20.0, 20.0],
+            ],
+        );
+        b.row_limits = vec![255.0, 130.0, 25.0];
+        let mut blocks = vec![b];
+        v.to_window(&mut blocks);
+        // The third row lies outside; the first limit ends at the frame.
+        assert_eq!(blocks[0].lines.len(), 2);
+        assert_eq!(blocks[0].row_limits, [200.0, 100.0]);
     }
 
     #[test]
