@@ -5,8 +5,9 @@
 //! its region to a [`Tracker`] at every tick
 //! (`performance.region_watcher_poll_ms`):
 //!
-//! 1. Capture the region and reduce it to a small greyscale thumbnail.
-//!    Unchanged pixels cost nothing more.
+//! 1. Capture the region (a little wider than the window, see
+//!    [`crate::scan_margin`]) and reduce it to a small greyscale
+//!    thumbnail. Unchanged pixels cost nothing more.
 //! 2. When pixels change, translations whose source area changed are
 //!    hidden at once ([`LiveEvent::Stale`]), so an outdated translation
 //!    never sits over new text while OCR runs.
@@ -35,6 +36,7 @@ use crate::{
     capture,
     pipeline::{CaptureFlowResult, LensBlock, Pipeline, TranslationProgress},
     providers::{Capability, TaskOutput},
+    scan_margin::Visible,
     translate_plan, user_error,
 };
 
@@ -131,6 +133,10 @@ pub type Geometry = [i32; 4];
 pub struct Frame {
     pub image: DynamicImage,
     pub geometry: Geometry,
+    /// Where the region lies in `image` when the capture was taken
+    /// wider than the region (see [`crate::scan_margin`]). `None`: the
+    /// image is the region.
+    pub visible: Option<Visible>,
 }
 
 /// What the caller supplies to [`Tracker::tick`].
@@ -277,6 +283,7 @@ impl Tracker {
             self.carried_for = (env.mode, env.target_language.to_string());
             self.carried.clear();
         }
+        let visible = frame.visible;
         let thumb = Thumb::of(&frame.image);
         let previous = self.last_thumb.replace(thumb.clone());
         let changed = previous
@@ -306,8 +313,11 @@ impl Tracker {
                 .iter()
                 .enumerate()
                 .filter(|(i, b)| {
+                    // Blocks are placed in the region, thumbnails cover
+                    // the whole capture.
+                    let bbox = frame.visible.map_or(b.bbox, |v| v.in_capture(b.bbox));
                     !self.shown.stale.contains(i)
-                        && base.changed_share(&thumb, Some(b.bbox)) >= BLOCK_CHANGED
+                        && base.changed_share(&thumb, Some(bbox)) >= BLOCK_CHANGED
                 })
                 .map(|(i, _)| i)
                 .collect();
@@ -325,7 +335,7 @@ impl Tracker {
             waiting => {
                 let png = capture::png_bytes(&frame.image).map_err(|e| e.to_string())?;
                 (env.emit)(LiveEvent::Reading { on: true });
-                let analyzed = env.pipeline.analyze_capture(png).await;
+                let analyzed = env.pipeline.analyze_capture_in(png, frame.visible).await;
                 (env.emit)(LiveEvent::Reading { on: false });
                 match analyzed {
                     Ok(bundle) => (bundle, waiting.map(|p| p.key)),
@@ -379,7 +389,7 @@ impl Tracker {
             // over it, now or while this text stays. A refresh tries anew.
             if !force {
                 keep_plain(&self.shown.blocks, &mut blocks);
-                drop_moving_erase(&mut blocks, self.shown.erase_base.as_ref(), &thumb);
+                drop_moving_erase(&mut blocks, visible, self.shown.erase_base.as_ref(), &thumb);
             }
             let erase_lost = erase_count(&blocks) < erase_count(&self.shown.blocks);
             if !self.shown.stale.is_empty() || force || erase_lost {
@@ -442,7 +452,7 @@ impl Tracker {
         // area held still since the previous tick. A refresh shows it
         // at once; the following ticks take it back if the picture moves.
         if !force {
-            drop_moving_erase(&mut bundle.blocks, previous.as_ref(), &thumb);
+            drop_moving_erase(&mut bundle.blocks, visible, previous.as_ref(), &thumb);
         }
 
         // Cached and same-language blocks are ready now; show them while
@@ -598,9 +608,17 @@ fn source_key(blocks: &[LensBlock]) -> String {
 
 /// Take the erase picture off every block whose area differs between
 /// `base` and `now` (or when there is nothing to compare with).
-fn drop_moving_erase(blocks: &mut [LensBlock], base: Option<&Thumb>, now: &Thumb) {
+/// Blocks are placed in the region (`visible`), thumbnails cover the
+/// whole capture.
+fn drop_moving_erase(
+    blocks: &mut [LensBlock],
+    visible: Option<Visible>,
+    base: Option<&Thumb>,
+    now: &Thumb,
+) {
     for b in blocks.iter_mut().filter(|b| b.erase.is_some()) {
-        if base.is_none_or(|t| t.changed_share(now, Some(b.bbox)) >= ERASE_MOVED) {
+        let bbox = visible.map_or(b.bbox, |v| v.in_capture(b.bbox));
+        if base.is_none_or(|t| t.changed_share(now, Some(bbox)) >= ERASE_MOVED) {
             b.erase = None;
         }
     }
@@ -748,7 +766,7 @@ mod tests {
     fn erase_picture_stays_while_the_picture_behind_holds_still() {
         let frame = Thumb::of(&with_word(100));
         let mut blocks = vec![erased("a", [80.0, 10.0, 400.0, 40.0])];
-        drop_moving_erase(&mut blocks, Some(&frame), &Thumb::of(&with_word(100)));
+        drop_moving_erase(&mut blocks, None, Some(&frame), &Thumb::of(&with_word(100)));
         assert!(blocks[0].erase.is_some());
     }
 
@@ -761,11 +779,11 @@ mod tests {
             erased("moved", [80.0, 10.0, 400.0, 40.0]),
             erased("still", [560.0, 0.0, 200.0, 60.0]),
         ];
-        drop_moving_erase(&mut blocks, Some(&before), &after);
+        drop_moving_erase(&mut blocks, None, Some(&before), &after);
         assert!(blocks[0].erase.is_none());
         assert!(blocks[1].erase.is_some());
         // Nothing to compare with: not known to be still.
-        drop_moving_erase(&mut blocks, None, &after);
+        drop_moving_erase(&mut blocks, None, None, &after);
         assert!(blocks[1].erase.is_none());
     }
 

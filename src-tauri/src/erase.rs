@@ -43,8 +43,10 @@ const MAX_COVER: f32 = 0.6;
 /// The repainted text pixels of one block.
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct ErasePatch {
-    /// `[x, y, w, h]` of the picture in captured-image pixels.
-    pub rect: [u32; 4],
+    /// `[x, y, w, h]` of the picture in the pixels the block is placed
+    /// in. `x` / `y` are negative where the picture starts outside a
+    /// translation window (see `scan_margin`).
+    pub rect: [i32; 4],
     /// PNG data URL: text pixels opaque, the rest transparent.
     pub image: String,
     /// The background varies enough that the translation needs an
@@ -95,10 +97,10 @@ pub fn patch(img: &RgbaImage, t: &Target<'_>) -> Option<ErasePatch> {
     let png = crate::capture::png_bytes_fast(&rgba).ok()?;
     Some(ErasePatch {
         rect: [
-            plan.area.x0,
-            plan.area.y0,
-            plan.area.x1 - plan.area.x0,
-            plan.area.y1 - plan.area.y0,
+            plan.area.x0 as i32,
+            plan.area.y0 as i32,
+            (plan.area.x1 - plan.area.x0) as i32,
+            (plan.area.y1 - plan.area.y0) as i32,
         ],
         image: format!(
             "data:image/png;base64,{}",
@@ -508,10 +510,13 @@ mod tests {
         let rows = [ROW];
         let p = patch(&img, &target(&rows)).expect("gradient needs the erase picture");
         let out = decode(&p);
-        assert_eq!([out.width(), out.height()], [p.rect[2], p.rect[3]]);
+        assert_eq!(
+            [out.width(), out.height()],
+            [p.rect[2] as u32, p.rect[3] as u32]
+        );
         let mut repainted = 0;
         for (x, y, px) in out.enumerate_pixels() {
-            let (ix, iy) = (p.rect[0] + x, p.rect[1] + y);
+            let (ix, iy) = (p.rect[0] as u32 + x, p.rect[1] as u32 + y);
             let was_text = img.get_pixel(ix, iy).0 == [255, 255, 255, 255];
             if was_text {
                 assert_eq!(px[3], 255, "text pixel {ix},{iy} left as is");
@@ -562,7 +567,7 @@ mod tests {
         let out = decode(&p);
         for (x, _, px) in out.enumerate_pixels() {
             // The row itself may be repainted up to its end, never past it.
-            assert!(px[3] == 0 || p.rect[0] + x < 220);
+            assert!(px[3] == 0 || p.rect[0] as u32 + x < 220);
         }
     }
 
@@ -590,7 +595,7 @@ mod tests {
         let p = patch(&img, &target(&rows)).expect("patch");
         let out = decode(&p);
         for (x, y, px) in out.enumerate_pixels() {
-            let (ix, iy) = (p.rect[0] + x, p.rect[1] + y);
+            let (ix, iy) = (p.rect[0] as u32 + x, p.rect[1] as u32 + y);
             if img.get_pixel(ix, iy).0 == [0, 0, 0, 255] {
                 assert_eq!(px[3], 255, "shadow pixel {ix},{iy} left as is");
             }
@@ -620,7 +625,7 @@ mod tests {
         assert_eq!(p.foreground, [200, 30, 60]);
         let out = decode(&p);
         for (x, y, px) in out.enumerate_pixels() {
-            if img.get_pixel(p.rect[0] + x, p.rect[1] + y).0 == [200, 30, 60, 255] {
+            if img.get_pixel(p.rect[0] as u32 + x, p.rect[1] as u32 + y).0 == [200, 30, 60, 255] {
                 assert_eq!(px[3], 255);
             }
         }
