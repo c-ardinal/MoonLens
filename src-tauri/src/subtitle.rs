@@ -524,17 +524,22 @@ impl SubtitleService {
 pub const LEVEL_EVENT: &str = "moonlens://subtitle-level";
 
 /// Event name of [`SubtitleEvent`]s; the payload carries the label of
-/// the window it belongs to as `id`.
+/// the window it belongs to as `window`.
 pub const SUBTITLE_EVENT: &str = "moonlens://subtitle";
 
-fn emit_event(app: &AppHandle, id: &str, event: SubtitleEvent) {
-    #[derive(Serialize, Clone)]
-    struct Tagged<'a> {
-        id: &'a str,
-        #[serde(flatten)]
-        event: SubtitleEvent,
-    }
-    let _ = app.emit(SUBTITLE_EVENT, Tagged { id, event });
+/// A [`SubtitleEvent`] with the label of its window.
+///
+/// The key must not be one an event uses itself: `Chunk` and `Revised`
+/// carry the line's `id`, and a flattened struct writes both keys.
+#[derive(Serialize, Clone)]
+struct Tagged<'a> {
+    window: &'a str,
+    #[serde(flatten)]
+    event: SubtitleEvent,
+}
+
+fn emit_event(app: &AppHandle, window: &str, event: SubtitleEvent) {
+    let _ = app.emit(SUBTITLE_EVENT, Tagged { window, event });
 }
 
 /// The first window: bottom centre of the primary screen, where
@@ -994,6 +999,38 @@ fn pcm16_to_bytes(samples: &[i16]) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A window key that an event also uses is written twice, and the
+    /// window then reads one value for both (JSON keeps the last).
+    #[test]
+    fn window_label_shares_no_key_with_an_event() {
+        let events = [
+            SubtitleEvent::Chunk {
+                id: 7,
+                original: "a".into(),
+                translated: "b".into(),
+            },
+            SubtitleEvent::Revised(crate::subtitle_revise::Revision {
+                replaces: vec![7],
+                id: 8,
+                original: "a".into(),
+                translated: "b".into(),
+                rest: None,
+            }),
+            SubtitleEvent::Stopped,
+        ];
+        for event in events {
+            let json = serde_json::to_string(&Tagged {
+                window: "subtitle-2",
+                event,
+            })
+            .unwrap();
+            for key in [r#""id":"#, r#""window":"#, r#""kind":"#] {
+                assert!(json.matches(key).count() <= 1, "{key} twice in {json}");
+            }
+            assert!(json.contains(r#""window":"subtitle-2""#), "{json}");
+        }
+    }
 
     #[tokio::test(start_paused = true)]
     async fn meter_relay_forwards_frames_and_reports_level_then_absence() {

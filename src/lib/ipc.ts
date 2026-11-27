@@ -402,8 +402,8 @@ export type SubtitleEvent =
   | { kind: 'candidate'; phrase: string }
   | { kind: 'error'; message: string };
 
-/** `id`：イベントの対象ウィンドウ（ラベル）。 */
-export type SubtitleMessage = SubtitleEvent & { id: string };
+/** `window`：イベントの対象ウィンドウ（ラベル）。イベント固有のキー（行の `id` 等）と重複不可。 */
+export type SubtitleMessage = SubtitleEvent & { window: string };
 
 export const toggleSubtitle = () => safeInvoke<boolean>('toggle_subtitle');
 /** 稼働中の音声翻訳ウィンドウの有無。 */

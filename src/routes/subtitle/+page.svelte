@@ -308,7 +308,7 @@
       unlisteners.push(await onSettingsChanged(applySettings));
       unlisteners.push(
         await onSubtitle((ev) => {
-          if (ev.id === label) view = reduce(view, ev);
+          if (ev.window === label) view = reduce(view, ev);
         })
       );
       unlisteners.push(

@@ -72,10 +72,10 @@ async function lensWindow() {
 async function subtitleWindow() {
   for (const [w, h] of [[900, 190], [480, 160]]) {
     const pg = await win('subtitle', '/subtitle/', w, h);
-    const emit = (p) => pg.evaluate((p) => window.__emit('moonlens://subtitle', p), p);
+    const emit = (p) => pg.evaluate((p) => window.__emit('moonlens://subtitle', { window: 'subtitle', ...p }), p);
     const m = async (n) => { await wait(pg, 200); await measure(pg, `subtitle-${w}-${n}`); };
     await m('idle');
-    await emit({ kind: 'started', device: 'スピーカー (Realtek(R) Audio)' }); await m('started');
+    await emit({ kind: 'started', device: 'スピーカー (Realtek(R) Audio)', source: { kind: 'system' } }); await m('started');
     // 入力レベル：閾値未満 → 音声検出（波形・メーター・状態表記）
     const level = (bins) => pg.evaluate((bins) => window.__emit('moonlens://subtitle-level', { bins, gate_db: -50.3 }), bins);
     await level(Array(40).fill(-64)); await m('low');
