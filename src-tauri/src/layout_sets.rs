@@ -890,9 +890,12 @@ pub async fn update_layout_set(
     }
     if let Some(on) = auto_restore {
         set.auto_restore = on && set.app.is_some();
-    }
-    if let Some(instance) = sets.active.lock().get_mut(&id) {
-        instance.auto = set.auto_restore;
+        // Only the switch changes whether the open windows close with
+        // their application: a rename leaves windows opened by hand as
+        // they are.
+        if let Some(instance) = sets.active.lock().get_mut(&id) {
+            instance.auto = set.auto_restore;
+        }
     }
     sets.store.put(set, None)?;
     changed(&app);
