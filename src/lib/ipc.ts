@@ -6,6 +6,7 @@
 
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
+import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 import type { AttachCandidate, AttachDock, Attachment } from './attach';
 
 export type Settings = Record<string, any>;
@@ -337,26 +338,72 @@ export const onHotkey = (handler: (action: string) => void): Promise<UnlistenFn>
 /** 音声翻訳の処理段階：音声待機・音声認識・翻訳。 */
 export type SubtitlePhase = 'waiting' | 'recognizing' | 'translating';
 
+/** 音声翻訳ウィンドウの音源：PC 全体、またはアプリ単位（プロセスツリー）。 */
+export type AudioSource = { kind: 'system' } | { kind: 'app'; pid: number };
+
+/** 音声出力ストリームを保持するアプリ。 */
+export type AudioApp = {
+  /** 取得対象プロセス（子プロセス含む）。 */
+  pid: number;
+  /** 実行ファイル名（拡張子なし）。 */
+  name: string;
+  /** アプリのウィンドウ題名。 */
+  title: string | null;
+  /** 音声再生中。 */
+  playing: boolean;
+};
+
+export type AudioApps = {
+  /** アプリ単位の音声取得に対応する OS。 */
+  supported: boolean;
+  apps: AudioApp[];
+};
+
+/** 音声翻訳ウィンドウ 1 枚の音源と稼働状態。 */
+export type SubtitleSession = { source: AudioSource; device: string; running: boolean };
+
 export type SubtitleEvent =
-  | { kind: 'started'; device: string }
+  | { kind: 'started'; device: string; source: AudioSource }
   | { kind: 'stopped' }
   | { kind: 'status'; phase: SubtitlePhase }
   | { kind: 'chunk'; original: string; translated: string }
   | { kind: 'error'; message: string };
 
+/** `id`：イベントの対象ウィンドウ（ラベル）。 */
+export type SubtitleMessage = SubtitleEvent & { id: string };
+
 export const toggleSubtitle = () => safeInvoke<boolean>('toggle_subtitle');
+/** 稼働中の音声翻訳ウィンドウの有無。 */
 export const subtitleState = () => safeInvoke<boolean>('subtitle_state', undefined, false);
+/** 音声翻訳ウィンドウを全停止・全閉鎖。 */
 export const stopSubtitle = () => safeInvoke<void>('stop_subtitle');
 export const startSubtitle = () => safeInvoke<void>('start_subtitle');
-export const onSubtitle = (handler: (event: SubtitleEvent) => void): Promise<UnlistenFn> =>
-  listen<SubtitleEvent>('moonlens://subtitle', (e) => handler(e.payload));
+/** 音声翻訳ウィンドウを追加（呼出元ウィンドウの隣へ配置）。 */
+export const openSubtitleWindow = (source?: AudioSource) =>
+  safeInvoke<string>('open_subtitle_window', { source });
+/** 呼出元の音声翻訳ウィンドウを停止・閉鎖。 */
+export const closeSubtitleWindow = () => safeInvoke<void>('close_subtitle_window');
+/** 呼出元の音声翻訳ウィンドウの音源を変更（停止後は同一音源で再開）。 */
+export const setSubtitleSource = (source: AudioSource) =>
+  safeInvoke<void>('set_subtitle_source', { source });
+export const subtitleSession = () =>
+  safeInvoke<SubtitleSession | null>('subtitle_session', undefined, null);
+export const listAudioApps = () =>
+  safeInvoke<AudioApps>('list_audio_apps', undefined, { supported: false, apps: [] });
+/** 全ウィンドウ分のイベントを受信（`id` で対象を判別）。 */
+export const onSubtitle = (handler: (event: SubtitleMessage) => void): Promise<UnlistenFn> =>
+  listen<SubtitleMessage>('moonlens://subtitle', (e) => handler(e.payload));
 
-/** 音声翻訳の入力レベル（波形表示用、50 ms 間隔）。 */
+/**
+ * 音声翻訳の入力レベル（波形表示用、50 ms 間隔）。送出先は対象ウィンドウ限定のため、
+ * 呼出元ウィンドウ宛のイベントのみ受信。
+ */
 export const onSubtitleLevel = (
   handler: (event: import('./subtitle-level').LevelEvent) => void
 ): Promise<UnlistenFn> =>
-  listen<import('./subtitle-level').LevelEvent>('moonlens://subtitle-level', (e) =>
-    handler(e.payload)
+  getCurrentWebviewWindow().listen<import('./subtitle-level').LevelEvent>(
+    'moonlens://subtitle-level',
+    (e) => handler(e.payload)
   );
 
 export type PermissionStatus = 'granted' | 'denied' | 'unknown';

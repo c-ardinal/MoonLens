@@ -62,7 +62,7 @@ async function lensWindow() {
   }
   for (const placement of ['outside', 'free']) {
     const pg = await win('lens-1-text', '/lens/text/?id=lens-1', 420, 300);
-    await pg.evaluate(([blocks, placement]) => window.__emit('moonlens://lens-text', { blocks, translation: '', source: null, explanation: placement === 'free' ? '北風と太陽の寓話の冒頭。' : null, placement }), [BLOCKS, placement]);
+    await pg.evaluate(([blocks, placement]) => window.__emit('moonlens://lens-text', { blocks, translation: '', source: null, explanation: placement === 'free' ? { status: 'done', text: '北風と太陽の寓話の冒頭。' } : null, placement }), [BLOCKS, placement]);
     await wait(pg, 300); await measure(pg, `lens-text-${placement}`);
     await pg.context().close();
   }

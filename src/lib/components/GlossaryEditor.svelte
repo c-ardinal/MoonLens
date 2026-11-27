@@ -1,7 +1,7 @@
 <script lang="ts">
   import { tick } from 'svelte';
   import { Plus, X } from 'lucide-svelte';
-  import { LANGUAGES } from '$lib/lens-overlay';
+  import { SOURCE_LANGUAGES } from '$lib/lens-overlay';
   import { addEntry, updateEntry, type GlossaryEntry } from '$lib/glossary';
 
   interface Props {
@@ -74,10 +74,10 @@
           onchange={(ev) => onChange(updateEntry(entries, i, { lang: (ev.currentTarget as HTMLSelectElement).value }))}
         >
           <option value="">全言語</option>
-          {#if e.lang && !LANGUAGES.some((l) => l.code === e.lang)}
+          {#if e.lang && !SOURCE_LANGUAGES.some((l) => l.code === e.lang)}
             <option value={e.lang}>{e.lang}</option>
           {/if}
-          {#each LANGUAGES as l (l.code)}
+          {#each SOURCE_LANGUAGES as l (l.code)}
             <option value={l.code}>{l.label}</option>
           {/each}
         </select>

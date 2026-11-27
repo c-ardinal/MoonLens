@@ -178,6 +178,7 @@ impl Run {
                 Frame {
                     image,
                     geometry: GEOMETRY,
+                    visible: None,
                 },
                 force,
                 &env,

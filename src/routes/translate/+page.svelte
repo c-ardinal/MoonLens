@@ -17,10 +17,10 @@
   import { extractText } from '$lib/result';
   import { copyText } from '$lib/toast.svelte';
   import { parseError, type UiError } from '$lib/errors';
-  import { LANGUAGES } from '$lib/lens-overlay';
+  import { LANGUAGES, SOURCE_LANGUAGES, writtenLanguage } from '$lib/lens-overlay';
   import { translateLines, type LineHistory } from '$lib/translate-line';
 
-  const SOURCE_LANGS = [{ code: 'auto', label: '自動判定' }, ...LANGUAGES];
+  const SOURCE_LANGS = [{ code: 'auto', label: '自動判定' }, ...SOURCE_LANGUAGES];
   const TARGET_LANGS = LANGUAGES;
 
   const MAX_CHARS = 5000;
@@ -214,11 +214,14 @@
   }
 
   function swap(): void {
+    // A target-only variant (やさしい日本語) becomes its base language
+    // on the source side.
+    const written = writtenLanguage(targetLang);
     if (sourceLang === 'auto') {
-      sourceLang = targetLang;
-      targetLang = targetLang === 'ja' ? 'en' : 'ja';
+      sourceLang = written;
+      targetLang = written === 'ja' ? 'en' : 'ja';
     } else {
-      [sourceLang, targetLang] = [targetLang, sourceLang];
+      [sourceLang, targetLang] = [written, sourceLang];
     }
     if (resultText) {
       [inputText, resultText] = [resultText, inputText];
