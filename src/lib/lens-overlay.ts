@@ -72,6 +72,32 @@ export function blockCssRect(block: LensBlock, crop: FrameRect, scale: number, p
 }
 
 /**
+ * CSS `clip-path` that keeps the mask of a block off the pictures beside
+ * its rows (see `row_limits`): each row's band ends at the row's limit.
+ * Empty when no row is limited.
+ */
+export function maskClip(block: LensBlock, scale: number, pad = 2): string {
+  const rows = block.lines ?? [];
+  const limits = block.row_limits ?? [];
+  if (rows.length < 2 || limits.length !== rows.length) return '';
+  const [bx, by, bw, bh] = block.bbox;
+  const width = bw / scale + pad * 2;
+  const height = bh / scale + pad * 2;
+  const rights = limits.map((l) => Math.min(width, (l - bx) / scale + pad * 2));
+  if (rights.every((r) => r >= width - 0.5)) return '';
+  const mid = (i: number) => ((rows[i][1] + rows[i][3] + rows[i + 1][1]) / 2 - by) / scale + pad;
+  const px = (n: number) => `${Math.round(n * 100) / 100}px`;
+  const points = ['0px 0px'];
+  rows.forEach((_, i) => {
+    const top = i === 0 ? 0 : mid(i - 1);
+    const bottom = i === rows.length - 1 ? height : mid(i);
+    points.push(`${px(rights[i])} ${px(top)}`, `${px(rights[i])} ${px(bottom)}`);
+  });
+  points.push(`0px ${px(height)}`);
+  return `polygon(${points.join(', ')})`;
+}
+
+/**
  * Distribute a partially streamed translation of `"p1\n\np2\n\n…"` over
  * `n` blocks. Paragraphs that have not arrived yet stay null. With a
  * single block everything streamed so far belongs to it.

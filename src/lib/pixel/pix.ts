@@ -188,6 +188,14 @@ export class Pix {
     }
   }
 
+  /** 円形の透過（描画済みの内容を消去し、背面の層を表示）。 */
+  hole(cx: number, cy: number, r: number) {
+    for (let y = -r; y <= r; y++) {
+      const w = Math.floor(Math.sqrt(r * r - y * y));
+      this.g.clearRect(cx - w, cy + y, 2 * w + 1, 1);
+    }
+  }
+
   /** 菱形（45 度の正方形）。 */
   diamond(cx: number, cy: number, r: number, c: Color, fill?: Color | null, dash?: [number, number]) {
     if (fill !== undefined && fill !== null)

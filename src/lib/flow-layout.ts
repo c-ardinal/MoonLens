@@ -12,6 +12,11 @@ export interface Row {
   top: number;
   width: number;
   height: number;
+  /**
+   * Right edge (from the box's left) the text of this row may reach,
+   * when something that is not text (a picture) stands beside the row.
+   */
+  limit?: number;
 }
 
 /** One laid-out line of the translation, relative to the block's box. */
@@ -180,7 +185,11 @@ export function flowLayout(text: string, o: FlowOptions): FlowResult {
   const grow = o.align === 'left' ? Math.max(0, o.grow ?? 0) : 0;
   const right = Math.max(...rows.map((r) => r.left + r.width), o.width) + grow;
   const rowLeft = (r: Row) => (o.align === 'left' ? r.left : 0);
-  const rowRoom = (i: number) => (i < rows.length ? right - rowLeft(rows[i]) : o.width);
+  // A row beside a picture ends at the picture.
+  const rowRight = (r: Row) => (r.limit == null ? right : Math.min(right, Math.max(r.limit, r.left + r.width)));
+  const rowRoom = (i: number) => (i < rows.length ? rowRight(rows[i]) - rowLeft(rows[i]) : o.width);
+  // Lines spread over the box stay clear of every picture beside it.
+  const spreadWidth = Math.min(o.width, ...rows.map((r) => (r.limit == null ? o.width : rowRight(r))));
   const textWidth = (t: string, fs: number) => o.measure(t) * fs;
 
   const place = (lines: string[], fs: number, overflow: boolean): FlowResult => {
@@ -191,7 +200,7 @@ export function flowLayout(text: string, o: FlowOptions): FlowResult {
         lines: lines.map((t, i) => {
           const r = rows[i];
           const left = rowLeft(r);
-          const width = Math.min(right, o.width) - left;
+          const width = Math.min(rowRight(r), o.width) - left;
           return { text: t, left, top: r.top, width, height: r.height, textWidth: textWidth(t, fs) };
         })
       };
@@ -207,7 +216,7 @@ export function flowLayout(text: string, o: FlowOptions): FlowResult {
         text: t,
         left: 0,
         top: i * pitch,
-        width: o.width,
+        width: spreadWidth,
         height: pitch,
         textWidth: textWidth(t, fs)
       }))
@@ -216,7 +225,7 @@ export function flowLayout(text: string, o: FlowOptions): FlowResult {
 
   const start = Math.max(minFont, Math.floor(o.maxFont * 2) / 2);
   const along = (fs: number) => breakLines(tokens, rowRoom, (t) => unitW(t) * fs);
-  const spread = (fs: number) => breakLines(tokens, () => o.width, (t) => unitW(t) * fs);
+  const spread = (fs: number) => breakLines(tokens, () => spreadWidth, (t) => unitW(t) * fs);
   let rowsFs: number | null = null;
   for (let fs = start; fs >= minFont; fs -= 0.5) {
     if (along(fs).length <= rows.length) {
@@ -238,6 +247,6 @@ export function flowLayout(text: string, o: FlowOptions): FlowResult {
     return place(along(rowsFs), rowsFs, false);
   }
   if (spreadFs != null) return place(spread(spreadFs), spreadFs, true);
-  const full = breakLines(tokens, () => o.width, (t) => unitW(t) * minFont);
+  const full = breakLines(tokens, () => spreadWidth, (t) => unitW(t) * minFont);
   return place(full, minFont, true);
 }

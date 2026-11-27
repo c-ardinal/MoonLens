@@ -2,6 +2,8 @@
   import { t, textEm } from '$lib/i18n';
   import { onMount, type Snippet } from 'svelte';
   import {
+    AppWindow,
+    Captions,
     ChevronDown,
     ClipboardCopy,
     EllipsisVertical,
@@ -20,6 +22,7 @@
   } from 'lucide-svelte';
   import { LANGUAGES, languageLabel } from '$lib/lens-overlay';
   import { fitCount } from '$lib/lens-bar';
+  import type { LensReadMode } from '$lib/ipc';
 
   /**
    * ウィンドウ翻訳のタイトルバー。左端：ウィンドウ追加・見出し（lead）、右端：最大化・閉じる（常時表示）。
@@ -31,6 +34,7 @@
     showOriginal,
     showText,
     targetLanguage,
+    readMode = 'subtitle',
     hasText = true,
     busy = false,
     maximized = false,
@@ -42,6 +46,7 @@
     onrefresh,
     onoriginal,
     onlanguage,
+    onreadmode,
     oncopy,
     ontext,
     onexplain,
@@ -54,6 +59,8 @@
     showOriginal: boolean;
     showText: boolean;
     targetLanguage: string;
+    /** 読取方式（字幕：逐次表示の完了後に前文脈付きで翻訳、UI：読取単位で翻訳し前文脈の継承なし）。 */
+    readMode?: LensReadMode;
     /** 翻訳対象の文字あり（原文切替・コピー・説明の可否）。 */
     hasText?: boolean;
     busy?: boolean;
@@ -71,6 +78,7 @@
     onrefresh: () => void;
     onoriginal: () => void;
     onlanguage: (code: string) => void;
+    onreadmode?: (mode: LensReadMode) => void;
     oncopy: () => void;
     ontext: () => void;
     onexplain: () => void;
@@ -134,6 +142,16 @@
       run: onoriginal
     },
     'language',
+    {
+      key: 'readmode',
+      icon: readMode === 'ui' ? AppWindow : Captions,
+      label: readMode === 'ui' ? t('読取方式：UI') : t('読取方式：字幕'),
+      title:
+        readMode === 'ui'
+          ? t('読取方式：UI（読取単位で翻訳、前文脈の継承なし）。クリックで字幕方式へ')
+          : t('読取方式：字幕（逐次表示の完了後、前文脈を継承して翻訳）。クリックでUI方式へ'),
+      run: () => onreadmode?.(readMode === 'ui' ? 'subtitle' : 'ui')
+    },
     {
       key: 'copy',
       icon: ClipboardCopy,

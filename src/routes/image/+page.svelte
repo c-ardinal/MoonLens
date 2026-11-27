@@ -15,7 +15,7 @@
     type CaptureFlowResult,
     type LensBlock
   } from '$lib/ipc';
-  import { LANGUAGES, applyStreaming, blockCssRect, growRoom, joinedText, rgb } from '$lib/lens-overlay';
+  import { LANGUAGES, applyStreaming, blockCssRect, growRoom, joinedText, maskClip, rgb } from '$lib/lens-overlay';
   import FlowText from '$lib/components/FlowText.svelte';
   import { scanlineHole } from '$lib/pixel/scanline';
   import { parseError, type UiError } from '$lib/errors';
@@ -348,7 +348,8 @@
                     class:pending={b.translation == null}
                     style="left: {r.left}px; top: {r.top}px; width: {r.width}px; height: {r.height}px;
                            background: {rgb(b.colors?.background, 'rgba(255,255,255,0.96)')};
-                           color: {rgb(b.colors?.foreground, '#111')};"
+                           color: {rgb(b.colors?.foreground, '#111')};
+                           clip-path: {maskClip(b, scale) || 'none'};"
                     title={b.source}
                   >
                     {#if b.translation != null}

@@ -221,10 +221,12 @@ jobs:
             plugin-sdk/examples/hello-translator
             plugin-sdk/examples/music-recognizer
           key: ${{ matrix.platform.name }}
-          # Only main/release write the cache. PR runs restore from it
-          # (base-branch caches are visible to PRs), which keeps the
-          # 10 GB repo cache quota from being evicted by every PR.
-          save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/release' }}
+          # Only develop/main/release write the cache. PR runs restore
+          # from it (base-branch caches are visible to PRs), which keeps
+          # the 10 GB repo cache quota from being evicted by every PR.
+          # `develop` is the base of feature PRs: without it in this
+          # list they would never get a cache hit.
+          save-if: ${{ github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main' || github.ref == 'refs/heads/release' }}
 
       # tauri::generate_context! embeds frontendDist (../build) at
       # compile time; an empty dir is enough for clippy/tests and saves

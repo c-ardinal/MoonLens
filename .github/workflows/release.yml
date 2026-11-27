@@ -18,7 +18,7 @@ on:
   # `installer:windows` and/or `installer:macos`. Nothing is published;
   # the installers are kept as run artifacts for 7 days. Used for test
   # builds of unreleased work and to dry-run changes to this file.
-  # Without a label only the (seconds-long) guard job runs.
+  # Without a label every job is skipped (no runner is taken).
   pull_request:
     types: [opened, synchronize, reopened, labeled]
   workflow_dispatch:
@@ -45,6 +45,11 @@ env:
 
 jobs:
   guard:
+    # A PR without an `installer:*` label has nothing to build: skip
+    # here so the run does not wait for (or hold) a runner.
+    if: >-
+      github.event_name != 'pull_request'
+      || contains(join(github.event.pull_request.labels.*.name, ','), 'installer:')
     runs-on: ubuntu-latest
     outputs:
       notes: ${{ steps.notes.outputs.notes }}

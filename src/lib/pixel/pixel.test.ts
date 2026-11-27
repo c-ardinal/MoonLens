@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { slantPolygon } from './slant';
-import { ROTORS, SELECTED_ANGLE, SIDE_WIDTH, dialGeometry, hitTest, labelPlacement, rotorSize } from './dial';
+import { ROTORS, SELECTED_ANGLE, SIDE_WIDTH, dialGeometry, hitTest, labelPlacement, moonPart, moonRadius, rotorSize } from './dial';
 import { homeDot, titleOffsets } from './home';
 import { inkBounds, slabCenterOrigin } from './pix';
 
@@ -98,6 +98,23 @@ describe('回転体', () => {
       expect(sizes.every((n) => n % 2 === 1)).toBe(true);
       expect(sizes[0]).toBeGreaterThan(sizes[1]);
       expect(sizes[1]).toBeGreaterThan(sizes[2]);
+    }
+  });
+});
+
+describe('中心の月', () => {
+  it('左側が明部の三日月、右上は影、円外は対象外', () => {
+    const r = moonRadius(158);
+    expect(moonPart(-r + 1, 0, r)).toBe('lit');
+    expect(moonPart(0, r - 1, r)).toBe('lit');
+    expect(moonPart(Math.round(r / 2), -Math.round(r / 2), r)).toBe('shade');
+    expect(moonPart(0, 0, r)).toBe('shade');
+    expect(moonPart(r + 2, 0, r)).toBeNull();
+  });
+  it('枠環を含め、回転体（正方形）の頂点より内側へ収まる', () => {
+    for (const r of [120, 158, 171]) {
+      const corner = (rotorSize('core-b', r) - 1) / 2 - 12;
+      expect(moonRadius(r) + 3).toBeLessThan(corner);
     }
   });
 });
