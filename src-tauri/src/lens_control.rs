@@ -25,6 +25,13 @@ impl Hold {
         self.shown
     }
 
+    /// The key binding is gone, and its release with it. True when the
+    /// translations have to come back now.
+    pub fn cancel(&mut self) -> bool {
+        self.seq += 1;
+        std::mem::replace(&mut self.shown, false)
+    }
+
     /// Key up. Returns the ticket for [`Hold::settle`].
     pub fn release(&mut self) -> u64 {
         self.seq += 1;
@@ -62,6 +69,17 @@ mod tests {
         assert!(!h.settle(first));
         let last = h.release();
         assert!(h.settle(last));
+    }
+
+    #[test]
+    fn cancel_ends_a_hold_and_outdates_its_release() {
+        let mut h = Hold::default();
+        assert!(!h.cancel());
+        assert!(h.press());
+        let t = h.release();
+        assert!(h.cancel());
+        assert!(!h.settle(t));
+        assert!(!h.shown());
     }
 
     #[test]

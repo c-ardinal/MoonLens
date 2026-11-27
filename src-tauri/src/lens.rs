@@ -807,6 +807,14 @@ pub fn hold_original(app: &AppHandle, registry: &LensRegistryHandle, pressed: bo
     });
 }
 
+/// The show-original binding is being replaced: its release would never
+/// arrive, so end a hold in progress.
+pub fn cancel_hold(app: &AppHandle, registry: &LensRegistryHandle) {
+    if registry.hold.lock().cancel() {
+        emit_all(app, registry, LENS_PEEK_EVENT, false);
+    }
+}
+
 fn emit_all(app: &AppHandle, registry: &LensRegistryHandle, event: &str, on: bool) {
     for d in registry.list() {
         let _ = app.emit_to(tauri::EventTarget::WebviewWindow { label: d.id }, event, on);

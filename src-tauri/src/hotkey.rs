@@ -27,6 +27,10 @@ pub fn register_all(
     let s = settings.snapshot();
     let shortcut_mgr = app.global_shortcut();
     shortcut_mgr.unregister_all().ok();
+    // A held show-original key loses its binding, and its release with it.
+    if let Some(state) = app.try_state::<AppState>() {
+        crate::lens::cancel_hold(app, &state.lenses);
+    }
     // One bad or duplicate binding must not take every other hotkey down
     // with it: register each one independently and report the failures.
     let mut failed: Vec<String> = Vec::new();
