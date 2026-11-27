@@ -242,7 +242,14 @@
   let placement = $state<TextPlacement>(loadPlacement());
   const textInside = $derived(showText && placement === 'inside');
   const textOutside = $derived(showText && placement !== 'inside');
-  const textView = $derived<TextView>({ blocks, translation, source, explanation, placement });
+  const textView = $derived<TextView>({
+    blocks,
+    translation,
+    source,
+    explanation,
+    placement,
+    mode: paused ? 'paused' : peek ? 'original' : 'normal'
+  });
   /** Bumped when the outside text window reports it is listening. */
   let textReady = $state(0);
   function setPlacement(p: TextPlacement) {

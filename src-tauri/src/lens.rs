@@ -1155,6 +1155,10 @@ async fn run_watch(
                 _ = kick.notified() => manual = true,
                 _ = tokio::time::sleep(Duration::from_millis(pause)) => {}
             }
+            // Paused during the wait: nothing more is captured.
+            if registry.paused() {
+                continue;
+            }
         }
         let target_language = registry
             .target_language(&id)
