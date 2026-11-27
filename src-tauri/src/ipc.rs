@@ -1058,25 +1058,136 @@ pub async fn list_history(
     .map_err(|e| e.to_string())
 }
 
+/// 個別削除の結果。`record` は音声翻訳の記録（削除時点の全行）：取消時に
+/// `restore_history_entry` へ引渡し。
+#[derive(Serialize)]
+pub struct DeletedHistoryEntry {
+    /// 削除行数（0：該当 id なし）。
+    pub deleted: usize,
+    pub record: Option<crate::storage::SubtitleRecord>,
+}
+
 #[tauri::command]
-pub async fn delete_history_entry(id: i64, state: State<'_, AppState>) -> Result<usize, String> {
-    // Return the affected row count so the UI can distinguish "no such
-    // id" (0) from an actual removal (1) without a second round-trip.
-    state.storage.delete(id).map_err(|e| e.to_string())
+pub async fn delete_history_entry(
+    id: i64,
+    state: State<'_, AppState>,
+) -> Result<DeletedHistoryEntry, String> {
+    let (deleted, record) = state
+        .storage
+        .delete_keeping_record(id)
+        .map_err(|e| e.to_string())?;
+    Ok(DeletedHistoryEntry { deleted, record })
 }
 
 /// 個別削除の取消：削除済みの行を元の id・日時で復元。
 #[tauri::command]
 pub async fn restore_history_entry(
     entry: crate::storage::HistoryEntry,
+    record: Option<crate::storage::SubtitleRecord>,
     state: State<'_, AppState>,
 ) -> Result<usize, String> {
-    state.storage.restore(&entry).map_err(|e| e.to_string())
+    state
+        .storage
+        .restore_with_record(&entry, record.as_ref())
+        .map_err(|e| e.to_string())
+}
+
+/// 音声翻訳の履歴（時刻付き行）。記録なしの行は null。
+#[tauri::command]
+pub async fn get_subtitle_record(
+    id: i64,
+    state: State<'_, AppState>,
+) -> Result<Option<crate::storage::SubtitleRecord>, String> {
+    state.storage.subtitle_record(id).map_err(|e| e.to_string())
+}
+
+/// 記録の全行を置換（再翻訳とその取消）。`revision` は行の取得時点の値：
+/// 取得後に記録が変化した場合は失敗（記録中の行を保護）。戻り値は新しい値。
+#[tauri::command]
+pub async fn replace_subtitle_lines(
+    id: i64,
+    revision: i64,
+    lines: Vec<crate::storage::SubtitleLine>,
+    state: State<'_, AppState>,
+) -> Result<i64, String> {
+    state
+        .storage
+        .replace_subtitle_lines(id, revision, &lines)
+        .map_err(|e| format!("{e:#}"))
+}
+
+/// 記録を SRT・テキストで保存。保存先ダイアログの取消は `None`。
+#[tauri::command]
+pub async fn export_subtitle_record(
+    id: i64,
+    format: crate::subtitle_record::ExportFormat,
+    content: crate::subtitle_record::ExportContent,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<Option<String>, String> {
+    use tauri_plugin_dialog::DialogExt;
+    let record = state
+        .storage
+        .subtitle_record(id)
+        .map_err(|e| e.to_string())?
+        .ok_or("字幕記録なし")?;
+    let created_at = state
+        .storage
+        .entry(id)
+        .map_err(|e| e.to_string())?
+        .map_or(0, |e| e.created_at);
+    let text = crate::subtitle_record::render(&record, format, content);
+    let name = crate::subtitle_record::export_file_name(created_at, format);
+    let label = match format {
+        crate::subtitle_record::ExportFormat::Srt => "SRT 字幕",
+        crate::subtitle_record::ExportFormat::Txt => "テキスト",
+    };
+    let dialog = app.dialog().clone();
+    let chosen = tokio::task::spawn_blocking(move || {
+        dialog
+            .file()
+            .set_file_name(name)
+            .add_filter(label, &[format.extension()])
+            .blocking_save_file()
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+    let Some(file) = chosen else { return Ok(None) };
+    let path = file.into_path().map_err(|e| e.to_string())?;
+    std::fs::write(&path, text).map_err(|e| e.to_string())?;
+    Ok(Some(path.to_string_lossy().to_string()))
 }
 
 #[tauri::command]
 pub async fn clear_history(state: State<'_, AppState>) -> Result<usize, String> {
     state.storage.clear_all().map_err(|e| e.to_string())
+}
+
+/// Size of the translation cache on disk, in total and per app.
+#[tauri::command]
+pub async fn translation_cache_usage(
+    state: State<'_, AppState>,
+) -> Result<crate::translation_cache::Usage, String> {
+    let pipeline = state.pipeline.clone();
+    tokio::task::spawn_blocking(move || pipeline.translation_cache_usage())
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())
+}
+
+/// Delete cached translations: those of one app (`""` = text that
+/// belongs to no app), or all of them when `app` is absent. Returns the
+/// number of entries removed.
+#[tauri::command]
+pub async fn clear_translation_cache(
+    app: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<usize, String> {
+    let pipeline = state.pipeline.clone();
+    tokio::task::spawn_blocking(move || pipeline.clear_translation_cache(app.as_deref()))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]

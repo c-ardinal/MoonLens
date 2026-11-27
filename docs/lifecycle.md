@@ -14,7 +14,7 @@ MoonLens の導入〜削除の各段階で発生するケースと、期待動�
 | 種類 | 場所（Linux／macOS／Windows） | 本体削除時の扱い |
 | --- | --- | --- |
 | 設定 `config.toml`（変更値のみ）・`config.default.toml`（既定値の参照用） | `~/.config/io.moonlens.app`／`~/Library/Application Support/io.moonlens.app`／`%APPDATA%\io.moonlens.app` | 全 OS で残存（手動削除） |
-| 履歴 DB・プラグイン | `~/.local/share/io.moonlens.app`／同上／`%APPDATA%\io.moonlens.app` | 同上 |
+| 履歴 DB・訳文キャッシュ・プラグイン | `~/.local/share/io.moonlens.app`／同上／`%APPDATA%\io.moonlens.app` | 同上 |
 | モデル（GGUF・OCR・音声認識） | `~/.local/share/io.moonlens.app/models`／`~/Library/Application Support/io.moonlens.app/models`／`%LOCALAPPDATA%\io.moonlens.app\models` | 同上 |
 
 設定画面「データ」に実パス・使用容量を表示。
@@ -86,6 +86,7 @@ MoonLens の導入〜削除の各段階で発生するケースと、期待動�
 | D-24 | テキスト翻訳（メニュー「翻訳」） | 複数行は行単位で翻訳。空行・ログ行・記号のみの行は原文維持、行頭インデント維持。各行は翻訳済みの前行を文脈として参照（内蔵 PLaMo のみ）。成功時に履歴へ保存（履歴保存オフ時は保存なし） | 新規 | `translate-line.test.ts`、`ipc::tests`。Xvfb＋PLaMo 3 Translate 2B 実推論で確認（例：「とても気に入っているそうだ。」単独 → "They say they like it"、前行「田中さんは…車を買った。」付き → "I hear he likes it"） |
 | D-25 | 履歴の種別絞込・詳細表示 | 種別タブ（全件・ウィンドウ・画像・テキスト・QR、件数付き、0 件の種別は非表示）で絞込。一覧の選択項目を右側に詳細表示（原文・訳文の全文、各コピー、削除）。個別削除は即時実行、直後の通知の「取消」で元の id・日時のまま復元可能（通知の終了後は復元不可）。旧形式の `translate`・旧 Lens・固定範囲の行は「ウィンドウ」扱い | 新規 | `history.test.ts`、`toast.svelte.test.ts`、`storage::tests::restore_puts_a_deleted_row_back_unchanged`、`capture_flow_blocks::history_rows_record_where_the_translation_came_from`。Xvfb 実アプリで確認 |
 | D-27 | ウィンドウ翻訳ウィンドウ：常時翻訳（既定 ON） | 範囲を常時監視（`region_watcher_poll_ms` 間隔）。画素変化時のみ OCR、新規文章のみ翻訳（既訳はキャッシュ流用）。変化部分の訳文は即時非表示、2 回同一の読取で確定後に再翻訳（読取が監視間隔以上を要した場合、確定用の取得は待機なしで実施）。長文は分割翻訳の各部分を完了順に表示。画面取得はウィンドウの範囲のみ。移動・サイズ変更中は取得を停止し、静止後に再読取（同一文章なら翻訳なしで再配置）。ヘッダー「常時」で OFF（手動の再キャプチャのみ）。自動コピーは新規文章の翻訳時のみ | 修正 | 従来は 1.5／3／10 秒間隔の定期再キャプチャ（毎回 OCR・変化なしでも再処理）。`region_watcher::Tracker` を使用（旧固定範囲ライブ翻訳は本ウィンドウへ統合し廃止）。`lens_continuous_live`（変化画像列で実 OCR・実翻訳）。Linux はキャプチャ時の一時非表示のため最短 1 秒間隔 |
+| D-27a | 訳文キャッシュ（既出の原文の再出現） | 推論を省略し訳文を即時表示。端末内（`translation-cache.db`）へ保存し再起動後も有効。追従先アプリ単位で分離（未指定は共通）。翻訳モデル・エンジン設定・文体の変更時、および当該原文に該当する用語集の語の変更時は不一致扱いとし再翻訳（旧訳は不使用）。前文脈付きの翻訳（先行する読取分を履歴とする翻訳）は同一の前文脈でのみ再使用し、別文脈での再出現時は再翻訳。画面上に継続表示中のブロックは訳文を維持。代替エンジンの訳文は保存対象外（アプリ終了時に破棄）。上限 20 万件、超過時は最長未使用分から削除。ファイル破損時は自動再作成。設定「訳文キャッシュ保存」OFF で端末内保存を停止、設定画面で使用量表示・全消去・アプリ単位の消去 | 新規 | `translation_cache::tests`、`translation_cache_persist`・`translation_cache_context`（スタブ）、`translation_cache_live`（実 OCR・実翻訳、Windows CI） |
 | D-49 | ウィンドウ翻訳：枠が文字を分断する配置 | 読取範囲を枠の外側へ拡張（設定「読取余白」、既定 32 px、0 で無効）。枠で分断された行は全文を認識・翻訳。行の太さの半分以上がウィンドウ内に存在しない行は翻訳対象外。訳文の表示位置はウィンドウ内に限定。余白がモニター端を超過する場合は端で打切 | 新規 | 従来は枠内の画素のみを認識し、分断された文字の誤認識が訳文へ波及。`scan_margin` テスト、`capture_flow_blocks::a_wider_capture_is_shown_inside_the_window_only`。モニター端を超過するウィンドウの訳文位置のずれも解消 |
 | D-28 | 機能の統合（ウィンドウ翻訳） | 範囲翻訳・全画面翻訳・固定範囲ライブ翻訳はウィンドウ翻訳のウィンドウへ一本化。範囲＝ウィンドウの位置・サイズ、全画面＝ウィンドウの最大化（最大化ボタン）。ウィンドウは複数同時に配置可能、各ウィンドウが背面を常時翻訳。範囲選択画面は廃止 | 新規 | Playwright（最大化・IPC 呼出）、Xvfb 実アプリ |
 | D-29 | ウィンドウ翻訳ウィンドウの操作 | 本体はクリック透過（背面の画面を操作可能）。ヘッダーで移動、右下グリップでサイズ変更、テキスト表示中のみ本体も操作可能。操作列は選択画面と共通 | 新規 | `lens::geometry::hits_controls` テスト。Linux はポインター位置を X サーバーから取得（tao の値は更新遅延あり）。Xvfb＋openbox で透過・移動後の再翻訳を確認 |

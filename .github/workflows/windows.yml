@@ -36,6 +36,8 @@ on:
       - 'src-tauri/src/lib.rs'
       - 'src-tauri/src/providers/ocr_*.rs'
       - 'src-tauri/tests/lens_screen_windows_live.rs'
+      - 'src-tauri/src/translation_cache.rs'
+      - 'src-tauri/tests/translation_cache_live.rs'
       - 'src-tauri/examples/fetch_models.rs'
       # Live subtitles: loopback capture of what the PC plays, speech
       # recognition and translation (lens-e2e job).
@@ -273,6 +275,12 @@ jobs:
       - name: Screen → OCR → translation
         working-directory: src-tauri
         run: cargo test --release --locked --test lens_screen_windows_live -- --ignored --nocapture
+
+      # Translations kept on disk: none of them reaches the model after
+      # a restart, and a glossary change re-translates what it touches.
+      - name: Translation cache over a restart
+        working-directory: src-tauri
+        run: cargo test --release --locked --test translation_cache_live -- --ignored --nocapture
 
       # Hosted runners have no sound card. A virtual output device lets
       # the test play real speech and capture it back through WASAPI

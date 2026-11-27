@@ -367,6 +367,9 @@ pub enum LogLevel {
 #[serde(default, deny_unknown_fields)]
 pub struct StorageSettings {
     pub keep_history: bool,
+    /// Keep translations on disk so text seen before shows at once after
+    /// a restart too. Off: they are kept until the app exits.
+    pub keep_translation_cache: bool,
     #[schemars(range(min = 0, max = 3650))]
     pub retention_days: u32,
     #[schemars(range(min = 0, max = 1000000))]
@@ -379,6 +382,7 @@ impl Default for StorageSettings {
     fn default() -> Self {
         Self {
             keep_history: true,
+            keep_translation_cache: true,
             retention_days: 90,
             max_entries: 10_000,
             encrypt_at_rest: false,
@@ -402,8 +406,6 @@ pub struct PerformanceSettings {
     pub scan_margin_px: u32,
     #[schemars(range(min = 1, max = 8))]
     pub max_concurrent_tasks: u32,
-    #[schemars(range(min = 0, max = 604800))]
-    pub cache_ttl_seconds: u32,
     pub use_gpu_if_available: bool,
 }
 
@@ -414,7 +416,6 @@ impl Default for PerformanceSettings {
             region_watcher_poll_ms: 250,
             scan_margin_px: 32,
             max_concurrent_tasks: 4,
-            cache_ttl_seconds: 3600,
             use_gpu_if_available: true,
         }
     }

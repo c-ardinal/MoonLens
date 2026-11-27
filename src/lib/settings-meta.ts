@@ -392,15 +392,10 @@ export const SECTIONS: Section[] = [
         slider: true
       },
       {
-        kind: 'number',
-        path: 'performance.cache_ttl_seconds',
-        label: '翻訳キャッシュ保持期間',
-        help: '同一文の再選択時、期間内なら前回の訳文を即時表示。0：アプリ終了まで。',
-        min: 0,
-        max: 604800,
-        step: 60,
-        unit: '秒',
-        zeroLabel: '無期限'
+        kind: 'toggle',
+        path: 'storage.keep_translation_cache',
+        label: '訳文キャッシュ保存',
+        help: '同一原文の再出現時、保存済の訳文を即時表示（再起動後も有効、保存先は端末内のみ）。翻訳モデル・文体・用語集の変更分は自動で再翻訳。無効時：アプリ終了時に破棄。'
       }
     ]
   },

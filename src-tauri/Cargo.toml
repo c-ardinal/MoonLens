@@ -28,6 +28,8 @@ tauri = { version = "2", features = [
 tauri-plugin-global-shortcut = "2"
 tauri-plugin-shell = "2"
 tauri-plugin-dialog = "2"
+# Local time for the default file name of exports; already in the tree.
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
 tauri-plugin-fs = "2"
 tauri-plugin-notification = "2"
 tauri-plugin-clipboard-manager = "2"
