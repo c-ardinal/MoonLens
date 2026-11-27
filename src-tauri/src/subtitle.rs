@@ -361,11 +361,17 @@ impl SubtitleService {
             // Release the audio stream (and the model, with no other
             // window left), but leave the window up: it shows why the
             // subtitles stopped.
-            let ended = app_emit
+            let current = app_emit
                 .state::<crate::app::AppState>()
                 .subtitle
-                .finish(&id, run);
-            if lost && ended.is_some() {
+                .finish(&id, run)
+                .is_some();
+            // A run the window has replaced (source switched) or that
+            // was closed says nothing more: its window shows the new run.
+            if !current {
+                return;
+            }
+            if lost {
                 emit(SubtitleEvent::Error {
                     message: "音源アプリ終了、または音声取得失敗".into(),
                 });

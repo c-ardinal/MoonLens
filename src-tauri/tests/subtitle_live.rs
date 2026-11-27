@@ -462,7 +462,11 @@ mod loopback {
         let mut listed = Vec::new();
         for _ in 0..40 {
             tokio::time::sleep(Duration::from_millis(500)).await;
-            let found = tokio::task::spawn_blocking(audio_apps::list).await.unwrap();
+            // The players are processes of this test, which the app's
+            // own list leaves out as "itself".
+            let found = tokio::task::spawn_blocking(|| audio_apps::list_except(None))
+                .await
+                .unwrap();
             assert!(found.supported);
             listed = found.apps;
             let playing = |pid| listed.iter().any(|a| a.pid == pid && a.playing);

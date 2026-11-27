@@ -90,16 +90,18 @@ fn descends_from(pid: u32, ancestor: u32, procs: &HashMap<u32, Proc>) -> bool {
 }
 
 /// Audio sessions (`pid`, playing) as applications: one entry per
-/// process group, playing ones first, without `own` (this application).
+/// process group, playing ones first, without the processes of `own`
+/// (this application) when given.
 pub fn group(
     sessions: &[(u32, bool)],
     procs: &HashMap<u32, Proc>,
     titles: &HashMap<u32, String>,
-    own: u32,
+    own: Option<u32>,
 ) -> Vec<AudioApp> {
     let mut apps = BTreeMap::<u32, AudioApp>::new();
     for &(pid, playing) in sessions {
-        if !procs.contains_key(&pid) || descends_from(pid, own, procs) {
+        let ours = own.is_some_and(|own| descends_from(pid, own, procs));
+        if !procs.contains_key(&pid) || ours {
             continue;
         }
         let root = root_of(pid, procs, titles);
@@ -119,17 +121,19 @@ pub fn group(
     apps
 }
 
-/// The applications with an audio output stream, for the source menu.
+/// The applications with an audio output stream, for the source menu:
+/// all but this application itself.
 pub fn list() -> AudioApps {
+    list_except(Some(std::process::id()))
+}
+
+/// [`list`] without the processes of `own` (and those it started).
+#[cfg_attr(not(windows), allow(unused_variables))]
+pub fn list_except(own: Option<u32>) -> AudioApps {
     #[cfg(windows)]
     {
         let apps = match platform::sessions() {
-            Ok(sessions) => group(
-                &sessions,
-                &processes(),
-                &platform::window_titles(),
-                std::process::id(),
-            ),
+            Ok(sessions) => group(&sessions, &processes(), &platform::window_titles(), own),
             Err(e) => {
                 tracing::warn!("audio: listing applications failed: {e:#}");
                 Vec::new()
@@ -310,7 +314,7 @@ mod tests {
             (12, Some(10), "chrome.exe"),
         ]);
         let titles = titles(&[(1, "Downloads"), (10, "Video - Google Chrome")]);
-        let apps = group(&[(11, true), (12, false)], &procs, &titles, 999);
+        let apps = group(&[(11, true), (12, false)], &procs, &titles, Some(999));
         assert_eq!(
             apps,
             vec![AudioApp {
@@ -331,7 +335,7 @@ mod tests {
             (22, Some(21), "msedgewebview2.exe"),
         ]);
         let titles = titles(&[(20, "Teams")]);
-        let apps = group(&[(22, false)], &procs, &titles, 999);
+        let apps = group(&[(22, false)], &procs, &titles, Some(999));
         assert_eq!(apps.len(), 1);
         assert_eq!((apps[0].pid, apps[0].name.as_str()), (20, "ms-teams"));
     }
@@ -340,7 +344,7 @@ mod tests {
     fn a_windowless_player_is_not_merged_into_the_shell() {
         let procs = procs(&[(1, None, "explorer.exe"), (30, Some(1), "player.exe")]);
         let titles = titles(&[(1, "Downloads")]);
-        let apps = group(&[(30, true)], &procs, &titles, 999);
+        let apps = group(&[(30, true)], &procs, &titles, Some(999));
         assert_eq!((apps[0].pid, apps[0].name.as_str()), (30, "player"));
         assert_eq!(apps[0].title, None);
     }
@@ -357,8 +361,11 @@ mod tests {
             &[(41, true), (60, false), (50, true), (70, true)],
             &procs,
             &HashMap::new(),
-            40,
+            Some(40),
         );
+        // Without an own process (tests that start the players).
+        let all = group(&[(41, true)], &procs, &HashMap::new(), None);
+        assert_eq!(all.len(), 1);
         let names: Vec<&str> = apps.iter().map(|a| a.name.as_str()).collect();
         assert_eq!(names, ["zplayer", "aplayer"]);
     }
