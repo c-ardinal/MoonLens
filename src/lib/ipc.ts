@@ -600,6 +600,15 @@ export const closeLensWindow = (id: string) => safeInvoke<void>('close_lens_wind
 export const listLensWindows = () =>
   safeInvoke<LensDescriptor[]>('list_lens_windows', undefined, []);
 /** Pause every lens window, or resume. Resolves to the new state. */
+/** Whether extra triggers (mouse button, double tap, gamepad) work here. */
+export const triggerSupported = () => safeInvoke<boolean>('trigger_supported', undefined, false);
+/**
+ * Wait for the user to perform a trigger; resolves with its text form
+ * (`Mouse4`, `Double:Control`, `Pad:Back+Y`), or null when nothing came
+ * in time or the wait was cancelled.
+ */
+export const captureTrigger = () => safeInvoke<string | null>('capture_trigger', undefined, null);
+export const cancelTriggerCapture = () => safeInvoke<void>('cancel_trigger_capture', undefined, undefined as void);
 export const toggleLensPause = () => safeInvoke<boolean>('toggle_lens_pause', undefined, false);
 /** All-window controls as they are now (for a window that just opened). */
 export const lensControls = () =>

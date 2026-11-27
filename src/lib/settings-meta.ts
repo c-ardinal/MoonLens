@@ -34,6 +34,8 @@ export type Field =
     }
   | { kind: 'color'; path: string; label: string; help?: string }
   | { kind: 'hotkey'; path: string; label: string; help?: string }
+  /** Mouse button / double tap / gamepad combination (TriggerInput). */
+  | { kind: 'trigger'; path: string; label: string; help?: string }
   /** Editable term list (rendered by GlossaryEditor). */
   | { kind: 'glossary'; path: string; label: string; help?: string }
   /** Editable list of phrases (rendered by PhraseList). */
@@ -66,6 +68,43 @@ const SOURCE_LANGUAGE_OPTIONS: Option[] = SOURCE_LANGUAGES.map((l) => ({
   value: l.code,
   label: l.label
 }));
+
+/** ショートカットの各操作。追加操作（`triggers.*`）も同一の操作を対象とする。 */
+const HOTKEY_FIELDS: Extract<Field, { kind: 'hotkey' }>[] = [
+      {
+        kind: 'hotkey',
+        path: 'hotkeys.capture_region',
+        label: 'common:window_translation',
+        help: 'settings:adds_a_translation_window_at_the_pointer'
+      },
+      {
+        kind: 'hotkey',
+        path: 'hotkeys.toggle_pin_overlay',
+        label: 'settings:window_translation_open_close_all',
+        help: 'settings:no_window_open_opens_one_windows_open'
+      },
+      {
+        kind: 'hotkey',
+        path: 'hotkeys.toggle_window_operate',
+        label: 'settings:window_translation_click_through_interact',
+        help: 'settings:switches_every_window_click_through_clicks'
+      },
+      {
+        kind: 'hotkey',
+        path: 'hotkeys.toggle_window_pause',
+        label: 'common:window_translation_pause_resume',
+        help: 'settings:stops_reading_and_translation_in_all_windows'
+      },
+      {
+        kind: 'hotkey',
+        path: 'hotkeys.hold_window_original',
+        label: 'settings:window_translation_show_source_while_held',
+        help: 'settings:hides_translations_in_all_windows_and_shows'
+      },
+      { kind: 'hotkey', path: 'hotkeys.toggle_subtitle', label: 'common:audio_translation_start_stop' },
+      { kind: 'hotkey', path: 'hotkeys.open_command_palette', label: 'settings:command_palette' },
+      { kind: 'hotkey', path: 'hotkeys.open_history', label: 'settings:open_history' }
+    ];
 
 export const SECTIONS: Section[] = [
   {
@@ -146,41 +185,17 @@ export const SECTIONS: Section[] = [
     id: 'hotkeys',
     title: 'settings:shortcuts',
     description: 'settings:global_shortcuts_that_work_in_every_app',
-    fields: [
-      {
-        kind: 'hotkey',
-        path: 'hotkeys.capture_region',
-        label: 'common:window_translation',
-        help: 'settings:adds_a_translation_window_at_the_pointer'
-      },
-      {
-        kind: 'hotkey',
-        path: 'hotkeys.toggle_pin_overlay',
-        label: 'settings:window_translation_open_close_all',
-        help: 'settings:no_window_open_opens_one_windows_open'
-      },
-      {
-        kind: 'hotkey',
-        path: 'hotkeys.toggle_window_operate',
-        label: 'settings:window_translation_click_through_interact',
-        help: 'settings:switches_every_window_click_through_clicks'
-      },
-      {
-        kind: 'hotkey',
-        path: 'hotkeys.toggle_window_pause',
-        label: 'common:window_translation_pause_resume',
-        help: 'settings:stops_reading_and_translation_in_all_windows'
-      },
-      {
-        kind: 'hotkey',
-        path: 'hotkeys.hold_window_original',
-        label: 'settings:window_translation_show_source_while_held',
-        help: 'settings:hides_translations_in_all_windows_and_shows'
-      },
-      { kind: 'hotkey', path: 'hotkeys.toggle_subtitle', label: 'common:audio_translation_start_stop' },
-      { kind: 'hotkey', path: 'hotkeys.open_command_palette', label: 'settings:command_palette' },
-      { kind: 'hotkey', path: 'hotkeys.open_history', label: 'settings:open_history' }
-    ]
+    fields: HOTKEY_FIELDS
+  },
+  {
+    id: 'triggers',
+    title: 'settings:extra_triggers',
+    description: 'settings:mouse_button_double_tap_or_gamepad_per_action',
+    fields: HOTKEY_FIELDS.map((f) => ({
+      kind: 'trigger' as const,
+      path: f.path.replace('hotkeys.', 'triggers.'),
+      label: f.label
+    }))
   },
   {
     id: 'subtitle',
@@ -504,7 +519,7 @@ export const GROUPS: Group[] = [
   { id: 'subtitle', title: 'settings:audio_group', sections: ['subtitle'] },
   { id: 'models', title: 'common:models', sections: ['models', 'model-assist', 'model-ocr', 'model-asr'] },
   { id: 'output', title: 'settings:history_copy', sections: ['history', 'clipboard'] },
-  { id: 'hotkeys', title: 'settings:shortcuts', sections: ['hotkeys'] },
+  { id: 'hotkeys', title: 'settings:shortcuts', sections: ['hotkeys', 'triggers'] },
   { id: 'plugins', title: 'settings:extensions', sections: ['plugins'] },
   { id: 'system', title: 'settings:system', sections: ['appearance', 'performance', 'startup', 'data', 'advanced'] }
 ];
@@ -586,7 +601,7 @@ export function savable<T>(saved: T, draft: T): T {
 export function heldHotkeys(saved: any, draft: any): string[] {
   const next = savable(saved, draft);
   return allFields()
-    .filter((f) => f.kind === 'hotkey' && !sameValue(getPath(next, f.path), getPath(draft, f.path)))
+    .filter((f) => (f.kind === 'hotkey' || f.kind === 'trigger') && !sameValue(getPath(next, f.path), getPath(draft, f.path)))
     .map((f) => f.path);
 }
 
@@ -599,17 +614,23 @@ export function saveDelay(path: string): number {
 
 /**
  * Hotkey fields that share a shortcut with another one. Only one of them
- * could be registered, so the screen refuses to save such a set.
+ * could be registered, so the screen refuses to save such a set. Extra
+ * triggers are held to the same rule: one input, one action.
  * Returns the paths involved (empty when all are distinct).
  */
 export function duplicateHotkeys(settings: any): string[] {
   const seen = new Map<string, string[]>();
   for (const f of allFields()) {
-    if (f.kind !== 'hotkey') continue;
+    if (f.kind !== 'hotkey' && f.kind !== 'trigger') continue;
     const v = String(getPath(settings, f.path) ?? '')
       .trim()
       .toLowerCase();
     if (!v) continue;
+    if (f.kind === 'trigger') {
+      // 追加操作：バックエンドの正規形を保存するため、文字列比較で十分
+      seen.set(`trigger ${v}`, [...(seen.get(`trigger ${v}`) ?? []), f.path]);
+      continue;
+    }
     const norm = v.split('+').map((k) => (k === 'cmdorctrl' ? 'commandorcontrol' : k));
     const key = [...norm.slice(0, -1).sort(), norm[norm.length - 1]].join('+');
     seen.set(key, [...(seen.get(key) ?? []), f.path]);
