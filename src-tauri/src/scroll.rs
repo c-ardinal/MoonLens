@@ -192,12 +192,27 @@ impl Memory {
                     let was_in_view = rows_in_view(rect, height).is_some();
                     let in_view = rows_in_view(moved, height);
                     if known.cut {
-                        // The rest of the line may have come into view.
+                        // The rest of the line may have come into view:
+                        // read it again with the rows next to it.
+                        let mut again = false;
                         if let (Some(rows), Some(span)) = (in_view, unread) {
                             let reach = rect[3].ceil() as u32;
                             if rows.0 <= span.1 + reach && span.0 <= rows.1 + reach {
                                 unread = Some((span.0.min(rows.0), span.1.max(rows.1)));
+                                again = true;
                             }
+                        }
+                        // No more of it shows than before: what was
+                        // read stands while it is in view.
+                        if !again && in_view.is_some() {
+                            kept.push(Known {
+                                line: OcrLine {
+                                    bbox: moved,
+                                    ..known.line.clone()
+                                },
+                                cut: true,
+                                shown: known.shown || shows(self.window, moved),
+                            });
                         }
                     } else if !was_in_view && in_view.is_some() {
                         // Came back into view unseen: read it again.
@@ -678,6 +693,25 @@ mod tests {
         assert!(!texts(&memory).contains(&"upper half".to_string()));
         let (top, _) = step.read.unwrap();
         assert!(top <= 250, "the cut line is inside the rows to read: {top}");
+    }
+
+    #[test]
+    fn a_line_at_the_edge_stays_known_while_no_more_of_it_comes_into_view() {
+        let page = page(30);
+        let mut memory = Memory::default();
+        // Line 10 (rows 410..430) begins 5 rows below the top edge: it
+        // may be cut, for all the reading tells.
+        memory.remember(&view(&page, 405), &lines_in(405, 30), None);
+        assert!(texts(&memory).contains(&"line 10".to_string()));
+        // Scrolled 4 rows on: new rows at the bottom only.
+        let step = memory.follow(&view(&page, 409), &[]).unwrap();
+        assert_eq!(step.dy, -4);
+        assert!(texts(&memory).contains(&"line 10".to_string()));
+        // Scrolled back: the rows above it are read, and it with them.
+        let step = memory.follow(&view(&page, 395), &[]).unwrap();
+        assert!(!texts(&memory).contains(&"line 10".to_string()));
+        let (top, bottom) = step.read.unwrap();
+        assert!(top == 0 && bottom >= 35, "{top}..{bottom}");
     }
 
     #[test]
