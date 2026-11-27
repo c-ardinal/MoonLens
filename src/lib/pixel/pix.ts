@@ -337,7 +337,7 @@ export class Pix {
     }
   }
 
-  /** 斜めの窓：段影・本体・外枠・内枠。 */
+  /** 斜めのウィンドウ：段影・本体・外枠・内枠。 */
   slantWin(x: number, y: number, w: number, h: number, k: number, opt: { shadow?: Color; bg?: Color } = {}) {
     if (opt.shadow !== undefined) this.slab(x + 5, y + 5, w, h, k, opt.shadow);
     this.slab(x, y, w, h, k, opt.bg ?? 0);
