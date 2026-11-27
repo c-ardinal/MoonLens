@@ -69,6 +69,7 @@ macro_rules! all_commands {
             ipc::macos_request_screen_capture,
             ipc::open_lens,
             ipc::set_lens_language,
+            ipc::set_lens_read_mode,
             ipc::set_lens_interactive,
             ipc::set_lens_operate,
             ipc::set_lens_text_dock,

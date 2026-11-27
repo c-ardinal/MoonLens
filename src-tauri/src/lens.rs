@@ -48,7 +48,7 @@ use crate::{
     lens_drag::{self, DragGate},
     lens_text::{self, Follow},
     pipeline::Pipeline,
-    region_watcher::{Frame, Geometry, LiveEvent, Tick, TickEnv, Tracker},
+    region_watcher::{Frame, Geometry, LiveEvent, ReadMode, Tick, TickEnv, Tracker},
     settings::SettingsStore,
 };
 
@@ -397,6 +397,7 @@ pub struct LensDescriptor {
     pub continuous: bool,
     /// Language it translates into; `None` = the configured target.
     pub target_language: Option<String>,
+    pub read_mode: ReadMode,
 }
 
 struct LensEntry {
@@ -404,6 +405,7 @@ struct LensEntry {
     watch: Option<Watch>,
     /// Translate into this language; `None` = the configured target.
     target_language: Option<String>,
+    read_mode: ReadMode,
     /// The renderer shows controls over the body (text view): the body
     /// takes the mouse too.
     interactive: bool,
@@ -420,6 +422,7 @@ pub struct Placement {
     /// Monitor-relative physical pixels, like the selector's crops.
     pub rect: CaptureRect,
     pub target_language: Option<String>,
+    pub read_mode: ReadMode,
 }
 
 /// A running continuous reading of one lens.
@@ -457,15 +460,16 @@ impl LensRegistry {
                 insets: e.insets,
                 continuous: e.watch.is_some(),
                 target_language: e.target_language.clone(),
+                read_mode: e.read_mode,
             })
             .collect()
     }
 
     pub fn track(&self, id: String) {
-        self.track_with(id, None);
+        self.track_with(id, None, ReadMode::default());
     }
 
-    fn track_with(&self, id: String, target_language: Option<String>) {
+    fn track_with(&self, id: String, target_language: Option<String>, read_mode: ReadMode) {
         self.entries.lock().push((
             id,
             LensEntry {
@@ -478,6 +482,7 @@ impl LensRegistry {
                 },
                 watch: None,
                 target_language,
+                read_mode,
                 interactive: false,
                 operate: false,
                 text: None,
@@ -496,6 +501,21 @@ impl LensRegistry {
     pub fn set_target_language(&self, id: &str, lang: Option<String>) {
         if let Some((_, e)) = self.entries.lock().iter_mut().find(|(i, _)| i == id) {
             e.target_language = lang;
+        }
+    }
+
+    /// `None` for a lens that is gone.
+    pub fn read_mode(&self, id: &str) -> Option<ReadMode> {
+        self.entries
+            .lock()
+            .iter()
+            .find(|(i, _)| i == id)
+            .map(|(_, e)| e.read_mode)
+    }
+
+    pub fn set_read_mode(&self, id: &str, mode: ReadMode) {
+        if let Some((_, e)) = self.entries.lock().iter_mut().find(|(i, _)| i == id) {
+            e.read_mode = mode;
         }
     }
 
@@ -632,10 +652,16 @@ pub fn create(
         .build()
         .context("create lens window")?;
     let source = beside.and_then(|b| app.get_webview_window(b));
-    let target_language = match &placement {
-        Some(p) => p.target_language.clone(),
-        // Opened from a window: the same language as that window.
-        None => beside.and_then(|b| registry.target_language(b)),
+    let (target_language, read_mode) = match &placement {
+        Some(p) => (p.target_language.clone(), p.read_mode),
+        // Opened from a window: the same language and reading mode as
+        // that window.
+        None => (
+            beside.and_then(|b| registry.target_language(b)),
+            beside
+                .and_then(|b| registry.read_mode(b))
+                .unwrap_or_default(),
+        ),
     };
     let placed = match (&placement, &source) {
         (Some(p), _) => place(&win, &p.rect),
@@ -647,7 +673,7 @@ pub fn create(
     }
     win.show().ok();
     let _ = win.set_always_on_top(true);
-    registry.track_with(id.clone(), target_language);
+    registry.track_with(id.clone(), target_language, read_mode);
     tauri::async_runtime::spawn(run_passthrough(app.clone(), registry.clone(), id.clone()));
     Ok(id)
 }
@@ -1076,6 +1102,7 @@ async fn run_watch(
         let env = TickEnv {
             pipeline: &pipeline,
             target_language: &target_language,
+            mode: registry.read_mode(&id).unwrap_or_default(),
             history_kind: crate::pipeline::history_kind::LENS,
             emit: &emit,
             geometry_now: &geometry_now,
@@ -1262,8 +1289,16 @@ mod tests {
     #[test]
     fn per_lens_language_and_interaction() {
         let r = new_registry_for_test();
-        r.track_with("a".into(), Some("en".into()));
+        r.track_with("a".into(), Some("en".into()), ReadMode::Ui);
         r.track("b".into());
+        // Reading mode: per window, subtitles unless set otherwise.
+        assert_eq!(r.read_mode("a"), Some(ReadMode::Ui));
+        assert_eq!(r.read_mode("b"), Some(ReadMode::Subtitle));
+        r.set_read_mode("b", ReadMode::Ui);
+        r.set_read_mode("a", ReadMode::Subtitle);
+        let modes: Vec<ReadMode> = r.list().iter().map(|l| l.read_mode).collect();
+        assert_eq!(modes, [ReadMode::Subtitle, ReadMode::Ui]);
+        assert_eq!(r.read_mode("missing"), None);
         assert_eq!(r.target_language("a").as_deref(), Some("en"));
         assert_eq!(r.target_language("b"), None);
         r.set_target_language("b", Some("ko".into()));

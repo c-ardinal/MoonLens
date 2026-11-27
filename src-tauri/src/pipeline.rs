@@ -701,7 +701,28 @@ impl Pipeline {
         progress: Option<&ProgressSink<'_>>,
         kind: &str,
     ) -> Result<(), ProviderError> {
+        self.translate_capture_in(
+            bundle,
+            target_language,
+            progress,
+            kind,
+            CaptureContext::default(),
+        )
+        .await
+    }
+
+    /// [`Self::translate_capture_as`] with the relation between the
+    /// capture's blocks, and to earlier captures, given by `context`.
+    pub async fn translate_capture_in(
+        &self,
+        bundle: &mut CaptureFlowResult,
+        target_language: &str,
+        progress: Option<&ProgressSink<'_>>,
+        kind: &str,
+        context: CaptureContext<'_>,
+    ) -> Result<(), ProviderError> {
         let s = self.settings.snapshot();
+        let independent = context == CaptureContext::Independent;
         self.prepare_translation(bundle, target_language);
         let pending: Vec<usize> = (0..bundle.blocks.len())
             .filter(|&i| bundle.blocks[i].needs_request())
@@ -741,7 +762,9 @@ impl Pipeline {
             .map(|&i| bundle.blocks[i].source.clone())
             .collect();
         let in_parts = self.translator_takes_context();
-        let parts = if in_parts {
+        let parts = if independent {
+            (0..sources.len()).map(|i| i..i + 1).collect()
+        } else if in_parts {
             let costs: Vec<usize> = sources.iter().map(|t| translate_plan::cost(t)).collect();
             translate_plan::plan(
                 &costs,
@@ -755,7 +778,21 @@ impl Pipeline {
         // a heading or a row of short labels is not translated blind. The
         // same reference stays in every later prompt so the prefix cache
         // still matches.
-        let reference = if parts.len() > 1 {
+        let reference = if independent {
+            // Every block is read next to the other text of the capture,
+            // translated or not: a label alone ("Light", "Resume") is
+            // ambiguous. The same lines for every block, so the prefix
+            // cache matches.
+            (bundle.blocks.len() > 1)
+                .then(|| {
+                    translate_plan::take_reference(
+                        bundle.blocks.iter().map(|b| b.source.as_str()),
+                        layout::BLOCK_SEPARATOR,
+                        translate_plan::REFERENCE,
+                    )
+                })
+                .flatten()
+        } else if parts.len() > 1 {
             translate_plan::take_reference(
                 sources[parts[1].start..].iter().map(String::as_str),
                 layout::BLOCK_SEPARATOR,
@@ -766,7 +803,10 @@ impl Pipeline {
         };
 
         let started = Instant::now();
-        let mut history: Vec<(String, String)> = Vec::new();
+        let mut history: Vec<(String, String)> = match context {
+            CaptureContext::Running { earlier } if in_parts => earlier.to_vec(),
+            _ => Vec::new(),
+        };
         let mut first: Option<TaskResult> = None;
         let mut reasons: Vec<String> = Vec::new();
         let mut outputs: Vec<String> = Vec::new();
@@ -877,8 +917,10 @@ impl Pipeline {
             }
             if !joined.trim().is_empty() {
                 outputs.push(joined.clone());
-                history.push((request_text, joined));
-                translate_plan::trim_history(&mut history, translate_plan::HISTORY);
+                if !independent {
+                    history.push((request_text, joined));
+                    translate_plan::trim_history(&mut history, translate_plan::HISTORY);
+                }
             }
             reasons.extend(translate.fallback_reasons.iter().cloned());
             first.get_or_insert(translate);
@@ -990,6 +1032,27 @@ impl Pipeline {
         {
             tracing::warn!("history retention failed: {e}");
         }
+    }
+}
+
+/// How the blocks of one capture relate to each other and to what was
+/// captured before (see [`Pipeline::translate_capture_in`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CaptureContext<'a> {
+    /// One running text: later parts are translated with the earlier
+    /// parts as history. `earlier` holds source and translation of
+    /// captures that came before this one (oldest first), for
+    /// translators that take a [`TranslateContext`].
+    Running { earlier: &'a [(String, String)] },
+    /// Separate pieces (interface labels): every block is a request of
+    /// its own, without history. The capture's text goes with each as
+    /// reference only, so a short label is still read in its place.
+    Independent,
+}
+
+impl Default for CaptureContext<'_> {
+    fn default() -> Self {
+        Self::Running { earlier: &[] }
     }
 }
 

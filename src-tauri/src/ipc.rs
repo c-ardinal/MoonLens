@@ -11,12 +11,13 @@ use crate::{
     clipboard, hotkey, intent,
     lens::{self, geometry::LensInsets, LensDescriptor},
     lens_text, overlay,
-    pipeline::{CaptureFlowResult, TaskResult, LOCAL_ASSIST_ID, LOCAL_LLM_ID},
+    pipeline::{CaptureContext, CaptureFlowResult, TaskResult, LOCAL_ASSIST_ID, LOCAL_LLM_ID},
     plugins::PluginDescriptor,
     providers::{
         asr_local::LOCAL_ASR_ID, llm_models, model_store, ocr_ocrs, whisper_models, Capability,
         TaskInput,
     },
+    region_watcher::ReadMode,
     settings::schema::Settings,
     user_error,
 };
@@ -1209,11 +1210,13 @@ fn platform_label(os: &str) -> &'static str {
 /// physical pixels) its body covers that range; without, it opens
 /// under the mouse pointer. `target_language` defaults to the
 /// configured target. `beside` (a window id, without `rect`): next to
-/// that window, with its size and language.
+/// that window, with its size, language and reading mode. `read_mode`
+/// applies with `rect` (default: subtitles).
 #[tauri::command]
 pub async fn open_lens(
     rect: Option<RegionArgs>,
     target_language: Option<String>,
+    read_mode: Option<ReadMode>,
     beside: Option<String>,
     app: AppHandle,
     state: State<'_, AppState>,
@@ -1227,6 +1230,7 @@ pub async fn open_lens(
             h: r.h,
         },
         target_language: clean_language(target_language.clone()),
+        read_mode: read_mode.unwrap_or_default(),
     });
     // Window creation must not run on the IPC worker on Windows (it
     // deadlocks with the event loop); hand it to the main thread.
@@ -1259,6 +1263,18 @@ pub async fn set_lens_language(
         .lenses
         .set_target_language(&id, clean_language(target_language));
     state.lenses.kick(&id);
+    Ok(())
+}
+
+/// Change how a lens window reads its range (see [`ReadMode`]). Applies
+/// from the next reading; what is shown stays.
+#[tauri::command]
+pub async fn set_lens_read_mode(
+    id: String,
+    mode: ReadMode,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    state.lenses.set_read_mode(&id, mode);
     Ok(())
 }
 
@@ -1404,12 +1420,18 @@ pub async fn capture_lens_now(
             .lenses
             .target_language(&id)
             .unwrap_or_else(|| state.settings.snapshot().subtitle.target_language.clone());
+        // A one-off reading has no readings before it to carry over.
+        let context = match state.lenses.read_mode(&id).unwrap_or_default() {
+            ReadMode::Subtitle => CaptureContext::default(),
+            ReadMode::Ui => CaptureContext::Independent,
+        };
         pipeline
-            .translate_capture_as(
+            .translate_capture_in(
                 &mut bundle,
                 &target,
                 None,
                 crate::pipeline::history_kind::LENS,
+                context,
             )
             .await
             .map_err(|e| user_error::provider(&e, Capability::Translate))?;
