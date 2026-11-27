@@ -6,13 +6,16 @@ import {
   dragRect,
   growRoom,
   joinedText,
+  LANGUAGES,
+  SOURCE_LANGUAGES,
   languageLabel,
   maskClip,
   rgb,
   splitStreaming,
   toCssRect,
   toFrameRect,
-  toolbarPosition
+  toolbarPosition,
+  writtenLanguage
 } from './lens-overlay';
 import type { LensBlock } from './ipc';
 
@@ -154,11 +157,20 @@ describe('target language', () => {
 
   it('labels languages', () => {
     expect(languageLabel('ja')).toBe('日本語');
+    expect(languageLabel('ja-easy')).toBe('やさしい日本語');
     expect(languageLabel('EN')).toBe('英語');
     expect(languageLabel('en-US')).toBe('英語');
     expect(languageLabel('zh')).toBe('中国語');
     expect(languageLabel('xx')).toBe('xx');
     expect(languageLabel(null)).toBe('');
+  });
+
+  it('keeps target-only variants out of the source languages', () => {
+    expect(LANGUAGES.map((l) => l.code)).toContain('ja-easy');
+    expect(SOURCE_LANGUAGES.map((l) => l.code)).not.toContain('ja-easy');
+    expect(writtenLanguage('ja-easy')).toBe('ja');
+    expect(writtenLanguage('zh-Hans')).toBe('zh-Hans');
+    expect(writtenLanguage('en')).toBe('en');
   });
 
   it('detects when nothing needed translating', () => {

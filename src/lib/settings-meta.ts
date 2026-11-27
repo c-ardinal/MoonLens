@@ -8,7 +8,7 @@
  */
 
 import { compactGlossary } from './glossary';
-import { LANGUAGES } from './lens-overlay';
+import { LANGUAGES, SOURCE_LANGUAGES } from './lens-overlay';
 
 export type Option = { value: string; label: string };
 
@@ -48,6 +48,10 @@ export type SectionComponent = 'llm-translate' | 'llm-assist' | 'ocr' | 'asr' | 
 export type Group = { id: string; title: string; sections: string[] };
 
 const LANGUAGE_OPTIONS: Option[] = LANGUAGES.map((l) => ({ value: l.code, label: l.label }));
+const SOURCE_LANGUAGE_OPTIONS: Option[] = SOURCE_LANGUAGES.map((l) => ({
+  value: l.code,
+  label: l.label
+}));
 
 export const SECTIONS: Section[] = [
   {
@@ -66,7 +70,7 @@ export const SECTIONS: Section[] = [
         kind: 'select',
         path: 'translation.style',
         label: '文体',
-        help: '日本語への翻訳時のみ適用。',
+        help: '日本語への翻訳時のみ適用。やさしい日本語は対象外。',
         options: [
           { value: 'auto', label: '自動' },
           { value: 'polite', label: '敬体（です・ます）' },
@@ -149,7 +153,7 @@ export const SECTIONS: Section[] = [
         kind: 'select',
         path: 'subtitle.source_language',
         label: '音声言語',
-        options: [{ value: 'auto', label: '自動判定' }, ...LANGUAGE_OPTIONS]
+        options: [{ value: 'auto', label: '自動判定' }, ...SOURCE_LANGUAGE_OPTIONS]
       },
       {
         kind: 'toggle',
