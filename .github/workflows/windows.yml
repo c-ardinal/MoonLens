@@ -40,6 +40,7 @@ on:
       # Live subtitles: loopback capture of what the PC plays, speech
       # recognition and translation (lens-e2e job).
       - 'src-tauri/src/audio.rs'
+      - 'src-tauri/src/audio_apps.rs'
       - 'src-tauri/src/subtitle.rs'
       - 'src-tauri/src/providers/asr_*.rs'
       - 'src-tauri/native/**'
@@ -268,7 +269,8 @@ jobs:
 
       # Recorded English speech → subtitle loop → recognized text and its
       # Japanese translation; once fed directly, once played on the
-      # output device and captured by the app's loopback capture.
+      # output device and captured by the app's loopback capture, once
+      # per application with two processes playing at the same time.
       - name: Speech → subtitles
         if: always()
         working-directory: src-tauri
