@@ -124,6 +124,28 @@ impl Provider for PageOcr {
     }
 }
 
+/// Finds a code in the picture once `0` is set.
+struct Code(Arc<Mutex<bool>>);
+
+#[async_trait]
+impl Provider for Code {
+    fn id(&self) -> &str {
+        "code"
+    }
+    fn capabilities(&self) -> &[Capability] {
+        &[Capability::QrHandler]
+    }
+    fn is_local(&self) -> bool {
+        true
+    }
+    async fn run(&self, _: TaskInput) -> Result<TaskOutput, ProviderError> {
+        match *self.0.lock() {
+            true => Ok(TaskOutput::Text("https://example.com/".into())),
+            false => Err(ProviderError::Other("no code".into())),
+        }
+    }
+}
+
 /// Wraps every paragraph in `<>` and records the requests.
 struct Recorder(Arc<Mutex<Vec<String>>>);
 
@@ -156,6 +178,8 @@ struct Run {
     fail_next: Arc<Mutex<bool>>,
     requests: Arc<Mutex<Vec<String>>>,
     events: Arc<Mutex<Vec<LiveEvent>>>,
+    /// A QR code is in the picture.
+    code: Arc<Mutex<bool>>,
     /// Rows read above and below the region (the scan margin).
     margin: u32,
 }
@@ -175,7 +199,7 @@ impl Run {
             timeout_ms: 1000,
             ..TaskChain::default()
         };
-        s.providers.qr_handler.chain = vec![];
+        s.providers.qr_handler.chain = vec!["code".into()];
         store.save(s).unwrap();
         std::mem::forget(tmp);
 
@@ -191,6 +215,8 @@ impl Run {
             }),
         );
         providers.insert("recorder".into(), Arc::new(Recorder(requests.clone())));
+        let code = Arc::new(Mutex::new(false));
+        providers.insert("code".into(), Arc::new(Code(code.clone())));
         Self {
             pipeline: Pipeline::with_providers(
                 Arc::new(store),
@@ -203,6 +229,7 @@ impl Run {
             fail_next,
             requests,
             events: Arc::default(),
+            code,
             margin: 0,
         }
     }
@@ -456,6 +483,23 @@ async fn rows_read_in_the_margin_are_shown_once_a_scroll_brings_them_in() {
         "{tick:?}"
     );
     assert_eq!(run.requests.lock()[1..], ["w9 w10 w11".to_string()]);
+}
+
+#[tokio::test]
+async fn a_code_that_scrolls_into_view_is_decoded() {
+    let mut run = Run::shown_at_the_top().await;
+    *run.code.lock() = true;
+    assert_eq!(run.tick(60).await, Ok(Tick::Settling));
+    assert_eq!(
+        run.tick(60).await,
+        Ok(Tick::Decoded {
+            text: "https://example.com/".into()
+        })
+    );
+    // Text again: nothing is left from before the code.
+    *run.code.lock() = false;
+    assert_eq!(run.tick(100).await, Ok(Tick::Settling));
+    assert_eq!(run.heights.lock().last(), Some(&H));
 }
 
 #[tokio::test]

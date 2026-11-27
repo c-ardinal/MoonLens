@@ -684,6 +684,18 @@ impl Tracker {
         env: &TickEnv<'_>,
     ) -> anyhow::Result<Result<CaptureFlowResult, ProviderError>> {
         let image = &frame.image;
+        // A code that came into view is the reading, as in a full one.
+        match env.pipeline.decode_qr(image, frame.visible).await {
+            Ok(None) => {}
+            Ok(Some(bundle)) => {
+                self.memory.clear();
+                return Ok(Ok(bundle));
+            }
+            Err(e) => {
+                self.memory.clear();
+                return Ok(Err(e));
+            }
+        }
         if let Some((top, bottom)) = step.read {
             let rows = image.crop_imm(0, top, image.width(), bottom - top);
             let png = capture::png_bytes(&rows)?;

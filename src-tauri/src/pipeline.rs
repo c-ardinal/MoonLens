@@ -596,36 +596,9 @@ impl Pipeline {
                 .map_err(|e| ProviderError::Other(e.to_string()))?,
             _ => image_png.clone(),
         };
-        if let Ok(res) = self
-            .run(
-                Capability::QrHandler,
-                TaskInput::IntentClassifier { image_png: qr_png },
-            )
-            .await
-        {
-            if let TaskOutput::Text(payload) = &res.output {
-                self.record_history(
-                    history_kind::QR,
-                    None,
-                    Some(payload),
-                    Some(&res.used_provider),
-                    res.via_cloud,
-                );
-                let bundle = CaptureFlowResult {
-                    intent: Intent::Qr,
-                    source_text: None,
-                    result: res,
-                    source_rect: None,
-                    blocks: vec![],
-                    image_size: Some(visible.map_or([img.width(), img.height()], |v| [v.w, v.h])),
-                    source_language: None,
-                    target_language: None,
-                    app: None,
-                    earlier: Vec::new(),
-                    on_screen: Vec::new(),
-                };
-                return Ok((bundle, vec![]));
-            }
+        let image_size = visible.map_or([img.width(), img.height()], |v| [v.w, v.h]);
+        if let Some(bundle) = self.qr_bundle(qr_png, image_size).await {
+            return Ok((bundle, vec![]));
         }
 
         // 2) OCR → layout → translate. Always attempted for text-like or
@@ -636,6 +609,58 @@ impl Pipeline {
             None => self.blocks_of(&img, &lines, None, false),
         };
         Ok((bundle, lines))
+    }
+
+    /// The QR code in `img`, as the bundle of a capture that shows one
+    /// (see [`Self::analyze_capture_in`]). For a caller that reads a
+    /// capture in parts.
+    pub async fn decode_qr(
+        &self,
+        img: &image::DynamicImage,
+        visible: Option<Visible>,
+    ) -> Result<Option<CaptureFlowResult>, ProviderError> {
+        let inside = visible.and_then(|v| v.crop(img));
+        let image_png = crate::capture::png_bytes(inside.as_ref().unwrap_or(img))
+            .map_err(|e| ProviderError::Other(e.to_string()))?;
+        let image_size = visible.map_or([img.width(), img.height()], |v| [v.w, v.h]);
+        Ok(self.qr_bundle(image_png, image_size).await)
+    }
+
+    async fn qr_bundle(
+        &self,
+        image_png: Vec<u8>,
+        image_size: [u32; 2],
+    ) -> Option<CaptureFlowResult> {
+        let res = self
+            .run(
+                Capability::QrHandler,
+                TaskInput::IntentClassifier { image_png },
+            )
+            .await
+            .ok()?;
+        let TaskOutput::Text(payload) = &res.output else {
+            return None;
+        };
+        self.record_history(
+            history_kind::QR,
+            None,
+            Some(payload),
+            Some(&res.used_provider),
+            res.via_cloud,
+        );
+        Some(CaptureFlowResult {
+            intent: Intent::Qr,
+            source_text: None,
+            result: res,
+            source_rect: None,
+            blocks: vec![],
+            image_size: Some(image_size),
+            source_language: None,
+            target_language: None,
+            app: None,
+            earlier: Vec::new(),
+            on_screen: Vec::new(),
+        })
     }
 
     /// Text recognition alone: the lines of a picture, positioned in its
