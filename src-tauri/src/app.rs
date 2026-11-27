@@ -169,11 +169,19 @@ pub fn build() -> Result<()> {
             // react (providers + hotkeys). `subscribe` returns a fresh
             // receiver each call so this does not starve any other
             // subscriber.
+            // Before subscribing: a login item the OS switched off turns
+            // the setting off here, and that save needs no reaction.
+            crate::autostart::sync_at_startup(&settings);
+            let mut launch_at_login = settings.snapshot().startup.launch_at_login;
             let reload_handle = handle.clone();
             let mut reload_rx = settings.subscribe();
             tauri::async_runtime::spawn(async move {
                 while let Ok(snapshot) = reload_rx.recv().await {
                     crate::apply_log_level(snapshot.privacy.log_level);
+                    if snapshot.startup.launch_at_login != launch_at_login {
+                        launch_at_login = snapshot.startup.launch_at_login;
+                        crate::autostart::sync_on_change(launch_at_login);
+                    }
                     // Let every window (overlay, subtitle, lens) apply theme
                     // or font changes, whether saved here or edited on disk.
                     let _ = reload_handle.emit("moonlens://settings-changed", &*snapshot);
