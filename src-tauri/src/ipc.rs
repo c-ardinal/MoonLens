@@ -11,7 +11,7 @@ use crate::{
     clipboard, hotkey, intent,
     lens::{self, geometry::LensInsets, LensDescriptor},
     lens_text, overlay,
-    pipeline::{CaptureContext, CaptureFlowResult, TaskResult, LOCAL_ASSIST_ID, LOCAL_LLM_ID},
+    pipeline::{CaptureFlowResult, TaskResult, LOCAL_ASSIST_ID, LOCAL_LLM_ID},
     plugins::PluginDescriptor,
     providers::{
         asr_local::LOCAL_ASR_ID, llm_models, model_store, ocr_ocrs, whisper_models, Capability,
@@ -1420,18 +1420,12 @@ pub async fn capture_lens_now(
             .lenses
             .target_language(&id)
             .unwrap_or_else(|| state.settings.snapshot().subtitle.target_language.clone());
-        // A one-off reading has no readings before it to carry over.
-        let context = match state.lenses.read_mode(&id).unwrap_or_default() {
-            ReadMode::Subtitle => CaptureContext::default(),
-            ReadMode::Ui => CaptureContext::Independent,
-        };
         pipeline
-            .translate_capture_in(
+            .translate_capture_as(
                 &mut bundle,
                 &target,
                 None,
                 crate::pipeline::history_kind::LENS,
-                context,
             )
             .await
             .map_err(|e| user_error::provider(&e, Capability::Translate))?;

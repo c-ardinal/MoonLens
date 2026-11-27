@@ -272,7 +272,7 @@ export const openLens = (rect: CaptureFlowRect | null = null, targetLanguage?: s
 export const openLensBeside = (id: string) => safeInvoke<string>('open_lens', { beside: id });
 export const setLensLanguage = (id: string, targetLanguage: string | null) =>
   safeInvoke<void>('set_lens_language', { id, targetLanguage });
-/** ウィンドウ翻訳の読取方式。字幕：逐次表示の完了後に前文脈付きで翻訳。UI：ブロック単位で独立翻訳。 */
+/** ウィンドウ翻訳の読取方式。字幕：逐次表示の完了後に前文脈付きで翻訳。UI：読取単位で翻訳し、前文脈の継承なし。 */
 export type LensReadMode = 'subtitle' | 'ui';
 /** 読取方式の変更（次回の読取から適用）。 */
 export const setLensReadMode = (id: string, mode: LensReadMode) =>

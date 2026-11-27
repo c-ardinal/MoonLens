@@ -58,7 +58,7 @@
     showOriginal: boolean;
     showText: boolean;
     targetLanguage: string;
-    /** 読取方式（字幕：逐次表示の完了後に前文脈付きで翻訳、UI：ブロック単位で独立翻訳）。 */
+    /** 読取方式（字幕：逐次表示の完了後に前文脈付きで翻訳、UI：読取単位で翻訳し前文脈の継承なし）。 */
     readMode?: LensReadMode;
     /** 翻訳対象の文字あり（原文切替・コピー・説明の可否）。 */
     hasText?: boolean;
@@ -147,7 +147,7 @@
       label: readMode === 'ui' ? '読取方式：UI' : '読取方式：字幕',
       title:
         readMode === 'ui'
-          ? '読取方式：UI（ブロック単位で独立翻訳）。クリックで字幕方式へ'
+          ? '読取方式：UI（読取単位で翻訳、前文脈の継承なし）。クリックで字幕方式へ'
           : '読取方式：字幕（逐次表示の完了後、前文脈を継承して翻訳）。クリックでUI方式へ',
       run: () => onreadmode?.(readMode === 'ui' ? 'subtitle' : 'ui')
     },

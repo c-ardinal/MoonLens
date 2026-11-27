@@ -2,8 +2,8 @@
 //!
 //! Subtitles: a line that is being typed out is translated once, when
 //! it is complete, and with the lines read before it as context.
-//! Interface text: every block is a request of its own and nothing is
-//! carried from one reading to the next.
+//! Interface text: nothing is carried from one reading to the next, and
+//! text that keeps changing is shown after the usual wait.
 //!
 //! Drives the shared [`Tracker`] with stub OCR / translate providers and
 //! records what the translator is asked.
@@ -255,7 +255,9 @@ async fn interface_text_that_keeps_changing_is_translated_after_the_usual_wait()
 #[tokio::test]
 async fn text_that_changes_without_growing_does_not_wait_longer_as_a_subtitle() {
     let mut run = Run::new(ReadMode::Subtitle);
-    let clock = ["10:01", "10:02", "10:03", "10:04", "10:05", "10:06", "10:07"];
+    let clock = [
+        "10:01", "10:02", "10:03", "10:04", "10:05", "10:06", "10:07",
+    ];
     for text in &clock[..6] {
         assert_eq!(run.tick(&[text], true).await, Tick::Settling);
     }
@@ -276,7 +278,10 @@ async fn a_subtitle_is_translated_with_the_lines_before_it() {
     assert_eq!(
         requests[1].1.history,
         vec![
-            ("Who goes there?".to_string(), "[Who goes there?]".to_string()),
+            (
+                "Who goes there?".to_string(),
+                "[Who goes there?]".to_string()
+            ),
             (
                 "It is only the wind.".to_string(),
                 "[It is only the wind.]".to_string()
@@ -297,7 +302,10 @@ async fn a_line_shown_half_way_is_not_context_of_its_own_completion() {
     assert_eq!(requests[2].0, "It is only the wind.");
     assert_eq!(
         requests[2].1.history,
-        vec![("Who goes there?".to_string(), "[Who goes there?]".to_string())]
+        vec![(
+            "Who goes there?".to_string(),
+            "[Who goes there?]".to_string()
+        )]
     );
 
     // And only the complete line is context of the next one.
@@ -322,42 +330,16 @@ async fn a_moved_window_starts_without_context() {
 }
 
 #[tokio::test]
-async fn interface_blocks_are_translated_one_by_one_without_history() {
+async fn interface_text_is_translated_without_earlier_readings() {
     let mut run = Run::new(ReadMode::Ui);
+    run.show(&["Who goes there?"]).await;
     run.show(&["Save", "Load", "Quit to title"]).await;
     let requests = run.requests();
-    let texts: Vec<&str> = requests.iter().map(|(t, _)| t.as_str()).collect();
-    assert_eq!(texts, ["Save", "Load", "Quit to title"]);
-    // No translation of another block is context; the text on screen is
-    // there for reference, the same for every block.
-    for (_, context) in &requests {
-        assert!(context.history.is_empty(), "{context:?}");
-        assert_eq!(
-            context.reference.as_deref(),
-            Some("Save\n\nLoad\n\nQuit to title")
-        );
-    }
-
-    // The next reading carries nothing over; known blocks are not asked
-    // again, and still tell what the new one stands next to.
-    run.show(&["Save", "Load", "Inventory"]).await;
-    let requests = run.requests();
-    assert_eq!(requests.len(), 1);
-    assert_eq!(requests[0].0, "Inventory");
-    assert!(requests[0].1.history.is_empty());
-    assert_eq!(
-        requests[0].1.reference.as_deref(),
-        Some("Save\n\nLoad\n\nInventory")
-    );
-}
-
-#[tokio::test]
-async fn subtitle_blocks_of_one_reading_share_their_context() {
-    let mut run = Run::new(ReadMode::Subtitle);
-    run.show(&["Save", "Load", "Quit to title"]).await;
-    let requests = run.requests();
-    assert_eq!(requests.len(), 1);
-    assert_eq!(requests[0].0, "Save\n\nLoad\n\nQuit to title");
+    assert_eq!(requests.len(), 2);
+    // The blocks of one reading still go together: a label alone
+    // ("Light", "Resume") is ambiguous.
+    assert_eq!(requests[1].0, "Save\n\nLoad\n\nQuit to title");
+    assert!(requests[1].1.is_empty(), "{:?}", requests[1].1);
 }
 
 #[tokio::test]
@@ -414,7 +396,10 @@ async fn real_model_translations_per_mode() {
         for line in dialogue {
             let started = std::time::Instant::now();
             let translation = run.show(&[line]).await;
-            println!("  {line} → {translation} ({} ms)", started.elapsed().as_millis());
+            println!(
+                "  {line} → {translation} ({} ms)",
+                started.elapsed().as_millis()
+            );
             assert!(!translation.trim().is_empty());
         }
         run.moved();

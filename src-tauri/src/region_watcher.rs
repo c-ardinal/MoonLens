@@ -24,7 +24,7 @@
 //!
 //! Steps 3 and 4 depend on the window's [`ReadMode`]: subtitles wait
 //! for a line to be typed out in full and are translated with the lines
-//! before them; interface text is translated block by block.
+//! before them; interface text is translated reading by reading.
 //!
 //! The capture loop and the window live in `lens`.
 
@@ -33,7 +33,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     capture,
-    pipeline::{CaptureContext, CaptureFlowResult, LensBlock, Pipeline, TranslationProgress},
+    pipeline::{CaptureFlowResult, LensBlock, Pipeline, TranslationProgress},
     providers::{Capability, TaskOutput},
     translate_plan, user_error,
 };
@@ -80,9 +80,9 @@ pub enum ReadMode {
     /// as context.
     #[default]
     Subtitle,
-    /// Interface text (menus, labels): every block is translated on its
-    /// own, with the other text in the region as reference only, and
-    /// nothing is carried from one reading to the next.
+    /// Interface text (menus, labels): every reading is translated by
+    /// itself, nothing is carried from one to the next, and text that
+    /// keeps changing is not waited for beyond [`SETTLE_LIMIT`].
     Ui,
 }
 
@@ -453,25 +453,21 @@ impl Tracker {
                     });
                 }
             };
-            let context = match env.mode {
-                // A reading that the new one continues is the same line
-                // cut short: as history it would be translated twice.
-                ReadMode::Subtitle => CaptureContext::Running {
-                    earlier: match self.carried.split_last() {
-                        Some(((last, _), before)) if extends(last, &text) => before,
-                        _ => &self.carried,
-                    },
-                },
-                ReadMode::Ui => CaptureContext::Independent,
+            // Empty in `ReadMode::Ui`. A reading that the new one
+            // continues is the same line cut short: as history it would
+            // be translated twice.
+            let earlier = match self.carried.split_last() {
+                Some(((last, _), before)) if extends(last, &text) => before,
+                _ => &self.carried[..],
             };
             let result = env
                 .pipeline
-                .translate_capture_in(
+                .translate_capture_after(
                     &mut bundle,
                     env.target_language,
                     Some(&progress),
                     env.history_kind,
-                    context,
+                    earlier,
                 )
                 .await;
             self.shown.blocks = bundle.blocks.clone();
@@ -746,7 +742,10 @@ mod tests {
         t.carry("The north wind blows.", "北風が吹く。");
         assert_eq!(
             t.carried,
-            vec![("The north wind blows.".to_string(), "北風が吹く。".to_string())]
+            vec![(
+                "The north wind blows.".to_string(),
+                "北風が吹く。".to_string()
+            )]
         );
         t.carry("", "x");
         t.carry("x", " ");
@@ -760,7 +759,10 @@ mod tests {
             .map(|(s, tr)| translate_plan::cost(s) + translate_plan::cost(tr))
             .sum();
         assert!(total <= CARRY && t.carried.len() > 1, "{total}");
-        assert_eq!(t.carried.last().unwrap().0, "Line number 199 of the dialogue.");
+        assert_eq!(
+            t.carried.last().unwrap().0,
+            "Line number 199 of the dialogue."
+        );
     }
 
     #[test]
