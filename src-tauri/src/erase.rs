@@ -36,6 +36,9 @@ const HALO_CONTRAST: i32 = 20;
 /// the open background.
 const HALO_SHARE: f32 = 0.12;
 
+/// Text colours looked for in one block.
+const MAX_INKS: usize = 3;
+
 /// Share of the row pixels the mask may cover. Above it the text colour
 /// is too close to the picture to tell the two apart.
 const MAX_COVER: f32 = 0.6;
@@ -191,17 +194,34 @@ fn plan(img: &RgbaImage, t: &Target<'_>) -> Option<Plan> {
     let luma = |p: &[i32; 3]| (299 * p[0] + 587 * p[1] + 114 * p[2]) / 1000;
     let outline = spread(0.05, 0.95, &luma).0 >= OUTLINE_SPREAD;
 
-    // Text pixels: closer to the text colour than half way to the
+    // Text pixels: closer to a text colour than half way to the
     // typical background.
     let inside: Vec<[i32; 3]> = (0..w * h).filter(|&i| in_text[i]).map(px).collect();
     let fg = text_colour(&inside, &band).unwrap_or(t.foreground.map(|c| c as i32));
     let dist2 = |a: [i32; 3], b: [i32; 3]| (0..3).map(|c| (a[c] - b[c]).pow(2)).sum::<i32>();
     let median = [channels[0].1, channels[1].1, channels[2].1];
-    let reach = ((dist2(fg, median) as f32).sqrt() * 0.5).clamp(36.0, 96.0);
-    let reach2 = (reach * reach) as i32;
-    let mask: Vec<bool> = (0..w * h)
-        .map(|i| in_text[i] && dist2(px(i), fg) <= reach2)
-        .collect();
+    let mut mask = vec![false; w * h];
+    let mut ink = fg;
+    // Words in another colour (a highlighted term) are text as well:
+    // look for further colours among the pixels not taken yet.
+    for more in (0..MAX_INKS).rev() {
+        let reach = ((dist2(ink, median) as f32).sqrt() * 0.5).clamp(36.0, 96.0);
+        let reach2 = (reach * reach) as i32;
+        for (i, m) in mask.iter_mut().enumerate() {
+            *m |= in_text[i] && dist2(px(i), ink) <= reach2;
+        }
+        if more == 0 {
+            break;
+        }
+        let rest: Vec<[i32; 3]> = (0..w * h)
+            .filter(|&i| in_text[i] && !mask[i])
+            .map(px)
+            .collect();
+        match text_colour(&rest, &band) {
+            Some(next) => ink = next,
+            None => break,
+        }
+    }
     let text_px = in_text.iter().filter(|t| **t).count().max(1);
     let cover = mask.iter().filter(|m| **m).count() as f32 / text_px as f32;
     if !(0.005..=MAX_COVER).contains(&cover) {
@@ -487,6 +507,29 @@ mod tests {
             .decode(b64)
             .expect("base64");
         image::load_from_memory(&png).expect("png").to_rgba8()
+    }
+
+    #[test]
+    fn words_in_a_second_colour_are_erased_too() {
+        // White bars, then red ones (a highlighted word).
+        let red = |x: u32, y: u32| (150..218).contains(&x) && (22..38).contains(&y) && x % 12 < 3;
+        let mut img = picture(gradient);
+        for (x, y, px) in img.enumerate_pixels_mut() {
+            if red(x, y) {
+                *px = Rgba([220, 30, 40, 255]);
+            }
+        }
+        let rows = [ROW];
+        let p = patch(&img, &target(&rows)).expect("patch");
+        assert_eq!(p.foreground, [255, 255, 255]);
+        let out = decode(&p);
+        for (x, y, px) in out.enumerate_pixels() {
+            let (ix, iy) = (p.rect[0] as u32 + x, p.rect[1] as u32 + y);
+            let ink = img.get_pixel(ix, iy).0;
+            if ink == [255, 255, 255, 255] || ink == [220, 30, 40, 255] {
+                assert_eq!(px[3], 255, "text pixel {ix},{iy} left as is");
+            }
+        }
     }
 
     #[test]
