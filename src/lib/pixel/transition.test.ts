@@ -37,7 +37,7 @@ describe('play', () => {
     expect(calls).toHaveLength(0);
   });
 
-  it('ドット絵外観以外（訳文表示の窓）は無処理', () => {
+  it('ドット絵外観以外（訳文表示のウィンドウ）は無処理', () => {
     delete dataset.skin;
     const { node, calls } = fakeNode();
     play(node, 'open');

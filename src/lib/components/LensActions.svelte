@@ -59,7 +59,7 @@
     /** 翻訳対象の文字あり（原文切替・コピー・説明の可否）。 */
     hasText?: boolean;
     busy?: boolean;
-    /** 窓が最大化中（全画面翻訳）。 */
+    /** ウィンドウが最大化中（全画面翻訳）。 */
     maximized?: boolean;
     /** 操作モード（訳文の選択・コピー可）。false は透過モード（クリックは背面へ）。 */
     operate?: boolean;
@@ -67,7 +67,7 @@
     operateKey?: string;
     /** 字幕領域への自動整形の状態（未実行・観測中・整形済）。 */
     fit?: 'idle' | 'observing' | 'fitted';
-    /** 縦メニューの表示中（表示中は窓本体でのマウス操作の受付が必要）。 */
+    /** 縦メニューの表示中（表示中はウィンドウ本体でのマウス操作の受付が必要）。 */
     menuOpen?: boolean;
     /** 見出し（ウィンドウ追加ボタンの右隣）。 */
     lead?: Snippet;
@@ -115,7 +115,7 @@
       title:
         (operate
           ? '操作モード：訳文の選択・コピー可（クリックで透過モードへ）'
-          : '透過モード：窓上のクリックは背面へ（クリックで操作モードへ）') +
+          : '透過モード：ウィンドウ上のクリックは背面へ（クリックで操作モードへ）') +
         (operateKey ? ` (${operateKey})` : ''),
       pressed: operate,
       run: onoperate
@@ -361,7 +361,8 @@
     align-items: center;
     gap: 4px;
   }
-  /* 独自描画（WebKitGTK の既定描画は明背景で文字が不可視） */
+  /* 独自描画。選択肢は文字色・背景色を対で指定（背景色なしでは OS の配色設定の既定色となり、
+     暗色設定で文字が判読不可） */
   .lang select {
     appearance: none;
     -webkit-appearance: none;
@@ -375,8 +376,9 @@
   }
   .lang select option {
     color: #111;
+    background-color: #fff;
   }
-  /* 縦メニュー：タイトルバー直下の右端。窓の高さ不足時は内部スクロール。 */
+  /* 縦メニュー：タイトルバー直下の右端。ウィンドウの高さ不足時は内部スクロール。 */
   .menu {
     position: absolute;
     top: calc(100% + 4px);
@@ -386,7 +388,7 @@
     flex-direction: column;
     min-width: min(148px, calc(100vw - 8px));
     max-width: calc(100vw - 8px);
-    /* 窓の高さ − タイトルバー（32px）− 上下の余白 */
+    /* ウィンドウの高さ − タイトルバー（32px）− 上下の余白 */
     max-height: calc(100vh - 40px);
     box-sizing: border-box;
     overflow-y: auto;

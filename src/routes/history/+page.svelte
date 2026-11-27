@@ -326,8 +326,8 @@
           <div class="flex justify-end border-t border-border px-4 py-2">
             <button
               class="sbtn icon"
-              title="この履歴を削除"
-              aria-label="この履歴を削除"
+              title="当該履歴を削除"
+              aria-label="当該履歴を削除"
               onclick={() => current && remove(current)}
             >
               <Trash2 class="h-3.5 w-3.5" />
@@ -354,7 +354,7 @@
       onkeydown={(e) => e.key === 'Escape' && (confirmClear = false)}
     >
       <h2 class="text-base font-semibold">全履歴を削除</h2>
-      <p class="mt-1 text-sm text-ink-muted">この操作は復元不可。</p>
+      <p class="mt-1 text-sm text-ink-muted">本操作は復元不可。</p>
       <div class="mt-4 flex justify-end gap-2">
         <button
           class="rounded-ml-sm border border-border bg-surface px-3 py-1.5 text-sm"

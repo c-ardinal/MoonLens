@@ -11,7 +11,7 @@
     type TextView
   } from '$lib/lens-text';
 
-  // ウィンドウ翻訳のテキスト表示（窓外）。内容は本体ウィンドウが送信し、
+  // ウィンドウ翻訳のテキスト表示（ウィンドウ外）。内容は本体ウィンドウが送信し、
   // 位置は本体の移動・サイズ変更へバックエンドが追従（lens_text.rs）。
 
   const params = new URLSearchParams(
