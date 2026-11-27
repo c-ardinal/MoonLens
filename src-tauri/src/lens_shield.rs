@@ -96,9 +96,6 @@ mod sys {
         fn GetWindowDisplayAffinity(hwnd: Handle, affinity: *mut u32) -> i32;
         fn GetForegroundWindow() -> Handle;
         fn GetWindowLongW(hwnd: Handle, index: i32) -> i32;
-        // `foreign_window` declares it with its own handle and rect
-        // types of the same layout.
-        #[allow(clashing_extern_declarations)]
         fn GetWindowRect(hwnd: Handle, rect: *mut Rect) -> i32;
         fn GetWindowThreadProcessId(hwnd: Handle, pid: *mut u32) -> u32;
         fn MonitorFromWindow(hwnd: Handle, flags: u32) -> isize;

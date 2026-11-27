@@ -81,15 +81,14 @@ pub fn probe(id: u64) -> Probe {
         right: i32,
         bottom: i32,
     }
-    // `lens_shield` declares `GetWindowRect` with its own handle and
-    // rect types of the same layout.
-    #[allow(clashing_extern_declarations)]
     #[link(name = "user32")]
     extern "system" {
         fn IsWindow(hwnd: *mut c_void) -> i32;
         fn IsWindowVisible(hwnd: *mut c_void) -> i32;
         fn IsIconic(hwnd: *mut c_void) -> i32;
-        fn GetWindowRect(hwnd: *mut c_void, rect: *mut Bounds) -> i32;
+        // The handle as `isize`: the declaration in `lens_shield` has to
+        // agree with this one.
+        fn GetWindowRect(hwnd: isize, rect: *mut Bounds) -> i32;
     }
     #[link(name = "dwmapi")]
     extern "system" {
@@ -132,7 +131,7 @@ pub fn probe(id: u64) -> Probe {
             (&raw mut r).cast(),
             std::mem::size_of::<Bounds>() as u32,
         );
-        if got != 0 && GetWindowRect(hwnd, &raw mut r) == 0 {
+        if got != 0 && GetWindowRect(hwnd as isize, &raw mut r) == 0 {
             return Probe::Gone;
         }
         if r.right <= r.left || r.bottom <= r.top {
