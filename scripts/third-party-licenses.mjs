@@ -131,7 +131,7 @@ table{border-collapse:collapse}td,th{border:1px solid #ccc;padding:.25rem .5rem;
 <h1>MoonLens ${esc(pkg.version)} — Third-party licences</h1>
 <p>MoonLens includes the open-source software listed below. Each entry lists the packages
 it covers, followed by the full licence text.</p>
-<h2>Models (downloaded on request, not included in the installer)</h2>
+<h2>Models (downloaded on request, not included in the package)</h2>
 <table><tr><th>Model</th><th>Licence</th></tr>
 ${models
   .map(

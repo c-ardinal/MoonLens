@@ -232,4 +232,34 @@ mod tests {
             Duration::from_millis(15_000)
         );
     }
+
+    #[test]
+    fn local_explain_gets_time_for_a_model_load_and_a_free_text_answer() {
+        use crate::pipeline::effective_timeout;
+        use crate::providers::TaskInput;
+        let explain = TaskInput::Explain {
+            prompt: "a".repeat(1_000),
+            image_png: None,
+        };
+        let summarize = TaskInput::Summarize {
+            text: "a".repeat(1_000),
+        };
+        // The chain's 10 s does not cover loading the general model.
+        for input in [&explain, &summarize] {
+            assert_eq!(
+                effective_timeout(10_000, input, true),
+                Duration::from_millis(220_000)
+            );
+            // Cloud providers keep the fixed timeout.
+            assert_eq!(
+                effective_timeout(10_000, input, false),
+                Duration::from_millis(10_000)
+            );
+        }
+        // A longer chain timeout still wins.
+        assert_eq!(
+            effective_timeout(600_000, &explain, true),
+            Duration::from_millis(600_000)
+        );
+    }
 }
