@@ -1,4 +1,4 @@
-//! PP-OCRv5 smoke test / benchmark.
+//! PP-OCR smoke test / benchmark.
 //!
 //! ```sh
 //! cargo run --example ppocr_bench -- path/to/screenshot.png [det_max_side]

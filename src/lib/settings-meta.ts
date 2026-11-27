@@ -141,6 +141,18 @@ export const SECTIONS: Section[] = [
         label: 'ウィンドウ翻訳 透過／操作',
         help: '全ウィンドウの切替。透過：ウィンドウ上のクリックは背面へ。操作：訳文の選択・コピー可。'
       },
+      {
+        kind: 'hotkey',
+        path: 'hotkeys.toggle_window_pause',
+        label: 'ウィンドウ翻訳 一時停止／再開',
+        help: '全ウィンドウの読取・翻訳を停止（配置は維持、訳文は非表示）。再押下で再開。'
+      },
+      {
+        kind: 'hotkey',
+        path: 'hotkeys.hold_window_original',
+        label: 'ウィンドウ翻訳 原文表示（押下中）',
+        help: '押下中のみ全ウィンドウの訳文を非表示化し、原文を表示。解放で訳文を再表示。'
+      },
       { kind: 'hotkey', path: 'hotkeys.toggle_subtitle', label: '音声翻訳 開始／停止' },
       { kind: 'hotkey', path: 'hotkeys.open_command_palette', label: 'コマンドパレット' },
       { kind: 'hotkey', path: 'hotkeys.open_history', label: '履歴表示' }
@@ -194,6 +206,18 @@ export const SECTIONS: Section[] = [
         step: 0.1,
         unit: '秒',
         slider: true
+      },
+      {
+        kind: 'toggle',
+        path: 'subtitle.realtime_correction',
+        label: 'リアルタイム補正',
+        help: '文の認識完了時、文脈を参照して文全体を再翻訳、訳文を更新。負荷増。'
+      },
+      {
+        kind: 'toggle',
+        path: 'subtitle.batch_correction',
+        label: '一括補正',
+        help: '無音時・終了時に未補正の文を一括で再翻訳。発話中の負荷なし。'
       },
       {
         kind: 'toggle',
@@ -389,7 +413,7 @@ export const SECTIONS: Section[] = [
   {
     id: 'data',
     title: 'データ',
-    description: '保存先と使用容量。完全削除：アンインストール後、各保存先を削除。',
+    description: '保存先と使用容量。完全削除：本体の削除後、各保存先を削除。',
     component: 'data'
   },
   {

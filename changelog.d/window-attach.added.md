@@ -1,0 +1,1 @@
+- Window translation windows can be attached to a window of another app (new "attach" header button). An attached window snaps onto the chosen window and stays with it as it moves and resizes. Move or resize an attached window by hand and it keeps that position relative to the app window instead. It hides while the app window is minimized and detaches when the app window closes.

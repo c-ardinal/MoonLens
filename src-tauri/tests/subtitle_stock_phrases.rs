@@ -148,6 +148,10 @@ async fn subtitles_with(
     s.providers.translate.chain = vec!["tr".into()];
     s.subtitle.source_language = "en".into();
     s.subtitle.overlap_seconds = 0.0;
+    // Sentence correction translates each sentence a second time; the
+    // tests that count translations run without it.
+    s.subtitle.realtime_correction = false;
+    s.subtitle.batch_correction = false;
     configure(&mut s);
     let chunk_samples = (s.subtitle.chunk_seconds * 16_000.0) as usize;
     store.save(s).unwrap();
@@ -252,6 +256,47 @@ async fn stock_phrases_are_neither_shown_nor_translated() {
         ["The meeting starts at nine.", "Bring the report."]
     );
     assert!(out.candidates().is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn sentence_correction_never_sees_a_stock_phrase() {
+    let out = subtitles(
+        |s| {
+            s.subtitle.realtime_correction = true;
+            s.subtitle.batch_correction = true;
+        },
+        vec![
+            // One sentence over two chunks: corrected as a whole.
+            vec!["The meeting starts"],
+            vec!["at nine."],
+            vec!["Thanks for watching!"],
+            vec!["Bring the report."],
+        ],
+        |_, _| {},
+    )
+    .await;
+    assert_eq!(
+        out.shown(),
+        ["The meeting starts", "at nine.", "Bring the report."]
+    );
+    assert!(
+        out.translated.iter().all(|t| !t.contains("watching")),
+        "{:?}",
+        out.translated
+    );
+    let corrected: Vec<&str> = out
+        .events
+        .iter()
+        .filter_map(|e| match e {
+            SubtitleEvent::Revised(r) => Some(r.original.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert!(!corrected.is_empty(), "correction ran");
+    assert!(
+        corrected.iter().all(|t| !t.contains("watching")),
+        "{corrected:?}"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]

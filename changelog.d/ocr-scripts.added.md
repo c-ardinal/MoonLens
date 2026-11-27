@@ -1,0 +1,1 @@
+- **More writing systems for OCR**: Korean, Cyrillic, Arabic, Thai, Devanagari, Tamil and Telugu. Each has a small recognition model (8–13 MB) fetched on request from Settings → Models. Only lines the standard model cannot read are read again, so Japanese / Chinese / English screens keep their speed.
