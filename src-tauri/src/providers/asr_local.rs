@@ -256,15 +256,6 @@ mod engine {
         ENGINE.get_or_init(|| Mutex::new(None))
     }
 
-    /// Language of the last auto-detected chunk and how many chunks have
-    /// reused it. Detection runs the encoder a second time, so with
-    /// "auto" it is repeated only every few chunks.
-    fn sticky_language() -> &'static Mutex<(Option<String>, u32)> {
-        static LANG: OnceLock<Mutex<(Option<String>, u32)>> = OnceLock::new();
-        LANG.get_or_init(|| Mutex::new((None, 0)))
-    }
-    const REDETECT_EVERY: u32 = 6;
-
     fn open(path: &Path, use_gpu: bool) -> Result<Loaded, ProviderError> {
         let c = CString::new(path.to_string_lossy().as_bytes())
             .map_err(|e| ProviderError::Other(e.to_string()))?;
@@ -319,7 +310,6 @@ mod engine {
         if matches {
             *slot = None;
         }
-        *sticky_language().lock() = (None, 0);
     }
 
     fn thread_count(requested: u32) -> i32 {
@@ -347,20 +337,14 @@ mod engine {
         let mut slot = engine().lock();
         let loaded = ensure(&mut slot, path, params.use_gpu)?;
 
-        let auto = language.is_none();
-        let lang = match language {
-            Some(l) => Some(l.to_string()),
-            None => {
-                let mut s = sticky_language().lock();
-                s.1 += 1;
-                if s.1 >= REDETECT_EVERY {
-                    s.0 = None;
-                }
-                s.0.clone()
-            }
-        };
-        let lang_c = lang
-            .as_deref()
+        // Without a language, whisper.cpp detects it from this chunk.
+        // Each chunk is detected on its own: speech that switches
+        // language (a Japanese aside in an English talk) must not be
+        // decoded in the language of an earlier chunk, which turns it
+        // into a "translation" in that language. The detection shares
+        // the encoder pass with the decoding (see
+        // `vendor/whisper.cpp/README.md`), so it costs one decoder step.
+        let lang_c = language
             .map(|l| CString::new(l).map_err(|e| ProviderError::Other(e.to_string())))
             .transpose()?;
 
@@ -384,12 +368,13 @@ mod engine {
         if rc != 0 {
             return Err(ProviderError::Other(format!("whisper.cpp failed ({rc})")));
         }
-        if auto && lang.is_none() {
-            let id = unsafe { whisper_full_lang_id(loaded.ctx) };
-            let p = unsafe { whisper_lang_str(id) };
+        if language.is_none() {
+            let p = unsafe { whisper_lang_str(whisper_full_lang_id(loaded.ctx)) };
             if !p.is_null() {
-                let detected = unsafe { CStr::from_ptr(p) }.to_string_lossy().to_string();
-                *sticky_language().lock() = (Some(detected), 0);
+                tracing::debug!(
+                    "whisper: detected language {}",
+                    unsafe { CStr::from_ptr(p) }.to_string_lossy()
+                );
             }
         }
 
