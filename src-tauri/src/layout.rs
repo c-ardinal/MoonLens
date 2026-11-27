@@ -139,8 +139,10 @@ struct Building {
 ///
 /// A line joins the most recent compatible block when
 /// - its top is close enough below the block's last line (≤ 0.9 line
-///   heights, tightened once the block's own line spacing is known, and
-///   when the previous line stopped short of the right edge),
+///   heights, or ≤ 1.6 for a sentence that visibly runs on, so widely
+///   spaced text stays one paragraph; tightened once the block's own
+///   line spacing is known, and when the previous line was not wrapped),
+/// - it does not start a list item,
 /// - it starts at the block's left edge (or shares the centre),
 /// - its height is within 1.3× of the block's last line (headings vs body
 ///   text become separate blocks), and
@@ -197,22 +199,41 @@ pub fn group_lines(lines: &[OcrLine]) -> Vec<TextBlock> {
             // paragraph above two columns must not swallow the right one.
             let overlap = right(&lb).min(right(&b.last)) - lb[0].max(b.last[0]);
             let h = prev_h.max(lh);
+            let center = |r: &BBox| r[0] + r[2] / 2.0;
+            let prev_text = b.lines.last().map(|l| l.text.as_str()).unwrap_or("");
+            // The previous line was not wrapped: it left room for the
+            // first word of this line. While the sentence runs on, the
+            // room is measured against the lines above only (text
+            // beside a picture is narrower than the text below it).
+            let runs_on = runs_on(prev_text, &line.text, &b.last, h);
+            let reach = if runs_on {
+                right(&b.bbox)
+            } else {
+                right(&b.bbox).max(right(&lb))
+            };
+            let centred = (center(&lb) - center(&b.last)).abs() <= h * 0.75
+                && (lb[0] - b.last[0]).abs() > h * 0.75;
+            let ended = !centred
+                && reach - right(&b.last) > first_word_width(&line.text, &lb) * 1.3 + h * 0.3;
             // CJK text is often set with 1.6–1.8 line height, so allow up
-            // to ~0.9 line heights between wrapped lines...
+            // to ~0.9 line heights between wrapped lines, and more when
+            // the sentence visibly runs on (double-spaced text)...
             let mut max_gap = h * 0.9;
+            if !ended && runs_on {
+                max_gap = h * 1.6;
+            }
             // ...but once a block has a line spacing, a clearly larger gap
             // is a paragraph break,
             if let Some(spacing) = b.spacing {
                 max_gap = max_gap.min(spacing + h * 0.3);
             }
-            // and a previous line that stops well short of the block's
-            // right edge ended its paragraph (wrapped lines fill the width).
-            if right(&b.last) < right(&b.bbox) - h * 1.5 {
+            // and a previous line that was not wrapped ended its
+            // paragraph (or is a heading / speaker name above the text).
+            if ended {
                 max_gap = max_gap.min(h * 0.25);
             }
             // Wrapped lines share the left edge (or the centre, for
             // centred text); a line starting elsewhere is another column.
-            let center = |r: &BBox| r[0] + r[2] / 2.0;
             let aligned = (lb[0] - b.bbox[0]).abs() <= h * 1.5
                 || (center(&lb) - center(&b.last)).abs() <= h * 1.5;
             // Lines on the same row (gap negative) belong together only
@@ -220,9 +241,9 @@ pub fn group_lines(lines: &[OcrLine]) -> Vec<TextBlock> {
             // separate columns / UI labels.
             // Short capitalised rows stacked under each other are list
             // items / menu entries, not a wrapped sentence.
-            let prev_text = b.lines.last().map(|l| l.text.as_str()).unwrap_or("");
-            let list_item =
-                gap > 0.0 && is_list_row(prev_text, &b.last, h) && is_list_row(&line.text, &lb, h);
+            let list_item = gap > 0.0
+                && (starts_list_item(&line.text)
+                    || (is_list_row(prev_text, &b.last, h) && is_list_row(&line.text, &lb, h)));
             if gap <= max_gap
                 && !list_item
                 && gap >= -prev_h * 0.5
@@ -281,8 +302,9 @@ pub fn group_lines(lines: &[OcrLine]) -> Vec<TextBlock> {
     out
 }
 
-/// Even out the font-size hint of single-row blocks stacked in one
-/// column (menus, lists, table cells). OCR boxes of the same font vary
+/// Even out the font-size hint of blocks set in the same font:
+/// single-row blocks stacked in one column (menus, lists, table cells)
+/// and paragraphs of one body text. OCR boxes of the same font vary
 /// with ascenders and descenders, which made neighbouring translations
 /// visibly different in size. Each such block takes the median height
 /// of the left-aligned single-row blocks of similar height (≤ 1.25×).
@@ -304,6 +326,47 @@ fn harmonize_line_heights(blocks: &mut [TextBlock]) {
             updates.push((i, median(&mut peers)));
         }
     }
+    // Paragraphs of the same body text: same row pitch (and left edge), a steadier measure of the font than the box heights (which
+    // differ by a fifth between paragraphs of one font). Linked blocks
+    // form a group, so every paragraph of it gets the same size.
+    let pitch = |b: &TextBlock| {
+        let mut steps: Vec<f32> = b
+            .lines
+            .windows(2)
+            .map(|w| (w[1][1] + w[1][3] / 2.0) - (w[0][1] + w[0][3] / 2.0))
+            .collect();
+        (!steps.is_empty()).then(|| median(&mut steps))
+    };
+    let multi: Vec<(usize, f32, f32, f32)> = blocks
+        .iter()
+        .enumerate()
+        .filter(|(_, b)| b.line_height > 0.0)
+        .filter_map(|(i, b)| Some((i, b.bbox[0], b.line_height, pitch(b)?)))
+        .collect();
+    let mut group: Vec<usize> = (0..multi.len()).collect();
+    for a in 0..multi.len() {
+        for b in 0..a {
+            let ((_, ax, ah, ap), (_, bx, bh, bp)) = (multi[a], multi[b]);
+            // Another column counts only with a near-identical pitch.
+            let step = (ap / bp).max(bp / ap);
+            let same_edge = (ax - bx).abs() <= ah.min(bh);
+            if (ah / bh).max(bh / ah) <= 1.3 && step <= if same_edge { 1.1 } else { 1.04 } {
+                let (from, to) = (group[a], group[b]);
+                group
+                    .iter_mut()
+                    .filter(|g| **g == from)
+                    .for_each(|g| *g = to);
+            }
+        }
+    }
+    for g in 0..multi.len() {
+        let members: Vec<usize> = (0..multi.len()).filter(|&m| group[m] == g).collect();
+        if members.len() >= 2 {
+            let mut heights: Vec<f32> = members.iter().map(|&m| multi[m].2).collect();
+            let h = median(&mut heights);
+            updates.extend(members.iter().map(|&m| (multi[m].0, h)));
+        }
+    }
     for (i, h) in updates {
         blocks[i].line_height = h;
     }
@@ -319,6 +382,54 @@ fn is_list_row(text: &str, b: &BBox, h: f32) -> bool {
             .chars()
             .next()
             .is_some_and(|c| c.is_uppercase())
+}
+
+/// A line that opens a list item: a bullet, or a number such as `1.` /
+/// `2)`. It never continues the line above.
+fn starts_list_item(text: &str) -> bool {
+    let t = text.trim_start();
+    let Some(first) = t.chars().next() else {
+        return false;
+    };
+    if "•●○◦▪■□◆◇‣⁃・※★☆►▶*".contains(first) {
+        return true;
+    }
+    let digits = t.chars().take_while(|c| c.is_ascii_digit()).count();
+    let mut rest = t.chars().skip(digits);
+    (1..=2).contains(&digits)
+        && matches!(rest.next(), Some('.' | ')'))
+        && rest.next().is_some_and(char::is_whitespace)
+}
+
+/// Width (px) the first word of a line takes, with the space after it,
+/// estimated from the line's average character width. Text without
+/// spaces (CJK) breaks at any character, so the word ends there.
+fn first_word_width(text: &str, b: &BBox) -> f32 {
+    let t = text.trim();
+    let total = t.chars().count().max(1);
+    let word = t
+        .chars()
+        .take_while(|c| !c.is_whitespace() && !is_cjk(*c))
+        .count()
+        + 1;
+    b[2] * word.min(total) as f32 / total as f32
+}
+
+/// The sentence of `prev` visibly continues on `next`: `prev` does not
+/// end a sentence and `next` starts in lower case (text with spaces),
+/// or `prev` is a long line without a sentence end (CJK).
+fn runs_on(prev: &str, next: &str, prev_box: &BBox, h: f32) -> bool {
+    let Some(last) = prev.trim_end().chars().next_back() else {
+        return false;
+    };
+    if ".!?:;。！？：…」』）)".contains(last) {
+        return false;
+    }
+    match next.trim_start().chars().next() {
+        Some(c) if is_cjk(c) => is_cjk(last) && prev_box[2] >= h * 8.0,
+        Some(c) => c.is_lowercase(),
+        None => false,
+    }
 }
 
 /// Merge line rects (in reading order) into text rows: a rect that
@@ -612,6 +723,65 @@ pub fn estimate_colors(img: &RgbaImage, bbox: BBox) -> BlockColors {
     }
 }
 
+/// Rect to read a block's colours and stroke weight from: its widest
+/// row (the whole box when the block has no rows).
+pub fn sample_row(block: &TextBlock) -> BBox {
+    block
+        .lines
+        .iter()
+        .copied()
+        .max_by(|a, b| a[2].partial_cmp(&b[2]).unwrap_or(std::cmp::Ordering::Equal))
+        .unwrap_or(block.bbox)
+}
+
+/// Right edge each row of `block` may be written to. A row shorter than
+/// the block usually just wrapped early, but it may also stand beside a
+/// picture: the strip between the row's end and the block's right edge
+/// is scanned for columns that are not background. Empty when every row
+/// is free up to the block's right edge.
+pub fn row_limits(img: &RgbaImage, block: &TextBlock, background: [u8; 3]) -> Vec<f32> {
+    let (iw, ih) = (img.width() as i64, img.height() as i64);
+    let block_right = right(&block.bbox);
+    if block.lines.len() < 2 || iw == 0 || ih == 0 {
+        return vec![];
+    }
+    let differs = |x: i64, y: i64| {
+        let p = img.get_pixel(x as u32, y as u32).0;
+        (0..3).any(|c| (p[c] as i32 - background[c] as i32).abs() > 40)
+    };
+    let limits: Vec<f32> = block
+        .lines
+        .iter()
+        .map(|row| {
+            let h = row[3].max(1.0);
+            let y0 = (row[1].floor() as i64).clamp(0, ih - 1);
+            let y1 = (bottom(row).ceil() as i64).clamp(y0 + 1, ih);
+            let x0 = ((right(row) + h * 0.5).ceil() as i64).clamp(0, iw);
+            let x1 = (block_right.ceil() as i64).clamp(x0, iw);
+            // A picture fills the columns it covers; three such columns
+            // in a row rule out a stray mark.
+            let mut run = 0;
+            for x in x0..x1 {
+                let busy = (y0..y1).filter(|&y| differs(x, y)).count() as f32;
+                run = if busy >= (y1 - y0) as f32 * 0.6 {
+                    run + 1
+                } else {
+                    0
+                };
+                if run == 3 {
+                    return ((x - 2) as f32 - h * 0.5).max(right(row));
+                }
+            }
+            block_right
+        })
+        .collect();
+    if limits.iter().all(|&l| l >= block_right) {
+        vec![]
+    } else {
+        limits
+    }
+}
+
 fn median_color(v: &mut [[u8; 3]]) -> [u8; 3] {
     if v.is_empty() {
         return [255, 255, 255];
@@ -780,6 +950,292 @@ mod tests {
             line("fox jumps", 10.0, 30.0, 80.0, 16.0),
         ];
         assert_eq!(group_lines(&lines).len(), 1);
+    }
+
+    // Lines below are PP-OCR output for rendered pages (text, x, y, w, h).
+
+    #[test]
+    fn ragged_line_before_a_short_last_line_stays_in_its_paragraph() {
+        // Text beside a picture; the fourth row ends 34 px short of the
+        // widest one, which used to cut "fall." off.
+        let lines = vec![
+            line("If the universe were infinite, unchanging and filled", 36.0, 111.0, 440.0, 19.0),
+            line("evenly with stars, every line of sight would eventually", 36.0, 141.0, 464.0, 17.0),
+            line("end on the surface of a star. The whole sky should then", 36.0, 168.0, 475.0, 15.0),
+            line("glow as brightly as the Sun, and night would never", 37.0, 194.0, 440.0, 17.0),
+            line("fall.", 34.0, 219.0, 36.0, 19.0),
+            line("This puzzle is known as Olbers' paradox, after the", 38.0, 266.0, 430.0, 15.0),
+            line("German astronomer who described it in 1823. For", 37.0, 292.0, 432.0, 15.0),
+            line("more than a century nobody could say with confidence why the sky between the stars is", 36.0, 318.0, 760.0, 19.0),
+            line("black.", 34.0, 344.0, 54.0, 19.0),
+        ];
+        let blocks = group_lines(&lines);
+        assert_eq!(blocks.len(), 2);
+        assert_eq!(blocks[0].lines.len(), 5);
+        assert!(blocks[0].text.ends_with("never fall."));
+        assert_eq!(blocks[1].lines.len(), 4);
+        // Same body text: one font size for both paragraphs.
+        assert_eq!(blocks[0].line_height, blocks[1].line_height);
+    }
+
+    #[test]
+    fn double_spaced_paragraphs_keep_their_lines_together() {
+        // line-height 2.0 at 150 %: the gap between rows is about one
+        // line height, which used to make every row its own block.
+        let lines = vec![
+            line(
+                "Before you install the application, make sure that your computer",
+                46.0,
+                108.0,
+                777.0,
+                28.0,
+            ),
+            line(
+                "meets the minimum requirements listed below.",
+                46.0,
+                157.0,
+                565.0,
+                26.0,
+            ),
+            line(
+                "Download the installer from the release page and run it. The",
+                47.0,
+                238.0,
+                725.0,
+                24.0,
+            ),
+            line("setup takes about two minutes.", 47.0, 288.0, 376.0, 22.0),
+            line(
+                "When the installation has finished, open the settings window",
+                47.0,
+                367.0,
+                728.0,
+                24.0,
+            ),
+            line(
+                "and choose the language you want to read in. You can change",
+                47.0,
+                416.0,
+                744.0,
+                26.0,
+            ),
+            line(
+                "this choice at any time without restarting.",
+                46.0,
+                464.0,
+                502.0,
+                26.0,
+            ),
+        ];
+        let rows: Vec<usize> = group_lines(&lines).iter().map(|b| b.lines.len()).collect();
+        assert_eq!(rows, vec![2, 2, 3]);
+    }
+
+    #[test]
+    fn double_spaced_single_sentences_stay_apart() {
+        let lines = vec![
+            line(
+                "Download the installer from the release page.",
+                47.0,
+                238.0,
+                525.0,
+                24.0,
+            ),
+            line(
+                "Run the setup and wait for it to finish.",
+                47.0,
+                288.0,
+                476.0,
+                22.0,
+            ),
+        ];
+        assert_eq!(group_lines(&lines).len(), 2);
+    }
+
+    #[test]
+    fn heading_or_speaker_name_above_wider_text_is_its_own_block() {
+        let lines = vec![
+            line("What astronomers measure today", 37.0, 491.0, 401.0, 20.0),
+            line("Modern instruments record a faint glow coming from every direction. It is the cooled", 37.0, 527.0, 734.0, 17.0),
+            line("remnant of the hot early universe, and it peaks at microwave wavelengths rather than", 37.0, 555.0, 743.0, 17.0),
+            line("in visible light.", 36.0, 583.0, 126.0, 16.0),
+        ];
+        let blocks = group_lines(&lines);
+        assert_eq!(blocks.len(), 2);
+        assert_eq!(blocks[0].text, "What astronomers measure today");
+        assert_eq!(blocks[1].lines.len(), 3);
+
+        let lines = vec![
+            line("Old Fisherman", 43.0, 36.0, 125.0, 16.0),
+            line(
+                "You came all the way from the capital? Then you must have seen the",
+                44.0,
+                66.0,
+                623.0,
+                18.0,
+            ),
+            line(
+                "lighthouse on the cliff. Nobody has lit it since the storm took my",
+                45.0,
+                97.0,
+                578.0,
+                20.0,
+            ),
+            line(
+                "brother, and the boats no longer dare to enter the bay after dark.",
+                43.0,
+                130.0,
+                591.0,
+                18.0,
+            ),
+        ];
+        let blocks = group_lines(&lines);
+        assert_eq!(blocks.len(), 2);
+        assert_eq!(blocks[0].text, "Old Fisherman");
+        assert_eq!(blocks[1].lines.len(), 3);
+    }
+
+    #[test]
+    fn bullet_items_are_separate_blocks() {
+        let lines = vec![
+            line(
+                "• The glow has a temperature of about 2.7 kelvin.",
+                58.0,
+                625.0,
+                432.0,
+                19.0,
+            ),
+            line(
+                "• It is the same in every direction to one part in 100,000.",
+                59.0,
+                659.0,
+                495.0,
+                19.0,
+            ),
+            line(
+                "• Tiny variations in it later grew into galaxies.",
+                58.0,
+                692.0,
+                400.0,
+                19.0,
+            ),
+        ];
+        assert_eq!(group_lines(&lines).len(), 3);
+        // A wrapped item keeps its second row.
+        let lines = vec![
+            line(
+                "1. Open the settings window and choose the",
+                20.0,
+                10.0,
+                380.0,
+                18.0,
+            ),
+            line("language you want to read in.", 38.0, 34.0, 260.0, 18.0),
+            line("2. Restart the application.", 20.0, 58.0, 240.0, 18.0),
+        ];
+        let rows: Vec<usize> = group_lines(&lines).iter().map(|b| b.lines.len()).collect();
+        assert_eq!(rows, vec![2, 1]);
+    }
+
+    #[test]
+    fn short_lines_above_a_wide_paragraph_stay_apart() {
+        // english0001 fixture: two caption rows, then the body text.
+        let lines = vec![
+            line("The Speech Accent Archive (SAA) により使われている文。", 10.0, 41.0, 384.0, 18.0),
+            line("出典：SAA本文ページ（ページ最下部に本文あり）", 11.0, 70.0, 339.0, 17.0),
+            line("Please call Stella. Ask her to bring these things with her from the store: Six spoons of fresh snow peas, five thick", 20.0, 97.0, 838.0, 17.0),
+            line("cheese, and maybe a snack for her brother Bob. We also need a small plastic snake and a big toy frog for the kids. She", 13.0, 125.0, 859.0, 20.0),
+        ];
+        let blocks = group_lines(&lines);
+        assert!(blocks
+            .last()
+            .unwrap()
+            .text
+            .starts_with("Please call Stella."));
+        assert_eq!(blocks.last().unwrap().lines.len(), 2);
+    }
+
+    #[test]
+    fn rows_beside_a_picture_end_at_the_picture() {
+        // White page, picture at x = 300..400 beside the first two rows.
+        let mut img = RgbaImage::from_pixel(400, 100, Rgba([255, 255, 255, 255]));
+        for y in 0..50 {
+            for x in 300..400 {
+                img.put_pixel(x, y, Rgba([200, 80, 60, 255]));
+            }
+        }
+        let lines = vec![
+            line("first row beside the picture and", 10.0, 10.0, 270.0, 16.0),
+            line("the second row beside it, then", 10.0, 30.0, 250.0, 16.0),
+            line(
+                "a row that runs below the picture to the edge",
+                10.0,
+                54.0,
+                380.0,
+                16.0,
+            ),
+            line("and a short one.", 10.0, 76.0, 120.0, 16.0),
+        ];
+        let blocks = group_lines(&lines);
+        assert_eq!(blocks.len(), 1);
+        let limits = row_limits(&img, &blocks[0], [255, 255, 255]);
+        assert_eq!(limits.len(), 4);
+        assert!((285.0..300.0).contains(&limits[0]), "{limits:?}");
+        assert_eq!(limits[0], limits[1]);
+        assert_eq!(&limits[2..], &[390.0, 390.0]);
+        // Colours come from a text row, not from the box with the picture.
+        assert_eq!(sample_row(&blocks[0]), [10.0, 54.0, 380.0, 16.0]);
+    }
+
+    #[test]
+    fn ragged_rows_without_a_picture_have_no_limits() {
+        let img = RgbaImage::from_pixel(400, 100, Rgba([255, 255, 255, 255]));
+        let lines = vec![
+            line("first row of the paragraph", 10.0, 10.0, 270.0, 16.0),
+            line(
+                "a row that runs to the right edge of it",
+                10.0,
+                30.0,
+                380.0,
+                16.0,
+            ),
+            line("and a short one.", 10.0, 50.0, 120.0, 16.0),
+        ];
+        let blocks = group_lines(&lines);
+        assert!(row_limits(&img, &blocks[0], [255, 255, 255]).is_empty());
+    }
+
+    #[test]
+    fn note_in_another_script_below_a_short_last_line_stays_apart() {
+        // english0004 fixture: an English paragraph, then a Japanese
+        // note that starts with an ASCII bracket.
+        let lines = vec![
+            line(
+                "reading, which cause them to turn immediately to whichever sections",
+                29.0,
+                189.0,
+                560.0,
+                15.0,
+            ),
+            line(
+                "interest them, and to ignore the rest. Thus, most of the paper remains",
+                28.0,
+                208.0,
+                571.0,
+                17.0,
+            ),
+            line(
+                "unread, yet you still have to buy all of it.",
+                29.0,
+                227.0,
+                326.0,
+                15.0,
+            ),
+            line("(某大学入試過去問題から抜粋)", 39.0, 248.0, 218.0, 13.0),
+        ];
+        let blocks = group_lines(&lines);
+        assert_eq!(blocks.len(), 2);
+        assert_eq!(blocks[1].text, "(某大学入試過去問題から抜粋)");
     }
 
     #[test]

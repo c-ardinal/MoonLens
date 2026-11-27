@@ -560,6 +560,7 @@ mod tests {
             align: Default::default(),
             bold: false,
             lines: vec![],
+            row_limits: vec![],
         }
     }
 
