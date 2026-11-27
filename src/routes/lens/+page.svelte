@@ -301,11 +301,13 @@
     untrack(() => layoutsVersion++);
   }
   $effect(() => {
-    if (!stream.active || !bodyEl) return;
     void layoutsVersion;
-    const shown = showOriginal ? [] : boxes;
-    const keys = new Set(shown.map((b) => b.rect.key));
+    // Dropped on every update, streaming or not: the keys carry the
+    // source text, so a long reading would keep every past layout.
+    const keys = new Set(boxes.map((b) => b.rect.key));
     for (const key of layouts.keys()) if (!keys.has(key)) layouts.delete(key);
+    if (!stream.active || !bodyEl) return;
+    const shown = showOriginal ? [] : boxes;
     const items = streamItems(shown, layouts, dpr, bodyEl.offsetTop);
     // After the boxes of this update were laid out (their layouts
     // arrive in the same flush).
