@@ -82,6 +82,13 @@ impl Visible {
         ]
     }
 
+    /// The part of `image` (a capture) the window shows. `None` when
+    /// the window lies outside it.
+    pub fn crop(&self, image: &image::DynamicImage) -> Option<image::DynamicImage> {
+        let [x, y, w, h] = self.cut([0.0, 0.0, image.width() as f32, image.height() as f32])?;
+        Some(image.crop_imm(x as u32, y as u32, w as u32, h as u32))
+    }
+
     /// The rows the window shows. Rows wholly in the margin belong to
     /// whatever lies next to the window and are not translated.
     pub fn keep_lines(&self, lines: Vec<OcrLine>) -> Vec<OcrLine> {
@@ -260,6 +267,24 @@ mod tests {
             assert!(x >= 0.0 && y >= 0.0 && x + w <= 200.0 && y + h <= 100.0);
         }
         assert_eq!(v.in_capture(b.bbox), [30.0, 30.0, 200.0, 50.0]);
+    }
+
+    #[test]
+    fn the_window_part_of_a_capture_is_cut_out() {
+        let capture = image::DynamicImage::new_rgba8(260, 160);
+        let inside = window().crop(&capture).unwrap();
+        assert_eq!((inside.width(), inside.height()), (200, 100));
+        // A window hanging over the capture's left edge.
+        let v = visible_in(rect(-50, 400, 200, 100), rect(0, 370, 180, 160));
+        let inside = v.crop(&image::DynamicImage::new_rgba8(180, 160)).unwrap();
+        assert_eq!((inside.width(), inside.height()), (150, 100));
+        let off = Visible {
+            x: 300,
+            y: 0,
+            w: 10,
+            h: 10,
+        };
+        assert!(off.crop(&capture).is_none());
     }
 
     #[test]

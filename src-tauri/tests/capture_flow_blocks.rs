@@ -423,3 +423,88 @@ async fn a_wider_capture_is_shown_inside_the_window_only() {
     assert_eq!(all.blocks.len(), 2);
     assert_eq!(all.image_size, Some([300, 140]));
 }
+
+/// QR stub: "decodes" a code painted as a black pixel anywhere in the
+/// picture it is given.
+struct StubQr;
+
+#[async_trait]
+impl Provider for StubQr {
+    fn id(&self) -> &str {
+        "stub_qr"
+    }
+    fn capabilities(&self) -> &[Capability] {
+        &[Capability::QrHandler]
+    }
+    fn is_local(&self) -> bool {
+        true
+    }
+    async fn run(&self, input: TaskInput) -> Result<TaskOutput, ProviderError> {
+        let TaskInput::IntentClassifier { image_png } = input else {
+            unreachable!()
+        };
+        let img = image::load_from_memory(&image_png).unwrap().to_rgba8();
+        if img.pixels().any(|p| p.0[0] == 0) {
+            Ok(TaskOutput::Text("https://example.com".into()))
+        } else {
+            Err(ProviderError::Other("no code".into()))
+        }
+    }
+}
+
+/// A QR code next to a translation window, inside its scan margin, is
+/// not the window's: the text in the window is read, the code is not.
+#[tokio::test]
+async fn a_qr_code_in_the_margin_is_not_decoded() {
+    use moonlens_lib::scan_margin::Visible;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let store = SettingsStore::load_from(tmp.path().join("config.toml")).unwrap();
+    let mut s = Settings::default();
+    s.providers.ocr.chain = vec!["stub_ocr".into()];
+    s.providers.translate.chain = vec!["stub_tr".into()];
+    s.providers.qr_handler.chain = vec!["stub_qr".into()];
+    s.subtitle.target_language = "en-not-target".into();
+    store.save(s).unwrap();
+    let mut providers: HashMap<String, ProviderHandle> = HashMap::new();
+    providers.insert("stub_ocr".into(), Arc::new(StubOcr(ENGLISH_LINES.to_vec())));
+    providers.insert("stub_qr".into(), Arc::new(StubQr));
+    let pipe = Pipeline::with_providers(
+        Arc::new(store),
+        Arc::new(Storage::open_in_memory().unwrap()),
+        providers,
+    );
+
+    let capture = |code: (u32, u32)| {
+        let mut img = image::RgbaImage::from_pixel(300, 140, image::Rgba([255, 255, 255, 255]));
+        img.put_pixel(code.0, code.1, image::Rgba([0, 0, 0, 255]));
+        let mut out = Vec::new();
+        image::DynamicImage::ImageRgba8(img)
+            .write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png)
+            .unwrap();
+        out
+    };
+    let visible = Visible {
+        x: 30,
+        y: 24,
+        w: 100,
+        h: 60,
+    };
+
+    // The code lies left of the window.
+    let r = pipe
+        .analyze_capture_in(capture((10, 40)), Some(visible))
+        .await
+        .unwrap();
+    assert!(matches!(r.intent, Intent::Text));
+    assert_eq!(r.blocks.len(), 1);
+    assert_eq!(r.blocks[0].source, "world.");
+
+    // The code lies in the window.
+    let r = pipe
+        .analyze_capture_in(capture((60, 40)), Some(visible))
+        .await
+        .unwrap();
+    assert!(matches!(r.intent, Intent::Qr));
+    assert_eq!(r.image_size, Some([100, 60]));
+}

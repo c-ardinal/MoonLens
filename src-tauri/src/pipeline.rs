@@ -473,12 +473,17 @@ impl Pipeline {
         );
 
         // 1) Try QR — decoding is almost free and short-circuits the rest.
+        //    Only inside the window: a code in the scan margin belongs
+        //    to whatever lies next to it.
+        let qr_png = match visible.map(|v| v.crop(&img)) {
+            Some(Some(inside)) => crate::capture::png_bytes(&inside)
+                .map_err(|e| ProviderError::Other(e.to_string()))?,
+            _ => image_png.clone(),
+        };
         if let Ok(res) = self
             .run(
                 Capability::QrHandler,
-                TaskInput::IntentClassifier {
-                    image_png: image_png.clone(),
-                },
+                TaskInput::IntentClassifier { image_png: qr_png },
             )
             .await
         {
@@ -496,7 +501,7 @@ impl Pipeline {
                     result: res,
                     source_rect: None,
                     blocks: vec![],
-                    image_size: Some([img.width(), img.height()]),
+                    image_size: Some(visible.map_or([img.width(), img.height()], |v| [v.w, v.h])),
                     source_language: None,
                     target_language: None,
                 });
