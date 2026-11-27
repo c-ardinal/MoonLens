@@ -20,6 +20,7 @@ pub struct Settings {
     pub config_version: u32,
     pub appearance: Appearance,
     pub hotkeys: Hotkeys,
+    pub triggers: Triggers,
     pub overlay: OverlaySettings,
     pub subtitle: SubtitleSettings,
     pub clipboard: ClipboardSettings,
@@ -170,6 +171,25 @@ impl Default for Hotkeys {
     }
 }
 
+/* -------------------------------- triggers -------------------------------- */
+
+/// One more way to run each shortcut action: a mouse button, a modifier
+/// key pressed twice, or a gamepad button combination (text form:
+/// `trigger.rs`; e.g. `Mouse4`, `Double:Control`, `Pad:Back+Y`). Empty =
+/// none. The fields mirror [`Hotkeys`].
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(default, deny_unknown_fields)]
+pub struct Triggers {
+    pub capture_region: String,
+    pub toggle_pin_overlay: String,
+    pub toggle_window_operate: String,
+    pub toggle_window_pause: String,
+    pub hold_window_original: String,
+    pub toggle_subtitle: String,
+    pub open_command_palette: String,
+    pub open_history: String,
+}
+
 /* -------------------------------- overlay -------------------------------- */
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -230,6 +250,9 @@ pub enum OverlayPosition {
 pub struct SubtitleSettings {
     pub source_language: String,
     pub target_language: String,
+    /// Face-to-face conversation (microphone): the language of the
+    /// person the user talks to. The user's own is `target_language`.
+    pub conversation_language: String,
     pub model: String,
     pub fallback_model: String,
     #[schemars(range(min = 0, max = 3))]
@@ -261,6 +284,7 @@ impl Default for SubtitleSettings {
         Self {
             source_language: "auto".into(),
             target_language: "ja".into(),
+            conversation_language: "en".into(),
             model: "large-v3-turbo".into(),
             fallback_model: "base".into(),
             vad_aggressiveness: 2,

@@ -1362,6 +1362,17 @@ pub async fn start_subtitle(app: AppHandle, state: State<'_, AppState>) -> Resul
     Ok(())
 }
 
+/// Start a face-to-face conversation (microphone, translated in both
+/// directions) in a window of its own.
+#[tauri::command]
+pub async fn start_conversation(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+    let (subtitle, handle) = (state.subtitle.clone(), app.clone());
+    // Opening the microphone may wait for the device; off the IPC thread.
+    tauri::async_runtime::spawn(async move { subtitle.start_conversation(&handle).await })
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 fn subtitle_failure(e: anyhow::Error) -> String {
     user_error::coded(
         "error",
@@ -1770,6 +1781,28 @@ pub async fn set_lens_continuous(
 #[tauri::command]
 pub async fn toggle_lens_pause(app: AppHandle, state: State<'_, AppState>) -> Result<bool, String> {
     Ok(lens::toggle_pause(&app, &state.lenses))
+}
+
+/// Whether extra triggers (mouse buttons, double press, gamepad) work on
+/// this platform.
+#[tauri::command]
+pub async fn trigger_supported() -> Result<bool, String> {
+    Ok(crate::trigger_watch::SUPPORTED)
+}
+
+/// Wait for the user to perform a trigger and return its text form
+/// (settings screen). `None`: nothing in time, or cancelled.
+#[tauri::command]
+pub async fn capture_trigger(app: AppHandle) -> Result<Option<String>, String> {
+    Ok(crate::trigger_watch::capture(&app)
+        .await
+        .map(|t| t.to_string()))
+}
+
+#[tauri::command]
+pub async fn cancel_trigger_capture(app: AppHandle) -> Result<(), String> {
+    crate::trigger_watch::cancel_capture(&app);
+    Ok(())
 }
 
 /// State of the all-window controls, asked by a window as it opens.

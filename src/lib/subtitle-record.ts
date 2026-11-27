@@ -74,6 +74,14 @@ export function groupSentences(lines: readonly SubtitleLine[]): Unit[] {
   return units;
 }
 
+/**
+ * 履歴からの再翻訳の可否。対面会話の記録は行ごとに翻訳方向が相違し、
+ * 記録の言語（相手 → 利用者）での一括再翻訳は利用者側の発話の訳文を破壊するため対象外。
+ */
+export function canRetranslate(record: { conversation?: boolean }): boolean {
+  return !record.conversation;
+}
+
 export interface RetranslateOptions {
   signal?: AbortSignal;
   onProgress?: (done: number, total: number) => void;

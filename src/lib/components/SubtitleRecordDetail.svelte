@@ -21,7 +21,7 @@
     type SubtitleExportFormat,
     type SubtitleRecord
   } from '$lib/ipc';
-  import { durationLabel, groupSentences, retranslate, timeLabel } from '$lib/subtitle-record';
+  import { canRetranslate, durationLabel, groupSentences, retranslate, timeLabel } from '$lib/subtitle-record';
 
   let {
     entry,
@@ -82,7 +82,7 @@
 
   async function start() {
     const rec = record;
-    if (!rec || ctl) return;
+    if (!rec || ctl || !canRetranslate(rec)) return;
     const id = entry.id;
     const before = $state.snapshot(rec.lines);
     const mine = (ctl = new AbortController());
@@ -196,7 +196,7 @@
     {#if progress}
       <span class="text-sm tabular-nums text-ink-muted" role="status">{t('subtitle-record-detail:retranslating_done_total', { done: progress.done, total: progress.total })}</span>
       <button class="sbtn" onclick={cancel}>{t('common:cancel')}</button>
-    {:else}
+    {:else if canRetranslate(record)}
       <button class="sbtn icon neutral" title={t('subtitle-record-detail:retranslate')} aria-label={t('subtitle-record-detail:retranslate')} onclick={start}>
         <Languages class="h-3.5 w-3.5" />
       </button>

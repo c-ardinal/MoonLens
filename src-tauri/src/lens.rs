@@ -944,14 +944,19 @@ pub fn toggle_pause(app: &AppHandle, registry: &LensRegistryHandle) -> bool {
 /// Show-original hotkey: every window hides its translations while the
 /// key is down ([`LENS_PEEK_EVENT`]). Reading goes on, so the
 /// translations are current when they come back.
-pub fn hold_original(app: &AppHandle, registry: &LensRegistryHandle, pressed: bool) {
+pub fn hold_original(
+    app: &AppHandle,
+    registry: &LensRegistryHandle,
+    source: lens_control::HoldSource,
+    pressed: bool,
+) {
     if pressed {
-        if registry.hold.lock().press() {
+        if registry.hold.lock().press(source) {
             emit_all(app, registry, LENS_PEEK_EVENT, true);
         }
         return;
     }
-    let ticket = registry.hold.lock().release();
+    let ticket = registry.hold.lock().release(source);
     let (app, registry) = (app.clone(), registry.clone());
     tauri::async_runtime::spawn(async move {
         tokio::time::sleep(Duration::from_millis(lens_control::RELEASE_GRACE_MS)).await;

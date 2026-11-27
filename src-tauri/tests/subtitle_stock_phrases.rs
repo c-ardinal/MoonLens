@@ -20,7 +20,7 @@ use moonlens_lib::{
     },
     settings::{schema::Settings, SettingsStore},
     storage::Storage,
-    subtitle::{run_loop, SubtitleEvent},
+    subtitle::{run_loop, Mode, SubtitleEvent},
 };
 use tokio::sync::mpsc;
 
@@ -52,7 +52,10 @@ impl Provider for ScriptedAsr {
                 text: text.to_string(),
             })
             .collect();
-        Ok(TaskOutput::Transcript { segments })
+        Ok(TaskOutput::Transcript {
+            segments,
+            language: None,
+        })
     }
 }
 
@@ -190,7 +193,7 @@ async fn subtitles_with(
         tokio::spawn(async move {
             let emit = move |ev: SubtitleEvent| events.lock().unwrap().push(ev);
             let stop = Arc::new(tokio::sync::Notify::new());
-            run_loop(&emit, settings, pipeline, rx, stop, None).await
+            run_loop(&emit, settings, pipeline, rx, stop, Mode::default()).await
         })
     };
     // Audible, so the silence gate lets it through.

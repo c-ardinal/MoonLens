@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
   MAX_LINES,
+  conversationPair,
+  partnerLanguages,
+  sameSource,
+  sourceKey,
   initialView,
   inputHint,
   reduce,
@@ -100,6 +104,69 @@ describe('音声翻訳ウィンドウの表示状態', () => {
   });
 });
 
+describe('対面会話（音源：マイク）', () => {
+  const mic = { kind: 'microphone' } as const;
+
+  it('音源の表記・照合・選択状態', () => {
+    const view = { source: mic, device: 'USB Microphone' };
+    expect(sourceLabel(view)).toBe('マイク');
+    expect(sameSource(mic, { kind: 'microphone' })).toBe(true);
+    expect(sameSource(mic, { kind: 'system' })).toBe(false);
+    expect(sameSource({ kind: 'app', pid: 1 }, mic)).toBe(false);
+    const options = sourceOptions([], view);
+    expect(options.map((o) => o.selected)).toEqual([false, true]);
+    expect(new Set(options.map((o) => sourceKey(o.source))).size).toBe(options.length);
+  });
+
+  it('発話の話者を行へ保持、文単位の補正後も継承', () => {
+    const v = run([
+      { kind: 'started', device: 'mic', source: mic },
+      { kind: 'chunk', id: 1, original: '駅は', translated: 'The station', speaker: 'own' },
+      { kind: 'chunk', id: 2, original: 'どこですか。', translated: 'where is it?', speaker: 'own' },
+      { kind: 'chunk', id: 3, original: 'Over there.', translated: 'あちらです。', speaker: 'partner' },
+      {
+        kind: 'revised',
+        replaces: [1, 2],
+        id: 4,
+        original: '駅はどこですか。',
+        translated: 'Where is the station?',
+        rest: null
+      }
+    ]);
+    expect(v.lines.map((l) => [l.original, l.speaker])).toEqual([
+      ['駅はどこですか。', 'own'],
+      ['Over there.', 'partner']
+    ]);
+    expect(v.lines[0].revised).toBe(true);
+  });
+
+  it('字幕（話者なし）の行は話者を保持しない', () => {
+    const v = run([{ kind: 'chunk', id: 1, original: 'a', translated: 'b' }]);
+    expect('speaker' in v.lines[0]).toBe(false);
+  });
+
+  it('言語対：相手の言語が本人と同一・未設定の場合は英語（本人が英語の場合は日本語）', () => {
+    expect(conversationPair('ja', 'en')).toEqual({ own: 'ja', partner: 'en' });
+    expect(conversationPair('ja', 'ja')).toEqual({ own: 'ja', partner: 'en' });
+    expect(conversationPair('ja-easy', 'ja')).toEqual({ own: 'ja-easy', partner: 'en' });
+    expect(conversationPair('en', 'en')).toEqual({ own: 'en', partner: 'ja' });
+    expect(conversationPair('ko', '')).toEqual({ own: 'ko', partner: 'en' });
+    expect(conversationPair('ko', 'zh-Hans')).toEqual({ own: 'ko', partner: 'zh-Hans' });
+  });
+
+  it('相手の言語の選択肢：本人と同一の言語は対象外', () => {
+    const all = [{ code: 'ja' }, { code: 'en' }, { code: 'zh-Hans' }, { code: 'zh-Hant' }];
+    expect(partnerLanguages(all, 'ja-easy').map((l) => l.code)).toEqual(['en', 'zh-Hans', 'zh-Hant']);
+    expect(partnerLanguages(all, 'zh-Hans').map((l) => l.code)).toEqual(['ja', 'en']);
+  });
+
+  it('案内文：入力なしはマイクの確認、入力ありは発話待機', () => {
+    expect(inputHint('none', null, true)).toContain('マイク');
+    expect(inputHint('ok', null, true)).toBe(inputHint('low', null, true));
+    expect(inputHint('ok', null, true)).not.toBe(inputHint('ok'));
+  });
+});
+
 describe('音源メニューの選択肢', () => {
   const apps = [
     { pid: 10, name: 'chrome', title: '動画 - Google Chrome', playing: true },
@@ -108,16 +175,17 @@ describe('音源メニューの選択肢', () => {
 
   it('先頭は PC 全体、以降はアプリ一覧。選択中の音源を明示', () => {
     const options = sourceOptions(apps, { source: { kind: 'app', pid: 20 }, device: 'vlc' });
-    expect(options.map((o) => o.label)).toEqual(['PC 全体', 'chrome', 'vlc']);
-    expect(options.map((o) => o.selected)).toEqual([false, false, true]);
-    expect(options.map((o) => o.playing)).toEqual([true, true, false]);
-    expect(options[1].detail).toBe('動画 - Google Chrome');
+    expect(options.map((o) => o.label)).toEqual(['PC 全体', 'マイク', 'chrome', 'vlc']);
+    expect(options.map((o) => o.selected)).toEqual([false, false, false, true]);
+    // マイク：再生状況の対象外
+    expect(options.map((o) => o.playing)).toEqual([true, null, true, false]);
+    expect(options[2].detail).toBe('動画 - Google Chrome');
   });
 
   it('選択中のアプリが一覧に不在でも選択肢として残置', () => {
     const options = sourceOptions(apps, { source: { kind: 'app', pid: 99 }, device: 'game' });
     expect(options.at(-1)).toMatchObject({ label: 'game', selected: true, playing: false });
-    expect(sourceOptions([], { source: { kind: 'system' }, device: '' })).toHaveLength(1);
+    expect(sourceOptions([], { source: { kind: 'system' }, device: '' })).toHaveLength(2);
   });
 
   it('文単位の再翻訳結果で該当行を置換', () => {

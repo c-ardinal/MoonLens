@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { SubtitleLine } from './ipc';
 import {
+  canRetranslate,
   cost,
   durationLabel,
   groupSentences,
@@ -95,6 +96,17 @@ const sample = [
   line(1, 1000, 2000, 'my friend.', '古い二'),
   line(2, 5000, 6000, 'See you.', '古い三')
 ];
+
+describe('canRetranslate', () => {
+  it('対面会話の記録は対象外（行ごとに翻訳方向が相違）', () => {
+    expect(canRetranslate({ conversation: true })).toBe(false);
+  });
+
+  it('音声翻訳の記録と、旧版の記録（標識なし）は対象', () => {
+    expect(canRetranslate({ conversation: false })).toBe(true);
+    expect(canRetranslate({})).toBe(true);
+  });
+});
 
 describe('retranslate', () => {
   it('translates per unit with accumulated history and renumbers', async () => {

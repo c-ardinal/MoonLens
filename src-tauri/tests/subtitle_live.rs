@@ -44,7 +44,7 @@ use moonlens_lib::{
     plugins::registry::PluginRegistry,
     settings::SettingsStore,
     storage::Storage,
-    subtitle::{run_loop, Phase, SubtitleEvent},
+    subtitle::{run_loop, Mode, Phase, SubtitleEvent},
 };
 use parking_lot::Mutex;
 use tokio::sync::{mpsc, Notify};
@@ -122,6 +122,7 @@ async fn setup() -> Env {
         .run(TaskInput::Asr {
             audio_pcm16_mono_16k: vec![0; 32_000],
             language_hint: Some("en".into()),
+            language_candidates: Vec::new(),
         })
         .await
         .expect("speech model failed to load");
@@ -164,7 +165,15 @@ async fn subtitles_notifying(
         }
         sink.lock().push(ev);
     };
-    let gave_up = run_loop(&emit, settings, pipeline, rx, Arc::new(Notify::new()), None).await;
+    let gave_up = run_loop(
+        &emit,
+        settings,
+        pipeline,
+        rx,
+        Arc::new(Notify::new()),
+        Mode::default(),
+    )
+    .await;
     assert!(!gave_up, "recognition gave up");
     let mut events = events.lock();
     std::mem::take(&mut *events)

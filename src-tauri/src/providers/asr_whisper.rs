@@ -53,6 +53,7 @@ impl Provider for WhisperCppProvider {
         let TaskInput::Asr {
             audio_pcm16_mono_16k,
             language_hint,
+            ..
         } = input
         else {
             return Err(ProviderError::Other("expected Asr input".into()));
@@ -82,6 +83,9 @@ impl Provider for WhisperCppProvider {
                 text: s.text,
             })
             .collect();
-        Ok(TaskOutput::Transcript { segments })
+        Ok(TaskOutput::Transcript {
+            segments,
+            language: None,
+        })
     }
 }

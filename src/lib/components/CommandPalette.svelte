@@ -13,6 +13,7 @@
     Settings as SettingsIcon,
     Mic,
     MicOff,
+    MessagesSquare,
     Pause,
     Power,
     LayoutGrid,
@@ -26,6 +27,7 @@
     listLayoutSets,
     restoreLayoutSet,
     saveLayoutSet,
+    startConversation,
     startSubtitle,
     stopSubtitle,
     subtitleState,
@@ -100,6 +102,15 @@
       run: async () => {
         open = false;
         await toggleLensPause();
+      }
+    },
+    {
+      id: 'conversation',
+      label: t('command-palette:start_conversation'),
+      icon: MessagesSquare,
+      run: async () => {
+        await startConversation();
+        open = false;
       }
     },
     {
