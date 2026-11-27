@@ -358,7 +358,7 @@ export const onHotkey = (handler: (action: string) => void): Promise<UnlistenFn>
   listen<string>('moonlens://hotkey', (e) => handler(e.payload));
 
 /** 音声翻訳の処理段階：音声待機・音声認識・翻訳。 */
-export type SubtitlePhase = 'waiting' | 'recognizing' | 'translating';
+export type SubtitlePhase = 'waiting' | 'recognizing' | 'translating' | 'revising';
 
 /** 音声翻訳ウィンドウの音源：PC 全体、またはアプリ単位（プロセスツリー）。 */
 export type AudioSource = { kind: 'system' } | { kind: 'app'; pid: number };
@@ -388,7 +388,16 @@ export type SubtitleEvent =
   | { kind: 'started'; device: string; source: AudioSource }
   | { kind: 'stopped' }
   | { kind: 'status'; phase: SubtitlePhase }
-  | { kind: 'chunk'; original: string; translated: string }
+  | { kind: 'chunk'; id: number; original: string; translated: string }
+  | {
+      /** 文単位の再翻訳結果。`replaces` の各行を 1 行（＋次文の冒頭 `rest`）へ置換。 */
+      kind: 'revised';
+      replaces: number[];
+      id: number;
+      original: string;
+      translated: string;
+      rest: { id: number; original: string; translated: string } | null;
+    }
   | { kind: 'error'; message: string };
 
 /** `id`：イベントの対象ウィンドウ（ラベル）。 */

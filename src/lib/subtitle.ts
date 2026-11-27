@@ -1,8 +1,14 @@
 import type { AudioApp, AudioSource, SubtitleEvent, SubtitlePhase, SubtitleSession } from '$lib/ipc';
 import type { InputState } from '$lib/subtitle-level';
 
-/** 字幕 1 件（認識単位）。 */
-export type SubtitleLine = { id: number; original: string; translated: string };
+/** 字幕 1 件（認識単位、補正後は文単位）。 */
+export type SubtitleLine = {
+  id: number;
+  original: string;
+  translated: string;
+  /** 文単位の再翻訳で確定済み。 */
+  revised?: boolean;
+};
 
 /** 音声翻訳ウィンドウの表示状態。 */
 export type SubtitleView = {
@@ -14,6 +20,13 @@ export type SubtitleView = {
   source: AudioSource;
   lines: SubtitleLine[];
   error: string | null;
+  /**
+   * 行 ID の加算値。バックエンドは開始（音源変更・再開）単位で 1 から採番する一方、
+   * 表示済みの字幕は保持するため、開始時点の最大 ID を加算して重複を回避。
+   */
+  idBase: number;
+  /** 採番済みの最大 ID（加算後）。 */
+  lastId: number;
 };
 
 /** 保持件数の上限（超過分は旧字幕から破棄）。 */
@@ -25,7 +38,9 @@ export const initialView = (): SubtitleView => ({
   device: '',
   source: { kind: 'system' },
   lines: [],
-  error: null
+  error: null,
+  idBase: 0,
+  lastId: 0
 });
 
 /** バックエンドのイベント（`moonlens://subtitle`）を表示状態へ反映。 */
@@ -33,16 +48,44 @@ export function reduce(view: SubtitleView, ev: SubtitleEvent): SubtitleView {
   switch (ev.kind) {
     case 'started':
       // 音源変更・再開：表示済みの字幕は保持。
-      return { ...view, running: true, phase: 'waiting', device: ev.device, source: ev.source, error: null };
+      return {
+        ...view,
+        running: true,
+        phase: 'waiting',
+        device: ev.device,
+        source: ev.source,
+        error: null,
+        idBase: view.lastId
+      };
     case 'stopped':
       // 停止理由（エラー）は表示を継続。
       return { ...view, running: false, phase: 'waiting' };
     case 'status':
       return { ...view, phase: ev.phase };
     case 'chunk': {
-      const id = (view.lines.at(-1)?.id ?? 0) + 1;
+      const id = view.idBase + ev.id;
       const line = { id, original: ev.original, translated: ev.translated };
-      return { ...view, error: null, lines: [...view.lines, line].slice(-MAX_LINES) };
+      return {
+        ...view,
+        error: null,
+        lines: [...view.lines, line].slice(-MAX_LINES),
+        lastId: Math.max(view.lastId, id)
+      };
+    }
+    case 'revised': {
+      const base = view.idBase;
+      const replaces = ev.replaces.map((id) => base + id);
+      const lastId = Math.max(view.lastId, base + ev.id, base + (ev.rest?.id ?? 0));
+      // 置換対象が保持範囲外（破棄済み）の場合、行は不変。
+      const at = view.lines.findIndex((l) => replaces.includes(l.id));
+      if (at < 0) return lastId === view.lastId ? view : { ...view, lastId };
+      const next: SubtitleLine[] = [
+        { id: base + ev.id, original: ev.original, translated: ev.translated, revised: true }
+      ];
+      if (ev.rest) next.push({ ...ev.rest, id: base + ev.rest.id });
+      const lines = view.lines.filter((l) => !replaces.includes(l.id));
+      lines.splice(at, 0, ...next);
+      return { ...view, lines, lastId };
     }
     case 'error':
       return { ...view, error: ev.message };
@@ -54,6 +97,7 @@ export function statusLabel(view: SubtitleView, input: InputState = 'none'): str
   if (!view.running) return view.error ? 'エラー停止' : '停止中';
   if (view.phase === 'recognizing') return '認識中…';
   if (view.phase === 'translating') return '翻訳中…';
+  if (view.phase === 'revising') return '補正中…';
   if (input === 'ok') return '音声検出';
   return input === 'low' ? '閾値未満' : '入力未検出';
 }

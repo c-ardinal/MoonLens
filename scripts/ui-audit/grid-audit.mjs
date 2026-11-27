@@ -80,7 +80,7 @@ async function subtitleWindow() {
     await level(Array.from({ length: 40 }, (_, i) => -34 + 12 * Math.sin(i / 3))); await m('detected');
     await emit({ kind: 'status', phase: 'recognizing' }); await m('recognizing');
     await emit({ kind: 'status', phase: 'translating' });
-    await emit({ kind: 'chunk', original: 'And so, my fellow Americans,', translated: 'そして、同胞であるアメリカ国民の皆さん、' }); await m('chunk');
+    await emit({ kind: 'chunk', id: 1, original: 'And so, my fellow Americans,', translated: 'そして、同胞であるアメリカ国民の皆さん、' }); await m('chunk');
     await pg.mouse.move(w / 2, 20); await m('hover');
     // 吸着メニュー：吸着なし（候補一覧）・吸着中（配置 6 種・解除）
     const attachMenu = async (n) => {

@@ -254,9 +254,9 @@
     getCurrentWebviewWindow().startResizeDragging('SouthEast').catch(() => {});
   }
 
-  // 最新の字幕・エラーを表示範囲へ。
+  // 最新の字幕・エラーを表示範囲へ（補正による行の置換時も同様）。
   $effect(() => {
-    void view.lines.length;
+    void view.lines;
     void view.error;
     tick().then(() => scroller?.scrollTo({ top: scroller.scrollHeight }));
   });
@@ -397,7 +397,7 @@
   {/if}
   <section class="body" bind:this={scroller} aria-live="polite" aria-label="字幕">
     {#each view.lines as line (line.id)}
-      <div class="line">
+      <div class="line" class:revised={line.revised}>
         {#if showOriginal && line.translated}
           <p class="src" style="font-size: {Math.round(fontSize * 0.55)}px">{line.original}</p>
         {/if}
@@ -717,6 +717,23 @@
   .text {
     font-weight: 600;
     line-height: 1.35;
+  }
+  /* 補正による訳文の更新を明示（1 回のみ） */
+  .line.revised .text {
+    animation: revised 0.9s ease-out;
+  }
+  @keyframes revised {
+    from {
+      background: rgba(139, 92, 246, 0.45);
+    }
+    to {
+      background: transparent;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .line.revised .text {
+      animation: none;
+    }
   }
   /* 過去の字幕は減光、最新行を強調 */
   .line:not(:last-of-type) {

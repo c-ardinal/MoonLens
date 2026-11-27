@@ -46,6 +46,8 @@ chunk_seconds = 3.0
 overlap_seconds = 0.5
 show_original = true
 font_size_px = 22
+realtime_correction = true
+batch_correction = true
 
 [clipboard]
 auto_copy_translation = true

@@ -221,6 +221,11 @@ pub struct SubtitleSettings {
     pub show_original: bool,
     #[schemars(range(min = 14, max = 48))]
     pub font_size_px: u32,
+    /// Translate each sentence again as a whole as soon as it ends.
+    pub realtime_correction: bool,
+    /// Translate the sentences not yet corrected again when the speech
+    /// pauses or the audio ends.
+    pub batch_correction: bool,
 }
 
 impl Default for SubtitleSettings {
@@ -235,6 +240,8 @@ impl Default for SubtitleSettings {
             overlap_seconds: 0.5,
             show_original: true,
             font_size_px: 22,
+            realtime_correction: true,
+            batch_correction: true,
         }
     }
 }
