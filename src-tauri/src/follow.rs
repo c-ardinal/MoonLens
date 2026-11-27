@@ -107,6 +107,15 @@ impl Follow {
         self
     }
 
+    /// Change the header strip (the display scale changed); the next
+    /// [`step`](Self::step) places the window anew.
+    pub fn set_header(&mut self, header: u32) {
+        if header != self.header {
+            self.header = header;
+            self.anchor = None;
+        }
+    }
+
     pub fn dock(&self) -> Dock {
         self.dock
     }
@@ -628,6 +637,19 @@ mod tests {
             (r.x, r.w, r.y + r.h as i32),
             (off.x, off.w, off.y + off.h as i32)
         );
+    }
+
+    #[test]
+    fn a_new_header_height_places_the_cover_anew() {
+        let mut f = Follow::new(Dock::Cover, 1.0).with_header(32);
+        let at = f.step(LENS, ELSEWHERE, Some(MONITOR)).unwrap();
+        assert_eq!(f.step(LENS, at, Some(MONITOR)), None);
+        // Moved to a display at 150 %: the header is 48 pixels there.
+        f.set_header(48);
+        let r = f.step(LENS, at, Some(MONITOR)).unwrap();
+        assert_eq!((r.y, r.h), (LENS.y - 48, LENS.h + 48));
+        f.set_header(48);
+        assert_eq!(f.step(LENS, r, Some(MONITOR)), None);
     }
 
     #[test]

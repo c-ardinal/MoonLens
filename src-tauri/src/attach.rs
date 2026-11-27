@@ -55,6 +55,8 @@ struct Entry {
     serial: u64,
     target: Target,
     follow: Follow,
+    /// The follower's own header (CSS pixels; see [`Follow::with_header`]).
+    header_css: f64,
     /// Where the target was last seen; `None` while it is hidden.
     anchor: Option<Rect>,
     /// The follower is hidden along with its target.
@@ -141,7 +143,8 @@ pub fn attach(
                     title: target.title.clone(),
                     app: target.app.clone(),
                 },
-                follow: Follow::new(dock, scale).with_header((header_css * scale).ceil() as u32),
+                follow: Follow::new(dock, scale).with_header(header_px(header_css, scale)),
+                header_css,
                 anchor: None,
                 hidden: false,
                 pending: false,
@@ -158,6 +161,10 @@ pub fn attach(
         .spawn(move || run(&app_bg, &registry_bg, &label_bg, serial, id))?;
     emit(app, registry, label);
     Ok(())
+}
+
+fn header_px(header_css: f64, scale: f64) -> u32 {
+    (header_css * scale).ceil() as u32
 }
 
 /// Change how `label` sits on its target.
@@ -262,7 +269,10 @@ fn step(app: &AppHandle, registry: &Handle, label: &str, serial: u64) {
         return;
     };
     let Some(anchor) = e.anchor else {
-        if !std::mem::replace(&mut e.hidden, true) {
+        // Also when it is hidden already by our account: a capture that
+        // was under way hides the window and shows it again afterwards
+        // where the window cannot be kept out of captures.
+        if !std::mem::replace(&mut e.hidden, true) || win.is_visible().unwrap_or(false) {
             let _ = win.hide();
         }
         return;
@@ -273,6 +283,9 @@ fn step(app: &AppHandle, registry: &Handle, label: &str, serial: u64) {
     let Ok(actual) = lens::inner_rect(&win) else {
         return;
     };
+    // On another display the header may measure differently.
+    let scale = win.scale_factor().unwrap_or(1.0);
+    e.follow.set_header(header_px(e.header_css, scale));
     let before = e.follow.dock();
     let target = e
         .follow
