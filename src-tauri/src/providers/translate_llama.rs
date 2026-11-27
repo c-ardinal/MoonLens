@@ -552,6 +552,18 @@ fn plan_gpu_layers(requested: u32, n_layer: u32, model_bytes: u64, free: u64) ->
     requested.min(fit.min(total) as u32)
 }
 
+/// GGUF metadata key holding the number of transformer blocks.
+#[cfg_attr(not(feature = "local-llm"), allow(dead_code))]
+fn block_count_key(arch: &str) -> String {
+    format!("{}.block_count", arch.trim())
+}
+
+/// The block count as GGUF metadata prints it; 0 is not a count.
+#[cfg_attr(not(feature = "local-llm"), allow(dead_code))]
+fn parse_block_count(value: &str) -> Option<u32> {
+    value.trim().parse().ok().filter(|n| *n > 0)
+}
+
 #[cfg(feature = "local-llm")]
 mod engine {
     use std::num::NonZeroU32;
@@ -571,8 +583,8 @@ mod engine {
     use parking_lot::Mutex;
 
     use super::{
-        clean_output, fits_gpu, pfml3_prompt_in_context, plan_gpu_layers, render_chat_template,
-        take_utf8, ChunkSink, GenParams, Job, STOP_STRINGS,
+        block_count_key, clean_output, fits_gpu, parse_block_count, pfml3_prompt_in_context,
+        plan_gpu_layers, render_chat_template, take_utf8, ChunkSink, GenParams, Job, STOP_STRINGS,
     };
     use crate::providers::ProviderError;
 
@@ -697,25 +709,35 @@ mod engine {
             .flatten();
         let model_bytes = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
         // The layer count is only needed when the weights do not fit;
-        // reading it costs a metadata-only load.
+        // reading it costs a metadata-only load. Such a load skips the
+        // hyperparameters (`n_layer()` stays 0), so the count is taken
+        // from the GGUF metadata, which it does keep.
         let n_layer = || {
             let mp = LlamaModelParams::default().with_vocab_only(true);
             LlamaModel::load_from_file(backend, path, &mp)
-                .map(|m| m.n_layer())
-                .unwrap_or(0)
+                .ok()
+                .and_then(|m| {
+                    let arch = m.meta_val_str("general.architecture").ok()?;
+                    let blocks = m.meta_val_str(&block_count_key(&arch)).ok()?;
+                    parse_block_count(&blocks)
+                })
         };
         let layers = match gpu_free {
-            Some(free) if !fits_gpu(model_bytes, free) => {
-                let total = n_layer();
-                let fit = plan_gpu_layers(params.n_gpu_layers, total, model_bytes, free);
-                tracing::info!(
-                    "{} does not fit the GPU ({:.1} GB free): {fit} of {} layers on the GPU",
-                    path.display(),
-                    free as f64 / 1e9,
-                    total + 1
-                );
-                fit
-            }
+            Some(free) if !fits_gpu(model_bytes, free) => match n_layer() {
+                Some(total) => {
+                    let fit = plan_gpu_layers(params.n_gpu_layers, total, model_bytes, free);
+                    tracing::info!(
+                        "{} does not fit the GPU ({:.1} GB free): {fit} of {} layers on the GPU",
+                        path.display(),
+                        free as f64 / 1e9,
+                        total + 1
+                    );
+                    fit
+                }
+                // Layer count unknown: try the whole model as before
+                // (a failed GPU load still falls back to the CPU).
+                None => params.n_gpu_layers,
+            },
             _ => params.n_gpu_layers,
         };
         let mut on_gpu = layers > 0 && !crate::gpu::offload_devices().is_empty();
@@ -1318,6 +1340,15 @@ mod tests {
         assert_eq!(plan_gpu_layers(999, 32, 5_280_445_728, 64 * GB), 33);
         // Unreadable metadata (0 blocks, 0 bytes) must not divide by zero.
         assert_eq!(plan_gpu_layers(999, 0, 0, 4 * GB), 1);
+    }
+
+    #[test]
+    fn the_block_count_comes_from_the_gguf_metadata() {
+        assert_eq!(block_count_key("plamo2"), "plamo2.block_count");
+        assert_eq!(parse_block_count("32"), Some(32));
+        assert_eq!(parse_block_count(" 32\n"), Some(32));
+        assert_eq!(parse_block_count("0"), None);
+        assert_eq!(parse_block_count(""), None);
     }
 
     #[tokio::test]
