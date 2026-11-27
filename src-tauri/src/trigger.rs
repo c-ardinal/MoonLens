@@ -491,9 +491,16 @@ impl<A: Copy> Detector<A> {
             }
             return Vec::new();
         }
+        // A combination held on two gamepads is one press: it fires when
+        // the first one completes it and releases with the last one.
+        let elsewhere =
+            |combo| (self.pads.iter().enumerate()).any(|(i, b)| i != slot && b.contains(combo));
         let mut out = Vec::new();
         for (t, action) in &self.bindings {
             let Trigger::Pad(combo) = *t else { continue };
+            if elsewhere(combo) {
+                continue;
+            }
             let (was, is) = (prev.contains(combo), buttons.contains(combo));
             if was != is {
                 out.push(Output::Fire {
@@ -855,6 +862,25 @@ mod tests {
                 fired(2, false)
             ]
         );
+    }
+
+    #[test]
+    fn a_combination_on_two_pads_is_one_press() {
+        let slot = |slot, bits| InputEvent::Pad {
+            slot,
+            buttons: PadButtons(bits),
+        };
+        let mut d = detector(&[("Pad:Back+Y", 1)]);
+        let out = run(
+            &mut d,
+            &[
+                (0, slot(0, 0x8020)),
+                (1, slot(1, 0x8020)),
+                (2, slot(0, 0)), // still held on the second pad
+                (3, slot(1, 0)),
+            ],
+        );
+        assert_eq!(out, [fired(1, true), fired(1, false)]);
     }
 
     #[test]
