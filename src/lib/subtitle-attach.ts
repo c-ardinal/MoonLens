@@ -47,3 +47,58 @@ export function sourceAfterDetach(link: SourceLink | null, current: AudioSource)
   if (!link || !same(link.linked, current) || same(link.before, current)) return null;
   return link.before;
 }
+
+/** 吸着前の音源として記録する値。連動後に利用者が音源を変更済みの場合は現在の音源。 */
+export function sourceBeforeLink(link: SourceLink | null, current: AudioSource): AudioSource {
+  return link && same(link.linked, current) ? link.before : current;
+}
+
+export interface SourceLinkerDeps {
+  /** ウィンドウの現在の音源。 */
+  current(): Promise<AudioSource>;
+  /** 音声出力中のアプリ一覧。 */
+  apps(): Promise<AudioApp[]>;
+  set(source: AudioSource): Promise<void>;
+}
+
+/**
+ * 吸着先の変化へ音源を連動。変更は到着順に 1 件ずつ処理し、
+ * 処理開始時点で吸着先が更新済みの要求は破棄（旧要求による音源変更の防止）。
+ */
+export class SourceLinker {
+  private link: SourceLink | null = null;
+  private latest: AttachTarget | null = null;
+  private queue: Promise<void> = Promise.resolve();
+
+  constructor(private deps: SourceLinkerDeps) {}
+
+  /** 吸着先の変化（null：解除）。戻り値：当該要求までの処理完了。 */
+  follow(target: AttachTarget | null): Promise<void> {
+    this.latest = target;
+    this.queue = this.queue.then(() => this.settle(target)).catch(() => {});
+    return this.queue;
+  }
+
+  private stale(target: AttachTarget | null) {
+    return (this.latest?.id ?? null) !== (target?.id ?? null);
+  }
+
+  private async settle(target: AttachTarget | null) {
+    if (this.stale(target)) return;
+    if (!target) {
+      const link = this.link;
+      this.link = null;
+      const back = sourceAfterDetach(link, await this.deps.current());
+      if (back) await this.deps.set(back);
+      return;
+    }
+    const want = sourceForTarget(target, await this.deps.apps());
+    if (!want || this.stale(target)) return;
+    const current = await this.deps.current();
+    if (same(want, current)) return;
+    const before = sourceBeforeLink(this.link, current);
+    // 取得開始の失敗：従来の音源と記録を継続。
+    await this.deps.set(want);
+    this.link = { linked: want, before };
+  }
+}

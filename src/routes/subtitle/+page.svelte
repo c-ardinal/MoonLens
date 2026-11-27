@@ -20,12 +20,10 @@
   } from '$lib/ipc';
   import { errorText } from '$lib/errors';
   import AttachMenu from '$lib/components/AttachMenu.svelte';
-  import { ATTACH_EVENT, DETACHED, targetName, type Attachment, type AttachTarget } from '$lib/attach';
+  import { ATTACH_EVENT, DETACHED, targetName, type Attachment } from '$lib/attach';
   import {
     SUBTITLE_DOCKS,
-    sourceAfterDetach,
-    sourceForTarget,
-    type SourceLink
+    SourceLinker
   } from '$lib/subtitle-attach';
   import { languageLabel } from '$lib/lens-overlay';
   import {
@@ -78,33 +76,17 @@
   let label = $state('');
   let attachment = $state<Attachment>(DETACHED);
   let attachOpen = $state(false);
-  /** 吸着で連動した音源（解除時の復帰用）。 */
-  let link: SourceLink | null = null;
-
-  /** 吸着先のアプリを音源へ設定。音声出力なし・非対応の環境では音源を維持。 */
-  async function linkSource(target: AttachTarget) {
-    const found = await listAudioApps().catch(() => null);
-    const want = found && sourceForTarget(target, found.apps);
-    if (!want || sameSource(want, view.source)) return;
-    const before = link?.before ?? view.source;
-    try {
-      await setSubtitleSource(want);
-      link = { linked: want, before };
-    } catch {
-      /* 取得開始の失敗：従来の音源を継続 */
-    }
-  }
+  /** 吸着先アプリへの音源連動（音声出力なし・非対応の環境では音源を維持）。 */
+  const linker = new SourceLinker({
+    current: async () => (await subtitleSession())?.source ?? view.source,
+    apps: async () => (await listAudioApps()).apps,
+    set: (source) => setSubtitleSource(source)
+  });
 
   function applyAttachment(next: Attachment) {
     const before = attachment.target;
     attachment = next;
-    if (next.target && next.target.id !== before?.id) {
-      linkSource(next.target);
-    } else if (!next.target && before) {
-      const back = sourceAfterDetach(link, view.source);
-      link = null;
-      if (back) setSubtitleSource(back).catch(() => {});
-    }
+    if ((next.target?.id ?? null) !== (before?.id ?? null)) linker.follow(next.target);
   }
 
   function toggleAttach() {
