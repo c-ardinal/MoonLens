@@ -19,6 +19,8 @@ capture_region = "CommandOrControl+Shift+Space"
 capture_window = "CommandOrControl+Shift+W"
 toggle_pin_overlay = "CommandOrControl+Shift+P"
 toggle_window_operate = "CommandOrControl+Shift+E"
+toggle_window_pause = "CommandOrControl+Shift+X"
+hold_window_original = "CommandOrControl+Shift+O"
 toggle_subtitle = "CommandOrControl+Shift+S"
 open_command_palette = "CommandOrControl+K"
 open_history = "CommandOrControl+Shift+H"
@@ -46,6 +48,14 @@ chunk_seconds = 3.0
 overlap_seconds = 0.5
 show_original = true
 font_size_px = 22
+realtime_correction = true
+batch_correction = true
+# Remove phrases speech recognition invents over silence and music
+# ("Thanks for watching", subtitle credits, "[Music]"). A removed line is
+# not translated either.
+block_stock_phrases = true
+# Phrases to remove in addition to the bundled list.
+blocked_phrases = []
 
 [clipboard]
 auto_copy_translation = true
@@ -72,6 +82,9 @@ redact_sensitive_in_logs = true
 
 [storage]
 keep_history = true
+# Translations kept on disk: text seen before shows at once, after a
+# restart too. false = kept until the app exits.
+keep_translation_cache = true
 retention_days = 90
 max_entries = 10000
 encrypt_at_rest = false
@@ -82,8 +95,12 @@ streaming_debounce_ms = 50
 region_watcher_poll_ms = 250
 scan_margin_px = 32
 max_concurrent_tasks = 4
-cache_ttl_seconds = 3600
 use_gpu_if_available = true
+# 未使用モデルの自動解放までの時間（分）。0：無効（常駐）。
+model_idle_unload_minutes = 10
+
+[startup]
+launch_at_login = false
 
 # ---------------------------------------------------------------------------
 # Providers
@@ -108,7 +125,7 @@ max_cost_per_request = 0.0
 sticky_session_ms = 30000
 
 [providers.ocr]
-# ppocr: PP-OCRv5 (Japanese / Chinese / English). Falls through to the
+# ppocr: PP-OCR (Japanese / Chinese / English, more scripts on request). Falls through to the
 # Latin-only ocrs engine until its models are installed.
 chain = ["ppocr", "ocrs"]
 parallel_race = false

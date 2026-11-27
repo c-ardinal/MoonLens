@@ -11,7 +11,8 @@
     pad = 2,
     grow = 0,
     background = 'transparent',
-    outline = null
+    outline = null,
+    onlayout
   }: {
     block: LensBlock;
     text: string;
@@ -25,6 +26,8 @@
     background?: string;
     /** Outline colour, for text written straight onto a picture. */
     outline?: string | null;
+    /** The lines as placed, on every new layout. */
+    onlayout?: (layout: FlowResult) => void;
   } = $props();
 
   let host = $state<HTMLElement | null>(null);
@@ -57,7 +60,7 @@
     if (!ctx) return;
     // Measure at 100 px and scale: widths are linear in the font size.
     ctx.font = `${weight} 100px ${cs.fontFamily}`;
-    layout = flowLayout(text, {
+    const placed = flowLayout(text, {
       width,
       height,
       rows: rowsOf(block),
@@ -66,6 +69,8 @@
       grow,
       measure: (t) => ctx.measureText(t).width / 100
     });
+    layout = placed;
+    onlayout?.(placed);
   });
 </script>
 

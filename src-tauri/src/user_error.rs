@@ -14,6 +14,7 @@
 //! | `network`         | a download could not reach the server      |
 //! | `disk_full`       | not enough free space for a download       |
 //! | `integrity`       | a download did not match its pinned hash   |
+//! | `license_consent` | the model's licence was not accepted yet   |
 //! | `error`           | anything else (raw detail appended)        |
 
 use crate::providers::{Capability, ProviderError};

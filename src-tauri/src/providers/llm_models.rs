@@ -37,7 +37,14 @@ pub struct CatalogModel {
     pub license: &'static str,
     pub license_url: &'static str,
     pub style: PromptStyle,
+    /// Id of a licence the user must explicitly accept before this model
+    /// is downloaded (see [`require_consent`]); `None` when the licence
+    /// needs no consent step.
+    pub consent: Option<&'static str>,
 }
+
+/// Licence id for the PLaMo Community License.
+pub const CONSENT_PLAMO: &str = "plamo-community";
 
 /// Translation model used when the config names none (or an unknown
 /// id). PLaMo 3 Translate 2B won the in-house benchmark: same chrF as
@@ -62,6 +69,7 @@ pub const CATALOG: &[CatalogModel] = &[
         license: "PLaMo Community License",
         license_url: "https://plamo.preferredai.jp/info/plamo-community-license-en",
         style: PromptStyle::Pfml3,
+        consent: Some(CONSENT_PLAMO),
     },
     CatalogModel {
         id: "plamo-3-translate-0.8b",
@@ -74,6 +82,7 @@ pub const CATALOG: &[CatalogModel] = &[
         license: "PLaMo Community License",
         license_url: "https://plamo.preferredai.jp/info/plamo-community-license-en",
         style: PromptStyle::Pfml3,
+        consent: Some(CONSENT_PLAMO),
     },
     CatalogModel {
         id: "gemma-4-e4b",
@@ -86,6 +95,7 @@ pub const CATALOG: &[CatalogModel] = &[
         license: "Apache-2.0",
         license_url: "https://ai.google.dev/gemma/apache_2",
         style: PromptStyle::ChatTemplate,
+        consent: None,
     },
     CatalogModel {
         id: "gemma-4-e2b",
@@ -98,11 +108,35 @@ pub const CATALOG: &[CatalogModel] = &[
         license: "Apache-2.0",
         license_url: "https://ai.google.dev/gemma/apache_2",
         style: PromptStyle::ChatTemplate,
+        consent: None,
     },
 ];
 
 pub fn find(id: &str) -> Option<&'static CatalogModel> {
     CATALOG.iter().find(|m| m.id == id)
+}
+
+/// Refuse a download whose licence is not in `accepted`. The error is the
+/// licence id the user still has to accept.
+pub fn require_consent(m: &CatalogModel, accepted: &[String]) -> Result<(), &'static str> {
+    match m.consent {
+        Some(license) if !accepted.iter().any(|a| a == license) => Err(license),
+        _ => Ok(()),
+    }
+}
+
+/// Record acceptance of licence `id`. Only ids a catalog entry uses are
+/// accepted; repeating an accepted id changes nothing. Returns whether
+/// `accepted` changed.
+pub fn accept_license(accepted: &mut Vec<String>, id: &str) -> Result<bool, String> {
+    if !CATALOG.iter().any(|m| m.consent == Some(id)) {
+        return Err(format!("unknown license {id}"));
+    }
+    if accepted.iter().any(|a| a == id) {
+        return Ok(false);
+    }
+    accepted.push(id.to_string());
+    Ok(true)
 }
 
 impl CatalogModel {
@@ -256,6 +290,39 @@ mod tests {
             assert!(m.size > 100 << 20, "{}", m.id);
             assert!(m.url.contains(".gguf") && m.file.ends_with(".gguf"));
         }
+    }
+
+    #[test]
+    fn plamo_models_require_consent() {
+        for m in CATALOG {
+            let plamo = m.license == "PLaMo Community License";
+            assert_eq!(m.consent == Some(CONSENT_PLAMO), plamo, "{}", m.id);
+        }
+        assert!(CATALOG.iter().any(|m| m.consent.is_some()));
+    }
+
+    #[test]
+    fn download_needs_accepted_license() {
+        let plamo = find(DEFAULT_TRANSLATE_MODEL_ID).unwrap();
+        let gemma = find(DEFAULT_ASSIST_MODEL_ID).unwrap();
+        assert_eq!(require_consent(plamo, &[]), Err(CONSENT_PLAMO));
+        assert_eq!(
+            require_consent(plamo, &["other".into()]),
+            Err(CONSENT_PLAMO)
+        );
+        assert_eq!(require_consent(gemma, &[]), Ok(()));
+        assert_eq!(require_consent(plamo, &[CONSENT_PLAMO.into()]), Ok(()));
+    }
+
+    #[test]
+    fn accepting_is_idempotent_and_rejects_unknown_ids() {
+        let mut accepted = vec![];
+        assert!(accept_license(&mut accepted, "nope").is_err());
+        assert!(accept_license(&mut accepted, "").is_err());
+        assert!(accepted.is_empty());
+        assert_eq!(accept_license(&mut accepted, CONSENT_PLAMO), Ok(true));
+        assert_eq!(accept_license(&mut accepted, CONSENT_PLAMO), Ok(false));
+        assert_eq!(accepted, vec![CONSENT_PLAMO.to_string()]);
     }
 
     #[test]

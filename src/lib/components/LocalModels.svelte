@@ -82,6 +82,8 @@
   oninstall={install}
   oncancel={(id) => cancelLlmDownload(id)}
   onremove={remove}
+  accepted={data.accepted_licenses}
+  onaccepted={() => store.refresh()}
 />
 {#if error}
   <div class="srow error"><p class="row-label">{error}</p></div>

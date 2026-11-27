@@ -44,7 +44,7 @@ export function engineRows(llm: LlmModels, ocr: OcrModelsStatus, asr: AsrModels)
     {
       id: 'ocr',
       label: '文字認識',
-      model: ocr.ppocr ? 'PP-OCRv5' : ocr.ocrs ? 'ocrs（英語のみ）' : 'PP-OCRv5',
+      model: ocr.ppocr ? (ocr.current ? 'PP-OCRv6' : 'PP-OCRv5') : ocr.ocrs ? 'ocrs（英語のみ）' : 'PP-OCRv6',
       state: ocr.ppocr || ocr.ocrs ? 'ready' : 'missing'
     },
     modelRow('asr', '音声認識', asr.selected, asr.models)

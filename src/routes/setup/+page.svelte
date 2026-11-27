@@ -2,6 +2,8 @@
   import { onDestroy, onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import PixelTitle from '$lib/components/PixelTitle.svelte';
+  import LicenseConsent from '$lib/components/LicenseConsent.svelte';
+  import { LICENSES } from '$lib/licenses';
   import { slant } from '$lib/pixel/slant';
   import {
     cancelAsrDownload,
@@ -26,24 +28,28 @@
     FEATURE_TITLES,
     formatBytes,
     hardwareLines,
+    pendingConsents,
     totalBytes,
     type DownloadItem,
     type FeaturePlan
   } from '$lib/model-setup';
   import { errorText } from '$lib/errors';
 
-  type Step = 'check' | 'select' | 'download';
+  type Step = 'check' | 'select' | 'consent' | 'download';
   type ItemState = 'wait' | 'run' | 'done' | 'error' | 'cancel';
 
   const STEPS: { id: Step; title: string }[] = [
     { id: 'check', title: '構成診断' },
     { id: 'select', title: 'モデル選定' },
+    { id: 'consent', title: '許諾確認' },
     { id: 'download', title: '一括取得' }
   ];
 
   let step = $state<Step>('check');
   let loadError = $state<string | null>(null);
   let features = $state<FeaturePlan[]>([]);
+  /** 同意済みのライセンス id（取得前の許諾確認の要否判定）。 */
+  let accepted = $state<string[]>([]);
   let queue = $state<DownloadItem[]>([]);
   let states = $state<Record<string, ItemState>>({});
   let fractions = $state<Record<string, number>>({});
@@ -55,6 +61,7 @@
   const report = $derived(systemProfile.report);
   const lines = $derived(report ? hardwareLines(report) : []);
   const planned = $derived(downloadQueue(features));
+  const pending = $derived(pendingConsents(planned, accepted));
   const total = $derived(totalBytes(planned));
   const free = $derived(report?.profile.disk_free ?? null);
   /** 取得後も 1 GB の余裕を確保（バックエンドの容量検査と同等）。 */
@@ -69,6 +76,7 @@
     try {
       const [llm, asr, ocr] = await Promise.all([listLlmModels(), listAsrModels(), ocrModelsStatus()]);
       const r = await systemProfile.reload();
+      accepted = llm.accepted_licenses;
       features = buildFeatures(llm, asr, ocr, r?.recommended ?? null);
     } catch (e) {
       loadError = errorText(e);
@@ -134,6 +142,18 @@
       errors = { ...errors, apply: errorText(e) };
     }
     running = false;
+  }
+
+  /** モデル選定の確定：同意が必要なライセンスが有れば許諾確認、無ければ取得開始。 */
+  function approve() {
+    if (pending.length) step = 'consent';
+    else run();
+  }
+
+  /** 同意の保存後：全ライセンスの同意が揃った時点で一括取得。 */
+  function onAccepted(id: string) {
+    accepted = [...accepted, id];
+    if (!pending.length) run();
   }
 
   /** モデル選定へ移行：空き容量を再取得（診断後の容量変化を反映）。 */
@@ -226,6 +246,18 @@
           {/if}
         </section>
       {/each}
+    {:else if step === 'consent'}
+      {#each pending as id (id)}
+        <section class="px-win panel" aria-labelledby="lc-{id}">
+          <span class="px-win-title px-chip" data-tone="amber" id="lc-{id}" use:slant>利用許諾の確認</span>
+          <LicenseConsent
+            license={id}
+            cancelLabel="前画面"
+            onaccepted={() => onAccepted(id)}
+            oncancel={() => (step = 'select')}
+          />
+        </section>
+      {/each}
     {:else}
       <section class="px-win panel" aria-labelledby="dl-title">
         <span class="px-win-title px-chip" data-tone="amber" id="dl-title" use:slant>一括取得</span>
@@ -264,9 +296,11 @@
         合計 {formatBytes(total)}{free != null ? `／残容量 ${formatBytes(free)}` : ''}{short ? '。残容量不足' : ''}
       </p>
       <button class="px-btn" onclick={() => (step = 'check')}>前画面</button>
-      <button class="px-btn primary" disabled={short} onclick={run}>
+      <button class="px-btn primary" disabled={short} onclick={approve}>
         {planned.length ? '承認・一括取得' : '適用'}
       </button>
+    {:else if step === 'consent'}
+      <p class="sum">{pending.map((id) => LICENSES[id]?.title ?? id).join('、')}：同意後に一括取得を開始</p>
     {:else if running}
       <p class="sum">取得中：{current?.label ?? ''}</p>
       <button class="px-btn" disabled={current?.kind === 'ocr'} onclick={cancel}>中止</button>

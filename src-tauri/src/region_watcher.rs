@@ -146,6 +146,9 @@ pub struct TickEnv<'a> {
     pub mode: ReadMode,
     /// History kind of new translations (`pipeline::history_kind`).
     pub history_kind: &'a str,
+    /// Key of the app the region belongs to, when it follows one of its
+    /// windows ([`crate::pipeline::CaptureFlowResult::app`]).
+    pub app: Option<&'a str>,
     pub emit: &'a (dyn Fn(LiveEvent) + Send + Sync),
     /// Region geometry now. A translation finished after the region moved
     /// is not shown at the old place; the next tick shows it at the new.
@@ -182,10 +185,12 @@ pub enum Tick {
 #[derive(Default)]
 struct Shown {
     thumb: Option<Thumb>,
-    /// Target language and source text of the shown blocks (or the
+    /// [`shown_for`] and source text of the shown blocks (or the
     /// decoded QR payload): what a new reading is compared with.
     text: Option<String>,
     blocks: Vec<LensBlock>,
+    /// [`Pipeline::translation_epoch`] the blocks were translated under.
+    epoch: String,
     /// Indices already reported stale since the last `Blocks`.
     stale: Vec<usize>,
     /// The frame the shown erase pictures were made from. Unlike
@@ -209,8 +214,9 @@ pub struct Tracker {
     unsettled: u32,
     /// Ticks the pending reading has been growing ([`ReadMode::Subtitle`]).
     growing: u32,
-    /// Mode and target language of the last tick: a change drops
-    /// `carried` (its translations are in the old language).
+    /// Mode and [`shown_for`] of the last tick: a change drops
+    /// `carried` (its translations are in the old language, or its
+    /// lines were said in another application).
     carried_for: (ReadMode, String),
     /// Source and translation of earlier readings, oldest first: the
     /// context of the next subtitle. Empty in [`ReadMode::Ui`].
@@ -279,8 +285,9 @@ impl Tracker {
             return Ok(Tick::Moved);
         }
         self.last_geometry = Some(frame.geometry);
-        if self.carried_for.0 != env.mode || self.carried_for.1 != env.target_language {
-            self.carried_for = (env.mode, env.target_language.to_string());
+        let shown_for = shown_for(env);
+        if self.carried_for.0 != env.mode || self.carried_for.1 != shown_for {
+            self.carried_for = (env.mode, shown_for.clone());
             self.carried.clear();
         }
         let visible = frame.visible;
@@ -290,12 +297,13 @@ impl Tracker {
             .as_ref()
             .is_none_or(|t| t.changed_share(&thumb, None) >= REGION_CHANGED);
         // Nothing changed since the last tick and nothing waits to settle.
-        // The target language changed in settings: read and translate again.
+        // The target language changed in settings, or the region now
+        // follows another application: read and translate again.
         let language_changed = self
             .shown
             .text
             .as_deref()
-            .is_some_and(|k| k.split('\u{1}').next() != Some(env.target_language));
+            .is_some_and(|k| k.split('\u{1}').next() != Some(shown_for.as_str()));
         if !changed
             && !force
             && !language_changed
@@ -360,10 +368,11 @@ impl Tracker {
             _ => None,
         };
         // What decides "same as shown": the text read, and the language
-        // it is shown in (a changed target language translates again).
+        // and application it is shown for (a change of either
+        // translates again).
         let key = format!(
             "{}\u{1}{}",
-            env.target_language,
+            shown_for,
             decoded.as_deref().map_or(text.as_str(), |d| d)
         );
 
@@ -457,6 +466,30 @@ impl Tracker {
 
         // Cached and same-language blocks are ready now; show them while
         // the rest is translated.
+        bundle.app = env.app.map(str::to_string);
+        // Empty in `ReadMode::Ui`. A reading that the new one continues
+        // (or repeats) is the same line: as history it would be
+        // translated twice.
+        bundle.earlier = match self.carried.split_last() {
+            Some(((last, _), before)) if *last == text || extends(last, &text) => before,
+            _ => &self.carried[..],
+        }
+        .to_vec();
+        // Blocks still shown keep their translation; text that comes
+        // back after other lines is translated in its new context. Not
+        // after another target language, glossary or engine was chosen:
+        // what is shown was made under the old one.
+        let epoch = env.pipeline.translation_epoch(env.app, env.target_language);
+        if self.shown.epoch == epoch {
+            bundle.on_screen = self
+                .shown
+                .blocks
+                .iter()
+                .enumerate()
+                .filter(|(i, b)| !self.shown.stale.contains(i) && !b.same_language)
+                .filter_map(|(_, b)| Some((b.source.clone(), b.translation.clone()?)))
+                .collect();
+        }
         env.pipeline
             .prepare_translation(&mut bundle, env.target_language);
         let requested =
@@ -466,6 +499,7 @@ impl Tracker {
             thumb: Some(thumb),
             text: Some(key),
             blocks: bundle.blocks.clone(),
+            epoch,
             stale: Vec::new(),
         };
         (env.emit)(LiveEvent::Blocks {
@@ -492,21 +526,13 @@ impl Tracker {
                     });
                 }
             };
-            // Empty in `ReadMode::Ui`. A reading that the new one
-            // continues (or repeats) is the same line: as history it
-            // would be translated twice.
-            let earlier = match self.carried.split_last() {
-                Some(((last, _), before)) if *last == text || extends(last, &text) => before,
-                _ => &self.carried[..],
-            };
             let result = env
                 .pipeline
-                .translate_capture_after(
+                .translate_capture_as(
                     &mut bundle,
                     env.target_language,
                     Some(&progress),
                     env.history_kind,
-                    earlier,
                 )
                 .await;
             self.shown.blocks = bundle.blocks.clone();
@@ -589,6 +615,13 @@ fn extends(old: &str, new: &str) -> bool {
 
 /// [`extends`] for two reading keys (target language and text, see
 /// `key` in [`Tracker::tick`]) of the same language.
+/// Whom a translation is shown for: the target language and the
+/// application the text is read from. The same text is another reading
+/// under another of either (translations are cached per application).
+fn shown_for(env: &TickEnv<'_>) -> String {
+    format!("{}\u{2}{}", env.target_language, env.app.unwrap_or(""))
+}
+
 fn key_extends(old: &str, new: &str) -> bool {
     match (old.split_once('\u{1}'), new.split_once('\u{1}')) {
         (Some((old_lang, old)), Some((new_lang, new))) => old_lang == new_lang && extends(old, new),
