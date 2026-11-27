@@ -210,9 +210,10 @@ pub fn build_job_with(
                 text,
                 source_language,
                 target_language,
-                ..
+                context,
             },
         ) => {
+            let opts = opts.for_app(context.app.as_deref());
             let (system, user) =
                 translation_prompt_with(&text, &source_language, &target_language, opts);
             Ok(Job::Chat { system, user })
@@ -235,13 +236,16 @@ pub fn build_job_with(
                 context,
                 ..
             },
-        ) => Ok(Job::Pfml3 {
-            glossary: opts.terms_for(&text, &target_language),
-            form: opts.form_for(&target_language),
-            text,
-            target: pfml3_lang(&target_language),
-            context,
-        }),
+        ) => {
+            let opts = opts.for_app(context.app.as_deref());
+            Ok(Job::Pfml3 {
+                glossary: opts.terms_for(&text, &target_language),
+                form: opts.form_for(&target_language),
+                text,
+                target: pfml3_lang(&target_language),
+                context,
+            })
+        }
         (PromptStyle::Pfml3, _) => Err(ProviderError::Other(
             "this local model only translates".into(),
         )),
@@ -1088,6 +1092,7 @@ mod tests {
                     lang: String::new(),
                 })
                 .collect(),
+            ..Default::default()
         })
     }
 
@@ -1152,6 +1157,42 @@ mod tests {
     }
 
     #[test]
+    fn text_from_an_app_gets_that_apps_terms() {
+        use crate::settings::schema::{AppGlossary, GlossaryEntry, TranslationSettings};
+        let entry = |source: &str, target: &str| GlossaryEntry {
+            source: source.into(),
+            target: target.into(),
+            lang: String::new(),
+        };
+        let o = TranslateOptions::from_settings(&TranslationSettings {
+            glossary: vec![entry("Potion", "ポーション")],
+            app_glossaries: vec![AppGlossary {
+                app: "game".into(),
+                name: "Game".into(),
+                glossary: vec![entry("Ether", "エーテル")],
+            }],
+            ..Default::default()
+        });
+        let prompt = |app: Option<&str>| {
+            let input = TaskInput::Translate {
+                text: "Potion and Ether".into(),
+                source_language: "auto".into(),
+                target_language: "ja".into(),
+                context: TranslateContext::of_app(app),
+            };
+            rendered(build_job_with(PromptStyle::Pfml3, input, &o).unwrap())
+        };
+        let own = "<|plamo:index|>Ether<|plamo:item|>エーテル";
+        let common = "<|plamo:index|>Potion<|plamo:item|>ポーション";
+        assert!(prompt(Some("game")).contains(own));
+        assert!(prompt(Some("game")).contains(common));
+        for app in [None, Some("novel")] {
+            assert!(!prompt(app).contains(own), "{app:?}");
+            assert!(prompt(app).contains(common), "{app:?}");
+        }
+    }
+
+    #[test]
     fn chat_job_carries_glossary_in_the_system_prompt() {
         use crate::settings::schema::JaStyle;
         let o = opts(JaStyle::Polite, &[("dashboard", "管理画面")]);
@@ -1176,6 +1217,7 @@ mod tests {
         let ctx = TranslateContext {
             history: vec![("Theme".into(), "テーマ".into())],
             reference: Some("Light\n\nDark".into()),
+            app: None,
         };
         let p = pfml3_prompt_in_context("System", "ja", &[], None, &ctx);
         assert_eq!(

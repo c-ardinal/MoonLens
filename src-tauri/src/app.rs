@@ -86,6 +86,7 @@ macro_rules! all_commands {
             ipc::close_lens_window,
             ipc::list_lens_windows,
             crate::attach::list_attach_targets,
+            crate::attach::list_window_apps,
             crate::attach::attach_window,
             crate::attach::detach_window,
             crate::attach::window_attachment,

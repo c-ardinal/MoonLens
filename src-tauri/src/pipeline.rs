@@ -266,7 +266,10 @@ impl Pipeline {
             .collect();
         CacheStamp {
             engine: engine_fingerprint(&s, &plugins),
-            options: TranslateOptions::from_settings(&s.translation),
+            // The glossary of the app the text was read from.
+            options: TranslateOptions::from_settings(&s.translation)
+                .for_app(bundle.app.as_deref())
+                .clone(),
             context,
             persist: s.storage.keep_translation_cache,
         }
@@ -286,7 +289,10 @@ impl Pipeline {
             .filter(|p| p.enabled)
             .map(|p| (p.id, p.version))
             .collect();
-        let options = format!("{:?}", TranslateOptions::from_settings(&s.translation));
+        // The app's own glossary where it has one: editing another
+        // app's leaves this one's translations as they are.
+        let options = TranslateOptions::from_settings(&s.translation);
+        let options = format!("{:?}", options.for_app(app));
         translation_cache::fingerprint([
             engine_fingerprint(&s, &plugins).as_str(),
             options.as_str(),
@@ -1013,6 +1019,7 @@ impl Pipeline {
             .collect();
         let target_language = target_language.to_string();
         let scope = bundle.app.clone().unwrap_or_default();
+        let app = bundle.app.clone();
         let chosen = pick_chain(&s, Capability::Translate)
             .chain
             .into_iter()
@@ -1102,6 +1109,7 @@ impl Pipeline {
             let context = TranslateContext {
                 history: history.clone(),
                 reference: reference.clone(),
+                app: bundle.app.clone(),
             };
             let translate = match self
                 .run(
@@ -1187,7 +1195,7 @@ impl Pipeline {
                                 text: text.clone(),
                                 source_language: "auto".into(),
                                 target_language: target_language.clone(),
-                                context: TranslateContext::default(),
+                                context: TranslateContext::of_app(app.as_deref()),
                             })
                             .collect();
                         let out: Vec<Option<Answer>> = futures::stream::iter(inputs)

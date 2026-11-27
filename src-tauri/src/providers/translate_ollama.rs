@@ -298,13 +298,18 @@ impl Provider for OllamaTranslator {
     async fn run(&self, input: TaskInput) -> Result<TaskOutput, ProviderError> {
         let is_translate = matches!(input, TaskInput::Translate { .. });
         let plamo = is_plamo_translate(&self.model);
+        // The glossary of the application the text comes from, if any.
+        let options = match &input {
+            TaskInput::Translate { context, .. } => self.options.for_app(context.app.as_deref()),
+            _ => &*self.options,
+        };
         // Glossary / style lines, kept for a custom system prompt too.
         let extra = match &input {
             TaskInput::Translate {
                 text,
                 target_language,
                 ..
-            } if !plamo => self.options.chat_instructions(text, target_language),
+            } if !plamo => options.chat_instructions(text, target_language),
             _ => None,
         };
         let (system, prompt) = match input {
@@ -314,14 +319,14 @@ impl Provider for OllamaTranslator {
                 ..
             } if plamo => (
                 String::new(),
-                plamo_prompt_with(&text, &target_language, &self.options),
+                plamo_prompt_with(&text, &target_language, options),
             ),
             TaskInput::Translate {
                 text,
                 source_language,
                 target_language,
                 ..
-            } => translation_prompt_with(&text, &source_language, &target_language, &self.options),
+            } => translation_prompt_with(&text, &source_language, &target_language, options),
             TaskInput::Explain { prompt, .. } => (String::new(), prompt),
             TaskInput::Summarize { text } => {
                 (String::new(), format!("Summarize concisely:\n\n{text}"))
@@ -650,6 +655,7 @@ mod tests {
                 target: "担当者".into(),
                 lang: "ja".into(),
             }],
+            ..Default::default()
         });
         assert_eq!(
             plamo_prompt_with("Ask the owner.", "ja", &o),

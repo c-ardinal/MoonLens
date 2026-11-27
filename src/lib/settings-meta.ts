@@ -7,6 +7,7 @@
  * nothing. When a field starts doing something, add it here.
  */
 
+import { compactAppGlossaries } from './app-glossary';
 import { compactGlossary } from './glossary';
 import { LANGUAGES, SOURCE_LANGUAGES } from './lens-overlay';
 
@@ -34,7 +35,9 @@ export type Field =
   /** Editable term list (rendered by GlossaryEditor). */
   | { kind: 'glossary'; path: string; label: string; help?: string }
   /** Editable list of phrases (rendered by PhraseList). */
-  | { kind: 'phrases'; path: string; label: string; help?: string; placeholder?: string };
+  | { kind: 'phrases'; path: string; label: string; help?: string; placeholder?: string }
+  /** Glossaries of single applications (rendered by AppGlossaries). */
+  | { kind: 'app-glossaries'; path: string; label: string; help?: string };
 
 export type Section =
   | { id: string; title: string; description?: string; fields: Field[] }
@@ -98,6 +101,12 @@ export const SECTIONS: Section[] = [
         path: 'translation.glossary',
         label: '用語集',
         help: '原文中の用語を指定の訳語に固定。'
+      },
+      {
+        kind: 'app-glossaries',
+        path: 'translation.app_glossaries',
+        label: 'アプリ別用語集',
+        help: '指定アプリの翻訳時のみ追加で適用。対象：アプリへ吸着中のウィンドウ翻訳、アプリ単位の音声翻訳。共通の用語集と原語が重複する場合はアプリ別を優先。'
       }
     ]
   },
@@ -543,9 +552,12 @@ export function savable<T>(saved: T, draft: T): T {
   next = setPath(next, 'translation.glossary', compactGlossary(getPath(next, 'translation.glossary')));
   // 遮断文の空行も保存対象外（設定に項目の存在する場合のみ）。
   const phrases = getPath(next, 'subtitle.blocked_phrases');
-  return Array.isArray(phrases)
-    ? setPath(next, 'subtitle.blocked_phrases', phrases.filter((p: string) => p.trim() !== ''))
-    : next;
+  if (Array.isArray(phrases)) {
+    next = setPath(next, 'subtitle.blocked_phrases', phrases.filter((p: string) => p.trim() !== ''));
+  }
+  // 旧版の設定（項目なし）は項目を追加しない
+  const apps = getPath(next, 'translation.app_glossaries');
+  return apps == null ? next : setPath(next, 'translation.app_glossaries', compactAppGlossaries(apps));
 }
 
 /** 保存対象外のショートカット（重複の解消まで保存済の値を維持する項目）。 */
@@ -559,7 +571,7 @@ export function heldHotkeys(saved: any, draft: any): string[] {
 /** 連続入力の項目（スライダー・色・用語集）：保存までの待機時間（ミリ秒）。 */
 export function saveDelay(path: string): number {
   const f = allFields().find((x) => x.path === path);
-  if (f?.kind === 'glossary' || f?.kind === 'phrases') return 600;
+  if (f?.kind === 'glossary' || f?.kind === 'phrases' || f?.kind === 'app-glossaries') return 600;
   return f?.kind === 'color' || (f?.kind === 'number' && f.slider) ? 300 : 0;
 }
 

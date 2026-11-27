@@ -20,7 +20,7 @@ use moonlens_lib::{
         Capability, OcrLine, Provider, ProviderError, ProviderHandle, TaskInput, TaskOutput,
     },
     settings::{
-        schema::{GlossaryEntry, Settings, TaskChain},
+        schema::{AppGlossary, GlossaryEntry, Settings, TaskChain},
         SettingsStore,
     },
     storage::Storage,
@@ -325,6 +325,44 @@ async fn a_glossary_change_retranslates_only_the_paragraphs_it_touches() {
     let run = start(dir.path());
     run.translate(None).await;
     assert_eq!(run.requests(), ["Iron Sword"]);
+}
+
+#[tokio::test]
+async fn an_apps_glossary_change_retranslates_that_apps_text_only() {
+    let dir = tempfile::tempdir().unwrap();
+    let run = start(dir.path());
+    for app in [None, Some("game"), Some("novel")] {
+        run.translate(app).await;
+    }
+    run.requests();
+
+    let glossary_of_game = |terms: Vec<GlossaryEntry>| {
+        move |s: &mut Settings| {
+            s.translation.app_glossaries = vec![AppGlossary {
+                app: "game".into(),
+                name: "Game".into(),
+                glossary: terms,
+            }]
+        }
+    };
+    run.change(glossary_of_game(vec![term("Sword", "剣")]));
+    // The paragraph with the term, read from that app.
+    let r = run.translate(Some("game")).await;
+    assert_eq!(run.requests(), ["Iron Sword"]);
+    assert!(r.blocks[1].from_cache);
+    // Text of another app, or of none, is as it was.
+    for app in [Some("novel"), None] {
+        run.translate(app).await;
+        assert!(run.requests().is_empty(), "{app:?}");
+    }
+
+    // The app's glossary is gone again: its paragraph goes back to the
+    // model, the others stay.
+    run.change(glossary_of_game(vec![]));
+    run.translate(Some("game")).await;
+    assert_eq!(run.requests(), ["Iron Sword"]);
+    run.translate(Some("novel")).await;
+    assert!(run.requests().is_empty());
 }
 
 #[tokio::test]

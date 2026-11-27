@@ -164,7 +164,7 @@ async fn subtitles_notifying(
         }
         sink.lock().push(ev);
     };
-    let gave_up = run_loop(&emit, settings, pipeline, rx, Arc::new(Notify::new())).await;
+    let gave_up = run_loop(&emit, settings, pipeline, rx, Arc::new(Notify::new()), None).await;
     assert!(!gave_up, "recognition gave up");
     let mut events = events.lock();
     std::mem::take(&mut *events)

@@ -19,18 +19,20 @@
   const input =
     'min-w-0 w-full rounded-ml-sm border border-border bg-surface px-2 py-1 text-sm placeholder:text-ink-faint focus:border-accent/60 focus:outline-none';
 
+  let root = $state<HTMLElement | null>(null);
+
   async function add() {
     onChange(addEntry(entries, defaultLang));
     // Focus the new row's first box once it is rendered.
     await tick();
     requestAnimationFrame(() => {
-      const boxes = document.querySelectorAll<HTMLInputElement>('[data-glossary-source]');
+      const boxes = root?.querySelectorAll<HTMLInputElement>('[data-glossary-source]') ?? [];
       boxes[boxes.length - 1]?.focus();
     });
   }
 </script>
 
-<div class="flex flex-col gap-2 py-3">
+<div class="flex flex-col gap-2 py-3" bind:this={root}>
   <div class="flex items-start justify-between gap-4">
     <!-- 説明文は設定画面の説明欄へ委譲。row-label／row-value：選択帯上で黒へ反転 -->
     <p class="row-label min-w-0 text-sm font-medium text-ink">{label}</p>
