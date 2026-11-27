@@ -194,8 +194,9 @@ pub struct Tracker {
     unsettled: u32,
     /// Ticks the pending reading has been growing ([`ReadMode::Subtitle`]).
     growing: u32,
-    /// Mode of the last tick: a change drops `carried`.
-    mode: ReadMode,
+    /// Mode and target language of the last tick: a change drops
+    /// `carried` (its translations are in the old language).
+    carried_for: (ReadMode, String),
     /// Source and translation of earlier readings, oldest first: the
     /// context of the next subtitle. Empty in [`ReadMode::Ui`].
     carried: Vec<(String, String)>,
@@ -263,7 +264,8 @@ impl Tracker {
             return Ok(Tick::Moved);
         }
         self.last_geometry = Some(frame.geometry);
-        if std::mem::replace(&mut self.mode, env.mode) != env.mode {
+        if self.carried_for.0 != env.mode || self.carried_for.1 != env.target_language {
+            self.carried_for = (env.mode, env.target_language.to_string());
             self.carried.clear();
         }
         let thumb = Thumb::of(&frame.image);
@@ -454,10 +456,10 @@ impl Tracker {
                 }
             };
             // Empty in `ReadMode::Ui`. A reading that the new one
-            // continues is the same line cut short: as history it would
-            // be translated twice.
+            // continues (or repeats) is the same line: as history it
+            // would be translated twice.
             let earlier = match self.carried.split_last() {
-                Some(((last, _), before)) if extends(last, &text) => before,
+                Some(((last, _), before)) if *last == text || extends(last, &text) => before,
                 _ => &self.carried[..],
             };
             let result = env

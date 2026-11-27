@@ -423,3 +423,20 @@ async fn real_model_translations_per_mode() {
         assert_eq!(translation.split("\n\n").count(), hud.len());
     }
 }
+
+#[tokio::test]
+async fn another_target_language_starts_without_context() {
+    let mut run = Run::new(ReadMode::Subtitle);
+    run.show(&["Who goes there?"]).await;
+    // Translations into the old language are no examples for the new one.
+    run.target = "fr";
+    run.show(&["It is only the wind."]).await;
+    let requests = run.requests();
+    assert_eq!(requests.len(), 2);
+    assert!(requests[1].1.is_empty(), "{:?}", requests[1].1);
+
+    run.show(&["Then close the gate."]).await;
+    let requests = run.requests();
+    assert_eq!(requests[0].1.history.len(), 1);
+    assert_eq!(requests[0].1.history[0].0, "It is only the wind.");
+}
