@@ -49,6 +49,11 @@ const REGION_CHANGED: f32 = 0.002;
 /// translation before OCR confirms the change.
 const BLOCK_CHANGED: f32 = 0.12;
 
+/// Share of changed pixels inside a block's box above which the picture
+/// behind its text counts as moving (a video): the text-only erase is a
+/// still picture, so such a block goes back to the one-colour box.
+const ERASE_MOVED: f32 = 0.02;
+
 /// Ticks a changing text may take to settle before it is translated
 /// anyway (a clock, a counter).
 const SETTLE_LIMIT: u32 = 6;
@@ -220,11 +225,10 @@ impl Tracker {
         }
         self.last_geometry = Some(frame.geometry);
         let thumb = Thumb::of(&frame.image);
-        let changed = self
-            .last_thumb
+        let previous = self.last_thumb.replace(thumb.clone());
+        let changed = previous
             .as_ref()
             .is_none_or(|t| t.changed_share(&thumb, None) >= REGION_CHANGED);
-        self.last_thumb = Some(thumb.clone());
         // Nothing changed since the last tick and nothing waits to settle.
         // The target language changed in settings: read and translate again.
         let language_changed = self
@@ -311,12 +315,22 @@ impl Tracker {
             // the region moved over the same text): show what was hidden
             // again, at the new positions.
             self.unsettled = 0;
-            self.shown.thumb = Some(thumb);
             if let (Some(text), true) = (&decoded, force) {
+                self.shown.thumb = Some(thumb);
                 (env.emit)(LiveEvent::Decoded { text: text.clone() });
-            } else if !self.shown.stale.is_empty() || force {
+                return Ok(Tick::SameText);
+            }
+            let mut blocks = carry_translations(&self.shown.blocks, bundle.blocks);
+            // The picture behind the text moves: no still erase picture
+            // over it, now or while this text stays. A refresh tries anew.
+            if !force {
+                keep_plain(&self.shown.blocks, &mut blocks);
+                drop_moving_erase(&mut blocks, self.shown.thumb.as_ref(), &thumb);
+            }
+            let erase_lost = erase_count(&blocks) < erase_count(&self.shown.blocks);
+            self.shown.thumb = Some(thumb);
+            if !self.shown.stale.is_empty() || force || erase_lost {
                 self.shown.stale.clear();
-                let blocks = carry_translations(&self.shown.blocks, bundle.blocks);
                 self.shown.blocks = blocks.clone();
                 (env.emit)(LiveEvent::Blocks {
                     blocks,
@@ -356,6 +370,13 @@ impl Tracker {
             }
             (env.emit)(LiveEvent::Clear);
             return Ok(Tick::Empty);
+        }
+
+        // The text-only erase is a still picture: only for blocks whose
+        // area held still since the previous tick. A refresh shows it
+        // at once; the following ticks take it back if the picture moves.
+        if !force {
+            drop_moving_erase(&mut bundle.blocks, previous.as_ref(), &thumb);
         }
 
         // Cached and same-language blocks are ready now; show them while
@@ -454,6 +475,33 @@ fn source_key(blocks: &[LensBlock]) -> String {
         .map(|b| b.source.trim())
         .collect::<Vec<_>>()
         .join("\n\n")
+}
+
+/// Take the erase picture off every block whose area differs between
+/// `base` and `now` (or when there is nothing to compare with).
+fn drop_moving_erase(blocks: &mut [LensBlock], base: Option<&Thumb>, now: &Thumb) {
+    for b in blocks.iter_mut().filter(|b| b.erase.is_some()) {
+        if base.is_none_or(|t| t.changed_share(now, Some(b.bbox)) >= ERASE_MOVED) {
+            b.erase = None;
+        }
+    }
+}
+
+/// Blocks shown with the one-colour box keep it in a new reading of the
+/// same text: the box and the erase picture do not swap back and forth.
+fn keep_plain(old: &[LensBlock], new: &mut [LensBlock]) {
+    for b in new.iter_mut() {
+        if old
+            .iter()
+            .any(|o| o.source == b.source && o.erase.is_none())
+        {
+            b.erase = None;
+        }
+    }
+}
+
+fn erase_count(blocks: &[LensBlock]) -> usize {
+    blocks.iter().filter(|b| b.erase.is_some()).count()
 }
 
 /// New readings of the same text: keep the translations, take the new
@@ -561,7 +609,59 @@ mod tests {
             bold: false,
             lines: vec![],
             row_limits: vec![],
+            erase: None,
         }
+    }
+
+    fn erased(source: &str, bbox: [f32; 4]) -> LensBlock {
+        LensBlock {
+            erase: Some(crate::erase::ErasePatch {
+                rect: [0, 0, 1, 1],
+                image: String::new(),
+                outline: false,
+                foreground: [0, 0, 0],
+            }),
+            ..block(source, bbox)
+        }
+    }
+
+    #[test]
+    fn erase_picture_stays_while_the_picture_behind_holds_still() {
+        let frame = Thumb::of(&with_word(100));
+        let mut blocks = vec![erased("a", [80.0, 10.0, 400.0, 40.0])];
+        drop_moving_erase(&mut blocks, Some(&frame), &Thumb::of(&with_word(100)));
+        assert!(blocks[0].erase.is_some());
+    }
+
+    #[test]
+    fn erase_picture_goes_when_the_picture_behind_moves() {
+        let before = Thumb::of(&with_word(100));
+        let after = Thumb::of(&with_word(400));
+        // The block where the word was is dropped, the one elsewhere stays.
+        let mut blocks = vec![
+            erased("moved", [80.0, 10.0, 400.0, 40.0]),
+            erased("still", [560.0, 0.0, 200.0, 60.0]),
+        ];
+        drop_moving_erase(&mut blocks, Some(&before), &after);
+        assert!(blocks[0].erase.is_none());
+        assert!(blocks[1].erase.is_some());
+        // Nothing to compare with: not known to be still.
+        drop_moving_erase(&mut blocks, None, &after);
+        assert!(blocks[1].erase.is_none());
+    }
+
+    #[test]
+    fn a_block_shown_with_the_box_keeps_it_for_the_same_text() {
+        let old = vec![block("a", [0.0; 4]), erased("b", [0.0; 4])];
+        let mut new = vec![
+            erased("a", [0.0; 4]),
+            erased("b", [0.0; 4]),
+            erased("c", [0.0; 4]),
+        ];
+        keep_plain(&old, &mut new);
+        assert!(new[0].erase.is_none());
+        assert!(new[1].erase.is_some());
+        assert!(new[2].erase.is_some());
     }
 
     #[test]

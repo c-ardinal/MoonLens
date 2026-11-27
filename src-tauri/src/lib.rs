@@ -7,6 +7,7 @@ pub mod app;
 pub mod audio;
 pub mod capture;
 pub mod clipboard;
+pub mod erase;
 pub mod gpu;
 pub mod hotkey;
 pub mod intent;

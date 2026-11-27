@@ -14,7 +14,7 @@ use tokio::time::timeout;
 use futures::StreamExt;
 
 use crate::{
-    intent, lang, layout,
+    erase, intent, lang, layout,
     plugins::PluginRegistry,
     providers::{
         asr_whisper::WhisperCppProvider, glossary::TranslateOptions, ocr_ocrs::OcrsProvider,
@@ -560,6 +560,7 @@ impl Pipeline {
         }
 
         let rgba = img.to_rgba8();
+        let erase_time = std::cell::Cell::new(Duration::ZERO);
         let blocks: Vec<LensBlock> = text_blocks
             .iter()
             .map(|b| {
@@ -576,6 +577,31 @@ impl Pipeline {
                 let row_limits = colors
                     .map(|c| layout::row_limits(&rgba, b, c.background))
                     .unwrap_or_default();
+                // Text on a picture or gradient: repaint the text pixels
+                // only (see `erase`). `None` on a plain background.
+                let rows: &[layout::BBox] = if b.lines.is_empty() {
+                    std::slice::from_ref(&b.bbox)
+                } else {
+                    &b.lines
+                };
+                let started = Instant::now();
+                let erase = colors.and_then(|c| {
+                    erase::patch(
+                        &rgba,
+                        &erase::Target {
+                            rows,
+                            limits: &row_limits,
+                            line_height: b.line_height,
+                            foreground: c.foreground,
+                        },
+                    )
+                });
+                erase_time.set(erase_time.get() + started.elapsed());
+                // On a picture the erase reads the text colour better.
+                let colors = colors.map(|c| layout::BlockColors {
+                    foreground: erase.as_ref().map_or(c.foreground, |e| e.foreground),
+                    ..c
+                });
                 LensBlock {
                     bbox: b.bbox,
                     line_height: b.line_height,
@@ -588,9 +614,16 @@ impl Pipeline {
                     bold,
                     lines: b.lines.clone(),
                     row_limits,
+                    erase,
                 }
             })
             .collect();
+        tracing::debug!(
+            "text-only erase: {} of {} blocks, {:.1} ms",
+            blocks.iter().filter(|b| b.erase.is_some()).count(),
+            blocks.len(),
+            erase_time.get().as_secs_f64() * 1e3
+        );
 
         let mut bundle = CaptureFlowResult {
             intent: Intent::Text,
@@ -1082,6 +1115,11 @@ pub struct LensBlock {
     /// the overlay keeps the translation and its mask off the picture.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub row_limits: Vec<f32>,
+    /// Set when the text stands on a picture or gradient: the text
+    /// pixels repainted from their surroundings. The overlay draws it
+    /// instead of the one-colour box.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub erase: Option<erase::ErasePatch>,
 }
 
 impl LensBlock {

@@ -19,7 +19,7 @@
     type CaptureFlowResult,
     type LensBlock
   } from '$lib/ipc';
-  import { joinedText, languageLabel, maskClip, rgb } from '$lib/lens-overlay';
+  import { blockPaint, joinedText, languageLabel } from '$lib/lens-overlay';
   import { liveBoxes, liveText, type LensLiveEvent } from '$lib/live';
   import {
     TEXT_COMMAND_EVENT,
@@ -428,21 +428,33 @@
   <section class="body" class:operate class:working aria-label="訳文" aria-busy={working}>
     {#if !showOriginal}
       {#each boxes as b (b.rect.key)}
+        {@const paint = blockPaint(b.block, dpr)}
         <div
           class="box"
           class:pending={b.pending}
           style="left: {b.rect.left}px; top: {b.rect.top}px; width: {b.rect.width}px; height: {b.rect.height}px;
-                 background: {rgb(b.block.colors?.background, 'rgba(255,255,255,0.96)')};
-                 color: {rgb(b.block.colors?.foreground, '#111')};
-                 clip-path: {maskClip(b.block, dpr) || 'none'};"
+                 background: {paint.background};
+                 color: {paint.color};
+                 clip-path: {paint.clip};"
         >
+          {#if paint.erase}
+            <img
+              class="erase"
+              src={paint.erase.src}
+              alt=""
+              draggable="false"
+              style="left: {paint.erase.rect.left}px; top: {paint.erase.rect.top}px;
+                     width: {paint.erase.rect.width}px; height: {paint.erase.rect.height}px"
+            />
+          {/if}
           {#if !b.pending}
             <FlowText
               block={b.block}
               text={b.block.translation ?? ''}
               scale={dpr}
               grow={b.grow}
-              background={rgb(b.block.colors?.background, 'rgba(255,255,255,0.96)')}
+              background={paint.background}
+              outline={paint.outline}
             />
           {/if}
         </div>
@@ -536,6 +548,13 @@
   .box {
     position: absolute;
     border-radius: 3px;
+  }
+  /* 写真・グラデーション上：文字画素のみの補完画像 */
+  .box .erase {
+    position: absolute;
+    max-width: none;
+    pointer-events: none;
+    user-select: none;
   }
   .body.operate .box {
     user-select: text;
