@@ -14,6 +14,7 @@ pub mod ipc;
 pub mod lang;
 pub mod layout;
 pub mod lens;
+pub mod lens_control;
 pub mod lens_drag;
 pub mod lens_text;
 pub mod macos_permissions;

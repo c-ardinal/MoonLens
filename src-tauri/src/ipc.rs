@@ -1368,6 +1368,19 @@ pub async fn set_lens_continuous(
     Ok(())
 }
 
+/// Pause every lens window, or let them read again. Returns whether
+/// they are paused afterwards (false without a window).
+#[tauri::command]
+pub async fn toggle_lens_pause(app: AppHandle, state: State<'_, AppState>) -> Result<bool, String> {
+    Ok(lens::toggle_pause(&app, &state.lenses))
+}
+
+/// Whether the lens windows are paused (asked by a window as it opens).
+#[tauri::command]
+pub async fn lens_paused(state: State<'_, AppState>) -> Result<bool, String> {
+    Ok(state.lenses.paused())
+}
+
 /// Read a continuously reading lens now, even when nothing changed.
 /// Returns false when the lens is not reading continuously (the caller
 /// then uses `capture_lens_now`).

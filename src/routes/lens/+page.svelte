@@ -9,6 +9,7 @@
   import LensText from '$lib/components/LensText.svelte';
   import {
     getSettings,
+    lensPaused,
     listLensWindows,
     openLensBeside,
     runExplain,
@@ -71,6 +72,12 @@
   /** Show the original (translations off) / the text view. */
   let showOriginal = $state(false);
   let showText = $state(false);
+  /** Show-original hotkey held: every window hides its translations. */
+  let peek = $state(false);
+  /** Pause hotkey: no window reads or translates, translations hidden
+   * (the screen changes unseen, so they would go stale). */
+  let paused = $state(false);
+  let pauseKey = $state('');
   let explanation = $state<string | null>(null);
   let sourceLanguage = $state<string | null>(null);
   let targetLanguage = $state('ja');
@@ -160,8 +167,15 @@
     }
   }
 
+  function setPaused(on: boolean) {
+    paused = on;
+    // Resumed: the reader reads at once; what was shown before the pause
+    // stays hidden until then.
+    if (!on) hidden = new Set(blocks.map((_, i) => i));
+  }
+
   async function refresh() {
-    if (busy) return;
+    if (busy || paused) return;
     // Continuous: ask the reader to read now (also when nothing changed).
     if (continuous) {
       try {
@@ -307,6 +321,8 @@
           lenses.find((l) => l.id === id)?.target_language ?? s?.subtitle?.target_language ?? 'ja';
         const k = s?.hotkeys?.toggle_window_operate;
         operateKey = k ? displayAccelerator(k) : '';
+        const p = s?.hotkeys?.toggle_window_pause;
+        pauseKey = p ? displayAccelerator(p) : '';
       })
       .catch(() => {});
     try {
@@ -316,6 +332,13 @@
       unlisteners.push(
         await win.listen<CaptureFlowResult>('moonlens://lens-result', (e) => apply(e.payload))
       );
+      // Pause and show-original hotkeys (all windows at once). A window
+      // opened during a pause starts paused.
+      unlisteners.push(await win.listen<boolean>('moonlens://lens-pause', (e) => setPaused(e.payload)));
+      unlisteners.push(await win.listen<boolean>('moonlens://lens-peek', (e) => (peek = e.payload)));
+      lensPaused()
+        .then((on) => on && setPaused(true))
+        .catch(() => {});
       // Operate-mode hotkey (all windows at once).
       unlisteners.push(await win.listen<boolean>('moonlens://lens-operate', (e) => setOperate(e.payload)));
       // Outside text window: it asks for the content once it listens,
@@ -371,7 +394,11 @@
   });
 
   const status = $derived(
-    lastError
+    paused
+      ? pauseKey
+        ? `一時停止中（${pauseKey} で再開）`
+        : '一時停止中'
+      : lastError
       ? lastError
       : busy || reading
         ? '文字認識中…'
@@ -424,8 +451,15 @@
   </header>
 
   <!-- The observed range. Transparent; the mouse passes through it. -->
-  <section class="body" class:operate class:working aria-label="訳文" aria-busy={working}>
-    {#if !showOriginal}
+  <section
+    class="body"
+    class:operate
+    class:working={working && !paused}
+    class:peek
+    aria-label="訳文"
+    aria-busy={working && !paused}
+  >
+    {#if !showOriginal && !peek && !paused}
       {#each boxes as b (b.rect.key)}
         <div
           class="box"
@@ -587,6 +621,11 @@
     border-radius: 10px;
     background: rgba(24, 24, 28, 0.94);
     box-shadow: 0 8px 28px rgba(0, 0, 0, 0.4);
+  }
+  /* 原文表示キーの押下中：範囲上の表示を全て非表示（原文を遮蔽しない） */
+  .body.peek .panel,
+  .body.peek .status {
+    visibility: hidden;
   }
   .status {
     position: absolute;

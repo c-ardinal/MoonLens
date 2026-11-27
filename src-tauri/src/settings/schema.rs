@@ -126,6 +126,12 @@ pub struct Hotkeys {
     /// Window translation: switch every window between letting the mouse
     /// through (default) and taking it (select / copy the translation).
     pub toggle_window_operate: String,
+    /// Window translation: stop reading and translating in every window
+    /// (the windows stay), or resume.
+    pub toggle_window_pause: String,
+    /// Window translation: while held, every window hides its
+    /// translations so the original on screen can be read.
+    pub hold_window_original: String,
     pub toggle_subtitle: String,
     pub open_command_palette: String,
     pub open_history: String,
@@ -141,6 +147,8 @@ impl Default for Hotkeys {
             capture_window: "CommandOrControl+Shift+W".into(),
             toggle_pin_overlay: "CommandOrControl+Shift+P".into(),
             toggle_window_operate: "CommandOrControl+Shift+E".into(),
+            toggle_window_pause: "CommandOrControl+Shift+X".into(),
+            hold_window_original: "CommandOrControl+Shift+O".into(),
             toggle_subtitle: "CommandOrControl+Shift+S".into(),
             open_command_palette: "CommandOrControl+K".into(),
             open_history: "CommandOrControl+Shift+H".into(),

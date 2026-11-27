@@ -75,6 +75,34 @@ pub fn register_all(
         },
     );
 
+    // Window translation: pause / resume every window.
+    let app_z = app.clone();
+    bind(
+        shortcut_mgr,
+        &mut failed,
+        s.hotkeys.toggle_window_pause.as_str(),
+        move |_a, _s, e| {
+            if matches!(e.state(), ShortcutState::Pressed) {
+                let state = app_z.state::<AppState>();
+                crate::lens::toggle_pause(&app_z, &state.lenses);
+            }
+        },
+    );
+
+    // Window translation: the original instead of the translations
+    // while the key is held.
+    let app_v = app.clone();
+    bind(
+        shortcut_mgr,
+        &mut failed,
+        s.hotkeys.hold_window_original.as_str(),
+        move |_a, _s, e| {
+            let state = app_v.state::<AppState>();
+            let pressed = matches!(e.state(), ShortcutState::Pressed);
+            crate::lens::hold_original(&app_v, &state.lenses, pressed);
+        },
+    );
+
     // Subtitle: toggle the live subtitle service.
     let app_s = app.clone();
     let subtitle_s = subtitle.clone();

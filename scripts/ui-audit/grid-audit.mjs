@@ -22,7 +22,7 @@ const BLOCKS = [
   { source: 'The North Wind and the Sun were disputing which was the stronger.', translation: '北風と太陽が、どちらが強いかで言い争っていました。', bbox: [20, 64, 400, 44], same_language: false }
 ];
 const LENS = JSON.stringify({
-  get_settings: { subtitle: { target_language: 'ja', show_original: true, font_size_px: 22 }, hotkeys: { toggle_window_operate: 'Ctrl+Shift+O' } },
+  get_settings: { subtitle: { target_language: 'ja', show_original: true, font_size_px: 22 }, hotkeys: { toggle_window_operate: 'Ctrl+Shift+E', toggle_window_pause: 'Ctrl+Shift+X' } },
   list_lens_windows: [{ id: 'lens-1', target_language: 'ja' }], refresh_lens: true, subtitle_state: false
 });
 async function win(label, route, w, h) {
@@ -37,6 +37,8 @@ async function lensWindow() {
     await measure(pg, `lens-${w}-idle`);
     await pg.evaluate((blocks) => window.__emit('moonlens://lens-live', { kind: 'blocks', blocks, translating: false, provider: 'PLaMo', via_cloud: false }), BLOCKS);
     await wait(pg, 300); await measure(pg, `lens-${w}`);
+    await pg.evaluate(() => window.__emit('moonlens://lens-pause', true)); await wait(pg, 100); await measure(pg, `lens-${w}-paused`);
+    await pg.evaluate(() => window.__emit('moonlens://lens-pause', false)); await wait(pg, 100);
     // 縦メニューは収納項目が有る幅のみ表示
     if (await pg.locator('.more').count()) { await reach(`lens-${w}-menu`, async () => { await pg.click('.more', { timeout: 2000 }); await pg.locator('.menu').waitFor({ timeout: 2000 }); }); await measure(pg, `lens-${w}-menu`); }
     await pg.context().close();
