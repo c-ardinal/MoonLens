@@ -194,12 +194,19 @@ impl Script {
     /// the left of the picture: the line's last character first.
     /// Numbers and Latin words inside the line run left to right and
     /// keep their order (the rule PaddleOCR applies to Arabic, with
-    /// the comma added so that `1,024` stays one number).
+    /// the comma added so that `1,024` stays one number, and the
+    /// script's own digits so that `١٢٣` does).
     pub fn in_writing_order(&self, text: String) -> String {
         if !self.rtl {
             return text;
         }
-        let ltr = |c: char| c.is_ascii_alphanumeric() || " :*.,/%+-".contains(c);
+        // The digits of Arabic (U+0660..) and Persian (U+06F0..) and
+        // their decimal and thousands marks run left to right as well.
+        let ltr = |c: char| {
+            c.is_ascii_alphanumeric()
+                || " :*.,/%+-".contains(c)
+                || matches!(c, '\u{660}'..='\u{669}' | '\u{6f0}'..='\u{6f9}' | '\u{66b}' | '\u{66c}')
+        };
         let mut runs: Vec<String> = Vec::new();
         let mut run = String::new();
         for c in text.chars() {
@@ -321,6 +328,9 @@ mod tests {
         assert_eq!(ar.in_writing_order("ابحرم".into()), "مرحبا");
         // A number inside the line keeps its digits in order.
         assert_eq!(ar.in_writing_order("ج 1,024 ب".into()), "ب 1,024 ج");
+        // So do the digits Arabic and Persian write their numbers in.
+        assert_eq!(ar.in_writing_order("ج ١٢٣ ب".into()), "ب ١٢٣ ج");
+        assert_eq!(ar.in_writing_order("ج ۱٬۰۲۴٫۵ ب".into()), "ب ۱٬۰۲۴٫۵ ج");
         let ko = script("korean");
         assert_eq!(ko.in_writing_order("안녕 12".into()), "안녕 12");
     }
