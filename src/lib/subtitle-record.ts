@@ -33,11 +33,19 @@ export function cost(text: string): number {
   return n;
 }
 
-/** 連結：接合点の両側が ASCII の場合のみ空白を挿入（日本語・中国語は無空白）。 */
+/** 分かち書きなしの文字（かな・漢字・全角記号）。 */
+const UNSPACED = /[\u3000-\u30ff\u3400-\u9fff\uff00-\uffef]/;
+
+/**
+ * 連結：語間は空白（欧文・ハングル・キリル文字等）。接合点の一方が日本語・中国語の文字、
+ * または空白の場合は無空白。
+ */
 export function joinText(left: string, right: string): string {
   if (!left) return right;
   if (!right) return left;
-  return isAscii(left.at(-1)) && isAscii(right[0]) ? `${left} ${right}` : left + right;
+  const [a, b] = [[...left].at(-1)!, [...right][0]];
+  const tight = [a, b].some((ch) => UNSPACED.test(ch) || /\s/.test(ch));
+  return tight ? left + right : `${left} ${right}`;
 }
 
 /** 翻訳の単位：連続する行と、その原文の連結。 */

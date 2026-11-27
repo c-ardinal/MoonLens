@@ -366,6 +366,13 @@ impl Storage {
                     ],
                 )?;
                 write_lines(&tx, entry.id, &r.lines)?;
+                // `entry` may be older than the record (lines recorded
+                // after the list was loaded): the lines decide the texts.
+                rebuild_texts(&tx, entry.id)?;
+                tx.execute(
+                    "UPDATE subtitle_session SET revision = ?2 WHERE history_id = ?1",
+                    rusqlite::params![entry.id, r.revision],
+                )?;
             }
         }
         tx.commit()?;
@@ -1134,6 +1141,22 @@ mod tests {
             .unwrap();
         assert_eq!(s.delete_keeping_record(plain).unwrap(), (1, None));
         assert_eq!(s.delete_keeping_record(plain).unwrap(), (0, None));
+    }
+
+    #[test]
+    fn restoring_with_an_older_row_takes_the_texts_from_the_lines() {
+        let s = Storage::open_in_memory().unwrap();
+        let id = record_with_three_lines(&s);
+        // The list was loaded, then one more line was recorded.
+        let stale = s.entry(id).unwrap().unwrap();
+        s.append_subtitle_line(id, 4000, 5000, "four", "四")
+            .unwrap();
+        let current = s.entry(id).unwrap().unwrap();
+        let (_, record) = s.delete_keeping_record(id).unwrap();
+        s.restore_with_record(&stale, record.as_ref()).unwrap();
+        assert_eq!(s.entry(id).unwrap().unwrap(), current);
+        assert_eq!(s.subtitle_record(id).unwrap(), record);
+        assert_eq!(s.search("four", 10).unwrap().len(), 1);
     }
 
     #[test]

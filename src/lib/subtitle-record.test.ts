@@ -33,7 +33,14 @@ describe('timeLabel / durationLabel', () => {
 });
 
 describe('joinText / cost', () => {
-  it('inserts a space only between ASCII sides', () => {
+  it('keeps word boundaries in every spaced script', () => {
+    expect(joinText('Un café', 'noir.')).toBe('Un café noir.');
+    expect(joinText('Привет', 'мир')).toBe('Привет мир');
+    expect(joinText('안녕하세요', '여러분')).toBe('안녕하세요 여러분');
+    expect(joinText('漢字', 'かな')).toBe('漢字かな');
+    expect(joinText('a ', 'b')).toBe('a b');
+  });
+  it('inserts no space next to Japanese or Chinese text', () => {
     expect(joinText('Hello', 'world')).toBe('Hello world');
     expect(joinText('こんにちは', '世界')).toBe('こんにちは世界');
     expect(joinText('Hello', '世界')).toBe('Hello世界');
