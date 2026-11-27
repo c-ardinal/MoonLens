@@ -175,6 +175,10 @@ pub struct OverlaySettings {
     pub follow_source: bool,
     pub auto_hide_ms: Option<u32>,
     pub position: OverlayPosition,
+    /// Translation windows appear in screenshots and recordings
+    /// (Windows; they are excluded only while MoonLens reads the
+    /// screen). Off: excluded from every capture.
+    pub show_in_screenshots: bool,
 }
 
 impl Default for OverlaySettings {
@@ -189,6 +193,7 @@ impl Default for OverlaySettings {
             follow_source: true,
             auto_hide_ms: None,
             position: OverlayPosition::NearSource,
+            show_in_screenshots: true,
         }
     }
 }
