@@ -1,0 +1,1 @@
+- Window translation, its text view and the live subtitle window now follow the accent colour chosen in settings (frame, pressed buttons, progress sweep, resize grip) and update as soon as it changes; they were fixed to violet before.
