@@ -30,8 +30,18 @@ struct State {
     /// End of the previous line; the next line never starts before it.
     last_end_ms: i64,
     /// Event id of every saved line, in line order: where a later
-    /// [`SubtitleEvent::Revised`] finds the lines it replaces.
-    line_ids: Vec<u64>,
+    /// [`SubtitleEvent::Revised`] finds the lines it replaces. `None`
+    /// for a line this run no longer knows (see [`State::forget`]).
+    line_ids: Vec<Option<u64>>,
+}
+
+impl State {
+    /// The record's lines were replaced from outside the run (a
+    /// re-translation from the history page): `len` lines no event id
+    /// names any more. Their corrections are dropped.
+    fn forget(&mut self, len: usize) {
+        self.line_ids = vec![None; len];
+    }
 }
 
 impl Recorder {
@@ -69,17 +79,28 @@ impl Recorder {
     }
 
     /// A corrected sentence takes the place of the saved lines it was
-    /// recognized in. Lines that were never saved (history was off) are
-    /// not brought in by their correction.
+    /// recognized in, and only when every one of them was saved: with
+    /// history off for part of the sentence, its correction would bring
+    /// that part in.
     fn record_revision(&self, revision: &Revision) {
         let mut st = self.state.lock();
         let Some(id) = st.id else { return };
-        let at = |event: &u64| st.line_ids.iter().position(|l| l == event);
+        let at = |event: &u64| st.line_ids.iter().position(|l| *l == Some(*event));
         let found: Vec<usize> = revision.replaces.iter().filter_map(at).collect();
         let (Some(&first), Some(&last)) = (found.iter().min(), found.iter().max()) else {
             return;
         };
         let rest = revision.rest.as_ref();
+        if found.len() < revision.replaces.len() {
+            // The start of the next sentence stays in the last line of
+            // this one: when that line was saved, the next correction
+            // finds it there.
+            let last_heard = revision.replaces.last().and_then(at);
+            if let (Some(line), Some(rest)) = (last_heard, rest) {
+                st.line_ids[line] = Some(rest.id);
+            }
+            return;
+        }
         let lines = [
             Some((revision.id, &revision.original, &revision.translated)),
             rest.map(|r| (r.id, &r.original, &r.translated)),
@@ -94,15 +115,21 @@ impl Recorder {
             .iter()
             .map(|(_, original, translated)| (original.as_str(), translated.as_str()))
             .collect();
+        let known = st.line_ids.len();
         match self
             .storage
-            .revise_subtitle_lines(id, first as i64, last as i64, &texts)
+            .revise_subtitle_lines(id, first as i64, last as i64, &texts, known)
         {
             Ok(()) => {
                 st.line_ids
-                    .splice(first..=last, lines.iter().map(|(event, ..)| *event));
+                    .splice(first..=last, lines.iter().map(|(event, ..)| Some(*event)));
             }
-            Err(e) => tracing::warn!("subtitle history: revising lines failed: {e:#}"),
+            Err(e) => {
+                tracing::warn!("subtitle history: revising lines failed: {e:#}");
+                if let Ok(Some(record)) = self.storage.subtitle_record(id) {
+                    st.forget(record.lines.len());
+                }
+            }
         }
     }
 
@@ -133,9 +160,12 @@ impl Recorder {
             .storage
             .append_subtitle_line(id, start, end, original, translated)
         {
-            Ok(_) => {
+            Ok(line) => {
                 st.last_end_ms = end;
-                st.line_ids.push(event);
+                if usize::try_from(line.seq) != Ok(st.line_ids.len()) {
+                    st.forget(usize::try_from(line.seq).unwrap_or_default());
+                }
+                st.line_ids.push(Some(event));
             }
             Err(e) => tracing::warn!("subtitle history: appending a line failed: {e:#}"),
         }
@@ -657,6 +687,12 @@ mod tests {
         })
     }
 
+    fn keep_history(f: &Fixture, keep: bool) {
+        let mut s = (*f.settings.snapshot()).clone();
+        s.storage.keep_history = keep;
+        f.settings.save(s).unwrap();
+    }
+
     fn originals(storage: &Storage) -> Vec<String> {
         let lines = only_record(storage).lines;
         lines.into_iter().map(|l| l.original).collect()
@@ -720,5 +756,67 @@ mod tests {
         f.recorder
             .observe(&revised(&[11], 12, "Goodbye.", "さようなら。", None));
         assert_eq!(originals(&f.storage), ["Hello.", "Goodbye."]);
+    }
+    #[test]
+    fn a_sentence_heard_partly_without_history_is_not_corrected() {
+        let f = fixture();
+        f.recorder
+            .observe(&numbered(1, "My name", "私の名前", 2_000, 2_000));
+        keep_history(&f, false);
+        f.recorder
+            .observe(&numbered(2, "is secret", "秘密", 4_000, 2_000));
+        keep_history(&f, true);
+        f.recorder
+            .observe(&numbered(3, "today. Next", "今日。次", 6_000, 2_000));
+        f.recorder.observe(&revised(
+            &[1, 2, 3],
+            4,
+            "My name is secret today.",
+            "秘密",
+            Some((5, "Next")),
+        ));
+        assert_eq!(originals(&f.storage), ["My name", "today. Next"]);
+        // The next sentence, heard with history on, is corrected again.
+        f.recorder
+            .observe(&numbered(6, "one.", "一。", 8_000, 2_000));
+        f.recorder
+            .observe(&revised(&[5, 6], 7, "Next one.", "次の一。", None));
+        assert_eq!(originals(&f.storage), ["My name", "Next one."]);
+    }
+
+    #[test]
+    fn lines_replaced_from_outside_are_not_touched_by_later_corrections() {
+        let f = fixture();
+        f.recorder.observe(&numbered(1, "a", "A", 2_000, 2_000));
+        f.recorder.observe(&numbered(2, "b", "B", 4_000, 2_000));
+        f.recorder.observe(&numbered(3, "c", "C", 6_000, 2_000));
+        // A re-translation from the history page joins the first two.
+        let rec = only_record(&f.storage);
+        let joined = [line(0, 4_000, "a b", "AB"), rec.lines[2].clone()];
+        f.storage
+            .replace_subtitle_lines(rec.history_id, rec.revision, &joined)
+            .unwrap();
+        // Line 3 is now at another place: its correction is dropped.
+        f.recorder.observe(&revised(&[3], 4, "see", "見る", None));
+        assert_eq!(originals(&f.storage), ["a b", "c"]);
+        // Lines of the run from here on are corrected as before.
+        f.recorder.observe(&numbered(5, "d", "D", 8_000, 2_000));
+        f.recorder.observe(&revised(&[5], 6, "dee", "ディー", None));
+        assert_eq!(originals(&f.storage), ["a b", "c", "dee"]);
+    }
+
+    #[test]
+    fn a_line_appended_after_an_outside_replacement_is_still_corrected() {
+        let f = fixture();
+        f.recorder.observe(&numbered(1, "a", "A", 2_000, 2_000));
+        f.recorder.observe(&numbered(2, "b", "B", 4_000, 2_000));
+        let rec = only_record(&f.storage);
+        f.storage
+            .replace_subtitle_lines(rec.history_id, rec.revision, &[line(0, 4_000, "a b", "AB")])
+            .unwrap();
+        f.recorder.observe(&numbered(3, "c", "C", 6_000, 2_000));
+        f.recorder.observe(&revised(&[3], 4, "see", "見る", None));
+        f.recorder.observe(&revised(&[2], 5, "bee", "蜂", None));
+        assert_eq!(originals(&f.storage), ["a b", "see"]);
     }
 }

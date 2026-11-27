@@ -466,17 +466,27 @@ impl Storage {
     /// lines span from the first start to the last end, each a share in
     /// proportion to the length of its original. No entry: the lines
     /// just go. Later lines keep their order; seqs are renumbered from 0.
+    /// `expected_len` is the number of lines the caller believes the
+    /// record has: when it differs, the lines were replaced by someone
+    /// else, the seqs mean other lines, and nothing is written.
     pub fn revise_subtitle_lines(
         &self,
         id: i64,
         first_seq: i64,
         last_seq: i64,
         texts: &[(&str, &str)],
+        expected_len: usize,
     ) -> Result<()> {
         let mut db = self.db.lock();
         let tx = db.transaction()?;
         require_session(&tx, id)?;
         let lines = read_lines(&tx, id)?;
+        if lines.len() != expected_len {
+            anyhow::bail!(
+                "subtitle record {id} has {} lines, not {expected_len}",
+                lines.len()
+            );
+        }
         let (inside, outside): (Vec<_>, Vec<_>) = lines
             .into_iter()
             .partition(|l| (first_seq..=last_seq).contains(&l.seq));
@@ -1076,7 +1086,7 @@ mod tests {
     fn merging_consecutive_lines_spans_them_and_keeps_order() {
         let s = Storage::open_in_memory().unwrap();
         let id = record_with_three_lines(&s);
-        s.revise_subtitle_lines(id, 0, 1, &[("one two", "一二")])
+        s.revise_subtitle_lines(id, 0, 1, &[("one two", "一二")], 3)
             .unwrap();
         let rec = s.subtitle_record(id).unwrap().unwrap();
         assert_eq!(
@@ -1100,8 +1110,11 @@ mod tests {
     fn merging_the_middle_or_a_missing_range() {
         let s = Storage::open_in_memory().unwrap();
         let id = record_with_three_lines(&s);
-        assert!(s.revise_subtitle_lines(id, 5, 6, &[("x", "y")]).is_err());
-        s.revise_subtitle_lines(id, 1, 1, &[("TWO", "二")]).unwrap();
+        assert!(s.revise_subtitle_lines(id, 5, 6, &[("x", "y")], 3).is_err());
+        s.revise_subtitle_lines(id, 1, 1, &[("TWO", "二")], 3)
+            .unwrap();
+        // The lines are not the ones the caller knows.
+        assert!(s.revise_subtitle_lines(id, 1, 1, &[("x", "y")], 2).is_err());
         let rec = s.subtitle_record(id).unwrap().unwrap();
         assert_eq!(rec.lines[1], line(1, 1000, 2500, "TWO", "二"));
         assert_eq!(rec.lines.len(), 3);
@@ -1111,7 +1124,7 @@ mod tests {
     fn revising_into_two_lines_shares_the_time_and_into_none_removes() {
         let s = Storage::open_in_memory().unwrap();
         let id = record_with_three_lines(&s);
-        s.revise_subtitle_lines(id, 0, 1, &[("abcd", "ア"), ("e", "")])
+        s.revise_subtitle_lines(id, 0, 1, &[("abcd", "ア"), ("e", "")], 3)
             .unwrap();
         let rec = s.subtitle_record(id).unwrap().unwrap();
         assert_eq!(
@@ -1122,7 +1135,7 @@ mod tests {
                 line(2, 2500, 4000, "three", "三"),
             ]
         );
-        s.revise_subtitle_lines(id, 0, 1, &[]).unwrap();
+        s.revise_subtitle_lines(id, 0, 1, &[], 3).unwrap();
         let rec = s.subtitle_record(id).unwrap().unwrap();
         assert_eq!(rec.lines, vec![line(0, 2500, 4000, "three", "三")]);
         let row = s.entry(id).unwrap().unwrap();
