@@ -275,7 +275,7 @@ export const setLensLanguage = (id: string, targetLanguage: string | null) =>
 export const setLensOperate = (id: string, on: boolean) => safeInvoke<void>('set_lens_operate', { id, on });
 export const setLensInteractive = (id: string, on: boolean) =>
   safeInvoke<void>('set_lens_interactive', { id, on });
-/** テキスト表示を窓外へ配置（`null`：窓外表示を終了）。 */
+/** テキスト表示をウィンドウ外へ配置（`null`：ウィンドウ外表示を終了）。 */
 export const setLensTextDock = (
   id: string,
   dock: 'top' | 'bottom' | 'left' | 'right' | 'free' | null
@@ -339,6 +339,14 @@ export const stopSubtitle = () => safeInvoke<void>('stop_subtitle');
 export const startSubtitle = () => safeInvoke<void>('start_subtitle');
 export const onSubtitle = (handler: (event: SubtitleEvent) => void): Promise<UnlistenFn> =>
   listen<SubtitleEvent>('moonlens://subtitle', (e) => handler(e.payload));
+
+/** 音声翻訳の入力レベル（波形表示用、50 ms 間隔）。 */
+export const onSubtitleLevel = (
+  handler: (event: import('./subtitle-level').LevelEvent) => void
+): Promise<UnlistenFn> =>
+  listen<import('./subtitle-level').LevelEvent>('moonlens://subtitle-level', (e) =>
+    handler(e.payload)
+  );
 
 export type PermissionStatus = 'granted' | 'denied' | 'unknown';
 

@@ -57,6 +57,10 @@ async function subtitleWindow() {
     const m = async (n) => { await wait(pg, 200); await measure(pg, `subtitle-${w}-${n}`); };
     await m('idle');
     await emit({ kind: 'started', device: 'スピーカー (Realtek(R) Audio)' }); await m('started');
+    // 入力レベル：閾値未満 → 音声検出（波形・メーター・状態表記）
+    const level = (bins) => pg.evaluate((bins) => window.__emit('moonlens://subtitle-level', { bins, gate_db: -50.3 }), bins);
+    await level(Array(40).fill(-64)); await m('low');
+    await level(Array.from({ length: 40 }, (_, i) => -34 + 12 * Math.sin(i / 3))); await m('detected');
     await emit({ kind: 'status', phase: 'recognizing' }); await m('recognizing');
     await emit({ kind: 'status', phase: 'translating' });
     await emit({ kind: 'chunk', original: 'And so, my fellow Americans,', translated: 'そして、同胞であるアメリカ国民の皆さん、' }); await m('chunk');

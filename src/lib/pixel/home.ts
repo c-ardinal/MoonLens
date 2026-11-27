@@ -1,6 +1,6 @@
 /**
  * ホーム画面の描画（UI 第5案のモック準拠）。
- * 左：ルーン魔法陣、右：斜めの見出し帯・説明窓・エンジン窓・最近の翻訳。
+ * 左：ルーン魔法陣、右：斜めの見出し帯・説明欄・エンジン欄・最近の翻訳。
  * 右側は画面右端基準、最近の翻訳と案内行は下端基準。縦の余白は高さに応じて圧縮。
  */
 import { Pix, TITLE_FONT_FAMILY, TRI_H, TRI_W } from './pix';
@@ -73,9 +73,9 @@ export function titleOffsets(slide: number, dir: 1 | -1, leaveFrom?: number): { 
 export type HomeRegion = 'go' | 'engines' | 'recent';
 export type Rect = { x: number; y: number; w: number; h: number };
 
-/** 情報欄の窓と右端の余白（見出し帯のみ右端まで延長する演出）。 */
+/** 情報欄のウィンドウと右端の余白（見出し帯のみ右端まで延長する演出）。 */
 const RIGHT_MARGIN = 14;
-/** 情報欄（名札・説明窓・エンジン窓・最近の翻訳）の共通の左端と幅（mx 基準）。 */
+/** 情報欄（名札・説明欄・エンジン欄・最近の翻訳）の共通の左端と幅（mx 基準）。 */
 const COL_X = 330;
 const COL_W = 296;
 
@@ -156,7 +156,7 @@ export function drawHome(p: Pix, v: HomeView) {
   if (v.hotkey) x += chip(p, x, c.chips, v.hotkey, 0, 9) + 4;
   if (v.running) chip(p, x, c.chips, '動作中', 8, 1, true);
 
-  // 説明窓
+  // 説明欄
   p.slantWin(mx + COL_X, c.desc, COL_W, 70, 0.2, { shadow: 2 });
   let ty = p.wrap(v.desc, mx + 352, c.desc + 10, 260, 6, 18, v.error || v.preview ? 1 : 2);
   if (v.error) ty = p.wrap(v.error, mx + 352, ty, 260, 7, 18, 1);
@@ -166,7 +166,7 @@ export function drawHome(p: Pix, v: HomeView) {
   const goW = p.text(go, mx + 612, c.desc + 48, goCol, { align: 'right' });
   p.tri(mx + 612 - goW - TRI_GAP - TRI_W, triY(p, go, c.desc + 48), goCol);
 
-  // エンジン窓
+  // エンジン欄
   const E = R.engines;
   p.slantWin(E.x, E.y + 8, E.w, 86, 0.2, { shadow: 2 });
   chip(p, E.x + 14, E.y, 'エンジン', 0, v.hot === 'engines' ? 9 : 5);
@@ -199,6 +199,6 @@ export function drawHome(p: Pix, v: HomeView) {
     p.text(p.fit(v.recent.text, timeR - timeW - 12 - (Rr.x + 54)), Rr.x + 54, Rr.y + 2, 6);
   } else p.text('履歴なし', Rr.x + 54, Rr.y + 2, 3);
 
-  // 案内行：情報欄の右端（説明窓の右下角）へ揃える
+  // 案内行：情報欄の右端（説明欄の右下角）へ揃える
   if (h >= HINT_MIN_H) p.text(p.fit(v.hint, COL_W + 20), mx + COL_X + COL_W, h - 20, 3, { align: 'right' });
 }
