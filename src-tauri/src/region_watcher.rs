@@ -182,6 +182,10 @@ struct Shown {
     blocks: Vec<LensBlock>,
     /// Indices already reported stale since the last `Blocks`.
     stale: Vec<usize>,
+    /// The frame the shown erase pictures were made from. Unlike
+    /// `thumb` it does not follow ticks that emit nothing, so slow
+    /// motion behind the text adds up against it.
+    erase_base: Option<Thumb>,
 }
 
 /// Change-driven reading of one screen region, shared by live
@@ -375,12 +379,12 @@ impl Tracker {
             // over it, now or while this text stays. A refresh tries anew.
             if !force {
                 keep_plain(&self.shown.blocks, &mut blocks);
-                drop_moving_erase(&mut blocks, self.shown.thumb.as_ref(), &thumb);
+                drop_moving_erase(&mut blocks, self.shown.erase_base.as_ref(), &thumb);
             }
             let erase_lost = erase_count(&blocks) < erase_count(&self.shown.blocks);
-            self.shown.thumb = Some(thumb);
             if !self.shown.stale.is_empty() || force || erase_lost {
                 self.shown.stale.clear();
+                self.shown.erase_base = Some(thumb.clone());
                 self.shown.blocks = blocks.clone();
                 (env.emit)(LiveEvent::Blocks {
                     blocks,
@@ -389,6 +393,7 @@ impl Tracker {
                     via_cloud: false,
                 });
             }
+            self.shown.thumb = Some(thumb);
             return Ok(Tick::SameText);
         }
 
@@ -447,6 +452,7 @@ impl Tracker {
         let requested =
             bundle.needs_translation() && bundle.blocks.iter().any(|b| b.needs_request());
         self.shown = Shown {
+            erase_base: Some(thumb.clone()),
             thumb: Some(thumb),
             text: Some(key),
             blocks: bundle.blocks.clone(),
