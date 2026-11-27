@@ -7,8 +7,11 @@
 //! Direct2D. Nothing is read back to the CPU.
 //!
 //! The window sits past the corner of the desktop with one pixel left
-//! on it: capture tools list and capture it like any other window, and
-//! it covers nothing the user works with.
+//! on it: capture tools list it like any other window, and it covers
+//! nothing the user works with. Tools read it through
+//! Windows.Graphics.Capture (OBS: capture method "Windows 10 (1903 and
+//! up)"; Discord and browsers use it anyway); GDI capture of a window
+//! off the screen gets nothing.
 
 use std::mem::ManuallyDrop;
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
@@ -51,8 +54,8 @@ use windows::Win32::Graphics::Dxgi::Common::{
 };
 use windows::Win32::Graphics::Dxgi::{
     IDXGIDevice, IDXGIFactory2, IDXGISurface, IDXGISwapChain1, DXGI_PRESENT, DXGI_SCALING_STRETCH,
-    DXGI_SWAP_CHAIN_DESC1, DXGI_SWAP_CHAIN_FLAG, DXGI_SWAP_EFFECT_DISCARD,
-    DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL, DXGI_USAGE_RENDER_TARGET_OUTPUT,
+    DXGI_SWAP_CHAIN_DESC1, DXGI_SWAP_CHAIN_FLAG, DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL,
+    DXGI_USAGE_RENDER_TARGET_OUTPUT,
 };
 use windows::Win32::Graphics::Gdi::{
     ClientToScreen, EnumDisplayMonitors, GetMonitorInfoW, HDC, HMONITOR, MONITORINFO,
@@ -150,20 +153,8 @@ pub fn start(
     })
 }
 
-fn flip() -> bool {
-    #[cfg(test)]
-    return tests::FLIP.load(std::sync::atomic::Ordering::SeqCst);
-    #[cfg(not(test))]
-    true
-}
-
-fn buffers() -> u32 {
-    if flip() {
-        2
-    } else {
-        1
-    }
-}
+/// Back buffers of the flip-model swap chain.
+const BUFFERS: u32 = 2;
 
 fn hwnd(handle: isize) -> HWND {
     HWND(handle as *mut core::ffi::c_void)
@@ -234,10 +225,6 @@ fn client_rect(window: HWND) -> Option<[i32; 4]> {
 /// the monitor that reaches furthest right (the lowest of those), so
 /// that all but one pixel of a window placed there is on no monitor.
 fn parking_spot() -> (i32, i32) {
-    #[cfg(test)]
-    if !tests::PARKED.load(std::sync::atomic::Ordering::SeqCst) {
-        return (480, 380);
-    }
     unsafe extern "system" fn each(monitor: HMONITOR, _: HDC, _: *mut RECT, out: LPARAM) -> BOOL {
         let mut info = MONITORINFO {
             cbSize: std::mem::size_of::<MONITORINFO>() as u32,
@@ -365,9 +352,12 @@ impl Composite {
         let opened = (|| -> Result<Self, Error> {
             // SAFETY: plain COM calls on live objects.
             let factory: IDXGIFactory2 = unsafe { dxgi.GetAdapter()?.GetParent() }?;
-            // A blit-model swap chain: its content is the window's own
-            // surface, which every capture method reads (the flip
-            // model stays black for GDI-based capture).
+            // A flip-model swap chain: the compositor takes its
+            // buffers whole, so the part of the window past the edge
+            // of the desktop is there for Windows.Graphics.Capture. A
+            // blit-model one is copied to the window only where it is
+            // on a screen (measured: black off-screen). GDI capture
+            // (`BitBlt`) gets neither while the window is parked.
             let desc = DXGI_SWAP_CHAIN_DESC1 {
                 Width: size.Width as u32,
                 Height: size.Height as u32,
@@ -377,13 +367,9 @@ impl Composite {
                     Quality: 0,
                 },
                 BufferUsage: DXGI_USAGE_RENDER_TARGET_OUTPUT,
-                BufferCount: buffers(),
+                BufferCount: BUFFERS,
                 Scaling: DXGI_SCALING_STRETCH,
-                SwapEffect: if flip() {
-                    DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL
-                } else {
-                    DXGI_SWAP_EFFECT_DISCARD
-                },
+                SwapEffect: DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL,
                 AlphaMode: DXGI_ALPHA_MODE_IGNORE,
                 ..Default::default()
             };
@@ -495,7 +481,7 @@ impl Composite {
             self.d2d.SetTarget(None);
             self.context.ClearState();
             self.swap_chain.ResizeBuffers(
-                buffers(),
+                BUFFERS,
                 size.Width as u32,
                 size.Height as u32,
                 DXGI_FORMAT_B8G8R8A8_UNORM,

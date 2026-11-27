@@ -110,6 +110,9 @@
       </button>
       {#if stream.active && stream.title}
         <p class="note nm" title={stream.title}>取込対象：{stream.title}</p>
+        <p class="note nm" title="OBS のウィンドウキャプチャでは、キャプチャ方法に「Windows 10 (1903 以降)」を指定">
+          OBS の方式：Windows 10 (1903 以降)
+        </p>
       {/if}
     {/if}
   {/if}

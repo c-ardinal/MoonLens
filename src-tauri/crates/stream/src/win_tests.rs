@@ -9,10 +9,7 @@ use windows::Win32::Foundation::COLORREF;
 use windows::Win32::Graphics::Direct3D11::{
     D3D11_CPU_ACCESS_READ, D3D11_MAPPED_SUBRESOURCE, D3D11_MAP_READ, D3D11_USAGE_STAGING,
 };
-use windows::Win32::Graphics::Gdi::{
-    BitBlt, CreateCompatibleDC, CreateDIBSection, CreateSolidBrush, DeleteDC, DeleteObject, GetDC,
-    ReleaseDC, SelectObject, BITMAPINFO, BITMAPINFOHEADER, DIB_RGB_COLORS, SRCCOPY,
-};
+use windows::Win32::Graphics::Gdi::CreateSolidBrush;
 use windows::Win32::UI::WindowsAndMessaging::{
     GetMessageW, GetWindowRect, WS_EX_TOPMOST, WS_VISIBLE,
 };
@@ -179,57 +176,6 @@ fn capture(window: isize) -> Picture {
     }
 }
 
-/// `window` as GDI reads it (`BitBlt` from its device context): the
-/// older capture method of streaming tools.
-fn capture_gdi(window: isize) -> Picture {
-    // SAFETY: GDI objects made and released here; `bits` is valid
-    // while the bitmap lives.
-    unsafe {
-        let mut bounds = RECT::default();
-        GetClientRect(hwnd(window), &mut bounds).unwrap();
-        let (width, height) = (bounds.right as usize, bounds.bottom as usize);
-        let source = GetDC(Some(hwnd(window)));
-        let memory = CreateCompatibleDC(Some(source));
-        let info = BITMAPINFO {
-            bmiHeader: BITMAPINFOHEADER {
-                biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
-                biWidth: width as i32,
-                biHeight: -(height as i32),
-                biPlanes: 1,
-                biBitCount: 32,
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-        let mut bits = std::ptr::null_mut();
-        let bitmap =
-            CreateDIBSection(Some(memory), &info, DIB_RGB_COLORS, &mut bits, None, 0).unwrap();
-        let old = SelectObject(memory, bitmap.into());
-        BitBlt(
-            memory,
-            0,
-            0,
-            width as i32,
-            height as i32,
-            Some(source),
-            0,
-            0,
-            SRCCOPY,
-        )
-        .unwrap();
-        let data = std::slice::from_raw_parts(bits as *const u8, width * height * 4).to_vec();
-        SelectObject(memory, old);
-        let _ = DeleteObject(bitmap.into());
-        let _ = DeleteDC(memory);
-        ReleaseDC(Some(hwnd(window)), source);
-        Picture {
-            width,
-            height,
-            data,
-        }
-    }
-}
-
 fn close_to(got: [u8; 3], want: [u8; 3]) -> bool {
     got.iter().zip(want).all(|(&g, w)| g.abs_diff(w) <= 24)
 }
@@ -252,46 +198,6 @@ fn settle(window: isize, what: &str, ok: impl Fn(&Picture) -> bool) -> Picture {
         );
         std::thread::sleep(Duration::from_millis(100));
     }
-}
-
-pub static FLIP: AtomicBool = AtomicBool::new(true);
-pub static PARKED: AtomicBool = AtomicBool::new(true);
-
-/// What each way of presenting and placing the composite gives the two
-/// capture methods (printed; `the_composite_shows…` asserts the one in
-/// use).
-#[test]
-fn a_probe_of_presentation_and_placement() {
-    let target = colour_window(
-        "MoonLensStreamProbeTarget",
-        BLUE,
-        false,
-        [600, 60, 300, 200],
-    );
-    std::thread::sleep(Duration::from_millis(500));
-    println!("target through WGC: {:?}", capture(target).at(10, 10));
-    println!("target through GDI: {:?}", capture_gdi(target).at(10, 10));
-    for (flip, parked) in [(true, true), (true, false), (false, true), (false, false)] {
-        FLIP.store(flip, Ordering::SeqCst);
-        PARKED.store(parked, Ordering::SeqCst);
-        let composite = Compositor::start(target, "MoonLens probe", || {}).expect("composite");
-        std::thread::sleep(Duration::from_millis(1500));
-        let wgc = capture(composite.window());
-        let gdi = capture_gdi(composite.window());
-        println!(
-            "flip {flip}, parked {parked}: WGC {}x{} {:?} / {:?}, GDI {:?} / {:?}",
-            wgc.width,
-            wgc.height,
-            wgc.at(10, 10),
-            wgc.at(280, 180),
-            gdi.at(10, 10),
-            gdi.at(280, 180)
-        );
-        composite.stop();
-        std::thread::sleep(Duration::from_millis(300));
-    }
-    FLIP.store(true, Ordering::SeqCst);
-    PARKED.store(true, Ordering::SeqCst);
 }
 
 const BLUE: [u8; 3] = [0, 0, 200];
@@ -369,18 +275,6 @@ fn the_composite_shows_the_target_with_the_translations_over_it() {
         !translated.has_white([0, 0, 400, 95]),
         "text outside the box"
     );
-
-    // The older capture method reads the same picture.
-    let gdi = capture_gdi(window);
-    println!(
-        "GDI capture {}x{}: corner {:?}, box {:?}, text {}",
-        gdi.width,
-        gdi.height,
-        gdi.at(10, 10),
-        gdi.at(262, 104),
-        gdi.has_white([70, 100, 200, 60])
-    );
-    assert!(close_to(gdi.at(10, 10), BLUE) && close_to(gdi.at(262, 104), RED));
 
     // The translation window moves: its translations move along.
     // SAFETY: plain call with a live handle.
