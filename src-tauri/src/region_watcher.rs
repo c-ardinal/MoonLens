@@ -180,7 +180,7 @@ pub enum Tick {
 #[derive(Default)]
 struct Shown {
     thumb: Option<Thumb>,
-    /// Target language and source text of the shown blocks (or the
+    /// [`shown_for`] and source text of the shown blocks (or the
     /// decoded QR payload): what a new reading is compared with.
     text: Option<String>,
     blocks: Vec<LensBlock>,
@@ -286,12 +286,14 @@ impl Tracker {
             .is_none_or(|t| t.changed_share(&thumb, None) >= REGION_CHANGED);
         self.last_thumb = Some(thumb.clone());
         // Nothing changed since the last tick and nothing waits to settle.
-        // The target language changed in settings: read and translate again.
+        // The target language changed in settings, or the region now
+        // follows another application: read and translate again.
+        let shown_for = shown_for(env);
         let language_changed = self
             .shown
             .text
             .as_deref()
-            .is_some_and(|k| k.split('\u{1}').next() != Some(env.target_language));
+            .is_some_and(|k| k.split('\u{1}').next() != Some(shown_for.as_str()));
         if !changed
             && !force
             && !language_changed
@@ -356,10 +358,11 @@ impl Tracker {
             _ => None,
         };
         // What decides "same as shown": the text read, and the language
-        // it is shown in (a changed target language translates again).
+        // and application it is shown for (a change of either
+        // translates again).
         let key = format!(
             "{}\u{1}{}",
-            env.target_language,
+            shown_for,
             decoded.as_deref().map_or(text.as_str(), |d| d)
         );
 
@@ -583,6 +586,13 @@ fn extends(old: &str, new: &str) -> bool {
 
 /// [`extends`] for two reading keys (target language and text, see
 /// `key` in [`Tracker::tick`]) of the same language.
+/// Whom a translation is shown for: the target language and the
+/// application the text is read from. The same text is another reading
+/// under another of either (translations are cached per application).
+fn shown_for(env: &TickEnv<'_>) -> String {
+    format!("{}\u{2}{}", env.target_language, env.app.unwrap_or(""))
+}
+
 fn key_extends(old: &str, new: &str) -> bool {
     match (old.split_once('\u{1}'), new.split_once('\u{1}')) {
         (Some((old_lang, old)), Some((new_lang, new))) => old_lang == new_lang && extends(old, new),

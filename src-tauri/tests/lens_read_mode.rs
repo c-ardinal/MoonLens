@@ -97,6 +97,7 @@ struct Run {
     lines: Arc<Mutex<Vec<String>>>,
     requests: Requests,
     target: &'static str,
+    app: Option<&'static str>,
     /// Every picture differs from the one before, like a screen whose
     /// text changes.
     pictures: u32,
@@ -144,6 +145,7 @@ impl Run {
             lines,
             requests: Arc::default(),
             target: "ja",
+            app: None,
             pictures: 0,
         }
     }
@@ -171,7 +173,7 @@ impl Run {
             target_language: self.target,
             mode: self.mode,
             history_kind: "lens",
-            app: None,
+            app: self.app,
             emit: &emit,
             geometry_now: &geometry_now,
         };
@@ -196,7 +198,7 @@ impl Run {
             target_language: self.target,
             mode: self.mode,
             history_kind: "lens",
-            app: None,
+            app: self.app,
             emit: &emit,
             geometry_now: &geometry_now,
         };
@@ -462,6 +464,28 @@ async fn another_target_language_starts_without_context() {
     let requests = run.requests();
     assert_eq!(requests[0].1.history.len(), 1);
     assert_eq!(requests[0].1.history[0].0, "It is only the wind.");
+}
+
+#[tokio::test]
+async fn text_that_stays_on_screen_is_translated_again_for_another_app() {
+    let mut run = Run::new(ReadMode::Ui);
+    run.show(&["Options"]).await;
+    run.requests();
+
+    // The window now follows another application showing the same
+    // words: what was made for the first one is not kept.
+    run.app = Some("game");
+    assert_eq!(run.tick(&["Options"], false).await, Tick::Settling);
+    assert!(matches!(
+        run.tick(&["Options"], false).await,
+        Tick::Translated { .. }
+    ));
+    let requests = run.requests();
+    assert_eq!(requests.len(), 1, "{requests:?}");
+    assert_eq!(requests[0].0, "Options");
+
+    // Still the same application: nothing to do.
+    assert_eq!(run.tick(&["Options"], false).await, Tick::Unchanged);
 }
 
 #[tokio::test]
