@@ -16,13 +16,14 @@ describe('音声翻訳ウィンドウの表示状態', () => {
     expect(statusLabel(v)).toBe('認識中…');
     v = reduce(v, { kind: 'status', phase: 'translating' });
     expect(statusLabel(v)).toBe('翻訳中…');
-    v = reduce(v, { kind: 'chunk', original: 'Hello.', translated: 'こんにちは。' });
+    v = reduce(v, { kind: 'chunk', id: 1, original: 'Hello.', translated: 'こんにちは。' });
     expect(v.lines).toEqual([{ id: 1, original: 'Hello.', translated: 'こんにちは。' }]);
   });
 
   it('字幕は時系列で蓄積、上限超過分は旧字幕から破棄', () => {
     const events: SubtitleEvent[] = Array.from({ length: MAX_LINES + 5 }, (_, i) => ({
       kind: 'chunk',
+      id: i + 1,
       original: `o${i}`,
       translated: `t${i}`
     }));
@@ -40,14 +41,14 @@ describe('音声翻訳ウィンドウの表示状態', () => {
     ]);
     expect(v.error).toBe('音声認識失敗：x');
     expect(statusLabel(v)).toBe('音声待機中');
-    v = reduce(v, { kind: 'chunk', original: 'a', translated: 'b' });
+    v = reduce(v, { kind: 'chunk', id: 1, original: 'a', translated: 'b' });
     expect(v.error).toBeNull();
   });
 
   it('連続失敗による停止後もエラー表示を継続', () => {
     const v = run([
       { kind: 'started', device: '' },
-      { kind: 'chunk', original: 'a', translated: 'b' },
+      { kind: 'chunk', id: 1, original: 'a', translated: 'b' },
       { kind: 'error', message: '音声認識の連続失敗により停止：x' },
       { kind: 'stopped' }
     ]);
@@ -59,11 +60,62 @@ describe('音声翻訳ウィンドウの表示状態', () => {
 
   it('再開始で前回の字幕・エラーを消去', () => {
     const v = run([
-      { kind: 'chunk', original: 'a', translated: 'b' },
+      { kind: 'chunk', id: 1, original: 'a', translated: 'b' },
       { kind: 'error', message: 'x' },
       { kind: 'stopped' },
       { kind: 'started', device: 'd' }
     ]);
     expect(v).toEqual({ ...initialView(), running: true, device: 'd' });
+  });
+
+  it('文単位の再翻訳結果で該当行を置換', () => {
+    const chunk = (id: number, original: string): SubtitleEvent => ({
+      kind: 'chunk',
+      id,
+      original,
+      translated: `<${original}>`
+    });
+    let v = run([
+      { kind: 'started', device: '' },
+      chunk(1, 'ask not what'),
+      chunk(2, 'your country can do. Ask'),
+      chunk(3, 'what you can do')
+    ]);
+    v = reduce(v, { kind: 'status', phase: 'revising' });
+    expect(statusLabel(v)).toBe('補正中…');
+    // 行 1・2 → 文 1 行＋次文の冒頭。後続の行 3 は位置を維持。
+    v = reduce(v, {
+      kind: 'revised',
+      replaces: [1, 2],
+      id: 4,
+      original: 'ask not what your country can do.',
+      translated: '国に求めるな。',
+      rest: { id: 5, original: 'Ask', translated: '問え' }
+    });
+    expect(v.lines.map((l) => [l.id, l.translated, !!l.revised])).toEqual([
+      [4, '国に求めるな。', true],
+      [5, '問え', false],
+      [3, '<what you can do>', false]
+    ]);
+    // 次文：冒頭行（5）と行 3 を置換。
+    v = reduce(v, {
+      kind: 'revised',
+      replaces: [5, 3],
+      id: 6,
+      original: 'Ask what you can do',
+      translated: '可能な貢献を問え',
+      rest: null
+    });
+    expect(v.lines.map((l) => l.id)).toEqual([4, 6]);
+    // 破棄済みの行に対する補正は無視。
+    const same = reduce(v, {
+      kind: 'revised',
+      replaces: [1, 2],
+      id: 9,
+      original: 'x',
+      translated: 'y',
+      rest: null
+    });
+    expect(same).toBe(v);
   });
 });

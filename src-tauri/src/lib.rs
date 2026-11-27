@@ -29,6 +29,7 @@ pub mod settings;
 pub mod setup;
 pub mod storage;
 pub mod subtitle;
+pub mod subtitle_revise;
 pub mod translate_plan;
 pub mod translation_cache;
 pub mod user_error;

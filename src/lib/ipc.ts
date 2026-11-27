@@ -324,13 +324,22 @@ export const onHotkey = (handler: (action: string) => void): Promise<UnlistenFn>
   listen<string>('moonlens://hotkey', (e) => handler(e.payload));
 
 /** 音声翻訳の処理段階：音声待機・音声認識・翻訳。 */
-export type SubtitlePhase = 'waiting' | 'recognizing' | 'translating';
+export type SubtitlePhase = 'waiting' | 'recognizing' | 'translating' | 'revising';
 
 export type SubtitleEvent =
   | { kind: 'started'; device: string }
   | { kind: 'stopped' }
   | { kind: 'status'; phase: SubtitlePhase }
-  | { kind: 'chunk'; original: string; translated: string }
+  | { kind: 'chunk'; id: number; original: string; translated: string }
+  | {
+      /** 文単位の再翻訳結果。`replaces` の各行を 1 行（＋次文の冒頭 `rest`）へ置換。 */
+      kind: 'revised';
+      replaces: number[];
+      id: number;
+      original: string;
+      translated: string;
+      rest: { id: number; original: string; translated: string } | null;
+    }
   | { kind: 'error'; message: string };
 
 export const toggleSubtitle = () => safeInvoke<boolean>('toggle_subtitle');

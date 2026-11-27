@@ -20,6 +20,7 @@ use crate::{
     pipeline::Pipeline,
     providers::{Capability, TaskInput, TaskOutput},
     settings::SettingsStore,
+    subtitle_revise::{Assembler, Languages, Reviser, Revision, Translator},
 };
 
 #[derive(Debug, Clone, Serialize)]
@@ -35,9 +36,14 @@ pub enum SubtitleEvent {
         phase: Phase,
     },
     Chunk {
+        /// Names the line for a later [`SubtitleEvent::Revised`].
+        id: u64,
         original: String,
         translated: String,
     },
+    /// A finished sentence, translated again as a whole: it replaces
+    /// the lines of the chunks it was recognized in.
+    Revised(Revision),
     Error {
         message: String,
     },
@@ -50,6 +56,8 @@ pub enum Phase {
     Waiting,
     Recognizing,
     Translating,
+    /// No sound, and finished sentences are being translated again.
+    Revising,
 }
 
 pub struct SubtitleService {
@@ -178,6 +186,7 @@ impl SubtitleService {
                     if let SubtitleEvent::Chunk {
                         original,
                         translated,
+                        ..
                     } = &ev
                     {
                         let text = if translated.is_empty() {
@@ -310,8 +319,21 @@ pub async fn run_loop(
     };
     let mut heard = false;
     let mut closed = false;
+    let mut lines = Assembler::default();
+    let mut reviser = Reviser::new(translator(pipeline.clone()));
+    let revised = |revision: Revision| emit(SubtitleEvent::Revised(revision));
     loop {
         let snap = settings.snapshot();
+        let realtime = snap.subtitle.realtime_correction;
+        let correcting = realtime || snap.subtitle.batch_correction;
+        if !correcting {
+            lines.clear();
+            reviser.clear();
+        }
+        let languages = Languages {
+            source: snap.subtitle.source_language.clone(),
+            target: snap.subtitle.target_language.clone(),
+        };
         let chunk_samples = (snap.subtitle.chunk_seconds * 16_000.0) as usize;
         let overlap_samples = (snap.subtitle.overlap_seconds * 16_000.0) as usize;
         let target_lang = snap.subtitle.target_language.clone();
@@ -333,7 +355,16 @@ pub async fn run_loop(
                         flush = true;
                     }
                 },
-                _ = tokio::time::sleep(FLUSH_AFTER), if !buffer.is_empty() => flush = true,
+                // Also without buffered audio while a sentence is open:
+                // the pause is what ends it.
+                _ = tokio::time::sleep(FLUSH_AFTER), if !buffer.is_empty() || lines.is_open() => {
+                    flush = true;
+                }
+                Some(revision) = reviser.next() => {
+                    revised(revision);
+                    set_phase(idle(&reviser));
+                    continue;
+                }
             }
         }
         // Collect whatever arrived during the previous recognition.
@@ -349,9 +380,18 @@ pub async fn run_loop(
                 // Too short to recognize on its own.
                 buffer.clear();
                 overlap.clear();
-                set_phase(Phase::Waiting);
+                if correcting {
+                    pause(&mut lines, &mut reviser, &languages);
+                }
+                set_phase(idle(&reviser));
             }
             if closed {
+                // The audio ended (stopping drops this task instead):
+                // finish what the pause above released.
+                while let Some(revision) = reviser.next().await {
+                    revised(revision);
+                }
+                set_phase(Phase::Waiting);
                 break;
             }
             continue;
@@ -375,7 +415,10 @@ pub async fn run_loop(
         // Silence (or near-silence) makes Whisper invent stock phrases
         // such as "Thanks for watching"; skip it.
         if is_silent(&to_send) {
-            set_phase(Phase::Waiting);
+            if correcting {
+                pause(&mut lines, &mut reviser, &languages);
+            }
+            set_phase(idle(&reviser));
             continue;
         }
 
@@ -383,20 +426,18 @@ pub async fn run_loop(
         let seconds = to_send.len() as f32 / 16_000.0;
         let started = std::time::Instant::now();
         let pcm_bytes = pcm16_to_bytes(&to_send);
-        match pipeline
-            .run(
-                Capability::Asr,
-                TaskInput::Asr {
-                    audio_pcm16_mono_16k: pcm_bytes,
-                    language_hint: if source_lang == "auto" {
-                        None
-                    } else {
-                        Some(source_lang.clone())
-                    },
+        let recognition = pipeline.run(
+            Capability::Asr,
+            TaskInput::Asr {
+                audio_pcm16_mono_16k: pcm_bytes,
+                language_hint: if source_lang == "auto" {
+                    None
+                } else {
+                    Some(source_lang.clone())
                 },
-            )
-            .await
-        {
+            },
+        );
+        match reviser.during(&revised, recognition).await {
             Ok(res) => {
                 failures = 0;
                 let original = match &res.output {
@@ -414,22 +455,23 @@ pub async fn run_loop(
                     original.chars().count()
                 );
                 if original.trim().is_empty() {
-                    set_phase(Phase::Waiting);
+                    if correcting {
+                        pause(&mut lines, &mut reviser, &languages);
+                    }
+                    set_phase(idle(&reviser));
                     continue;
                 }
                 set_phase(Phase::Translating);
-                let translated = match pipeline
-                    .run(
-                        Capability::Translate,
-                        TaskInput::Translate {
-                            text: original.clone(),
-                            source_language: source_lang.clone(),
-                            target_language: target_lang.clone(),
-                            context: Default::default(),
-                        },
-                    )
-                    .await
-                {
+                let translation = pipeline.run(
+                    Capability::Translate,
+                    TaskInput::Translate {
+                        text: original.clone(),
+                        source_language: source_lang.clone(),
+                        target_language: target_lang.clone(),
+                        context: Default::default(),
+                    },
+                );
+                let translated = match reviser.during(&revised, translation).await {
                     Ok(t) => match t.output {
                         TaskOutput::Text(s) => s,
                         _ => String::new(),
@@ -439,11 +481,21 @@ pub async fn run_loop(
                         String::new()
                     }
                 };
+                let id = lines.next_id();
+                if correcting {
+                    if let Some(sentence) = lines.push(id, &original, &translated) {
+                        reviser.push(sentence, languages.clone(), realtime);
+                    }
+                }
                 emit(SubtitleEvent::Chunk {
+                    id,
                     original,
                     translated,
                 });
-                set_phase(Phase::Waiting);
+                if correcting && flush {
+                    pause(&mut lines, &mut reviser, &languages);
+                }
+                set_phase(idle(&reviser));
                 // Avoid bursting work when chunks arrive too quickly.
                 tokio::time::sleep(Duration::from_millis(20)).await;
             }
@@ -466,6 +518,49 @@ pub async fn run_loop(
         }
     }
     false
+}
+
+/// What the loop shows between chunks.
+fn idle(reviser: &Reviser) -> Phase {
+    if reviser.is_busy() {
+        Phase::Revising
+    } else {
+        Phase::Waiting
+    }
+}
+
+/// The speech paused: the open sentence ends here, and every sentence
+/// held back for a pause may now be translated again.
+fn pause(lines: &mut Assembler, reviser: &mut Reviser, languages: &Languages) {
+    if let Some(sentence) = lines.flush() {
+        reviser.push(sentence, languages.clone(), true);
+    }
+    reviser.release();
+}
+
+/// Sentence translation for [`Reviser`] through the provider chain.
+fn translator(pipeline: Arc<Pipeline>) -> Translator {
+    Arc::new(move |text, languages: Languages, context| {
+        let pipeline = pipeline.clone();
+        Box::pin(async move {
+            let input = TaskInput::Translate {
+                text,
+                source_language: languages.source,
+                target_language: languages.target,
+                context,
+            };
+            match pipeline.run(Capability::Translate, input).await {
+                Ok(res) => match res.output {
+                    TaskOutput::Text(s) => Some(s),
+                    _ => None,
+                },
+                Err(e) => {
+                    tracing::warn!("subtitle: sentence translation failed: {e}");
+                    None
+                }
+            }
+        })
+    })
 }
 
 /// Stop after this many chunks in a row fail, instead of repeating the
