@@ -386,8 +386,11 @@ export const onHotkey = (handler: (action: string) => void): Promise<UnlistenFn>
 /** 音声翻訳の処理段階：音声待機・音声認識・翻訳。 */
 export type SubtitlePhase = 'waiting' | 'recognizing' | 'translating' | 'revising';
 
-/** 音声翻訳ウィンドウの音源：PC 全体、またはアプリ単位（プロセスツリー）。 */
-export type AudioSource = { kind: 'system' } | { kind: 'app'; pid: number };
+/** 音声翻訳ウィンドウの音源：PC 全体、アプリ単位（プロセスツリー）、マイク（対面会話）。 */
+export type AudioSource = { kind: 'system' } | { kind: 'app'; pid: number } | { kind: 'microphone' };
+
+/** 対面会話の話者：利用者本人、または相手。 */
+export type Speaker = 'own' | 'partner';
 
 /** 音声出力ストリームを保持するアプリ。 */
 export type AudioApp = {
@@ -414,7 +417,8 @@ export type SubtitleEvent =
   | { kind: 'started'; device: string; source: AudioSource }
   | { kind: 'stopped' }
   | { kind: 'status'; phase: SubtitlePhase }
-  | { kind: 'chunk'; id: number; original: string; translated: string }
+  /** `speaker`：対面会話の話者（訳文は相手側の言語）。字幕では省略。 */
+  | { kind: 'chunk'; id: number; original: string; translated: string; speaker?: Speaker }
   | {
       /** 文単位の再翻訳結果。`replaces` の各行を 1 行（＋次文の冒頭 `rest`）へ置換。`original` が空の場合は遮断済みの文：行の除去のみ。 */
       kind: 'revised';
@@ -437,6 +441,8 @@ export const subtitleState = () => safeInvoke<boolean>('subtitle_state', undefin
 /** 音声翻訳ウィンドウを全停止・全閉鎖。 */
 export const stopSubtitle = () => safeInvoke<void>('stop_subtitle');
 export const startSubtitle = () => safeInvoke<void>('start_subtitle');
+/** 対面会話を開始：マイク入力のウィンドウを表示（表示済みの場合は前面化・再開）。 */
+export const startConversation = () => safeInvoke<void>('start_conversation');
 /** 音声翻訳の遮断リスト（`subtitle.blocked_phrases`）へ追加。 */
 export const blockSubtitlePhrase = (phrase: string) =>
   safeInvoke<void>('block_subtitle_phrase', { phrase });
@@ -594,6 +600,15 @@ export const closeLensWindow = (id: string) => safeInvoke<void>('close_lens_wind
 export const listLensWindows = () =>
   safeInvoke<LensDescriptor[]>('list_lens_windows', undefined, []);
 /** Pause every lens window, or resume. Resolves to the new state. */
+/** Whether extra triggers (mouse button, double tap, gamepad) work here. */
+export const triggerSupported = () => safeInvoke<boolean>('trigger_supported', undefined, false);
+/**
+ * Wait for the user to perform a trigger; resolves with its text form
+ * (`Mouse4`, `Double:Control`, `Pad:Back+Y`), or null when nothing came
+ * in time or the wait was cancelled.
+ */
+export const captureTrigger = () => safeInvoke<string | null>('capture_trigger', undefined, null);
+export const cancelTriggerCapture = () => safeInvoke<void>('cancel_trigger_capture', undefined, undefined as void);
 export const toggleLensPause = () => safeInvoke<boolean>('toggle_lens_pause', undefined, false);
 /** All-window controls as they are now (for a window that just opened). */
 export const lensControls = () =>
@@ -665,6 +680,8 @@ export interface SubtitleRecord {
   /** 実行時の設定値（auto の場合あり）。 */
   source_language: string;
   target_language: string;
+  /** 対面会話の記録：行ごとに翻訳方向が相違（上記の言語は相手側の発話のみ）。 */
+  conversation?: boolean;
   /** 行の変更回数。全行の置換時に取得時点の値を指定（記録中の行の消失防止）。 */
   revision: number;
   lines: SubtitleLine[];

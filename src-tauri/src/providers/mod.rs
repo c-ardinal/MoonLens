@@ -87,6 +87,11 @@ pub enum TaskInput {
     Asr {
         audio_pcm16_mono_16k: Vec<u8>,
         language_hint: Option<String>,
+        /// Without a hint: the languages the speech can be in (a
+        /// face-to-face conversation has two). An engine that detects
+        /// the language chooses among them; empty = any language.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        language_candidates: Vec<String>,
     },
     Explain {
         prompt: String,
@@ -153,6 +158,10 @@ pub enum TaskOutput {
     },
     Transcript {
         segments: Vec<TranscriptSegment>,
+        /// The language the speech was decoded in, when the engine
+        /// tells (its own detection, or the hint).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        language: Option<String>,
     },
     OpenedExternalUrl(String),
     Intent(Intent),

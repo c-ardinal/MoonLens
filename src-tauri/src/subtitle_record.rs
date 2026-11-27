@@ -19,6 +19,8 @@ use crate::subtitle_revise::Revision;
 pub struct Recorder {
     storage: Arc<Storage>,
     settings: Arc<SettingsStore>,
+    /// The run is a face-to-face conversation (see [`Recorder::languages`]).
+    conversation: bool,
     state: Mutex<State>,
 }
 
@@ -51,8 +53,29 @@ impl Recorder {
         Self {
             storage,
             settings,
+            conversation: false,
             state: Mutex::new(State::default()),
         }
+    }
+
+    /// The run is a face-to-face conversation.
+    pub fn conversation(mut self, conversation: bool) -> Self {
+        self.conversation = conversation;
+        self
+    }
+
+    /// Source and target language of the record. A conversation goes
+    /// both ways; its record names the direction the user reads: from
+    /// the other person's language into their own.
+    fn languages(&self, s: &crate::settings::Settings) -> (String, String) {
+        if self.conversation {
+            let pair = crate::conversation::Pair::from_settings(&s.subtitle);
+            return (pair.partner, pair.own);
+        }
+        (
+            s.subtitle.source_language.clone(),
+            s.subtitle.target_language.clone(),
+        )
     }
 
     /// Feed every event of the run, in order. Storage errors are logged
@@ -71,6 +94,7 @@ impl Recorder {
                 translated,
                 at_ms,
                 duration_ms,
+                ..
             } => self.record_chunk(*id, original, translated, *at_ms, *duration_ms),
             SubtitleEvent::Revised(revision) => self.record_revision(revision),
             SubtitleEvent::Stopped
@@ -147,10 +171,7 @@ impl Recorder {
         let mut st = self.state.lock();
         // One record holds one language pair (a later re-translation
         // uses it for every line): a change starts the next record.
-        let languages = (
-            settings.subtitle.source_language.clone(),
-            settings.subtitle.target_language.clone(),
-        );
+        let languages = self.languages(&settings);
         if st.id.is_some() && st.languages != languages {
             st.id = None;
             st.line_ids.clear();
@@ -181,10 +202,12 @@ impl Recorder {
     /// Create the record, then apply the retention settings like every
     /// other history write.
     fn begin(&self, st: &mut State, s: &crate::settings::Settings) -> Option<i64> {
-        let id = match self.storage.begin_subtitle_record(
+        let languages = self.languages(s);
+        let id = match self.storage.begin_subtitle_record_of(
             &st.source,
-            &s.subtitle.source_language,
-            &s.subtitle.target_language,
+            &languages.0,
+            &languages.1,
+            self.conversation,
         ) {
             Ok(id) => id,
             Err(e) => {
@@ -193,10 +216,7 @@ impl Recorder {
             }
         };
         st.id = Some(id);
-        st.languages = (
-            s.subtitle.source_language.clone(),
-            s.subtitle.target_language.clone(),
-        );
+        st.languages = languages;
         if let Err(e) = self
             .storage
             .apply_retention(s.storage.retention_days, s.storage.max_entries)
@@ -359,6 +379,7 @@ mod tests {
             translated: translated.into(),
             at_ms,
             duration_ms,
+            speaker: None,
         }
     }
 
@@ -501,6 +522,31 @@ mod tests {
             (rec.source_language.as_str(), rec.target_language.as_str()),
             ("en", "ja")
         );
+    }
+
+    #[test]
+    fn a_conversation_is_recorded_from_the_partners_language_into_the_users() {
+        let f = fixture();
+        let mut s = (*f.settings.snapshot()).clone();
+        // The spoken language of the subtitles does not apply.
+        s.subtitle.source_language = "fr".into();
+        s.subtitle.target_language = "ja".into();
+        s.subtitle.conversation_language = "ko".into();
+        f.settings.save(s).unwrap();
+        let recorder = Recorder::new(f.storage.clone(), f.settings.clone()).conversation(true);
+        recorder.observe(&SubtitleEvent::Started {
+            device: "mic".into(),
+            source: AudioSource::Microphone,
+        });
+        recorder.observe(&chunk("a", "b", 1000, 1000));
+        let rec = only_record(&f.storage);
+        assert_eq!(
+            (rec.source_language.as_str(), rec.target_language.as_str()),
+            ("ko", "ja")
+        );
+        // Its lines go both ways: history must not translate them again
+        // in that one direction.
+        assert!(rec.conversation);
     }
 
     #[test]

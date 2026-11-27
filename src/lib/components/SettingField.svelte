@@ -3,6 +3,7 @@
   import { RotateCcw } from 'lucide-svelte';
   import type { Field } from '$lib/settings-meta';
   import HotkeyInput from './HotkeyInput.svelte';
+  import TriggerInput from './TriggerInput.svelte';
   import VoiceSelect from './VoiceSelect.svelte';
 
   interface Props {
@@ -143,6 +144,8 @@
       <code class="font-mono text-xs text-ink-muted">{value}</code>
     {:else if field.kind === 'hotkey'}
       <HotkeyInput value={value ?? ''} label={t(field.label)} {onChange} />
+    {:else if field.kind === 'trigger'}
+      <TriggerInput value={value ?? ''} label={t(field.label)} {onChange} />
     {:else if field.kind === 'voice'}
       <VoiceSelect {id} value={value ?? ''} {language} {onChange} />
     {/if}

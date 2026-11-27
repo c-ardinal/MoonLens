@@ -227,6 +227,7 @@ fn to_wit_input(input: TaskInput) -> wit_types::TaskInput {
         TaskInput::Asr {
             audio_pcm16_mono_16k,
             language_hint,
+            ..
         } => W::Asr(wit_types::AsrInput {
             audio: audio_pcm16_mono_16k,
             language_hint,
@@ -268,6 +269,7 @@ fn from_wit_output(out: wit_types::TaskOutput) -> TaskOutput {
                     text: s.text,
                 })
                 .collect(),
+            language: None,
         },
         W::OpenedExternalUrl(u) => TaskOutput::OpenedExternalUrl(u),
         W::Intent(_) => TaskOutput::Intent(crate::providers::Intent::Unknown),

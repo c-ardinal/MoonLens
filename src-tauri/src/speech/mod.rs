@@ -11,7 +11,7 @@
 //! screen drops what waited longest instead of trailing further.
 //!
 //! Speech is never played into a capture that would hear it: while a
-//! subtitle window listens to the whole PC, requests are refused
+//! subtitle window listens to the whole PC or the microphone, requests are refused
 //! ([`Host::blocked`]), or its recognition would transcribe and
 //! translate what MoonLens says, and read that aloud in turn.
 
@@ -79,7 +79,7 @@ pub struct Utterance {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Skip {
-    /// A subtitle window listens to the whole PC.
+    /// A subtitle window listens to the whole PC or the microphone.
     Blocked,
     /// No installed voice speaks the language.
     NoVoice,
@@ -315,7 +315,7 @@ impl Host for AppHost {
     }
 
     fn blocked(&self) -> bool {
-        self.0.state::<AppState>().subtitle.hears_whole_pc()
+        self.0.state::<AppState>().subtitle.hears_speech()
     }
 
     fn emit(&self, owner: &str, event: Event) {

@@ -3,7 +3,7 @@
   import { onDestroy, onMount, tick } from 'svelte';
   import { type UnlistenFn } from '@tauri-apps/api/event';
   import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
-  import { AppWindow, Check, ChevronDown, Eye, EyeOff, Magnet, Monitor, Plus, RotateCw, Volume2, VolumeX, X } from 'lucide-svelte';
+  import { AppWindow, ArrowLeftRight, Check, ChevronDown, Eye, EyeOff, Magnet, Mic, Monitor, Plus, RotateCw, Volume2, VolumeX, X } from 'lucide-svelte';
   import {
     blockSubtitlePhrase,
     closeSubtitleWindow,
@@ -13,6 +13,7 @@
     onSubtitle,
     onSubtitleLevel,
     openSubtitleWindow,
+    setSettings,
     setSubtitleSource,
     subtitleSession,
     windowAttachment,
@@ -27,14 +28,17 @@
     SUBTITLE_DOCKS,
     SourceLinker
   } from '$lib/subtitle-attach';
-  import { languageLabel } from '$lib/lens-overlay';
+  import { languageLabel, SOURCE_LANGUAGES } from '$lib/lens-overlay';
   import {
+    conversationPair,
     initialView,
     inputHint,
+    partnerLanguages,
     reduce,
     restore,
     sameSource,
     settle,
+    sourceKey,
     sourceLabel,
     sourceOptions,
     statusLabel
@@ -47,6 +51,8 @@
   // ウィンドウ単位で選択。字幕は時系列で蓄積し、最新行へ自動スクロール。
   // 吸着：他アプリのウィンドウへ割当て、移動・サイズ変更へ追従（音源も当該アプリへ連動）。
   // 背景：入力波形と認識閾値。入力の有無・音量の過不足を常時表示。
+  // 対面会話（音源：マイク）：発話単位で言語を判定し、相手側の言語へ翻訳。本人の発話は左、
+  // 相手の発話は右へ配置。相手の言語はタイトルバーで選択。
 
   /** 音源メニュー表示中のアプリ一覧の更新間隔。 */
   const APPS_REFRESH_MS = 1500;
@@ -60,6 +66,11 @@
   let showOriginal = $state(true);
   let fontSize = $state(22);
   let targetLanguage = $state('ja');
+  let partnerSetting = $state('en');
+  const conversation = $derived(view.source.kind === 'microphone');
+  const pair = $derived(conversationPair(targetLanguage, partnerSetting));
+  const partnerOptions = $derived(partnerLanguages(SOURCE_LANGUAGES, targetLanguage));
+  let partnerError = $state<string | null>(null);
   let scroller = $state<HTMLElement>();
   // 訳文の読上（ウィンドウ単位）。音源が PC 全体の場合、読上音声を再認識するため利用不可。
   let speakOn = $state(false);
@@ -98,6 +109,8 @@
   function applyAttachment(next: Attachment) {
     const before = attachment.target;
     attachment = next;
+    // 対面会話：音源はマイク固定（吸着先アプリへ連動しない）。
+    if (conversation) return;
     if ((next.target?.id ?? null) !== (before?.id ?? null)) linker.follow(next.target);
   }
 
@@ -110,6 +123,21 @@
     showOriginal = s?.subtitle?.show_original ?? true;
     fontSize = s?.subtitle?.font_size_px ?? 22;
     targetLanguage = s?.subtitle?.target_language ?? 'ja';
+    partnerSetting = s?.subtitle?.conversation_language ?? 'en';
+  }
+
+  /** 相手の言語を変更（設定へ保存、次の発話から適用）。 */
+  async function choosePartner(code: string) {
+    const before = partnerSetting;
+    partnerSetting = code;
+    partnerError = null;
+    try {
+      const s = await getSettings();
+      await setSettings({ ...s, subtitle: { ...s.subtitle, conversation_language: code } });
+    } catch (e) {
+      partnerSetting = before;
+      partnerError = errorText(e);
+    }
   }
 
   // 入力波形：棒 1 本＝25 ms、右端が最新。描画は入力変化時のみ（無入力・停止中は休止）。
@@ -343,10 +371,11 @@
 
 <main class="sub">
   <header class="bar" data-tauri-drag-region>
+    <!-- 対面会話は言語対の分だけ項目が多数：省略の開始幅を拡大（.conv） -->
     <button class="btn" title={t('subtitle:add_audio_translation_window')} aria-label={t('subtitle:add_audio_translation_window')} onclick={addWindow}>
       <Plus class="h-4 w-4" />
     </button>
-    <span class="title" data-tauri-drag-region>{t('common:audio_translation')}</span>
+    <span class="title" class:conv={conversation} data-tauri-drag-region>{conversation ? t('subtitle:conversation') : t('common:audio_translation')}</span>
     <button
       class="source"
       class:open={menuOpen}
@@ -358,6 +387,8 @@
     >
       {#if view.source.kind === 'system'}
         <Monitor class="h-3.5 w-3.5 flex-none" />
+      {:else if view.source.kind === 'microphone'}
+        <Mic class="h-3.5 w-3.5 flex-none" />
       {:else}
         <AppWindow class="h-3.5 w-3.5 flex-none" />
       {/if}
@@ -393,6 +424,7 @@
     {#if view.running}
       <span
         class="meter"
+        class:conv={conversation}
         class:over={input === 'ok'}
         bind:this={meter}
         role="img"
@@ -403,7 +435,23 @@
       ></span>
     {/if}
     <span class="fill" data-tauri-drag-region></span>
-    <span class="lang" title={t('common:target_language')} data-tauri-drag-region>{languageLabel(targetLanguage)}</span>
+    {#if conversation}
+      <span class="lang" title={t('subtitle:your_language')} data-tauri-drag-region>{languageLabel(pair.own)}</span>
+      <span class="swap" aria-hidden="true" data-tauri-drag-region><ArrowLeftRight class="h-3 w-3" /></span>
+      <select
+        class="their"
+        title={t('subtitle:partner_language')}
+        aria-label={t('subtitle:partner_language')}
+        value={pair.partner}
+        onchange={(e) => choosePartner(e.currentTarget.value)}
+      >
+        {#each partnerOptions as option (option.code)}
+          <option value={option.code}>{t(option.label)}</option>
+        {/each}
+      </select>
+    {:else}
+      <span class="lang" title={t('common:target_language')} data-tauri-drag-region>{languageLabel(targetLanguage)}</span>
+    {/if}
     <button
       class="btn"
       class:on={speakOn && speakable}
@@ -439,7 +487,12 @@
   {/if}
   <section class="body" bind:this={scroller} aria-live="polite" aria-label={t('subtitle:subtitles')}>
     {#each view.lines as line (line.id)}
-      <div class="line" class:revised={line.revised}>
+      <div
+        class="line"
+        class:revised={line.revised}
+        class:own={line.speaker === 'own'}
+        class:partner={line.speaker === 'partner'}
+      >
         {#if showOriginal && line.translated}
           <p class="src" style="font-size: {Math.round(fontSize * 0.55)}px">{line.original}</p>
         {/if}
@@ -451,7 +504,7 @@
           {#if !view.running}
             {t('subtitle:audio_translation_is_stopped')}
           {:else}
-            {inputHint(input, view.source.kind === 'app' ? source : null)}
+            {inputHint(input, view.source.kind === 'app' ? source : null, conversation)}
             {#if view.source.kind === 'system' && view.device}<br />{t('subtitle:audio_source_device', { device: view.device })}{/if}
           {/if}
         </p>
@@ -459,6 +512,9 @@
     {/each}
     {#if view.error}
       <p class="err" role="alert">{errorText(view.error)}</p>
+    {/if}
+    {#if partnerError}
+      <p class="err" role="alert">{partnerError}</p>
     {/if}
     {#if speaker.note}
       <p class="err" role="status">{speaker.note}</p>
@@ -483,7 +539,7 @@
   {#if menuOpen}
     <!-- 小寸法のウィンドウでも一覧可能とするため、字幕領域全面へ表示 -->
     <div class="menu" role="menu" tabindex="-1" aria-label={t('subtitle:audio_source')} bind:this={menu} onkeydown={onMenuKey}>
-      {#each options as option (option.source.kind === 'app' ? option.source.pid : 'system')}
+      {#each options as option (sourceKey(option.source))}
         {@const pending = !!switching && sameSource(switching, option.source)}
         <button
           class="option"
@@ -495,6 +551,8 @@
         >
           {#if option.source.kind === 'system'}
             <Monitor class="h-4 w-4 flex-none" />
+          {:else if option.source.kind === 'microphone'}
+            <Mic class="h-4 w-4 flex-none" />
           {:else}
             <AppWindow class="h-4 w-4 flex-none" />
           {/if}
@@ -502,9 +560,11 @@
             <span class="option-name">{option.label}</span>
             {#if option.detail}<span class="option-detail">{option.detail}</span>{/if}
           </span>
-          <span class="bars" class:playing={option.playing} title={option.playing ? t('subtitle:playing') : t('subtitle:silent')} aria-label={option.playing ? t('subtitle:playing') : t('subtitle:silent')}>
-            <i></i><i></i><i></i>
-          </span>
+          {#if option.playing !== null}
+            <span class="bars" class:playing={option.playing} title={option.playing ? t('subtitle:playing') : t('subtitle:silent')} aria-label={option.playing ? t('subtitle:playing') : t('subtitle:silent')}>
+              <i></i><i></i><i></i>
+            </span>
+          {/if}
           <span class="mark">
             {#if pending}
               <span class="spin"></span>
@@ -674,16 +734,53 @@
     opacity: 0.75;
     white-space: nowrap;
   }
+  /* 対面会話：相手の言語（本人の言語は設定 → 言語） */
+  .their {
+    flex: 0 1 8em;
+    width: 8em;
+    min-width: 44px;
+    height: 24px;
+    margin-right: 4px;
+    border: 0;
+    border-radius: 6px;
+    padding: 0 4px;
+    font-size: 11px;
+    color: inherit;
+    background: rgba(255, 255, 255, 0.1);
+    cursor: pointer;
+  }
+  .their:hover,
+  .their:focus-visible {
+    background: rgba(255, 255, 255, 0.18);
+  }
+  .their option {
+    color: #f4f4f5;
+    background: #18181c;
+  }
+  .swap {
+    flex: none;
+    display: flex;
+    opacity: 0.7;
+  }
   /* 狭幅：見出し・翻訳先言語を省略し、音源・状態表記と操作を優先 */
+  @container (max-width: 500px) {
+    .title.conv,
+    .meter.conv,
+    .swap {
+      display: none;
+    }
+  }
   @container (max-width: 400px) {
     .title,
     .lang,
+    .swap,
     .meter {
       display: none;
     }
   }
   @container (max-width: 260px) {
-    .state {
+    .state,
+    .their {
       display: none;
     }
   }
@@ -791,6 +888,22 @@
     .line.revised .text {
       animation: none;
     }
+  }
+  /* 対面会話：本人の発話は左、相手の発話は右。話者は端の線で区別 */
+  .line.own,
+  .line.partner {
+    max-width: 86%;
+    padding: 4px 12px;
+  }
+  .line.own {
+    margin-right: auto;
+    text-align: left;
+    border-left: 2px solid color-mix(in srgb, var(--ml-accent) 80%, transparent);
+  }
+  .line.partner {
+    margin-left: auto;
+    text-align: right;
+    border-right: 2px solid rgba(244, 244, 245, 0.6);
   }
   /* 過去の字幕は減光、最新行を強調 */
   .line:not(:last-of-type) {

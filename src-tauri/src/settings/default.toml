@@ -27,6 +27,16 @@ open_history = "CommandOrControl+Shift+H"
 reverse_image_search = "CommandOrControl+Shift+G"
 custom = {}
 
+[triggers]
+capture_region = ""
+toggle_pin_overlay = ""
+toggle_window_operate = ""
+toggle_window_pause = ""
+hold_window_original = ""
+toggle_subtitle = ""
+open_command_palette = ""
+open_history = ""
+
 [overlay]
 max_width_px = 480
 opacity = 0.92
@@ -41,6 +51,7 @@ show_in_screenshots = true
 [subtitle]
 source_language = "auto"
 target_language = "ja"
+conversation_language = "en"
 model = "large-v3-turbo"
 fallback_model = "base"
 vad_aggressiveness = 2
