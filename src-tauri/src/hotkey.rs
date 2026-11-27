@@ -11,6 +11,7 @@ use anyhow::Result;
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
+use crate::lens_control::HoldSource;
 use crate::settings::schema::{Hotkeys, Triggers};
 use crate::tr;
 use crate::{app::AppState, settings::SettingsStore};
@@ -42,12 +43,12 @@ pub enum Action {
 }
 
 impl Action {
-    /// Run the action for a press (`pressed`) or a release. Only
-    /// [`Action::HoldOriginal`] reacts to the release.
-    pub fn run(self, app: &AppHandle, pressed: bool) {
+    /// Run the action for a press (`pressed`) or a release of `source`.
+    /// Only [`Action::HoldOriginal`] reacts to the release.
+    pub fn run(self, app: &AppHandle, source: HoldSource, pressed: bool) {
         let state = app.state::<AppState>();
         if self == Action::HoldOriginal {
-            crate::lens::hold_original(app, &state.lenses, pressed);
+            crate::lens::hold_original(app, &state.lenses, source, pressed);
             return;
         }
         if !pressed {
@@ -123,7 +124,8 @@ pub fn register_all(app: &AppHandle, settings: Arc<SettingsStore>) -> Result<()>
     for (action, accel) in shortcuts(&s.hotkeys) {
         let app_a = app.clone();
         bind(shortcut_mgr, &mut failed, accel, move |_app, _sc, event| {
-            action.run(&app_a, matches!(event.state(), ShortcutState::Pressed));
+            let pressed = matches!(event.state(), ShortcutState::Pressed);
+            action.run(&app_a, HoldSource::Shortcut, pressed);
         });
     }
 

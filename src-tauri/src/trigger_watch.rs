@@ -17,6 +17,7 @@ use tauri::{AppHandle, Manager};
 use tokio::sync::oneshot;
 
 use crate::hotkey::Action;
+use crate::lens_control::HoldSource;
 use crate::settings::schema::Triggers;
 use crate::trigger::{Detector, Output, Sink, Sources, Trigger};
 
@@ -142,7 +143,9 @@ impl Service {
                     Output::Fire { action, pressed } => {
                         // Like the global shortcuts: on the main thread.
                         let app_m = app.clone();
-                        let _ = app.run_on_main_thread(move || action.run(&app_m, pressed));
+                        let _ = app.run_on_main_thread(move || {
+                            action.run(&app_m, HoldSource::Trigger, pressed)
+                        });
                     }
                     Output::Captured(trigger) => {
                         if let Some(reply) = capture.lock().reply.take() {

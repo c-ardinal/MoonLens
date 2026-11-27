@@ -305,16 +305,18 @@ pub enum Output<A> {
     Captured(Trigger),
 }
 
-/// One modifier key's progress towards a double press.
+/// Progress towards a double press of a modifier key.
 #[derive(Debug, Default)]
 struct Tap {
-    /// The key now down, since when, and whether nothing else was pressed
-    /// meanwhile.
-    down: Option<(Modifier, u64, bool)>,
+    /// Modifier keys physically down.
+    mods: Mods,
+    /// A modifier pressed on its own, with nothing else pressed since,
+    /// and when it went down.
+    candidate: Option<(Modifier, u64)>,
     /// The finished first tap and when it was released.
     last: Option<(Modifier, u64)>,
-    /// Second presses still down (each one owes a release).
-    held: Mods,
+    /// The second press, still down (it owes a release).
+    held: Option<Modifier>,
 }
 
 /// Turns input events into trigger outputs. Times are milliseconds on any
@@ -408,48 +410,47 @@ impl<A: Copy> Detector<A> {
         let Key::Modifier(m) = key else {
             // Ctrl+C and the like: the modifier is in use, not tapped.
             if down {
+                self.tap.candidate = None;
                 self.tap.last = None;
-                if let Some(d) = &mut self.tap.down {
-                    d.2 = false;
-                }
             }
             return Vec::new();
         };
         if down {
-            if self.tap.held.has(m) {
+            if self.tap.mods.has(m) {
                 return Vec::new(); // key repeat
             }
-            match self.tap.down {
-                Some((d, _, _)) if d == m => return Vec::new(), // key repeat
-                Some(_) => {
-                    // Two modifiers together: a combination, not a tap.
-                    self.tap.down = Some((m, now, false));
-                    self.tap.last = None;
-                    return Vec::new();
-                }
-                None => {}
+            let alone = self.tap.mods == Mods::NONE;
+            self.tap.mods = self.tap.mods.with(m);
+            let last = self.tap.last.take();
+            if !alone {
+                // Pressed while another modifier is down: a combination,
+                // however often it is repeated.
+                self.tap.candidate = None;
+                return Vec::new();
             }
-            match self.tap.last.take() {
+            match last {
                 Some((l, at)) if l == m && now.saturating_sub(at) <= GAP_MAX_MS => {
                     if self.capturing {
                         return self.captured(Trigger::Double(m));
                     }
-                    self.tap.held = self.tap.held.with(m);
+                    self.tap.held = Some(m);
                     self.fire(Trigger::Double(m), true)
                 }
                 _ => {
-                    self.tap.down = Some((m, now, true));
+                    self.tap.candidate = Some((m, now));
                     Vec::new()
                 }
             }
-        } else if self.tap.held.has(m) {
-            self.tap.held = self.tap.held.without(m);
-            self.fire(Trigger::Double(m), false)
         } else {
-            if let Some((d, since, clean)) = self.tap.down {
-                if d == m {
-                    self.tap.down = None;
-                    if clean && now.saturating_sub(since) <= TAP_MAX_MS {
+            self.tap.mods = self.tap.mods.without(m);
+            if self.tap.held == Some(m) {
+                self.tap.held = None;
+                return self.fire(Trigger::Double(m), false);
+            }
+            if let Some((c, since)) = self.tap.candidate {
+                if c == m {
+                    self.tap.candidate = None;
+                    if now.saturating_sub(since) <= TAP_MAX_MS {
                         self.tap.last = Some((m, now));
                     }
                 }
@@ -491,9 +492,16 @@ impl<A: Copy> Detector<A> {
             }
             return Vec::new();
         }
+        // A combination held on two gamepads is one press: it fires when
+        // the first one completes it and releases with the last one.
+        let elsewhere =
+            |combo| (self.pads.iter().enumerate()).any(|(i, b)| i != slot && b.contains(combo));
         let mut out = Vec::new();
         for (t, action) in &self.bindings {
             let Trigger::Pad(combo) = *t else { continue };
+            if elsewhere(combo) {
+                continue;
+            }
             let (was, is) = (prev.contains(combo), buttons.contains(combo));
             if was != is {
                 out.push(Output::Fire {
@@ -831,30 +839,69 @@ mod tests {
     }
 
     #[test]
-    fn two_held_double_presses_are_each_released() {
+    fn taps_while_another_modifier_is_down_are_a_combination() {
         let mut d = detector(&[("Double:Control", 1), ("Double:Shift", 2)]);
+        // Ctrl stays down while Shift is tapped three times.
         let out = run(
             &mut d,
             &[
                 (0, key(CTRL, true)),
-                (50, key(CTRL, false)),
-                (100, key(CTRL, true)), // held from here
-                (500, key(SHIFT, true)),
-                (550, key(SHIFT, false)),
-                (600, key(SHIFT, true)),
-                (900, key(CTRL, false)),
-                (950, key(SHIFT, false)),
+                (100, key(SHIFT, true)),
+                (150, key(SHIFT, false)),
+                (200, key(SHIFT, true)),
+                (250, key(SHIFT, false)),
+                (300, key(SHIFT, true)),
+                (350, key(SHIFT, false)),
+                (400, key(CTRL, false)),
             ],
         );
-        assert_eq!(
-            out,
-            [
-                fired(1, true),
-                fired(2, true),
-                fired(1, false),
-                fired(2, false)
-            ]
+        assert_eq!(out, []);
+        // The same while a double press of Ctrl is being held: only Ctrl
+        // fires, and it is released.
+        let out = run(
+            &mut d,
+            &[
+                (1000, key(CTRL, true)),
+                (1050, key(CTRL, false)),
+                (1100, key(CTRL, true)),
+                (1500, key(SHIFT, true)),
+                (1550, key(SHIFT, false)),
+                (1600, key(SHIFT, true)),
+                (1900, key(CTRL, false)),
+                (1950, key(SHIFT, false)),
+            ],
         );
+        assert_eq!(out, [fired(1, true), fired(1, false)]);
+        // Afterwards a plain double press works again.
+        let out = run(
+            &mut d,
+            &[
+                (3000, key(SHIFT, true)),
+                (3050, key(SHIFT, false)),
+                (3100, key(SHIFT, true)),
+                (3150, key(SHIFT, false)),
+            ],
+        );
+        assert_eq!(out, [fired(2, true), fired(2, false)]);
+    }
+
+    #[test]
+    fn a_combination_on_two_pads_is_one_press() {
+        let slot = |slot, bits| InputEvent::Pad {
+            slot,
+            buttons: PadButtons(bits),
+        };
+        let mut d = detector(&[("Pad:Back+Y", 1)]);
+        let out = run(
+            &mut d,
+            &[
+                (0, slot(0, 0x8020)),
+                (1, slot(1, 0x8020)),
+                (2, slot(0, 0)), // still held on the second pad
+                (3, slot(1, 0)),
+            ],
+        );
+        assert_eq!(out, [fired(1, true), fired(1, false)]);
     }
 
     #[test]
