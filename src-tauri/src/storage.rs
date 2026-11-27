@@ -92,9 +92,8 @@ impl Storage {
                 crate::notices::push(
                     "history-db",
                     tr!(
-                        "履歴データベースを読込不可のため再作成。旧ファイル：{}",
-                        "The history database could not be read and was recreated. Old file: {}",
-                        aside.file_name().unwrap_or_default().to_string_lossy()
+                        "履歴データベースを読込不可のため再作成。旧ファイル：{file}",
+                        file = aside.file_name().unwrap_or_default().to_string_lossy()
                     ),
                     None,
                 );
@@ -536,8 +535,7 @@ impl Storage {
         require_session(&tx, id)?;
         if revision_of(&tx, id)? != revision {
             anyhow::bail!(crate::tr!(
-                "字幕記録の更新を検出（記録中または他操作）。再読込後に再実行",
-                "The subtitle record changed (still recording, or another operation). Reload and try again"
+                "字幕記録の更新を検出（記録中または他操作）。再読込後に再実行"
             ));
         }
         write_lines(&tx, id, lines)?;

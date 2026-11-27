@@ -10,7 +10,7 @@
 
 import { compactGlossary } from './glossary';
 import { LANGUAGES, SOURCE_LANGUAGES } from './lens-overlay';
-import { t } from './i18n';
+import { LOCALES, t } from './i18n';
 
 export type Option = { value: string; label: string };
 
@@ -327,11 +327,10 @@ export const SECTIONS: Section[] = [
         kind: 'select',
         path: 'appearance.ui_language',
         label: '表示言語',
-        help: '全ウィンドウ・通知・トレイメニューの言語。自動：OS の言語へ追従（日本語以外は英語）。',
+        help: '全ウィンドウ・通知・トレイメニューの言語。自動：OS の言語へ追従（未対応の言語は英語）。',
         options: [
           { value: 'auto', label: '自動（OS の言語）' },
-          { value: 'ja', label: '日本語' },
-          { value: 'en', label: 'English' }
+          ...LOCALES.map((l) => ({ value: l.code, label: l.name }))
         ]
       },
       {

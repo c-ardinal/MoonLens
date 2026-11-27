@@ -220,7 +220,7 @@ impl Issue {
     pub fn unreadable(path: &[Seg]) -> Self {
         Self::new(
             path,
-            tr!("読込不可の値", "Unreadable value"),
+            tr!("読込不可の値"),
             Some((Fix::Remove(path.to_vec()), restore_default())),
         )
     }
@@ -264,13 +264,13 @@ pub fn apply(t: &mut toml::Table, fixes: &[Fix]) -> usize {
 /* ------------------------------ pass 1: rules ----------------------------- */
 
 fn restore_default() -> String {
-    tr!("既定値に復元", "Reset to default")
+    tr!("既定値に復元")
 }
 
 /// Leading words of the notice line for a renamed provider id; the notice
 /// lists these lines first (see `store::load_user_file`).
 pub fn alias_prefix() -> &'static str {
-    crate::i18n::pick("旧識別子", "Old id")
+    crate::i18n::text("旧識別子")
 }
 
 /// Apply the declarative rules. Returns one line per change, for the
@@ -283,13 +283,13 @@ pub fn migrate(t: &mut toml::Table, rules: &Rules) -> Vec<String> {
             if get(t, &to).is_none() {
                 set(t, &to, v);
             }
-            done.push(tr!("項目名変更 {} → {}", "Renamed {} → {}", r.from, r.to));
+            done.push(tr!("項目名変更 {from} → {to}", from = r.from, to = r.to));
         }
     }
     for r in rules.removed {
         if remove(t, &dotted(r.path)).is_some() {
             tracing::info!("config: dropped retired key {} ({})", r.path, r.note);
-            done.push(tr!("廃止項目 {} を削除", "Removed retired item {}", r.path));
+            done.push(tr!("廃止項目 {path} を削除", path = r.path));
         }
     }
     if let Some(Value::Table(providers)) = t.get_mut("providers") {
@@ -313,11 +313,11 @@ pub fn migrate(t: &mut toml::Table, rules: &Rules) -> Vec<String> {
                     });
                 if let Some(a) = alias {
                     done.push(tr!(
-                        "{} {} → {}（{task}）",
-                        "{} {} → {} ({task})",
-                        alias_prefix(),
-                        a.old,
-                        a.new
+                        "{prefix} {old} → {new}（{task}）",
+                        prefix = alias_prefix(),
+                        old = a.old,
+                        new = a.new,
+                        task = task
                     ));
                     *item = Value::String(a.new.to_string());
                     changed = true;
@@ -335,11 +335,7 @@ pub fn migrate(t: &mut toml::Table, rules: &Rules) -> Vec<String> {
         if let Some(Value::Table(configs)) = providers.get_mut("configs") {
             for a in rules.provider_aliases {
                 if configs.remove(a.old).is_some() {
-                    done.push(tr!(
-                        "旧エンジン設定 {} を削除",
-                        "Removed old engine settings {}",
-                        a.old
-                    ));
+                    done.push(tr!("旧エンジン設定 {old} を削除", old = a.old));
                 }
             }
         }
@@ -447,14 +443,14 @@ impl<'a> Walker<'a> {
             return;
         }
         let problem = tr!(
-            "不正な選択肢「{got}」（候補：{}）",
-            "Invalid choice \"{got}\" (options: {})",
-            choices.join(crate::i18n::pick("／", " / "))
+            "不正な選択肢「{got}」（候補：{choices}）",
+            got = got,
+            choices = choices.join(crate::i18n::text("／"))
         );
         let fix = match choices.iter().find(|c| c.eq_ignore_ascii_case(got)) {
             Some(c) => (
                 Fix::Set(path.clone(), Value::String(c.clone())),
-                tr!("「{c}」に補正", "Change to \"{c}\""),
+                tr!("「{c}」に補正", c = c),
             ),
             None => drop_fix(path, v),
         };
@@ -464,16 +460,15 @@ impl<'a> Walker<'a> {
     fn type_issue(&mut self, v: &Value, expected: &[String], path: &Path) {
         let want: Vec<&str> = expected.iter().map(|t| type_label(t)).collect();
         let problem = tr!(
-            "型不一致（期待：{}、実際：{}）",
-            "Wrong type (expected {}, found {})",
-            want.join(crate::i18n::pick("／", " / ")),
-            type_label(v.type_str())
+            "型不一致（期待：{want}、実際：{got}）",
+            want = want.join(crate::i18n::text("／")),
+            got = type_label(v.type_str())
         );
         // A whole float where an integer belongs: keep the number.
         let fix = match v {
             Value::Float(f) if f.fract() == 0.0 && expected.iter().any(|t| t == "integer") => (
                 Fix::Set(path.clone(), Value::Integer(*f as i64)),
-                tr!("整数 {} に補正", "Change to integer {}", *f as i64),
+                tr!("整数 {value} に補正", value = *f as i64),
             ),
             _ => drop_fix(path, v),
         };
@@ -487,11 +482,10 @@ impl<'a> Walker<'a> {
             return;
         }
         let problem = tr!(
-            "範囲外 {}（許容：{}〜{}）",
-            "Out of range: {} (allowed: {} to {})",
-            num(x),
-            min.map(num).unwrap_or_default(),
-            max.map(num).unwrap_or_default()
+            "範囲外 {value}（許容：{min}〜{max}）",
+            value = num(x),
+            min = min.map(num).unwrap_or_default(),
+            max = max.map(num).unwrap_or_default()
         );
         let value = if integer {
             Value::Integer(clamped as i64)
@@ -500,7 +494,7 @@ impl<'a> Walker<'a> {
         };
         let fix = (
             Fix::Set(path.clone(), value),
-            tr!("{} に補正", "Change to {}", num(clamped)),
+            tr!("{value} に補正", value = num(clamped)),
         );
         self.issues.push(Issue::new(path, problem, Some(fix)));
     }
@@ -525,18 +519,12 @@ impl<'a> Walker<'a> {
                 let mut to = path.clone();
                 to.pop();
                 to.push(key(&c));
-                (
-                    Fix::Rename(path.clone(), to),
-                    tr!("「{c}」に改名", "Rename to \"{c}\""),
-                )
+                (Fix::Rename(path.clone(), to), tr!("「{c}」に改名", c = c))
             }
-            None => (Fix::Remove(path.clone()), tr!("削除", "Delete")),
+            None => (Fix::Remove(path.clone()), tr!("削除")),
         };
-        self.issues.push(Issue::new(
-            path,
-            tr!("未知の項目", "Unknown item"),
-            Some(fix),
-        ));
+        self.issues
+            .push(Issue::new(path, tr!("未知の項目"), Some(fix)));
     }
 }
 
@@ -545,7 +533,7 @@ fn drop_fix(path: &Path, v: &Value) -> (Fix, String) {
     match path.split_last() {
         Some((Seg::Index(_), parent)) => (
             Fix::RemoveElement(parent.to_vec(), v.clone()),
-            tr!("配列から除外", "Remove from the list"),
+            tr!("配列から除外"),
         ),
         _ => (Fix::Remove(path.clone()), restore_default()),
     }
@@ -601,16 +589,16 @@ fn type_matches(v: &Value, ty: &str) -> bool {
 }
 
 fn type_label(t: &str) -> &'static str {
-    use crate::i18n::pick;
+    use crate::i18n::text;
     match t {
-        "string" => pick("文字列", "string"),
-        "integer" => pick("整数", "integer"),
-        "number" | "float" => pick("数値", "number"),
-        "boolean" => pick("真偽値", "boolean"),
-        "array" => pick("配列", "array"),
-        "object" | "table" => pick("表", "table"),
-        "datetime" => pick("日時", "date-time"),
-        _ => pick("不明", "unknown"),
+        "string" => text("文字列"),
+        "integer" => text("整数"),
+        "number" | "float" => text("数値"),
+        "boolean" => text("真偽値"),
+        "array" => text("配列"),
+        "object" | "table" => text("表"),
+        "datetime" => text("日時"),
+        _ => text("不明#type"),
     }
 }
 
@@ -660,41 +648,21 @@ fn edit_distance(a: &str, b: &str) -> usize {
 
 /// Task chains with their capability and label (Japanese, English).
 pub const TASKS: [(&str, Capability, Text); 8] = [
-    (
-        "translate",
-        Capability::Translate,
-        Text::new("翻訳", "translation"),
-    ),
-    ("ocr", Capability::Ocr, Text::new("OCR", "OCR")),
-    (
-        "asr",
-        Capability::Asr,
-        Text::new("音声認識", "speech recognition"),
-    ),
-    (
-        "explain",
-        Capability::Explain,
-        Text::new("解説", "explanation"),
-    ),
-    (
-        "summarize",
-        Capability::Summarize,
-        Text::new("要約", "summarization"),
-    ),
+    ("translate", Capability::Translate, Text::new("翻訳#task")),
+    ("ocr", Capability::Ocr, Text::new("OCR")),
+    ("asr", Capability::Asr, Text::new("音声認識#task")),
+    ("explain", Capability::Explain, Text::new("解説")),
+    ("summarize", Capability::Summarize, Text::new("要約#task")),
     (
         "reverse_image_search",
         Capability::ReverseImageSearch,
-        Text::new("画像検索", "image search"),
+        Text::new("画像検索"),
     ),
-    (
-        "qr_handler",
-        Capability::QrHandler,
-        Text::new("QR 処理", "QR handling"),
-    ),
+    ("qr_handler", Capability::QrHandler, Text::new("QR 処理")),
     (
         "intent_classifier",
         Capability::IntentClassifier,
-        Text::new("意図判定", "intent detection"),
+        Text::new("意図判定"),
     ),
 ];
 
@@ -727,9 +695,8 @@ pub fn check_providers(
             String::new()
         } else {
             tr!(
-                "（候補：{}）",
-                " (options: {})",
-                candidates.join(crate::i18n::pick("、", ", "))
+                "（候補：{choices}）",
+                choices = candidates.join(crate::i18n::text("、"))
             )
         };
         let bad: Vec<(usize, &String, String)> = chain
@@ -740,18 +707,16 @@ pub fn check_providers(
                 None => Some((
                     i,
                     id,
-                    tr!(
-                        "未登録のプロバイダー「{id}」{hint}",
-                        "Unregistered provider \"{id}\"{hint}"
-                    ),
+                    tr!("未登録のプロバイダー「{id}」{hint}", id = id, hint = hint),
                 )),
                 Some(caps) if !caps.contains(cap) => Some((
                     i,
                     id,
                     tr!(
-                        "「{id}」は{}非対応{hint}",
-                        "\"{id}\" does not support {}{hint}",
-                        label.get()
+                        "「{id}」は{task}非対応{hint}",
+                        id = id,
+                        task = label.get(),
+                        hint = hint
                     ),
                 )),
                 Some(_) => None,
@@ -765,7 +730,7 @@ pub fn check_providers(
             } else {
                 (
                     Fix::RemoveElement(chain_path.clone(), Value::String(id.clone())),
-                    tr!("チェーンから除外", "Remove from the chain"),
+                    tr!("チェーンから除外"),
                 )
             };
             let mut path = chain_path.clone();

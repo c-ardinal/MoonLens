@@ -34,31 +34,11 @@ const DEFAULT_TOML: &str = include_str!("default.toml");
 /// First lines of the user file. Kept short; the reference file carries
 /// every key with its default.
 fn user_header() -> &'static str {
-    crate::i18n::pick(
-        "\
-# MoonLens 設定（変更値のみ）。
-# 既定値の一覧：同一フォルダーの config.default.toml
-# 未記載の項目は既定値を使用。保存時に即時反映。
-",
-        "\
-# MoonLens settings (changed values only).
-# Every default: config.default.toml in this folder.
-# Items not listed here use their default. Saved changes apply at once.
-",
-    )
+    crate::i18n::text("# MoonLens 設定（変更値のみ）。\n# 既定値の一覧：同一フォルダーの config.default.toml\n# 未記載の項目は既定値を使用。保存時に即時反映。\n")
 }
 
 fn defaults_header() -> &'static str {
-    crate::i18n::pick(
-        "\
-# MoonLens 既定値（参照用。起動時に再生成、編集は無効）。
-# 変更は config.toml に該当キーのみ記述。
-",
-        "\
-# MoonLens defaults (for reference; rewritten at start-up, edits are ignored).
-# To change a value, put only that key in config.toml.
-",
-    )
+    crate::i18n::text("# MoonLens 既定値（参照用。起動時に再生成、編集は無効）。\n# 変更は config.toml に該当キーのみ記述。\n")
 }
 
 /// Notice id for problems found in config.toml.
@@ -94,21 +74,21 @@ impl SettingsStore {
     /// `appearance.ui_language` straight from config.toml, before the full
     /// load: the loader words its own notices (upgrades, syntax errors),
     /// so the display language has to be known first.
-    pub fn peek_ui_language(app: &AppHandle) -> super::schema::UiLanguage {
-        use super::schema::UiLanguage;
+    pub fn peek_ui_language(app: &AppHandle) -> String {
         app.path()
             .app_config_dir()
             .ok()
             .and_then(|dir| std::fs::read_to_string(dir.join("config.toml")).ok())
             .and_then(|raw| raw.parse::<toml::Table>().ok())
-            .and_then(
-                |t| match t.get("appearance")?.get("ui_language")?.as_str()? {
-                    "ja" => Some(UiLanguage::Ja),
-                    "en" => Some(UiLanguage::En),
-                    _ => None,
-                },
-            )
-            .unwrap_or_default()
+            .and_then(|t| {
+                Some(
+                    t.get("appearance")?
+                        .get("ui_language")?
+                        .as_str()?
+                        .to_string(),
+                )
+            })
+            .unwrap_or_else(super::schema::default_ui_language)
     }
 
     pub fn load_or_default(app: &AppHandle) -> Result<Self> {
@@ -484,19 +464,13 @@ fn report(outcome: &LoadOutcome, backup: Option<&Path>) {
     }
     let saved = backup
         .and_then(|p| p.file_name())
-        .map(|n| {
-            tr!(
-                "元ファイル：{}。",
-                " Original file: {}.",
-                n.to_string_lossy()
-            )
-        })
+        .map(|n| tr!("元ファイル：{file}。", file = n.to_string_lossy()))
         .unwrap_or_default();
     crate::notices::push(
         NOTICE_CONFIG,
         tr!(
             "設定ファイルの構文エラー。既定値を使用。{saved}",
-            "The settings file has a syntax error. Using the defaults.{saved}"
+            saved = saved
         ),
         None,
     );
@@ -540,28 +514,23 @@ fn load_user_file(path: &Path) -> (Settings, LoadOutcome, Option<toml::Table>) {
                 let shown: Vec<&str> = ordered.into_iter().take(2).collect();
                 let more = done.len().saturating_sub(shown.len());
                 let more = if more > 0 {
-                    tr!("他 {more} 件", " and {more} more")
+                    tr!("他 {more} 件", more = more)
                 } else {
                     String::new()
                 };
                 let saved = kept
                     .as_deref()
                     .and_then(|p| p.file_name())
-                    .map(|n| {
-                        tr!(
-                            "元ファイル：{}。",
-                            " Original file: {}.",
-                            n.to_string_lossy()
-                        )
-                    })
+                    .map(|n| tr!("元ファイル：{file}。", file = n.to_string_lossy()))
                     .unwrap_or_default();
                 crate::notices::push(
                     NOTICE_CONFIG_MIGRATED,
                     tr!(
-                        "旧形式の設定を自動更新（{} 件）：{}{more}。{saved}",
-                        "Updated settings from an older format ({}): {}{more}.{saved}",
-                        done.len(),
-                        shown.join(crate::i18n::pick("、", ", "))
+                        "旧形式の設定を自動更新（{done} 件）：{items}{more}。{saved}",
+                        done = done.len(),
+                        items = shown.join(crate::i18n::text("、")),
+                        more = more,
+                        saved = saved
                     ),
                     None,
                 );

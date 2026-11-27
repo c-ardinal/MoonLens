@@ -429,9 +429,9 @@ pub async fn attach_window(
     .await
     .map_err(|e| e.to_string())?
     .ok_or_else(|| {
-        crate::tr!(
-            "attach_target_gone|吸着先のウィンドウが存在しません",
-            "attach_target_gone|The target window no longer exists"
+        crate::user_error::coded(
+            "attach_target_gone",
+            crate::tr!("吸着先のウィンドウが存在しません"),
         )
     })?;
     let header = header_css(&app, &label);

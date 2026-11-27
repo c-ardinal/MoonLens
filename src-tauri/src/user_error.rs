@@ -26,61 +26,42 @@ pub fn coded(code: &str, message: impl AsRef<str>) -> String {
 }
 
 fn timeout_message() -> String {
-    tr!(
-        "制限時間超過。範囲を縮小して再試行",
-        "Timed out. Try a smaller area."
-    )
+    tr!("制限時間超過。範囲を縮小して再試行")
 }
 
 /// The bundled engines need AVX2 and FMA.
 pub fn unsupported_cpu() -> String {
-    tr!(
-        "非対応 CPU（AVX2・FMA 必須）",
-        "Unsupported CPU (AVX2 and FMA required)"
-    )
+    tr!("非対応 CPU（AVX2・FMA 必須）")
 }
 
 /// Message for a failed pipeline task.
 pub fn provider(e: &ProviderError, cap: Capability) -> String {
     match e {
         ProviderError::NotInstalled(what) => match cap {
-            Capability::Ocr => coded(
-                "model_missing",
-                tr!("OCR モデル未導入", "OCR model not downloaded"),
-            ),
+            Capability::Ocr => coded("model_missing", tr!("OCR モデル未導入")),
             Capability::Explain | Capability::Summarize => coded(
                 "model_missing",
-                tr!(
-                    "説明用モデル未導入：{what}",
-                    "Explanation model not downloaded: {what}"
-                ),
+                tr!("説明用モデル未導入：{what}", what = what),
             ),
             Capability::Asr => coded(
                 "model_missing",
-                tr!(
-                    "音声認識モデル未導入：{what}",
-                    "Speech recognition model not downloaded: {what}"
-                ),
+                tr!("音声認識モデル未導入：{what}", what = what),
             ),
             _ => coded(
                 "model_missing",
-                tr!(
-                    "翻訳モデル未導入：{what}",
-                    "Translation model not downloaded: {what}"
-                ),
+                tr!("翻訳モデル未導入：{what}", what = what),
             ),
         },
         // Explain / summarize read the text already on screen: there is
         // no range to shrink, and the UI offers the retry.
         ProviderError::Timeout(_) if matches!(cap, Capability::Explain | Capability::Summarize) => {
-            coded("timeout", tr!("制限時間超過", "Timed out"))
+            coded("timeout", tr!("制限時間超過"))
         }
         ProviderError::Timeout(ms) if *ms > 0 => coded(
             "timeout",
             tr!(
-                "制限時間（{} 秒）超過。範囲を縮小して再試行",
-                "Timed out after {} s. Try a smaller area.",
-                ms / 1000
+                "制限時間（{seconds} 秒）超過。範囲を縮小して再試行",
+                seconds = ms / 1000
             ),
         ),
         ProviderError::Timeout(_) => coded("timeout", timeout_message()),
@@ -93,12 +74,9 @@ pub fn provider(e: &ProviderError, cap: Capability) -> String {
             coded(
                 "timeout",
                 match cap {
-                    Capability::Ocr => tr!(
-                        "文字認識の制限時間超過。範囲を縮小して再試行",
-                        "Text recognition timed out. Try a smaller area."
-                    ),
+                    Capability::Ocr => tr!("文字認識の制限時間超過。範囲を縮小して再試行"),
                     Capability::Explain | Capability::Summarize => {
-                        tr!("制限時間超過", "Timed out")
+                        tr!("制限時間超過")
                     }
                     _ => timeout_message(),
                 },
@@ -117,20 +95,15 @@ pub fn provider(e: &ProviderError, cap: Capability) -> String {
             coded(
                 "error",
                 tr!(
-                    "未対応プロバイダー：{}。設定のプロバイダー再確認が必要",
-                    "Unsupported provider: {}. Check the providers in the settings.",
-                    ids.join(crate::i18n::pick("、", ", "))
+                    "未対応プロバイダー：{ids}。設定のプロバイダー再確認が必要",
+                    ids = ids.join(crate::i18n::text("、"))
                 ),
             )
         }
-        ProviderError::Other(m) if m.starts_with("no provider configured") => coded(
-            "error",
-            tr!(
-                "本機能のプロバイダー未設定",
-                "No provider is set for this feature"
-            ),
-        ),
-        other => coded("error", tr!("処理失敗：{other}", "Failed: {other}")),
+        ProviderError::Other(m) if m.starts_with("no provider configured") => {
+            coded("error", tr!("本機能のプロバイダー未設定"))
+        }
+        other => coded("error", tr!("処理失敗：{other}", other = other)),
     }
 }
 
@@ -143,15 +116,9 @@ pub fn download(e: &anyhow::Error) -> String {
         || lower.contains("os error 112")
         || lower.contains("disk full")
     {
-        coded("disk_full", tr!("残容量不足", "Not enough free space"))
+        coded("disk_full", tr!("残容量不足"))
     } else if lower.contains("integrity") {
-        coded(
-            "integrity",
-            tr!(
-                "整合性検証失敗。再ダウンロードが必要",
-                "Integrity check failed. Download it again."
-            ),
-        )
+        coded("integrity", tr!("整合性検証失敗。再ダウンロードが必要"))
     } else if lower.contains("error sending request")
         || lower.contains("dns")
         || lower.contains("connect")
@@ -161,24 +128,12 @@ pub fn download(e: &anyhow::Error) -> String {
     {
         coded(
             "network",
-            tr!(
-                "ネットワーク接続失敗。接続確認後に再試行（途中から再開）",
-                "Network error. Check the connection and retry (the download resumes)."
-            ),
+            tr!("ネットワーク接続失敗。接続確認後に再試行（途中から再開）"),
         )
     } else if lower.contains("status") && (lower.contains("404") || lower.contains("403")) {
-        coded(
-            "network",
-            tr!(
-                "配布元からの取得失敗：{raw}",
-                "Could not download from the source: {raw}"
-            ),
-        )
+        coded("network", tr!("配布元からの取得失敗：{raw}", raw = raw))
     } else {
-        coded(
-            "error",
-            tr!("ダウンロード失敗：{raw}", "Download failed: {raw}"),
-        )
+        coded("error", tr!("ダウンロード失敗：{raw}", raw = raw))
     }
 }
 

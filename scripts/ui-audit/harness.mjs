@@ -9,9 +9,10 @@ const { chromium } = createRequire(import.meta.url)('playwright');
 export const HERE = dirname(fileURLToPath(import.meta.url));
 export const MOCK = readFileSync(join(HERE, 'mock.json'), 'utf8');
 /** 英語辞書（日本語の原文 → 英訳）。 */
-export const EN = JSON.parse(readFileSync(join(HERE, '../../src/lib/i18n/en.json'), 'utf8'));
+/** 言語ファイル（locales/<言語コード>.json）。原文の言語（ja）は空の辞書。 */
+export const dict = (lang) => (lang === 'ja' ? {} : JSON.parse(readFileSync(join(HERE, `../../locales/${lang}.json`), 'utf8')));
 /** 表示言語の文言：操作対象の名称（ボタン名等）の指定に使用。 */
-export const label = (lang) => (ja) => (lang === 'en' ? (EN[ja] ?? ja) : ja);
+export const label = (lang) => { const d = dict(lang); return (ja) => d[ja] ?? ja; };
 export const TEXT_SIZES = ['xsmall', 'small', 'medium', 'large', 'xlarge'];
 
 /** 引数の解析：`--key value` を取出し、残余を位置引数として返却。 */
@@ -66,10 +67,10 @@ const mockPlamoMissing = (ts, lang) => {
     profile: { os: 'windows', cpu_name: 'Ryzen 7 7840U', cpu_cores: 16, ram_total: 32 * 2 ** 30, gpus: [], disk_free: 400 * 2 ** 30, use_gpu: true },
     accelerator: null,
     recommended: {
-      translate: { model: 'plamo-3-translate-2b', reason: { ja: '本 PC の構成に適合', en: 'Fits this PC' } },
-      assistant: { model: 'gemma-4-e4b', reason: { ja: '本 PC の構成に適合', en: 'Fits this PC' } },
-      ocr: { model: 'ppocr', reason: { ja: '', en: '' } },
-      asr: { model: 'whisper-small', reason: { ja: '', en: '' } }
+      translate: { model: 'plamo-3-translate-2b', reason: '高品質・高速。本 PC で快適動作' },
+      assistant: { model: 'gemma-4-e4b', reason: '高品質・高速。本 PC で快適動作' },
+      ocr: { model: 'ppocr', reason: '' },
+      asr: { model: 'whisper-small', reason: '' }
     }
   };
   return JSON.stringify(m);
@@ -204,7 +205,7 @@ const lensMock = (lang) => JSON.stringify({
   list_lens_windows: [{ id: 'lens-1', target_language: 'ja' }], refresh_lens: true, subtitle_state: false,
   window_attachment: { target: null, dock: null },
   stream_state: { supported: true, active: false, title: null },
-  set_stream: { supported: true, active: true, title: 'MoonLens 配信 - Chapter 1 — The Lighthouse' },
+  set_stream: { supported: true, active: true, title: label(lang)('MoonLens 配信 - {name}').replace('{name}', 'Chapter 1 — The Lighthouse') },
   list_attach_targets: [
     { id: 11, pid: 100, app: 'Game.exe', title: 'Chapter 1 — The Lighthouse', rect: { x: 0, y: 0, w: 800, h: 600 }, overlap: 0.8 },
     { id: 12, pid: 101, app: 'firefox', title: 'MoonLens docs — Mozilla Firefox', rect: { x: 0, y: 0, w: 800, h: 600 }, overlap: 0 }
@@ -285,7 +286,7 @@ export async function walkWindows(browser, url, { only = null, lang = 'ja' } = {
       await pg.evaluate((a) => window.__emit('moonlens://attach', a), { ...ATTACHED, dock: 'inside' });
       await attachMenu('attached');
       await pg.keyboard.press('Escape');
-      await emit({ kind: 'error', message: '音声認識の連続失敗により停止：モデル読込失敗' }); await emit({ kind: 'stopped' }); await m('error');
+      await emit({ kind: 'error', message: label(lang)('音声認識の連続失敗により停止：{detail}').replace('{detail}', 'model load failed') }); await emit({ kind: 'stopped' }); await m('error');
       await pg.context().close();
     }
   }

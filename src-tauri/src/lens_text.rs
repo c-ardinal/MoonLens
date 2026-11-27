@@ -66,7 +66,7 @@ pub fn set_dock(
         if app.get_webview_window(&label).is_none() {
             let url = format!("/lens/text/?id={id}");
             WebviewWindowBuilder::new(app, &label, WebviewUrl::App(url.into()))
-                .title(tr!("MoonLens テキスト", "MoonLens Text"))
+                .title(tr!("MoonLens テキスト"))
                 .inner_size(WIDTH_CSS, HEIGHT_CSS)
                 .min_inner_size(MIN_WIDTH_CSS, MIN_HEIGHT_CSS)
                 .decorations(false)

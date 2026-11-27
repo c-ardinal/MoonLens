@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { locale, onLocaleChange, resolveLocale, setLocale, t, textEm, textOf } from './index';
+import { LOCALES, locale, onLocaleChange, resolveLocale, setLocale, t, textEm } from './index';
 
 afterEach(() => setLocale('ja'));
 
@@ -14,6 +14,10 @@ describe('resolveLocale', () => {
     expect(resolveLocale('auto', 'en-US')).toBe('en');
     expect(resolveLocale('auto', 'zh-CN')).toBe('en');
     expect(resolveLocale(undefined, 'fr')).toBe('en');
+  });
+  it('言語ファイルの無い言語コードは auto と同一', () => {
+    expect(resolveLocale('xx', 'ja-JP')).toBe('ja');
+    expect(resolveLocale('xx', 'en-US')).toBe('en');
   });
 });
 
@@ -63,12 +67,9 @@ describe('textEm', () => {
   });
 });
 
-describe('textOf', () => {
-  it('picks the display language of backend texts at render time', () => {
-    const note = { ja: '推奨', en: 'Recommended' };
-    expect(textOf(note)).toBe('推奨');
-    setLocale('en');
-    expect(textOf(note)).toBe('Recommended');
-    expect(textOf('保存')).toBe(t('保存'));
+describe('LOCALES', () => {
+  it('原文の言語と、locales/ の全言語ファイルを列挙（言語名は各ファイルの @language）', () => {
+    expect(LOCALES[0]).toEqual({ code: 'ja', name: '日本語' });
+    expect(LOCALES).toContainEqual({ code: 'en', name: 'English' });
   });
 });

@@ -63,8 +63,10 @@ pub struct Appearance {
     /// text/image translation, extensions). Home and page titles keep
     /// their size; window translation keeps the source layout.
     pub text_size: TextSize,
-    /// Display language of every window, the tray menu and messages.
-    pub ui_language: UiLanguage,
+    /// Display language of every window, the tray menu and messages:
+    /// `auto` (the OS display language when `locales/` has it, otherwise
+    /// English), `ja`, or the code of a file in `locales/`.
+    pub ui_language: String,
     pub font_family_ui: String,
     pub font_family_mono: String,
     pub reduced_motion: bool,
@@ -77,7 +79,7 @@ impl Default for Appearance {
             accent: "#FFB547".into(),
             density: Density::Normal,
             text_size: TextSize::default(),
-            ui_language: UiLanguage::default(),
+            ui_language: default_ui_language(),
             font_family_ui: "Inter Variable".into(),
             font_family_mono: "JetBrains Mono".into(),
             reduced_motion: false,
@@ -85,14 +87,8 @@ impl Default for Appearance {
     }
 }
 
-/// `auto` follows the OS display language (Japanese, otherwise English).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Default)]
-#[serde(rename_all = "lowercase")]
-pub enum UiLanguage {
-    #[default]
-    Auto,
-    Ja,
-    En,
+pub fn default_ui_language() -> String {
+    "auto".into()
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, Default)]

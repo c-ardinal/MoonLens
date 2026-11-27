@@ -5,7 +5,7 @@ import { engineRows } from './engine-status';
 const llmModel = (id: string, label: string, installed: boolean, downloading = false) => ({
   id,
   label,
-  note: { ja: '', en: '' },
+  note: '',
   file: '',
   url: '',
   size: 0,

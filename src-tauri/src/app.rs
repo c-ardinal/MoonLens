@@ -164,10 +164,10 @@ pub fn build() -> Result<()> {
         .setup(|app| {
             let handle = app.handle().clone();
             crate::notices::attach(&handle);
-            crate::i18n::apply(SettingsStore::peek_ui_language(&handle));
+            crate::i18n::apply(&SettingsStore::peek_ui_language(&handle));
             let settings = Arc::new(SettingsStore::load_or_default(&handle)?);
             crate::apply_log_level(settings.snapshot().privacy.log_level);
-            crate::i18n::apply(settings.snapshot().appearance.ui_language);
+            crate::i18n::apply(&settings.snapshot().appearance.ui_language);
             let settings_watcher = Watcher::spawn(settings.clone())?;
             // Wire disk reloads to the parts of the app that need to
             // react (providers + hotkeys). `subscribe` returns a fresh
@@ -182,7 +182,7 @@ pub fn build() -> Result<()> {
             tauri::async_runtime::spawn(async move {
                 while let Ok(snapshot) = reload_rx.recv().await {
                     crate::apply_log_level(snapshot.privacy.log_level);
-                    if crate::i18n::apply(snapshot.appearance.ui_language) {
+                    if crate::i18n::apply(&snapshot.appearance.ui_language) {
                         retitle(&reload_handle);
                     }
                     if snapshot.startup.launch_at_login != launch_at_login {
@@ -310,23 +310,14 @@ pub fn build() -> Result<()> {
 /// Tray menu in the current display language.
 fn tray_menu(app: &AppHandle) -> Result<Menu<tauri::Wry>> {
     let item = |id: &str, text: String| MenuItem::with_id(app, id, text, true, None::<&str>);
-    let open = item("open", tr!("MoonLens 表示", "Show MoonLens"))?;
-    let capture = item("capture", tr!("ウィンドウ翻訳", "Window Translation"))?;
-    let pause = item(
-        "pause",
-        tr!(
-            "ウィンドウ翻訳 一時停止／再開",
-            "Window Translation: pause / resume"
-        ),
-    )?;
-    let subtitle = item(
-        "subtitle",
-        tr!("音声翻訳 開始／停止", "Audio Translation: start / stop"),
-    )?;
-    let plugins = item("plugins", tr!("拡張機能", "Extensions"))?;
-    let history = item("history", tr!("履歴", "History"))?;
+    let open = item("open", tr!("MoonLens 表示"))?;
+    let capture = item("capture", tr!("ウィンドウ翻訳"))?;
+    let pause = item("pause", tr!("ウィンドウ翻訳 一時停止／再開"))?;
+    let subtitle = item("subtitle", tr!("音声翻訳 開始／停止"))?;
+    let plugins = item("plugins", tr!("拡張機能"))?;
+    let history = item("history", tr!("履歴"))?;
     let sep = tauri::menu::PredefinedMenuItem::separator(app)?;
-    let quit = item("quit", tr!("終了", "Quit"))?;
+    let quit = item("quit", tr!("終了"))?;
     Ok(Menu::with_items(
         app,
         &[

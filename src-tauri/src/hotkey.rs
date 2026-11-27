@@ -170,9 +170,8 @@ pub fn register_all(
         Ok(())
     } else {
         let msg = tr!(
-            "ショートカット登録失敗（他アプリと重複、または形式不正）：{}",
-            "Could not register shortcuts (used by another app, or malformed): {}",
-            failed.join(", ")
+            "ショートカット登録失敗（他アプリと重複、または形式不正）：{keys}",
+            keys = failed.join(", ")
         );
         // Also shown on the home screen: at start-up nobody is looking
         // at a log.

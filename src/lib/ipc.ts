@@ -7,7 +7,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
-import type { Bilingual } from './i18n';
 import type { AttachCandidate, AttachDock, Attachment } from './attach';
 import { NO_STREAM, type StreamItem, type StreamState } from './stream';
 
@@ -191,7 +190,8 @@ export const onSettingsChanged = (handler: (s: Settings) => void): Promise<Unlis
 export interface LlmModel {
   id: string;
   label: string;
-  note: Bilingual;
+  /** 日本語の原文（表示時に `t()` で翻訳）。 */
+  note: string;
   file: string;
   url: string;
   size: number;
@@ -247,7 +247,8 @@ export const onLlmProgress = (handler: (p: LlmProgress) => void): Promise<Unlist
 export interface AsrModel {
   id: string;
   label: string;
-  note: Bilingual;
+  /** 日本語の原文（表示時に `t()` で翻訳）。 */
+  note: string;
   file: string;
   url: string;
   size: number;
@@ -502,7 +503,8 @@ export interface SystemProfile {
 
 export interface ModelPick {
   model: string;
-  reason: Bilingual;
+  /** 日本語の原文（表示時に `t()` で翻訳）。 */
+  reason: string;
 }
 
 /** 機能別の推奨モデル（ocr は PP-OCRv5 固定で 'ppocr'）。 */

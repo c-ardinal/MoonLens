@@ -10,7 +10,7 @@ import type {
   Recommendation,
   SystemReport
 } from '$lib/ipc';
-import { t, type Bilingual } from './i18n';
+import { t } from './i18n';
 
 export type Feature = 'translate' | 'ocr' | 'assistant' | 'asr';
 
@@ -23,7 +23,7 @@ export interface Choice {
   installed: boolean;
   /** 中断した取得の既存分（再開時は残りのみ取得）。 */
   partial: number;
-  note: Bilingual | string;
+  note: string;
   /** 取得前に同意が必要なライセンス id（不要なら null）。 */
   consent: string | null;
 }
@@ -37,7 +37,7 @@ export interface FeaturePlan {
   /** ラジオの選択値（常に 1 件）。 */
   selected: string;
   recommended: string;
-  reason: Bilingual | string;
+  reason: string;
   /** 今回の一括取得の対象。 */
   enabled: boolean;
 }
@@ -96,7 +96,7 @@ const pick = <
     size: number;
     installed: boolean;
     partial_bytes: number;
-    note: Bilingual;
+    note: string;
     consent?: string | null;
   }
 >(

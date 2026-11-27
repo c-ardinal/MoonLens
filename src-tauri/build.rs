@@ -19,6 +19,8 @@ fn main() {
         }
     }
 
+    locales();
+
     #[cfg(feature = "local-asr")]
     whisper::build();
 
@@ -66,6 +68,32 @@ fn main() {
     }
     tauri_build::try_build(tauri_build::Attributes::new().windows_attributes(windows))
         .expect("failed to run tauri-build");
+}
+
+/// Embed every `locales/<code>.json` (UI translations, shared with the
+/// frontend) as `LOCALE_FILES`, so adding a language is adding a file.
+fn locales() {
+    let dir = std::path::Path::new(&std::env::var("CARGO_MANIFEST_DIR").unwrap())
+        .join("..")
+        .join("locales");
+    println!("cargo:rerun-if-changed={}", dir.display());
+    let mut files: Vec<_> = std::fs::read_dir(&dir)
+        .expect("read locales/")
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| p.extension().is_some_and(|x| x == "json"))
+        .collect();
+    files.sort();
+    let mut out = String::from("static LOCALE_FILES: &[(&str, &str)] = &[\n");
+    for f in &files {
+        let code = f.file_stem().unwrap().to_string_lossy();
+        out.push_str(&format!(
+            "    ({code:?}, include_str!({:?})),\n",
+            f.display().to_string()
+        ));
+    }
+    out.push_str("];\n");
+    let dest = std::path::Path::new(&std::env::var("OUT_DIR").unwrap()).join("locales.rs");
+    std::fs::write(dest, out).expect("write locales.rs");
 }
 
 /// Compile the vendored whisper.cpp (speech recognition for live

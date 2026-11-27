@@ -320,10 +320,9 @@ pub fn export_file_name(created_at: i64, format: ExportFormat) -> String {
 
 fn file_name_at(at: chrono::NaiveDateTime, format: ExportFormat) -> String {
     crate::tr!(
-        "moonlens-字幕-{}.{}",
-        "moonlens-subtitles-{}.{}",
-        at.format("%Y%m%d-%H%M"),
-        format.extension()
+        "moonlens-字幕-{time}.{ext}",
+        time = at.format("%Y%m%d-%H%M"),
+        ext = format.extension()
     )
 }
 

@@ -87,7 +87,7 @@ pub const WINDOW_PREFIX: &str = "subtitle-";
 
 /// Title of a subtitle window, in the display language.
 pub fn window_title() -> String {
-    tr!("MoonLens 音声翻訳", "MoonLens Audio Translation")
+    tr!("MoonLens 音声翻訳")
 }
 
 /// `label` is a subtitle window.
@@ -208,10 +208,7 @@ impl SubtitleService {
         if chain.is_empty() {
             return Err(crate::user_error::coded(
                 "asr_unavailable",
-                tr!(
-                    "音声認識プロバイダー未設定",
-                    "No speech recognition provider is set"
-                ),
+                tr!("音声認識プロバイダー未設定"),
             ));
         }
         let empty = serde_json::Value::Object(Default::default());
@@ -241,11 +238,7 @@ impl SubtitleService {
                 first_error.get_or_insert_with(|| {
                     crate::user_error::coded(
                         "model_missing",
-                        tr!(
-                            "音声認識モデル未導入：{}",
-                            "Speech recognition model not downloaded: {}",
-                            p.model().label
-                        ),
+                        tr!("音声認識モデル未導入：{model}", model = p.model().label),
                     )
                 });
             } else if id.starts_with("whisper_cpp.") {
@@ -273,9 +266,8 @@ impl SubtitleService {
             crate::user_error::coded(
                 "asr_unavailable",
                 tr!(
-                    "音声認識サーバー未接続：{}",
-                    "Speech recognition server unreachable: {}",
-                    unreachable.join(crate::i18n::pick("、", ", "))
+                    "音声認識サーバー未接続：{servers}",
+                    servers = unreachable.join(crate::i18n::text("、"))
                 ),
             )
         }))
@@ -289,10 +281,7 @@ impl SubtitleService {
         let failed = |e: anyhow::Error| {
             crate::user_error::coded(
                 "error",
-                tr!(
-                    "音声取得の開始失敗：{e:#}",
-                    "Could not start audio capture: {e:#}"
-                ),
+                tr!("音声取得の開始失敗：{e}", e = format!("{:#}", e)),
             )
         };
         let stopped: Vec<(String, AudioSource)> = self
@@ -360,12 +349,7 @@ impl SubtitleService {
     /// Open `source` and start a recognition loop for the window
     /// `label`, replacing its current one.
     fn run(&self, app: &AppHandle, label: &str, source: AudioSource, window: Window) -> Result<()> {
-        let missing = || {
-            anyhow::anyhow!(tr!(
-                "音声翻訳ウィンドウ未検出：{label}",
-                "Audio Translation window not found: {label}"
-            ))
-        };
+        let missing = || anyhow::anyhow!(tr!("音声翻訳ウィンドウ未検出：{label}", label = label));
         if window == Window::Open && !self.sessions.lock().contains_key(label) {
             return Err(missing());
         }
@@ -451,10 +435,7 @@ impl SubtitleService {
             }
             if lost {
                 emit(SubtitleEvent::Error {
-                    message: tr!(
-                        "音源アプリ終了、または音声取得失敗",
-                        "The source app exited, or audio capture failed"
-                    ),
+                    message: tr!("音源アプリ終了、または音声取得失敗"),
                 });
             }
             emit(SubtitleEvent::Stopped);
@@ -563,11 +544,7 @@ impl SubtitleService {
             };
             let (code, message) = failure.split_once('|').unwrap_or(("error", &failure));
             let route = (code == "model_missing").then_some("/settings/#section-model-asr");
-            crate::notices::push(
-                NOTICE,
-                tr!("音声翻訳：{message}", "Audio Translation: {message}"),
-                route,
-            );
+            crate::notices::push(NOTICE, tr!("音声翻訳：{message}", message = message), route);
             crate::app::route_main(&app, route.unwrap_or("/"));
         });
     }
@@ -906,15 +883,9 @@ pub async fn run_loop(
                 let detail = crate::user_error::provider(&e, Capability::Asr);
                 let detail = detail.split_once('|').map_or(detail.as_str(), |(_, m)| m);
                 let message = if gave_up {
-                    tr!(
-                        "音声認識の連続失敗により停止：{detail}",
-                        "Stopped after repeated speech recognition failures: {detail}"
-                    )
+                    tr!("音声認識の連続失敗により停止：{detail}", detail = detail)
                 } else {
-                    tr!(
-                        "音声認識失敗：{detail}",
-                        "Speech recognition failed: {detail}"
-                    )
+                    tr!("音声認識失敗：{detail}", detail = detail)
                 };
                 emit(SubtitleEvent::Error { message });
                 if gave_up {

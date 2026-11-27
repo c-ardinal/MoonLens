@@ -118,16 +118,13 @@ fn title(target: &attach::Target) -> String {
     } else {
         target.title.trim()
     };
-    crate::tr!("MoonLens 配信 - {name}", "MoonLens Stream - {name}")
+    crate::tr!("MoonLens 配信 - {name}", name = name)
 }
 
 /// Open the composite of the window `label` is attached to.
 fn start(app: &AppHandle, streams: &Handle, label: &str) -> Result<(), String> {
     let target = target_of(app, label).ok_or_else(|| {
-        crate::tr!(
-            "stream_needs_attach|吸着先の指定が必要",
-            "stream_needs_attach|Attach to a window first"
-        )
+        crate::user_error::coded("stream_needs_attach", crate::tr!("吸着先の指定が必要"))
     })?;
     if streams.active(target.id) {
         return Ok(());
@@ -138,23 +135,19 @@ fn start(app: &AppHandle, streams: &Handle, label: &str) -> Result<(), String> {
         ended(&app_end, &streams_end, id, serial);
     })
     .map_err(|e| match e {
-        moonlens_stream::Error::Unsupported => {
-            crate::tr!(
-                "stream_unsupported|配信用ウィンドウは当該環境で利用不可",
-                "stream_unsupported|The streaming window is not available in this environment"
-            )
-        }
-        moonlens_stream::Error::TargetGone => {
-            crate::tr!(
-                "attach_target_gone|吸着先のウィンドウが存在しません",
-                "attach_target_gone|The target window no longer exists"
-            )
-        }
+        moonlens_stream::Error::Unsupported => crate::user_error::coded(
+            "stream_unsupported",
+            crate::tr!("配信用ウィンドウは当該環境で利用不可"),
+        ),
+        moonlens_stream::Error::TargetGone => crate::user_error::coded(
+            "attach_target_gone",
+            crate::tr!("吸着先のウィンドウが存在しません"),
+        ),
         moonlens_stream::Error::Os(e) => {
             tracing::warn!("stream composite of window {id}: {e}");
-            crate::tr!(
-                "stream_failed|配信用ウィンドウの生成に失敗：{e}",
-                "stream_failed|Could not create the streaming window: {e}"
+            crate::user_error::coded(
+                "stream_failed",
+                crate::tr!("配信用ウィンドウの生成に失敗：{e}", e = e),
             )
         }
     })?;

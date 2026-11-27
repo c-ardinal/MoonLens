@@ -71,13 +71,14 @@ node scripts/ui-audit/overflow-audit.mjs build --sizes xlarge --shots out/   # �
 
 ## 表示言語の監査
 
-英語表示で全ウィンドウの全状態を巡回し、未翻訳の日本語文言（辞書 `src/lib/i18n/en.json` の原文と一致する本文・
+英語表示で全ウィンドウの全状態を巡回し、未翻訳の日本語文言（言語ファイル `locales/en.json` の原文と一致する本文・
 `title`／`aria-label`／`placeholder`／`alt` 属性）と `<html lang>` の未更新を検出。CI が毎回実行。
 初回表示は日本語の控えから開始するため、表示中の言語切替（再描画）の検査を兼用。
 
 ```sh
 npm run audit:i18n
 node scripts/ui-audit/i18n-audit.mjs build --shots out/   # 各状態の画面も保存
+node scripts/ui-audit/i18n-audit.mjs build --lang en      # 言語の指定（既定：en）
 ```
 
 対象外：利用者・バックエンド由来の文字列（履歴の本文・訳文・モデルの説明）、Canvas 描画（`--shots` の画像で目視確認）。

@@ -88,8 +88,8 @@ jobs:
           npm run lint:copy
 
       # Display language (CLAUDE.md): Japanese is the source text; every
-      # Japanese string needs its English entry in src/lib/i18n/en.json
-      # and must reach the screen through t().
+      # Japanese string (frontend and Rust) needs its entry in every
+      # locales/<code>.json and must reach the screen through t() / tr!.
       - name: i18n lint
         run: |
           node --test scripts/i18n-lint.test.mjs
