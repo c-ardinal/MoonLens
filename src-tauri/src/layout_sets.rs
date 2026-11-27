@@ -378,6 +378,36 @@ struct Restored {
     layout: WindowLayout,
     /// The window it was attached to when restored.
     target: Option<u64>,
+    /// Seen off that window while the window was still there, at the
+    /// last poll.
+    loose: bool,
+}
+
+/// What becomes of the attachment of a window opened from a set.
+#[derive(Debug, PartialEq, Eq)]
+enum Tie {
+    /// As it is.
+    Keep,
+    /// The user took the window off its target, or onto another one:
+    /// theirs from now on, it is not attached again.
+    Release,
+    /// Its target is gone, or was not there yet: onto the window the
+    /// application shows now.
+    Reattach,
+}
+
+/// `target`: the window it was attached to when restored; `wants`: its
+/// layout names an application window; `attached`: what it is attached
+/// to now; `present`: the windows on the desktop.
+fn tie(target: Option<u64>, wants: bool, attached: Option<u64>, present: &HashSet<u64>) -> Tie {
+    match (attached, target) {
+        (Some(now), Some(then)) if now == then => Tie::Keep,
+        (Some(_), _) => Tie::Release,
+        (None, Some(then)) if present.contains(&then) => Tie::Release,
+        (None, Some(_)) => Tie::Reattach,
+        (None, None) if wants => Tie::Reattach,
+        (None, None) => Tie::Keep,
+    }
 }
 
 /// The windows a set has open.
@@ -498,6 +528,7 @@ fn snapshot(app: &AppHandle) -> Vec<Restored> {
             Some(Restored {
                 label: lens.id,
                 target: attach.as_ref().and(target),
+                loose: false,
                 layout: WindowLayout {
                     rect,
                     target_language: lens.target_language,
@@ -595,6 +626,7 @@ fn restore(
             label,
             layout: layout.clone(),
             target: attached.map(|t| t.window.id),
+            loose: false,
         });
     }
     let count = opened.len();
@@ -637,10 +669,24 @@ fn reattach(app: &AppHandle, sets: &Handle, windows: &[AppWindow]) {
     let monitors = monitors(app);
     let mut active = sets.active.lock();
     for w in active.values_mut().flat_map(|i| i.windows.iter_mut()) {
-        let lost = w.target.is_some_and(|t| !present.contains(&t));
-        let waiting = w.target.is_none() && w.layout.attach.is_some();
-        if !(lost || waiting) || attachments.attachment(&w.label).target.is_some() {
-            continue;
+        let attached = attachments.attachment(&w.label).target.map(|t| t.id);
+        match tie(w.target, w.layout.attach.is_some(), attached, &present) {
+            Tie::Keep => {
+                w.loose = false;
+                continue;
+            }
+            Tie::Release if !w.loose => {
+                // Once more: a target that just closed may still be in
+                // this poll's window list.
+                w.loose = true;
+                continue;
+            }
+            Tie::Release => {
+                w.target = None;
+                w.layout.attach = None;
+                continue;
+            }
+            Tie::Reattach => w.loose = false,
         }
         let (rect, Some(target)) = placement(&w.layout, windows, &monitors) else {
             continue;
@@ -1213,5 +1259,27 @@ mod tests {
         let ui = r#"{"rect":{"x":0,"y":0,"w":10,"h":10},"read_mode":"ui"}"#;
         let window: WindowLayout = serde_json::from_str(ui).unwrap();
         assert_eq!(window.read_mode, crate::region_watcher::ReadMode::Ui);
+    }
+    #[test]
+    fn a_window_the_user_took_off_its_target_is_not_attached_again() {
+        let present: HashSet<u64> = [1, 2].into();
+        // Still on the window it was restored onto.
+        assert_eq!(tie(Some(1), true, Some(1), &present), Tie::Keep);
+        // Detached while that window is still there: the user's doing.
+        assert_eq!(tie(Some(1), true, None, &present), Tie::Release);
+        // Attached to another window by the user.
+        assert_eq!(tie(Some(1), true, Some(2), &present), Tie::Release);
+        assert_eq!(tie(None, true, Some(2), &present), Tie::Release);
+    }
+
+    #[test]
+    fn a_window_whose_target_went_away_goes_onto_the_next_one() {
+        let present: HashSet<u64> = [2].into();
+        // The launcher window closed.
+        assert_eq!(tie(Some(1), true, None, &present), Tie::Reattach);
+        // Restored before its application showed a window.
+        assert_eq!(tie(None, true, None, &present), Tie::Reattach);
+        // Never attached to anything.
+        assert_eq!(tie(None, false, None, &present), Tie::Keep);
     }
 }
