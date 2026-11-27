@@ -45,6 +45,9 @@ macro_rules! all_commands {
             ipc::read_image_file,
             ipc::install_ocr_models,
             ipc::ocr_models_status,
+            ipc::ocr_scripts_status,
+            ipc::install_ocr_script,
+            ipc::delete_ocr_script,
             ipc::list_llm_models,
             ipc::install_llm_model,
             ipc::cancel_llm_download,
@@ -60,6 +63,7 @@ macro_rules! all_commands {
             ipc::toggle_subtitle,
             ipc::subtitle_state,
             ipc::stop_subtitle,
+            ipc::block_subtitle_phrase,
             ipc::start_subtitle,
             ipc::open_subtitle_window,
             ipc::close_subtitle_window,
@@ -81,16 +85,30 @@ macro_rules! all_commands {
             ipc::set_lens_text_dock,
             ipc::close_lens_window,
             ipc::list_lens_windows,
+            crate::attach::list_attach_targets,
+            crate::attach::attach_window,
+            crate::attach::detach_window,
+            crate::attach::window_attachment,
+            crate::stream::stream_state,
+            crate::stream::set_stream,
+            crate::stream::set_stream_paint,
             ipc::set_lens_insets,
             ipc::set_lens_continuous,
             ipc::refresh_lens,
+            ipc::toggle_lens_pause,
+            ipc::lens_controls,
             ipc::fit_lens,
             ipc::restore_lens,
             ipc::capture_lens_now,
             ipc::list_history,
             ipc::delete_history_entry,
             ipc::restore_history_entry,
+            ipc::get_subtitle_record,
+            ipc::replace_subtitle_lines,
+            ipc::export_subtitle_record,
             ipc::clear_history,
+            ipc::translation_cache_usage,
+            ipc::clear_translation_cache,
             ipc::list_notices,
             ipc::dismiss_notice,
             ipc::list_config_issues,
@@ -154,6 +172,10 @@ pub fn build() -> Result<()> {
             // react (providers + hotkeys). `subscribe` returns a fresh
             // receiver each call so this does not starve any other
             // subscriber.
+            // Before subscribing: a login item the OS switched off turns
+            // the setting off here, and that save needs no reaction.
+            crate::autostart::sync_at_startup(&settings);
+            let mut launch_at_login = settings.snapshot().startup.launch_at_login;
             let reload_handle = handle.clone();
             let mut reload_rx = settings.subscribe();
             tauri::async_runtime::spawn(async move {
@@ -161,6 +183,10 @@ pub fn build() -> Result<()> {
                     crate::apply_log_level(snapshot.privacy.log_level);
                     if crate::i18n::apply(snapshot.appearance.ui_language) {
                         retitle(&reload_handle);
+                    }
+                    if snapshot.startup.launch_at_login != launch_at_login {
+                        launch_at_login = snapshot.startup.launch_at_login;
+                        crate::autostart::sync_on_change(launch_at_login);
                     }
                     // Let every window (overlay, subtitle, lens) apply theme
                     // or font changes, whether saved here or edited on disk.
@@ -214,7 +240,11 @@ pub fn build() -> Result<()> {
                 let pipeline = pipeline.clone();
                 tauri::async_runtime::spawn(async move { pipeline.warm_up().await });
             }
-            let subtitle = Arc::new(SubtitleService::new(settings.clone(), pipeline.clone()));
+            let subtitle = Arc::new(SubtitleService::new(
+                settings.clone(),
+                pipeline.clone(),
+                storage.clone(),
+            ));
             let lenses: LensRegistryHandle = Arc::new(LensRegistry::new());
 
             // A hotkey another app already owns must not stop MoonLens
@@ -233,6 +263,8 @@ pub fn build() -> Result<()> {
                 tracing::warn!("tray unavailable: {e}");
             }
 
+            app.manage(crate::attach::Handle::default());
+            app.manage(crate::stream::Handle::default());
             app.manage(AppState {
                 settings,
                 storage,
@@ -279,6 +311,13 @@ fn tray_menu(app: &AppHandle) -> Result<Menu<tauri::Wry>> {
     let item = |id: &str, text: String| MenuItem::with_id(app, id, text, true, None::<&str>);
     let open = item("open", tr!("MoonLens 表示", "Show MoonLens"))?;
     let capture = item("capture", tr!("ウィンドウ翻訳", "Window Translation"))?;
+    let pause = item(
+        "pause",
+        tr!(
+            "ウィンドウ翻訳 一時停止／再開",
+            "Window Translation: pause / resume"
+        ),
+    )?;
     let subtitle = item(
         "subtitle",
         tr!("音声翻訳 開始／停止", "Audio Translation: start / stop"),
@@ -289,11 +328,12 @@ fn tray_menu(app: &AppHandle) -> Result<Menu<tauri::Wry>> {
     let quit = item("quit", tr!("終了", "Quit"))?;
     Ok(Menu::with_items(
         app,
-        &[&open, &capture, &subtitle, &plugins, &history, &sep, &quit],
+        &[
+            &open, &capture, &pause, &subtitle, &plugins, &history, &sep, &quit,
+        ],
     )?)
 }
 
-/// Title of the audio translation window (also its taskbar entry).
 /// Re-word the tray menu and the audio translation windows' titles after
 /// the display language changed. Window contents follow
 /// `moonlens://settings-changed`; translation windows have no visible
@@ -329,6 +369,10 @@ fn build_tray(app: &AppHandle) -> Result<()> {
         .on_menu_event(move |app, event| match event.id.as_ref() {
             "open" => show_main_window(app),
             "capture" => crate::lens::open_new(app),
+            "pause" => {
+                let state = app.state::<AppState>();
+                crate::lens::toggle_pause(app, &state.lenses);
+            }
             "subtitle" => {
                 let state = app.state::<AppState>();
                 state.subtitle.toggle_checked(app);

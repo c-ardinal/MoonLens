@@ -12,6 +12,7 @@
     Settings as SettingsIcon,
     Mic,
     MicOff,
+    Pause,
     Power
   } from 'lucide-svelte';
   import {
@@ -21,7 +22,8 @@
     openLens,
     startSubtitle,
     stopSubtitle,
-    subtitleState
+    subtitleState,
+    toggleLensPause
   } from '$lib/ipc';
   import { displayAccelerator } from '$lib/hotkey';
   import { errorText } from '$lib/errors';
@@ -66,6 +68,16 @@
       hint: hint('capture_region'),
       icon: Camera,
       run: openWindow
+    },
+    {
+      id: 'window-pause',
+      label: t('ウィンドウ翻訳 一時停止／再開'),
+      hint: hint('toggle_window_pause'),
+      icon: Pause,
+      run: async () => {
+        open = false;
+        await toggleLensPause();
+      }
     },
     {
       id: 'subtitle',

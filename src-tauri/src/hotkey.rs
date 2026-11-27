@@ -28,6 +28,10 @@ pub fn register_all(
     let s = settings.snapshot();
     let shortcut_mgr = app.global_shortcut();
     shortcut_mgr.unregister_all().ok();
+    // A held show-original key loses its binding, and its release with it.
+    if let Some(state) = app.try_state::<AppState>() {
+        crate::lens::cancel_hold(app, &state.lenses);
+    }
     // One bad or duplicate binding must not take every other hotkey down
     // with it: register each one independently and report the failures.
     let mut failed: Vec<String> = Vec::new();
@@ -73,6 +77,34 @@ pub fn register_all(
                 let state = app_o.state::<AppState>();
                 crate::lens::toggle_operate(&app_o, &state.lenses);
             }
+        },
+    );
+
+    // Window translation: pause / resume every window.
+    let app_z = app.clone();
+    bind(
+        shortcut_mgr,
+        &mut failed,
+        s.hotkeys.toggle_window_pause.as_str(),
+        move |_a, _s, e| {
+            if matches!(e.state(), ShortcutState::Pressed) {
+                let state = app_z.state::<AppState>();
+                crate::lens::toggle_pause(&app_z, &state.lenses);
+            }
+        },
+    );
+
+    // Window translation: the original instead of the translations
+    // while the key is held.
+    let app_v = app.clone();
+    bind(
+        shortcut_mgr,
+        &mut failed,
+        s.hotkeys.hold_window_original.as_str(),
+        move |_a, _s, e| {
+            let state = app_v.state::<AppState>();
+            let pressed = matches!(e.state(), ShortcutState::Pressed);
+            crate::lens::hold_original(&app_v, &state.lenses, pressed);
         },
     );
 

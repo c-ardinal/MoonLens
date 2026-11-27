@@ -3,8 +3,9 @@
   import { onDestroy, onMount, tick } from 'svelte';
   import { type UnlistenFn } from '@tauri-apps/api/event';
   import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
-  import { AppWindow, Check, ChevronDown, Eye, EyeOff, Monitor, Plus, RotateCw, X } from 'lucide-svelte';
+  import { AppWindow, Check, ChevronDown, Eye, EyeOff, Magnet, Monitor, Plus, RotateCw, X } from 'lucide-svelte';
   import {
+    blockSubtitlePhrase,
     closeSubtitleWindow,
     getSettings,
     listAudioApps,
@@ -14,11 +15,18 @@
     openSubtitleWindow,
     setSubtitleSource,
     subtitleSession,
+    windowAttachment,
     type AudioApp,
     type AudioSource,
     type Settings
   } from '$lib/ipc';
   import { errorText } from '$lib/errors';
+  import AttachMenu from '$lib/components/AttachMenu.svelte';
+  import { ATTACH_EVENT, DETACHED, targetName, type Attachment } from '$lib/attach';
+  import {
+    SUBTITLE_DOCKS,
+    SourceLinker
+  } from '$lib/subtitle-attach';
   import { languageLabel } from '$lib/lens-overlay';
   import {
     initialView,
@@ -26,6 +34,7 @@
     reduce,
     restore,
     sameSource,
+    settle,
     sourceLabel,
     sourceOptions,
     statusLabel
@@ -35,6 +44,7 @@
   // 音声翻訳ウィンドウ（複数可）。タイトルバーのドラッグで移動、右下隅で寸法変更、
   // × で当該ウィンドウを停止・閉鎖、＋ でウィンドウ追加。音源（PC 全体／アプリ単位）は
   // ウィンドウ単位で選択。字幕は時系列で蓄積し、最新行へ自動スクロール。
+  // 吸着：他アプリのウィンドウへ割当て、移動・サイズ変更へ追従（音源も当該アプリへ連動）。
   // 背景：入力波形と認識閾値。入力の有無・音量の過不足を常時表示。
 
   /** 音源メニュー表示中のアプリ一覧の更新間隔。 */
@@ -64,6 +74,28 @@
   let sourceButton = $state<HTMLElement>();
   const options = $derived(sourceOptions(apps, view));
   const source = $derived(sourceLabel(view));
+
+  // 吸着（他アプリのウィンドウへの割当て）
+  let label = $state('');
+  let attachment = $state<Attachment>(DETACHED);
+  let attachOpen = $state(false);
+  /** 吸着先アプリへの音源連動（音声出力なし・非対応の環境では音源を維持）。 */
+  const linker = new SourceLinker({
+    current: async () => (await subtitleSession())?.source ?? view.source,
+    apps: async () => (await listAudioApps()).apps,
+    set: (source) => setSubtitleSource(source)
+  });
+
+  function applyAttachment(next: Attachment) {
+    const before = attachment.target;
+    attachment = next;
+    if ((next.target?.id ?? null) !== (before?.id ?? null)) linker.follow(next.target);
+  }
+
+  function toggleAttach() {
+    attachOpen = !attachOpen;
+    if (attachOpen) menuOpen = false;
+  }
 
   function applySettings(s: Settings) {
     showOriginal = s?.subtitle?.show_original ?? true;
@@ -177,6 +209,7 @@
   async function toggleMenu() {
     menuOpen = !menuOpen;
     menuError = null;
+    if (menuOpen) attachOpen = false;
     if (!menuOpen) return;
     refreshApps();
     await tick();
@@ -218,15 +251,26 @@
     items[(at + step + items.length) % items.length]?.focus();
   }
 
+  // 反復検出の候補：遮断リストへの追加は利用者の承認時のみ。
+  const candidate = $derived(view.candidates[0]);
+  async function block(phrase: string) {
+    try {
+      await blockSubtitlePhrase(phrase);
+      view = settle(view, phrase, true);
+    } catch (e) {
+      view = { ...view, error: t('遮断リストへの追加失敗：{error}', { error: String(e) }) };
+    }
+  }
+
   function startResize(e: PointerEvent) {
     if (e.button !== 0) return;
     e.preventDefault();
     getCurrentWebviewWindow().startResizeDragging('SouthEast').catch(() => {});
   }
 
-  // 最新の字幕・エラーを表示範囲へ。
+  // 最新の字幕・エラーを表示範囲へ（補正による行の置換時も同様）。
   $effect(() => {
-    void view.lines.length;
+    void view.lines;
     void view.error;
     tick().then(() => scroller?.scrollTo({ top: scroller.scrollHeight }));
   });
@@ -241,22 +285,31 @@
   onMount(async () => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
-      if (menuOpen) closeMenu();
+      if (attachOpen) attachOpen = false;
+      else if (menuOpen) closeMenu();
       else close();
     };
     window.addEventListener('keydown', onKey);
     unlisteners.push(() => window.removeEventListener('keydown', onKey));
+    // 吸着メニュー：メニュー外の押下で閉鎖。
+    const onDown = (e: PointerEvent) => {
+      const el = e.target as HTMLElement | null;
+      if (attachOpen && !el?.closest?.('.am, [data-action="attach"]')) attachOpen = false;
+    };
+    window.addEventListener('pointerdown', onDown, true);
+    unlisteners.push(() => window.removeEventListener('pointerdown', onDown, true));
     getSettings().then(applySettings).catch(() => {});
     const resize = new ResizeObserver(fitCanvas);
     if (canvas) resize.observe(canvas);
     unlisteners.push(() => resize.disconnect());
     unlisteners.push(() => cancelAnimationFrame(raf));
     try {
-      const label = getCurrentWebviewWindow().label;
+      const win = getCurrentWebviewWindow();
+      label = win.label;
       unlisteners.push(await onSettingsChanged(applySettings));
       unlisteners.push(
         await onSubtitle((ev) => {
-          if (ev.id === label) view = reduce(view, ev);
+          if (ev.window === label) view = reduce(view, ev);
         })
       );
       unlisteners.push(
@@ -267,6 +320,8 @@
       );
       // 開始イベントは受信登録より先行：現況を照会。
       if (!view.running) view = restore(view, await subtitleSession());
+      unlisteners.push(await win.listen<Attachment>(ATTACH_EVENT, (e) => applyAttachment(e.payload)));
+      applyAttachment(await windowAttachment(label));
     } catch {
       /* not running inside Tauri */
     }
@@ -296,6 +351,21 @@
       {/if}
       <span class="source-name">{source}</span>
       <ChevronDown class="chevron h-3 w-3 flex-none" />
+    </button>
+    <button
+      class="btn"
+      class:on={!!attachment.target || attachOpen}
+      class:attached={!!attachment.target}
+      data-action="attach"
+      aria-haspopup="dialog"
+      aria-expanded={attachOpen}
+      title={attachment.target
+        ? t('吸着中：{name}', { name: targetName(attachment.target) })
+        : t('他アプリのウィンドウへ吸着')}
+      aria-label={t('吸着')}
+      onclick={toggleAttach}
+    >
+      <Magnet class="h-4 w-4" />
     </button>
     <span
       class="state"
@@ -341,7 +411,7 @@
   {/if}
   <section class="body" bind:this={scroller} aria-live="polite" aria-label={t('字幕')}>
     {#each view.lines as line (line.id)}
-      <div class="line">
+      <div class="line" class:revised={line.revised}>
         {#if showOriginal && line.translated}
           <p class="src" style="font-size: {Math.round(fontSize * 0.55)}px">{line.original}</p>
         {/if}
@@ -366,6 +436,18 @@
       <button class="restart" onclick={restart}><RotateCw class="h-3.5 w-3.5" />{t('再開')}</button>
     {/if}
   </section>
+  {#if candidate}
+    <aside class="cand" aria-label={t('遮断候補')}>
+      <span class="cand-label" title={t('同一文の反復を検出。誤認識の場合は遮断を選択')}>{t('反復検出')}</span>
+      <span class="cand-text" title={candidate}>{candidate}</span>
+      <button class="cand-btn primary" title={t('以後、字幕から除外（設定 → 音声翻訳で解除可能）')} onclick={() => block(candidate)}>
+        {t('遮断')}
+      </button>
+      <button class="cand-btn" title={t('今回の音声翻訳中は再提示なし')} onclick={() => (view = settle(view, candidate, false))}>
+        {t('無視')}
+      </button>
+    </aside>
+  {/if}
 
   {#if menuOpen}
     <!-- 小寸法のウィンドウでも一覧可能とするため、字幕領域全面へ表示 -->
@@ -409,6 +491,17 @@
       {#if menuError}
         <p class="note bad" role="alert">{menuError}</p>
       {/if}
+    </div>
+  {/if}
+  {#if attachOpen}
+    <!-- タイトルバーと同位置の基準枠：メニューは直下へ表示（字幕・波形より前面） -->
+    <div class="attach-pop">
+      <AttachMenu
+        {label}
+        {attachment}
+        docks={SUBTITLE_DOCKS}
+        onclose={() => (attachOpen = false)}
+      />
     </div>
   {/if}
   <div class="grip" role="presentation" title={t('サイズ変更')} onpointerdown={startResize}></div>
@@ -577,6 +670,20 @@
     opacity: 1;
     background: rgba(255, 255, 255, 0.12);
   }
+  .btn.attached {
+    color: var(--ml-accent);
+  }
+  /* 吸着メニューの基準枠：タイトルバーと同位置。枠自体は操作を透過 */
+  .attach-pop {
+    position: absolute;
+    inset: 0 0 auto;
+    height: 32px;
+    z-index: 2;
+    pointer-events: none;
+  }
+  .attach-pop :global(.am) {
+    pointer-events: auto;
+  }
   /* 入力波形（字幕の背景）。字幕表示中は減光し、可読性を優先 */
   .wave {
     position: absolute;
@@ -636,6 +743,23 @@
   .text {
     font-weight: 600;
     line-height: 1.35;
+  }
+  /* 補正による訳文の更新を明示（1 回のみ） */
+  .line.revised .text {
+    animation: revised 0.9s ease-out;
+  }
+  @keyframes revised {
+    from {
+      background: rgba(139, 92, 246, 0.45);
+    }
+    to {
+      background: transparent;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .line.revised .text {
+      animation: none;
+    }
   }
   /* 過去の字幕は減光、最新行を強調 */
   .line:not(:last-of-type) {
@@ -810,6 +934,51 @@
       animation: none;
       transition: none;
     }
+  }
+  /* 遮断候補：字幕の下端へ固定（字幕のスクロール対象外） */
+  .cand {
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    /* 右端：寸法変更の把手を回避 */
+    padding: 4px 16px 4px 12px;
+    font-size: 12px;
+    line-height: 16px;
+    background: rgba(24, 24, 28, 0.92);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12);
+    border-radius: 0 0 8px 8px;
+  }
+  .cand-label {
+    flex: none;
+    opacity: 0.75;
+    white-space: nowrap;
+  }
+  .cand-text {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-weight: 600;
+  }
+  .cand-btn {
+    flex: none;
+    border-radius: 6px;
+    padding: 4px 8px;
+    line-height: 16px;
+    cursor: pointer;
+    white-space: nowrap;
+    background: rgba(255, 255, 255, 0.08);
+  }
+  .cand-btn:hover {
+    background: rgba(255, 255, 255, 0.16);
+  }
+  .cand-btn.primary {
+    background: color-mix(in srgb, var(--ml-accent) 45%, transparent);
+  }
+  .cand-btn.primary:hover {
+    background: color-mix(in srgb, var(--ml-accent) 65%, transparent);
   }
   .grip {
     z-index: 2;

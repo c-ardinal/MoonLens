@@ -5,6 +5,7 @@
   import { ocrChoice, OCR_CHOICE_ID } from '$lib/model-setup';
   import { errorText } from '$lib/errors';
   import ModelChoice from './ModelChoice.svelte';
+  import OcrScripts from './OcrScripts.svelte';
 
   let status = $state<OcrModelsStatus | null>(null);
   let installing = $state(false);
@@ -26,7 +27,7 @@
   });
   onDestroy(() => unlisten?.());
 
-  /** PP-OCRv5 と予備の ocrs を一括取得（片方のみの取得は不可）。 */
+  /** PP-OCR・予備の ocrs・高速実行部品を一括取得（個別取得は不可）。 */
   async function install() {
     installing = true;
     error = null;
@@ -43,7 +44,7 @@
 </script>
 
 {#if status}
-  <!-- 選択肢は PP-OCRv5 のみ（常に選択状態）。未取得時は取得を案内 -->
+  <!-- 選択肢は PP-OCR のみ（常に選択状態）。未取得時は取得を案内 -->
   <ModelChoice
     key="ocr"
     feature={t('文字認識')}
@@ -56,6 +57,7 @@
     onselect={async () => {}}
     oninstall={install}
   />
+  <OcrScripts ready={status.ppocr} />
 {/if}
 {#if error}
   <div class="srow error"><p class="row-label">{error}</p></div>

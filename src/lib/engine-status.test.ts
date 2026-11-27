@@ -29,6 +29,7 @@ const llm = (installed: boolean, downloading = false): LlmModels => ({
 });
 const ocr = (ppocr: boolean, ocrs = false): OcrModelsStatus => ({
   ppocr,
+  current: ppocr,
   ocrs,
   fast: true,
   dir: ''
@@ -41,13 +42,18 @@ describe('engineRows', () => {
     expect(rows.map((r) => [r.id, r.model, r.state])).toEqual([
       ['translate', 'PLaMo 3 Translate 2B', 'ready'],
       ['assistant', 'Gemma 4 E4B', 'missing'],
-      ['ocr', 'PP-OCRv5', 'ready'],
+      ['ocr', 'PP-OCRv6', 'ready'],
       ['asr', '—', 'unset']
     ]);
   });
 
   it('shows a download in progress', () => {
     expect(engineRows(llm(false, true), ocr(true), asr)[0].state).toBe('downloading');
+  });
+
+  it('names the earlier generation while it is the one in use', () => {
+    const row = engineRows(llm(true), { ...ocr(true), current: false }, asr)[2];
+    expect(row).toMatchObject({ model: 'PP-OCRv5', state: 'ready' });
   });
 
   it('falls back to ocrs when PP-OCR is missing', () => {

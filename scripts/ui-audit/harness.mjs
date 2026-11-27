@@ -127,7 +127,7 @@ const imageFile = async (pg) => ({
 /**
  * メインウィンドウの全状態を巡回し、各状態で visit(page, 状態名) を実行。
  * 状態：ホーム・パレット・テキスト翻訳（結果・通知・右クリックメニュー）・画像翻訳（空・結果）・
- * 履歴（通知・確認）・初期設定・設定の全分類。
+ * 履歴（音声翻訳の記録・通知・確認）・初期設定・設定の全分類。
  */
 export async function walkMain(browser, url, { textSize = 'medium', width = 1280, height = 800, lang = 'ja' } = {}, visit) {
   const l = label(lang);
@@ -146,6 +146,7 @@ export async function walkMain(browser, url, { textSize = 'medium', width = 1280
   await reach('image-result', async () => { await pg.locator('input[type=file]').setInputFiles(await imageFile(pg)); await pg.getByText('Phone: 555-0123').first().waitFor({ timeout: 5000 }); await wait(pg, 300); }); await visit(pg, 'image-result');
   await pg.close();
   pg = await open('/history/'); await visit(pg, 'history');
+  await reach('history-subtitle', async () => { await pg.locator('li button').filter({ hasText: l('音声翻訳') }).first().click({ timeout: 2000 }); await pg.getByText(l('音源：{source}').split('{')[0]).first().waitFor({ timeout: 2000 }); await wait(pg, 300); }); await visit(pg, 'history-subtitle');
   await reach('history-toast', async () => { await pg.getByRole('button', { name: l('当該履歴を削除') }).first().click({ timeout: 2000 }); await pg.locator('.toast').first().waitFor({ timeout: 2000 }); }); await visit(pg, 'history-toast');
   await reach('history-confirm', async () => { await pg.getByText(l('全消去')).click({ timeout: 2000 }); await pg.getByRole('dialog').waitFor({ timeout: 2000 }); }); await visit(pg, 'history-confirm');
   await pg.close();
@@ -168,9 +169,17 @@ const BLOCKS = [
   { source: 'The North Wind and the Sun were disputing which was the stronger.', translation: '北風と太陽が、どちらが強いかで言い争っていました。', bbox: [20, 64, 400, 44], same_language: false }
 ];
 const lensMock = (lang) => JSON.stringify({
-  get_settings: { appearance: { ui_language: lang }, subtitle: { target_language: 'ja', show_original: true, font_size_px: 22 }, hotkeys: { toggle_window_operate: 'Ctrl+Shift+O' } },
-  list_lens_windows: [{ id: 'lens-1', target_language: 'ja' }], refresh_lens: true, subtitle_state: false
+  get_settings: { appearance: { ui_language: lang }, subtitle: { target_language: 'ja', show_original: true, font_size_px: 22 }, hotkeys: { toggle_window_operate: 'Ctrl+Shift+O', toggle_window_pause: 'Ctrl+Shift+X' } },
+  list_lens_windows: [{ id: 'lens-1', target_language: 'ja' }], refresh_lens: true, subtitle_state: false,
+  window_attachment: { target: null, dock: null },
+  stream_state: { supported: true, active: false, title: null },
+  set_stream: { supported: true, active: true, title: 'MoonLens 配信 - Chapter 1 — The Lighthouse' },
+  list_attach_targets: [
+    { id: 11, pid: 100, app: 'Game.exe', title: 'Chapter 1 — The Lighthouse', rect: { x: 0, y: 0, w: 800, h: 600 }, overlap: 0.8 },
+    { id: 12, pid: 101, app: 'firefox', title: 'MoonLens docs — Mozilla Firefox', rect: { x: 0, y: 0, w: 800, h: 600 }, overlap: 0 }
+  ]
 });
+const ATTACHED = { target: { id: 11, pid: 100, app: 'Game.exe', title: 'Chapter 1 — The Lighthouse' }, dock: 'cover' };
 /**
  * メインウィンドウ以外（ウィンドウ翻訳・字幕・訳文オーバーレイ）の全状態を巡回し、各状態で visit(page, 状態名) を実行。
  * only：lens／subtitle／overlay の単独指定。lang：表示言語。
@@ -188,8 +197,26 @@ export async function walkWindows(browser, url, { only = null, lang = 'ja' } = {
       await visit(pg, `lens-${w}-idle`);
       await pg.evaluate((blocks) => window.__emit('moonlens://lens-live', { kind: 'blocks', blocks, translating: false, provider: 'PLaMo', via_cloud: false }), BLOCKS);
       await wait(pg, 300); await visit(pg, `lens-${w}`);
+      await pg.evaluate(() => window.__emit('moonlens://lens-pause', true)); await wait(pg, 100); await visit(pg, `lens-${w}-paused`);
+      await pg.evaluate(() => window.__emit('moonlens://lens-pause', false)); await wait(pg, 100);
       // 縦メニューは収納項目が有る幅のみ表示
       if (await pg.locator('.more').count()) { await reach(`lens-${w}-menu`, async () => { await pg.click('.more', { timeout: 2000 }); await pg.locator('.menu').waitFor({ timeout: 2000 }); }); await visit(pg, `lens-${w}-menu`); }
+      // 吸着メニュー：吸着なし（候補一覧）・吸着中（配置・解除）。縦メニューへ収納中の幅は縦メニュー経由
+      const attachMenu = async (state) => {
+        await reach(state, async () => {
+          if (await pg.locator('.am').count()) return;
+          if (await pg.locator('.tb[data-action="attach"]:not(.off)').count()) await pg.click('.tb[data-action="attach"]:not(.off)', { timeout: 2000 });
+          else { if (!(await pg.locator('.menu').count())) await pg.click('.more', { timeout: 2000 }); await pg.click('.mi[data-action="attach"]', { timeout: 2000 }); }
+          await pg.locator('.am .row').first().waitFor({ timeout: 2000 });
+        });
+        await visit(pg, state);
+      };
+      await attachMenu(`lens-${w}-attach`);
+      await pg.evaluate((a) => window.__emit('moonlens://attach', a), ATTACHED);
+      await wait(pg, 200); await attachMenu(`lens-${w}-attached`);
+      // 配信用ウィンドウ：稼働中（切替行・取込対象の表示）
+      await reach(`lens-${w}-stream`, async () => { await pg.click('.am .sw', { timeout: 2000 }); await pg.locator('.am .sw[aria-checked="true"]').waitFor({ timeout: 2000 }); });
+      await visit(pg, `lens-${w}-stream`);
       await pg.context().close();
     }
     for (const placement of ['outside', 'free']) {
@@ -202,18 +229,31 @@ export async function walkWindows(browser, url, { only = null, lang = 'ja' } = {
   async function subtitleWindow() {
     for (const [w, h] of [[900, 190], [480, 160]]) {
       const pg = await win('subtitle', '/subtitle/', w, h);
-      const emit = (p) => pg.evaluate((p) => window.__emit('moonlens://subtitle', p), p);
+      const emit = (p) => pg.evaluate((p) => window.__emit('moonlens://subtitle', { window: 'subtitle', ...p }), p);
       const m = async (n) => { await wait(pg, 200); await visit(pg, `subtitle-${w}-${n}`); };
       await m('idle');
-      await emit({ kind: 'started', device: 'スピーカー (Realtek(R) Audio)' }); await m('started');
+      await emit({ kind: 'started', device: 'スピーカー (Realtek(R) Audio)', source: { kind: 'system' } }); await m('started');
       // 入力レベル：閾値未満 → 音声検出（波形・メーター・状態表記）
       const level = (bins) => pg.evaluate((bins) => window.__emit('moonlens://subtitle-level', { bins, gate_db: -50.3 }), bins);
       await level(Array(40).fill(-64)); await m('low');
       await level(Array.from({ length: 40 }, (_, i) => -34 + 12 * Math.sin(i / 3))); await m('detected');
       await emit({ kind: 'status', phase: 'recognizing' }); await m('recognizing');
       await emit({ kind: 'status', phase: 'translating' });
-      await emit({ kind: 'chunk', original: 'And so, my fellow Americans,', translated: 'そして、同胞であるアメリカ国民の皆さん、' }); await m('chunk');
+      await emit({ kind: 'chunk', id: 1, original: 'And so, my fellow Americans,', translated: 'そして、同胞であるアメリカ国民の皆さん、' }); await m('chunk');
       await pg.mouse.move(w / 2, 20); await m('hover');
+      await emit({ kind: 'candidate', phrase: 'Thank you.' }); await m('candidate');
+      // 吸着メニュー：吸着なし（候補一覧）・吸着中（配置 6 種・解除）
+      const attachMenu = async (n) => {
+        await reach(`subtitle-${w}-${n}`, async () => {
+          if (!(await pg.locator('.am').count())) await pg.click('[data-action="attach"]', { timeout: 2000 });
+          await pg.locator('.am .row').first().waitFor({ timeout: 2000 });
+        });
+        await m(n);
+      };
+      await attachMenu('attach');
+      await pg.evaluate((a) => window.__emit('moonlens://attach', a), { ...ATTACHED, dock: 'inside' });
+      await attachMenu('attached');
+      await pg.keyboard.press('Escape');
       await emit({ kind: 'error', message: '音声認識の連続失敗により停止：モデル読込失敗' }); await emit({ kind: 'stopped' }); await m('error');
       await pg.context().close();
     }

@@ -5,12 +5,13 @@
  * written before those existed use `translate` for every translation, so
  * they count as window translations. One-off (`capture`) and continuous
  * (`lens`, and `live` from before the two were merged) window
- * translations share one tab.
+ * translations share one tab. `subtitle` (a timed record) and the older
+ * `transcript` / `asr` rows share the audio tab.
  */
 import type { HistoryEntry } from './ipc';
 import { t } from './i18n';
 
-export type HistoryFilter = 'all' | 'window' | 'image' | 'text' | 'qr';
+export type HistoryFilter = 'all' | 'window' | 'image' | 'text' | 'qr' | 'audio';
 
 /** 絞込みタブ。label は日本語の原文（表示時は `t()` で翻訳）。 */
 export const HISTORY_FILTERS: { value: HistoryFilter; label: string }[] = [
@@ -18,7 +19,8 @@ export const HISTORY_FILTERS: { value: HistoryFilter; label: string }[] = [
   { value: 'window', label: 'ウィンドウ' },
   { value: 'image', label: '画像' },
   { value: 'text', label: 'テキスト' },
-  { value: 'qr', label: 'QR' }
+  { value: 'qr', label: 'QR' },
+  { value: 'audio', label: '音声' }
 ];
 
 const KIND_LABELS: Record<string, string> = {
@@ -32,6 +34,7 @@ const KIND_LABELS: Record<string, string> = {
   ocr: '文字認識',
   explain: '説明',
   summarize: '要約',
+  subtitle: '音声翻訳',
   transcript: '音声翻訳',
   asr: '音声翻訳'
 };
@@ -49,6 +52,10 @@ export function filterOf(kind: string): Exclude<HistoryFilter, 'all'> | null {
     case 'lens':
     case 'live':
       return 'window';
+    case 'subtitle':
+    case 'transcript':
+    case 'asr':
+      return 'audio';
     case 'image':
     case 'text':
     case 'qr':
@@ -70,7 +77,8 @@ export function countByFilter(entries: HistoryEntry[]): Record<HistoryFilter, nu
     window: 0,
     image: 0,
     text: 0,
-    qr: 0
+    qr: 0,
+    audio: 0
   };
   for (const e of entries) {
     const f = filterOf(e.kind);
@@ -83,4 +91,15 @@ export function countByFilter(entries: HistoryEntry[]): Record<HistoryFilter, nu
 export function nextSelection(visible: HistoryEntry[], selected: number | null): number | null {
   if (selected !== null && visible.some((e) => e.id === selected)) return selected;
   return visible[0]?.id ?? null;
+}
+
+/** 詳細の日時表示（例：2026/11/27 06:02）。`created` は UNIX 秒。 */
+export function dateLabel(created: number): string {
+  return new Date(created * 1000).toLocaleString('ja-JP', {
+    year: 'numeric',
+    month: 'numeric',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit'
+  });
 }

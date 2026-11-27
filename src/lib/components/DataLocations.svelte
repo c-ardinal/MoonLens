@@ -26,7 +26,7 @@
     info
       ? [
           { id: 'models', label: t('モデル'), value: size(info.models_bytes), path: info.models_dir },
-          { id: 'data', label: t('履歴・拡張機能'), value: size(info.data_bytes), path: info.data_dir },
+          { id: 'data', label: t('履歴・キャッシュ・拡張機能'), value: size(info.data_bytes), path: info.data_dir },
           { id: 'config', label: t('設定ファイル'), value: '', path: info.config_dir },
           ...(info.log_dir
             ? [{ id: 'log', label: t('ログ'), value: t('不具合報告時に添付'), path: info.log_dir }]

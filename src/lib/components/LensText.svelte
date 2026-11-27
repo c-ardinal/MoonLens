@@ -47,32 +47,42 @@
     <button class="close" onclick={onclose} title={t('閉じる')}><X class="h-3.5 w-3.5" /></button>
   </header>
   <div class="content">
-    {#if view.explanation?.status === 'pending'}
-      <section class="explain" role="status">{t('説明を生成中…')}</section>
-    {:else if view.explanation?.status === 'done'}
-      <section class="explain">{view.explanation.text}</section>
-    {:else if view.explanation?.status === 'failed'}
-      <section class="explain failed" role="alert">
-        <span>{t('説明の生成に失敗：{error}', { error: view.explanation.message })}</span>
-        <button class="retry" onclick={onexplain}>
-          <RotateCw class="h-3 w-3" />{t('再試行')}
-        </button>
-      </section>
-    {/if}
-    {#if view.blocks.length > 0}
+    {#if view.mode === 'paused'}
+      <p class="none">{t('一時停止中')}</p>
+    {:else if view.mode === 'original'}
       {#each view.blocks as b, i (i)}
-        {#if b.same_language}
-          <p class="para">{b.source}</p>
-        {:else}
-          <p class="para tight">{b.translation ?? t('（翻訳中）')}</p>
-          <p class="para src">{b.source}</p>
-        {/if}
+        <p class="para">{b.source}</p>
+      {:else}
+        <p class="para">{view.source ?? ''}</p>
       {/each}
-    {:else if hasText}
-      <p class="para tight">{view.translation}</p>
-      {#if view.source}<p class="para src">{view.source}</p>{/if}
     {:else}
-      <p class="none">{t('文字なし')}</p>
+      {#if view.explanation?.status === 'pending'}
+        <section class="explain" role="status">{t('説明を生成中…')}</section>
+      {:else if view.explanation?.status === 'done'}
+        <section class="explain">{view.explanation.text}</section>
+      {:else if view.explanation?.status === 'failed'}
+        <section class="explain failed" role="alert">
+          <span>{t('説明の生成に失敗：{error}', { error: view.explanation.message })}</span>
+          <button class="retry" onclick={onexplain}>
+            <RotateCw class="h-3 w-3" />{t('再試行')}
+          </button>
+        </section>
+      {/if}
+      {#if view.blocks.length > 0}
+        {#each view.blocks as b, i (i)}
+          {#if b.same_language}
+            <p class="para">{b.source}</p>
+          {:else}
+            <p class="para tight">{b.translation ?? t('（翻訳中）')}</p>
+            <p class="para src">{b.source}</p>
+          {/if}
+        {/each}
+      {:else if hasText}
+        <p class="para tight">{view.translation}</p>
+        {#if view.source}<p class="para src">{view.source}</p>{/if}
+      {:else}
+        <p class="none">{t('文字なし')}</p>
+      {/if}
     {/if}
   </div>
 </div>
