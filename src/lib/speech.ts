@@ -48,12 +48,12 @@ export function sampleFor(voice: Voice | undefined, language: string): { text: s
   return { text, lang };
 }
 
-/** 読上済みの訳文（照合用の文字列 → 最終表示時刻）。 */
-export type Spoken = Map<string, number>;
+/** 読上済みの訳文（照合用の文字列 → 画面からの消失時刻。表示中は null）。 */
+export type Spoken = Map<string, number | null>;
 
 /**
  * 画面から消失した訳文の記憶期間。期間内の再表示（読取の揺らぎ、スクロールの往復）は
- * 再読上せず、期間経過後の再表示は新規の文として読上。
+ * 再読上せず、期間経過後の再表示は新規の文として読上。表示の継続中は期間に無関係で再読上なし。
  */
 export const FORGET_MS = 10_000;
 
@@ -64,16 +64,25 @@ const key = (text: string): string =>
 /**
  * ウィンドウ翻訳：今回の読取結果のうち未読上の訳文（表示順）。`spoken` を更新。
  * 翻訳待ち・翻訳不要（対象言語と同一）のブロックは対象外。
+ * 消失の検出は呼出し時のため、文字なしの読取結果（空配列）でも呼出しが必要。
  */
 export function unspoken(spoken: Spoken, blocks: LensBlock[], now: number): string[] {
   const fresh: string[] = [];
+  const shown = new Set<string>();
   for (const b of blocks) {
     const text = b.same_language ? '' : (b.translation ?? '').trim();
     const k = key(text);
-    if (!k) continue;
-    if (!spoken.has(k)) fresh.push(text);
-    spoken.set(k, now);
+    if (!k || shown.has(k)) continue;
+    shown.add(k);
+    const gone = spoken.get(k);
+    const remembered = spoken.has(k) && (gone == null || now - gone <= FORGET_MS);
+    if (!remembered) fresh.push(text);
+    spoken.set(k, null);
   }
-  for (const [k, seen] of spoken) if (now - seen > FORGET_MS) spoken.delete(k);
+  for (const [k, gone] of spoken) {
+    if (shown.has(k)) continue;
+    if (gone == null) spoken.set(k, now);
+    else if (now - gone > FORGET_MS) spoken.delete(k);
+  }
   return fresh;
 }

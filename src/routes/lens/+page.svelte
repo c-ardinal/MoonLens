@@ -196,6 +196,9 @@
     } else if (ev.kind === 'stale') {
       hidden = new Set([...hidden, ...ev.indices]);
     } else if (ev.kind === 'clear') {
+      // The translations are gone from the screen: read again if they
+      // come back later.
+      readAloud([]);
       blocks = [];
       hidden = new Set();
       source = null;

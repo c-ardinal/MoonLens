@@ -37,11 +37,29 @@ describe('unspoken', () => {
     expect(unspoken(spoken, [block('台詞')], 2000)).toEqual([]);
   });
 
-  it('記憶期間の経過後の再表示は再読上', () => {
+  it('消失から記憶期間の経過後の再表示は再読上', () => {
     const spoken: Spoken = new Map();
     unspoken(spoken, [block('台詞')], 0);
-    unspoken(spoken, [], FORGET_MS + 1);
-    expect(unspoken(spoken, [block('台詞')], FORGET_MS + 500)).toEqual(['台詞']);
+    unspoken(spoken, [], 1000);
+    expect(unspoken(spoken, [block('台詞')], 1000 + FORGET_MS + 1)).toEqual(['台詞']);
+  });
+
+  it('読取結果の通知が長時間途絶しても、表示の継続中は再読上せず', () => {
+    const spoken: Spoken = new Map();
+    unspoken(spoken, [block('常設の見出し')], 0);
+    expect(unspoken(spoken, [block('常設の見出し'), block('新規')], FORGET_MS * 5)).toEqual(['新規']);
+  });
+
+  it('同一文の複数ブロックは 1 回のみ', () => {
+    expect(unspoken(new Map(), [block('はい'), block('はい')], 0)).toEqual(['はい']);
+  });
+
+  it('消失済みの記憶は期間経過後に破棄', () => {
+    const spoken: Spoken = new Map();
+    unspoken(spoken, [block('台詞')], 0);
+    unspoken(spoken, [], 1000);
+    unspoken(spoken, [], 1000 + FORGET_MS + 1);
+    expect(spoken.size).toBe(0);
   });
 
   it('表示中の訳文は期間を超過しても記憶を維持', () => {

@@ -119,7 +119,8 @@
   });
 
   function resetResult(): void {
-    if (speaker.speaking) speaker.stop();
+    // 待機中（他ウィンドウの読上中）の依頼も破棄。
+    speaker.stop();
     resultText = '';
     provider = null;
     viaCloud = false;
