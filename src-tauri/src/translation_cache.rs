@@ -89,8 +89,15 @@ pub struct TranslationCache {
 
 #[derive(Default)]
 struct Inner {
-    map: HashMap<Key, (String, CachedTranslation)>,
+    map: HashMap<Key, Held>,
     order: VecDeque<Key>,
+}
+
+struct Held {
+    fingerprint: String,
+    value: CachedTranslation,
+    /// When the disk layer last heard that this entry is in use.
+    touched: i64,
 }
 
 impl TranslationCache {
@@ -111,18 +118,35 @@ impl TranslationCache {
     }
 
     pub fn get(&self, at: Lookup<'_>) -> Option<CachedTranslation> {
+        self.get_at(at, now_seconds())
+    }
+
+    fn get_at(&self, at: Lookup<'_>, now: i64) -> Option<CachedTranslation> {
         let key = at.key();
-        if let Some((fp, value)) = self.inner.lock().map.get(&key) {
-            if fp == at.fingerprint {
-                return Some(value.clone());
+        let disk = self.disk.as_ref().filter(|_| at.persist);
+        let held = {
+            let mut inner = self.inner.lock();
+            match inner.map.get_mut(&key) {
+                Some(held) if held.fingerprint == at.fingerprint => {
+                    let stale = now - held.touched > DiskCache::TOUCH_AFTER_SECS;
+                    if stale && disk.is_some() {
+                        held.touched = now;
+                    }
+                    Some((held.value.clone(), stale))
+                }
+                _ => None,
             }
+        };
+        if let Some((value, stale)) = held {
+            // Text served from memory is in use on disk too: without
+            // this the entries read most would be trimmed first.
+            if let Some(disk) = disk.filter(|_| stale) {
+                disk.touch(&key, at.fingerprint, now);
+            }
+            return Some(value);
         }
-        let hit = self
-            .disk
-            .as_ref()
-            .filter(|_| at.persist)?
-            .get(&key, at.fingerprint)?;
-        self.remember(key, at.fingerprint, hit.clone());
+        let hit = disk?.get(&key, at.fingerprint, now)?;
+        self.remember(key, at.fingerprint, hit.clone(), now);
         Some(hit)
     }
 
@@ -137,16 +161,17 @@ impl TranslationCache {
         if let Some(disk) = self.disk.as_ref().filter(|_| durable && at.persist) {
             disk.put(&key, at.fingerprint, &value);
         }
-        self.remember(key, at.fingerprint, value);
+        self.remember(key, at.fingerprint, value, now_seconds());
     }
 
-    fn remember(&self, key: Key, fingerprint: &str, value: CachedTranslation) {
+    fn remember(&self, key: Key, fingerprint: &str, value: CachedTranslation, now: i64) {
+        let held = Held {
+            fingerprint: fingerprint.to_string(),
+            value,
+            touched: now,
+        };
         let mut inner = self.inner.lock();
-        if inner
-            .map
-            .insert(key.clone(), (fingerprint.to_string(), value))
-            .is_none()
-        {
+        if inner.map.insert(key.clone(), held).is_none() {
             inner.order.push_back(key);
         }
         while inner.order.len() > self.capacity {
@@ -331,9 +356,20 @@ impl DiskCache {
         Ok(())
     }
 
-    fn get(&self, key: &Key, fingerprint: &str) -> Option<CachedTranslation> {
+    /// Note that an entry is in use, so that the trim keeps it.
+    fn touch(&self, key: &Key, fingerprint: &str, now: i64) {
+        if let Err(e) = self.db.lock().execute(
+            "UPDATE entries SET last_used = ?6
+             WHERE scope = ?1 AND target = ?2 AND source = ?3 AND context = ?4
+               AND fingerprint = ?5",
+            params![key.0, key.1, key.2, key.3, fingerprint, now],
+        ) {
+            tracing::warn!("translation cache touch failed: {e}");
+        }
+    }
+
+    fn get(&self, key: &Key, fingerprint: &str, now: i64) -> Option<CachedTranslation> {
         let db = self.db.lock();
-        let now = now_seconds();
         let row = db
             .query_row(
                 "SELECT text, provider, via_cloud, last_used FROM entries
@@ -573,6 +609,24 @@ mod tests {
         );
         // A fallback engine's answer lives for the session only.
         assert!(c.get(at("game", "ja", "Fallback", "f")).is_none());
+    }
+
+    #[test]
+    fn a_translation_read_from_memory_outlives_unused_ones_on_disk() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(DiskCache::FILE_NAME);
+        {
+            let c = TranslationCache::new(10).with_disk(DiskCache::open(&path).unwrap());
+            for source in ["a", "b", "c"] {
+                c.put(at("", "ja", source, "f"), v(source), true);
+            }
+            let later = now_seconds() + 2 * DiskCache::TOUCH_AFTER_SECS;
+            assert!(c.get_at(at("", "ja", "a", "f"), later).is_some());
+        }
+        let disk = DiskCache::open(&path).unwrap().with_max_entries(2);
+        let c = TranslationCache::new(10).with_disk(disk);
+        assert_eq!(c.usage().unwrap().entries, 2);
+        assert!(c.get(at("", "ja", "a", "f")).is_some());
     }
 
     #[test]

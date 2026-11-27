@@ -1331,12 +1331,15 @@ async fn run_watch(
         let target_language = registry
             .target_language(&id)
             .unwrap_or_else(|| settings.snapshot().subtitle.target_language.clone());
+        // Text read from a window of another application is cached
+        // (and counted on the settings page) under that application.
+        let attached_to = app.state::<attach::Handle>().app(&id);
         let env = TickEnv {
             pipeline: &pipeline,
             target_language: &target_language,
             mode: registry.read_mode(&id).unwrap_or_default(),
             history_kind: crate::pipeline::history_kind::LENS,
-            app: None,
+            app: attached_to.as_ref().map(|a| a.key.as_str()),
             emit: &emit,
             geometry_now: &geometry_now,
         };
