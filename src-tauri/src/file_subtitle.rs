@@ -135,13 +135,8 @@ pub async fn run(
                     cut = (resume_ms * RATE as u64 / 1000) as usize;
                 }
             }
-            for (start, end, text) in segments {
-                let screened = stock.screen(settings, &[text.as_str()], Instant::now());
-                let text = screened.text.trim();
-                if text.is_empty() {
-                    continue;
-                }
-                for done in joiner.push(offset_ms + start, offset_ms + end, text) {
+            for (start, end, text) in screen(&mut stock, settings, segments) {
+                for done in joiner.push(offset_ms + start, offset_ms + end, &text) {
                     finish(engine, emit, done, &mut history).await;
                 }
             }
@@ -161,6 +156,44 @@ pub async fn run(
         finish(engine, emit, done, &mut history).await;
     }
     Ok(())
+}
+
+/// Drop the stock phrases from the segments of a window. A sentence is
+/// judged whole, across the segments it was recognized in: speech that
+/// only starts like a stock phrase stays. Segments keep their times;
+/// a sentence that loses a part becomes one segment over its span.
+fn screen(
+    stock: &mut StockFilter,
+    settings: &SubtitleSettings,
+    segments: Vec<(u64, u64, String)>,
+) -> Vec<(u64, u64, String)> {
+    let mut out = Vec::with_capacity(segments.len());
+    let mut rest = segments.as_slice();
+    while !rest.is_empty() {
+        let open = |(_, _, text): &(u64, u64, String)| !ends_sentence(text) && !is_note(text);
+        let len = rest
+            .iter()
+            .position(|s| !open(s))
+            .map_or(rest.len(), |i| i + 1);
+        let (sentence, after) = rest.split_at(len);
+        rest = after;
+        let texts: Vec<&str> = sentence.iter().map(|(_, _, text)| text.as_str()).collect();
+        let screened = stock.screen(settings, &texts, Instant::now());
+        let text = screened.text.trim();
+        if screened.blocked.is_empty() {
+            out.extend(sentence.iter().filter(|s| !s.2.trim().is_empty()).cloned());
+        } else if !text.is_empty() {
+            out.push((sentence[0].0, sentence[len - 1].1, text.to_string()));
+        }
+    }
+    out
+}
+
+/// A segment that is an annotation of the recognizer ("[Music]"), not
+/// part of a sentence.
+fn is_note(text: &str) -> bool {
+    let text = text.trim();
+    text.starts_with(['[', '(', '（', '【', '♪']) && text.ends_with([']', ')', '）', '】', '♪'])
 }
 
 /// Translate a finished cue with the cues before it as context, and
@@ -778,6 +811,40 @@ mod tests {
         result.unwrap();
         assert_eq!(engine.calls.load(Ordering::SeqCst), 0);
         assert_eq!(events.last(), Some(&Event::Progress { done_ms: 40_000 }));
+    }
+
+    #[test]
+    fn stock_phrases_are_judged_by_the_sentence_not_the_segment() {
+        let settings = SubtitleSettings {
+            block_stock_phrases: true,
+            ..Default::default()
+        };
+        let seg = |start: u64, end: u64, text: &str| (start, end, text.to_string());
+        let screened = |segments: Vec<(u64, u64, String)>| {
+            screen(&mut StockFilter::default(), &settings, segments)
+        };
+        // Speech that only starts like a stock phrase keeps its
+        // segments and their times.
+        let speech = vec![
+            seg(0, 1500, "Thanks for watching"),
+            seg(1500, 3000, "the kids yesterday."),
+        ];
+        assert_eq!(screened(speech.clone()), speech);
+        // A stock phrase goes, in one piece or two; its neighbours stay
+        // where they were.
+        assert_eq!(
+            screened(vec![
+                seg(0, 1000, "That is all."),
+                seg(5000, 6000, "Thanks for"),
+                seg(6000, 7000, "watching!"),
+                seg(9000, 10_000, "[Music]"),
+                seg(20_000, 21_000, "Welcome back."),
+            ]),
+            vec![
+                seg(0, 1000, "That is all."),
+                seg(20_000, 21_000, "Welcome back.")
+            ]
+        );
     }
 
     #[tokio::test]
