@@ -345,12 +345,24 @@
       );
       // Pause and show-original hotkeys (all windows at once). A window
       // opened during a pause or a hold starts in that state.
-      unlisteners.push(await win.listen<boolean>('moonlens://lens-pause', (e) => setPaused(e.payload)));
-      unlisteners.push(await win.listen<boolean>('moonlens://lens-peek', (e) => (peek = e.payload)));
+      // An event that arrives before the state asked for here is newer.
+      const seen = { pause: false, peek: false };
+      unlisteners.push(
+        await win.listen<boolean>('moonlens://lens-pause', (e) => {
+          seen.pause = true;
+          setPaused(e.payload);
+        })
+      );
+      unlisteners.push(
+        await win.listen<boolean>('moonlens://lens-peek', (e) => {
+          seen.peek = true;
+          peek = e.payload;
+        })
+      );
       lensControls()
         .then((c) => {
-          if (c?.paused) setPaused(true);
-          if (c?.original) peek = true;
+          if (c?.paused && !seen.pause) setPaused(true);
+          if (c?.original && !seen.peek) peek = true;
         })
         .catch(() => {});
       // Operate-mode hotkey (all windows at once).
