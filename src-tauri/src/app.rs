@@ -81,6 +81,8 @@ macro_rules! all_commands {
             ipc::set_lens_insets,
             ipc::set_lens_continuous,
             ipc::refresh_lens,
+            ipc::fit_lens,
+            ipc::restore_lens,
             ipc::capture_lens_now,
             ipc::list_history,
             ipc::delete_history_entry,

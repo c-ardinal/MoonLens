@@ -505,6 +505,17 @@ export const listLensWindows = () =>
 export const captureLensNow = (id: string) =>
   safeInvoke<CaptureFlowResult>('capture_lens_now', { id });
 
+/** Where a lens window was before `fitLens` (physical screen pixels). */
+export interface LensBefore {
+  rect: { x: number; y: number; w: number; h: number };
+  maximized: boolean;
+}
+/** Shrink a lens window to `band` ([x, y, w, h] inside its observed range, physical px). */
+export const fitLens = (id: string, band: [number, number, number, number]) =>
+  safeInvoke<LensBefore>('fit_lens', { id, band });
+export const restoreLens = (id: string, before: LensBefore) =>
+  safeInvoke<void>('restore_lens', { id, before });
+
 export interface HistoryEntry {
   id: number;
   created_at: number;
