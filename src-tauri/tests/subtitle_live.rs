@@ -331,6 +331,7 @@ async fn sentence_cut_by_chunks_is_translated_again() {
 
     // What the window shows: chunk lines, replaced as revisions arrive.
     let mut lines: Vec<(u64, String, String)> = Vec::new();
+    let mut shown = std::collections::HashMap::new();
     let mut chunks = 0;
     let mut revisions = Vec::new();
     for ev in &events {
@@ -341,6 +342,7 @@ async fn sentence_cut_by_chunks_is_translated_again() {
                 translated,
             } => {
                 chunks += 1;
+                shown.insert(*id, translated.clone());
                 lines.push((*id, original.clone(), translated.clone()));
             }
             SubtitleEvent::Revised(r) => {
@@ -354,6 +356,18 @@ async fn sentence_cut_by_chunks_is_translated_again() {
                         "line {id} replaced but not shown"
                     );
                 }
+                // Not the fallback of a failed translation: the old
+                // fragments side by side.
+                let fragments: Vec<&str> = r
+                    .replaces
+                    .iter()
+                    .filter_map(|id| shown.get(id).map(String::as_str))
+                    .collect();
+                assert_ne!(
+                    r.translated,
+                    fragments.join(" "),
+                    "the sentence was not translated again"
+                );
                 lines.retain(|(id, ..)| !r.replaces.contains(id));
                 lines.insert(at, (r.id, r.original.clone(), r.translated.clone()));
                 if let Some(rest) = &r.rest {
@@ -385,7 +399,16 @@ async fn sentence_cut_by_chunks_is_translated_again() {
         2,
         "words lost or doubled when joining the chunks: {original:?}"
     );
-    assert!(original.contains("ask not what your country can do for you"));
+    // The first sentence, recognized in three chunks, is one line. (Its
+    // wording is the recognizer's: a chunk cut mid-phrase can be misheard,
+    // and translating again does not recognize again.)
+    assert!(
+        lines.iter().any(|(_, o, _)| {
+            let o = o.to_lowercase();
+            o.contains("fellow americans") && o.contains("can do for you")
+        }),
+        "first sentence not joined: {lines:?}"
+    );
     for (_, o, t) in &lines {
         assert!(has_japanese(t), "{o:?} not translated: {t:?}");
     }

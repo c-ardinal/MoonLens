@@ -354,8 +354,8 @@ const HISTORY_MAX: usize = 1500;
 const HISTORY_KEEP: usize = 700;
 
 /// Translates finished sentences again, one at a time and in order,
-/// while the subtitle loop carries on. It runs inside the loop's task
-/// (see [`Reviser::during`]), so stopping the loop stops it too.
+/// between the chunks of the subtitle loop. It runs inside the loop's
+/// task, so stopping the loop stops it too.
 pub struct Reviser {
     translate: Translator,
     queue: VecDeque<Job>,
@@ -428,21 +428,12 @@ impl Reviser {
         }
     }
 
-    /// Wait for `work`, handing each sentence corrected meanwhile to
-    /// `emit`.
-    pub async fn during<T>(
-        &mut self,
-        emit: &(impl Fn(Revision) + Sync),
-        work: impl Future<Output = T>,
-    ) -> T {
-        tokio::pin!(work);
-        loop {
-            tokio::select! {
-                biased;
-                out = &mut work => return out,
-                Some(revision) = self.next() => emit(revision),
-            }
-        }
+    /// Wait for the translation in flight, if any, without starting
+    /// another.
+    pub async fn settle(&mut self) -> Option<Revision> {
+        let done = self.running.as_mut()?.await;
+        self.running = None;
+        Some(self.finish(done))
     }
 
     fn start(&mut self, job: Job) {
@@ -858,27 +849,25 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn work_goes_on_while_the_loop_waits_for_something_else() {
-        let (translate, _) = upper();
+    async fn settling_finishes_the_sentence_under_way_only() {
+        let (translate, calls) = upper();
         let mut r = Reviser::new(translate);
+        assert_eq!(r.settle().await, None);
         r.push(sentence(&[1, 2], 3, "one.", None), en_ja(), true);
-        let got = Mutex::new(Vec::new());
-        let (tx, rx) = tokio::sync::oneshot::channel::<u8>();
-        let emit = |rev: Revision| {
-            got.lock().push(rev.translated);
-        };
-        let out = r
-            .during(&emit, async {
-                // Long enough for the revision to finish first.
-                for _ in 0..50 {
-                    tokio::task::yield_now().await;
-                }
-                drop(tx);
-                rx.await.is_err()
-            })
-            .await;
-        assert!(out);
-        assert_eq!(*got.lock(), vec!["ONE.".to_string()]);
+        r.push(sentence(&[4, 5], 6, "two.", None), en_ja(), true);
+        // Nothing has started yet.
+        assert_eq!(r.settle().await, None);
+        // Start the first, as the loop does while it waits for audio.
+        tokio::select! {
+            biased;
+            _ = r.next() => panic!("finished at once"),
+            _ = std::future::ready(()) => {}
+        }
+        assert_eq!(r.settle().await.unwrap().translated, "ONE.");
+        assert_eq!(r.settle().await, None);
+        assert_eq!(calls.lock().len(), 1);
+        assert!(r.is_busy());
+        assert_eq!(r.next().await.unwrap().translated, "TWO.");
     }
 
     #[tokio::test]

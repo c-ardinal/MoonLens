@@ -426,6 +426,14 @@ pub async fn run_loop(
             continue;
         }
 
+        // One inference at a time: recognition and a sentence translation
+        // running together slow each other down far more than twofold
+        // without a GPU, until the translation runs out of time. A
+        // sentence under way finishes first; the next one starts when
+        // the loop waits for audio again.
+        if let Some(revision) = reviser.settle().await {
+            revised(revision);
+        }
         set_phase(Phase::Recognizing);
         let seconds = to_send.len() as f32 / 16_000.0;
         let started = std::time::Instant::now();
@@ -441,7 +449,7 @@ pub async fn run_loop(
                 },
             },
         );
-        match reviser.during(&revised, recognition).await {
+        match recognition.await {
             Ok(res) => {
                 failures = 0;
                 let original = match &res.output {
@@ -475,7 +483,7 @@ pub async fn run_loop(
                         context: Default::default(),
                     },
                 );
-                let translated = match reviser.during(&revised, translation).await {
+                let translated = match translation.await {
                     Ok(t) => match t.output {
                         TaskOutput::Text(s) => s,
                         _ => String::new(),
