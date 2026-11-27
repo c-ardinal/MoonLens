@@ -148,8 +148,9 @@ jobs:
   # Too heavy for every PR: it runs on PRs into `main` / `release`
   # (develop → main, release PRs), on a PR labelled `lens-e2e` (work on
   # capture, OCR or subtitles that needs the real-desktop check before
-  # merge; the label counts from the next push) and on manual runs. Elsewhere the job is skipped, which a
-  # required check counts as passed.
+  # merge; the label counts from the next push) and on manual runs.
+  # Elsewhere the job is skipped, which a required check counts as
+  # passed.
   lens-e2e:
     name: lens e2e (windows)
     if: >-
@@ -234,11 +235,6 @@ jobs:
       - name: OCR backends read the same text
         working-directory: src-tauri
         run: cargo test --release --locked --lib backends_read_the_same_lines -- --ignored --nocapture
-
-      # TEMPORARY diagnostic (not for merge).
-      - name: Windows OCR timing (diagnostic)
-        working-directory: src-tauri
-        run: cargo test --release --locked --test windows_ocr_diag -- --ignored --nocapture
 
       - name: Screen → OCR → translation
         working-directory: src-tauri
