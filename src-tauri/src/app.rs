@@ -61,6 +61,11 @@ macro_rules! all_commands {
             ipc::subtitle_state,
             ipc::stop_subtitle,
             ipc::start_subtitle,
+            ipc::open_subtitle_window,
+            ipc::close_subtitle_window,
+            ipc::set_subtitle_source,
+            ipc::subtitle_session,
+            ipc::list_audio_apps,
             ipc::get_onboarding_status,
             ipc::get_system_profile,
             ipc::complete_setup,
@@ -70,6 +75,7 @@ macro_rules! all_commands {
             ipc::macos_request_screen_capture,
             ipc::open_lens,
             ipc::set_lens_language,
+            ipc::set_lens_read_mode,
             ipc::set_lens_interactive,
             ipc::set_lens_operate,
             ipc::set_lens_text_dock,
@@ -78,6 +84,8 @@ macro_rules! all_commands {
             ipc::set_lens_insets,
             ipc::set_lens_continuous,
             ipc::refresh_lens,
+            ipc::fit_lens,
+            ipc::restore_lens,
             ipc::capture_lens_now,
             ipc::list_history,
             ipc::delete_history_entry,
@@ -245,15 +253,13 @@ pub fn build() -> Result<()> {
                     let _ = window.hide();
                 }
             }
-            // The subtitle window is kept for the next start: closing it
-            // (its × button goes through `stop_subtitle`; this is Alt+F4)
-            // stops the subtitles and hides it.
-            if window.label() == "subtitle" {
-                if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                    api.prevent_close();
+            // A subtitle window closing by itself (Alt+F4; its × button
+            // goes through `close_subtitle_window`): stop its recognition.
+            if crate::subtitle::is_window(window.label()) {
+                if let tauri::WindowEvent::CloseRequested { .. } = event {
                     let app = window.app_handle();
                     if let Some(state) = app.try_state::<AppState>() {
-                        let _ = state.subtitle.stop(app);
+                        state.subtitle.forget(app, window.label());
                     }
                 }
             }

@@ -1,0 +1,2 @@
+- Live subtitles: each subtitle window now has its own audio source, either everything the PC plays or a single application (Windows 10 version 2004 or later; the application's child processes are included). The source menu in the title bar lists the applications with audio output and shows which are playing.
+- Live subtitles: the ＋ button in the title bar opens another subtitle window, so several applications can be subtitled side by side. A window whose application exits keeps its subtitles and offers to resume.

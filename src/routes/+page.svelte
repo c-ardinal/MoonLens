@@ -89,8 +89,9 @@
       );
       unlisteners.push(
         await onSubtitle((event) => {
-          if (event.kind === 'started') subtitleRunning = true;
-          else if (event.kind === 'stopped') subtitleRunning = false;
+          // 複数ウィンドウ：1 枚の停止は全停止と別、稼働状況を照会。
+          if (event.kind === 'started' || event.kind === 'stopped')
+            subtitleState().then((on) => (subtitleRunning = on));
           else if (event.kind === 'chunk') subtitlePreview = event.translated || event.original;
           else if (event.kind === 'error') lastError = `音声翻訳：${event.message}`;
         })
