@@ -529,11 +529,10 @@ pub struct ModelProgress {
     pub fraction: Option<f32>,
 }
 
-#[tauri::command]
-pub async fn install_ocr_models(app: AppHandle) -> Result<String, String> {
-    let dir = ocr_ocrs::default_models_dir().ok_or("no data dir")?;
+/// Reports download progress as `moonlens://ocr-model-progress`.
+fn ocr_progress(app: &AppHandle) -> Box<ocr_ocrs::ProgressCb> {
     let app_for_cb = app.clone();
-    let cb: Box<ocr_ocrs::ProgressCb> = Box::new(move |filename, downloaded, total| {
+    Box::new(move |filename, downloaded, total| {
         let fraction = total.and_then(|t| {
             if t == 0 {
                 None
@@ -548,8 +547,14 @@ pub async fn install_ocr_models(app: AppHandle) -> Result<String, String> {
             fraction,
         };
         let _ = app_for_cb.emit("moonlens://ocr-model-progress", payload);
-    });
-    // PP-OCRv5 (Japanese / Chinese / English) first: it is the default
+    })
+}
+
+#[tauri::command]
+pub async fn install_ocr_models(app: AppHandle) -> Result<String, String> {
+    let dir = ocr_ocrs::default_models_dir().ok_or("no data dir")?;
+    let cb = ocr_progress(&app);
+    // PP-OCR (Japanese / Chinese / English) first: it is the default
     // OCR engine; ocrs stays as the Latin-only fallback.
     #[cfg(feature = "ocrs-engine")]
     crate::providers::ocr_ppocr::install_models_with_progress(&dir, Some(&*cb))
@@ -570,12 +575,15 @@ pub async fn install_ocr_models(app: AppHandle) -> Result<String, String> {
 /// Whether the OCR models are on disk, for the setup / settings screens.
 #[derive(serde::Serialize)]
 pub struct OcrModelsStatus {
-    /// PP-OCRv5 (Japanese / Chinese / English), the default engine.
+    /// PP-OCR (Japanese / Chinese / English), the default engine.
     pub ppocr: bool,
+    /// The PP-OCR models are the generation this version installs
+    /// (false: an earlier version's, which read less well).
+    pub current: bool,
     /// ocrs (Latin only), the fallback engine.
     pub ocrs: bool,
-    /// The faster runtime for PP-OCRv5 (ONNX Runtime and its models)
-    /// is installed, or this platform has none to install.
+    /// The faster runtime for PP-OCR (ONNX Runtime) is installed, or
+    /// this platform has none to install.
     pub fast: bool,
     pub dir: String,
 }
@@ -585,11 +593,59 @@ pub async fn ocr_models_status() -> Result<OcrModelsStatus, String> {
     let dir = ocr_ocrs::default_models_dir().ok_or("no data dir")?;
     Ok(OcrModelsStatus {
         ppocr: crate::providers::ocr_ppocr::models_installed(&dir),
+        current: crate::providers::ocr_ppocr::models_current(&dir),
         ocrs: ocr_ocrs::model_paths(&dir).is_some(),
         fast: !crate::providers::ocr_onnx::supported()
             || crate::providers::ocr_onnx::installed(&dir),
         dir: dir.display().to_string(),
     })
+}
+
+/// A writing system with a recognition model of its own
+/// (`providers::ocr_scripts`), for the model settings.
+#[derive(serde::Serialize)]
+pub struct OcrScriptStatus {
+    pub id: &'static str,
+    /// Download size in bytes.
+    pub size: u64,
+    pub installed: bool,
+}
+
+#[tauri::command]
+pub async fn ocr_scripts_status() -> Result<Vec<OcrScriptStatus>, String> {
+    use crate::providers::ocr_scripts;
+    let dir = ocr_ocrs::default_models_dir().ok_or("no data dir")?;
+    Ok(ocr_scripts::SCRIPTS
+        .iter()
+        .map(|s| OcrScriptStatus {
+            id: s.id,
+            size: s.bytes,
+            installed: s.model.present(&dir),
+        })
+        .collect())
+}
+
+/// Download the recognition model of one script. Progress arrives as
+/// `moonlens://ocr-model-progress` with the model's file name.
+#[tauri::command]
+pub async fn install_ocr_script(app: AppHandle, id: String) -> Result<(), String> {
+    use crate::providers::ocr_scripts;
+    let dir = ocr_ocrs::default_models_dir().ok_or("no data dir")?;
+    let script = ocr_scripts::by_id(&id).ok_or_else(|| format!("unknown script {id}"))?;
+    let cb = ocr_progress(&app);
+    script
+        .model
+        .install(&dir, Some(&*cb))
+        .await
+        .map_err(|e| user_error::download(&e))
+}
+
+#[tauri::command]
+pub async fn delete_ocr_script(id: String) -> Result<(), String> {
+    use crate::providers::ocr_scripts;
+    let dir = ocr_ocrs::default_models_dir().ok_or("no data dir")?;
+    let script = ocr_scripts::by_id(&id).ok_or_else(|| format!("unknown script {id}"))?;
+    ocr_scripts::remove(&dir, script).map_err(|e| e.to_string())
 }
 
 /// Local LLM models the app can download, with install state, plus the
@@ -1121,6 +1177,21 @@ pub async fn subtitle_state(state: State<'_, AppState>) -> Result<bool, String> 
     Ok(state.subtitle.is_running())
 }
 
+/// Block `phrase` in live subtitles from now on: the user approved a
+/// suggestion in the subtitle window. Persisted to config.toml
+/// (`subtitle.blocked_phrases`); takes effect from the next chunk.
+#[tauri::command]
+pub async fn block_subtitle_phrase(
+    phrase: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let mut next = (*state.settings.snapshot()).clone();
+    if crate::subtitle_filter::add_phrase(&mut next.subtitle.blocked_phrases, &phrase) {
+        state.settings.save(next).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 /// Stop and close every subtitle window.
 #[tauri::command]
 pub async fn stop_subtitle(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
@@ -1532,6 +1603,29 @@ pub async fn set_lens_continuous(
         on,
     );
     Ok(())
+}
+
+/// Pause every lens window, or let them read again. Returns whether
+/// they are paused afterwards (false without a window).
+#[tauri::command]
+pub async fn toggle_lens_pause(app: AppHandle, state: State<'_, AppState>) -> Result<bool, String> {
+    Ok(lens::toggle_pause(&app, &state.lenses))
+}
+
+/// State of the all-window controls, asked by a window as it opens.
+#[derive(Debug, Serialize)]
+pub struct LensControls {
+    pub paused: bool,
+    /// The show-original hotkey is held.
+    pub original: bool,
+}
+
+#[tauri::command]
+pub async fn lens_controls(state: State<'_, AppState>) -> Result<LensControls, String> {
+    Ok(LensControls {
+        paused: state.lenses.paused(),
+        original: state.lenses.original_held(),
+    })
 }
 
 /// Read a continuously reading lens now, even when nothing changed.

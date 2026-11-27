@@ -12,6 +12,7 @@ use serde::Deserialize;
 use crate::settings::SettingsStore;
 use crate::storage::{Storage, SubtitleLine, SubtitleRecord};
 use crate::subtitle::SubtitleEvent;
+use crate::subtitle_revise::Revision;
 
 /// Saves the lines of one run. The record is created at the first chunk,
 /// so a run that recognized nothing leaves no history row.
@@ -28,6 +29,9 @@ struct State {
     id: Option<i64>,
     /// End of the previous line; the next line never starts before it.
     last_end_ms: i64,
+    /// Event id of every saved line, in line order: where a later
+    /// [`SubtitleEvent::Revised`] finds the lines it replaces.
+    line_ids: Vec<u64>,
 }
 
 impl Recorder {
@@ -50,17 +54,66 @@ impl Recorder {
                 };
             }
             SubtitleEvent::Chunk {
+                id,
                 original,
                 translated,
                 at_ms,
                 duration_ms,
-            } => self.record_chunk(original, translated, *at_ms, *duration_ms),
-            SubtitleEvent::Stopped | SubtitleEvent::Status { .. } | SubtitleEvent::Error { .. } => {
-            }
+            } => self.record_chunk(*id, original, translated, *at_ms, *duration_ms),
+            SubtitleEvent::Revised(revision) => self.record_revision(revision),
+            SubtitleEvent::Stopped
+            | SubtitleEvent::Status { .. }
+            | SubtitleEvent::Candidate { .. }
+            | SubtitleEvent::Error { .. } => {}
         }
     }
 
-    fn record_chunk(&self, original: &str, translated: &str, at_ms: u64, duration_ms: u64) {
+    /// A corrected sentence takes the place of the saved lines it was
+    /// recognized in. Lines that were never saved (history was off) are
+    /// not brought in by their correction.
+    fn record_revision(&self, revision: &Revision) {
+        let mut st = self.state.lock();
+        let Some(id) = st.id else { return };
+        let at = |event: &u64| st.line_ids.iter().position(|l| l == event);
+        let found: Vec<usize> = revision.replaces.iter().filter_map(at).collect();
+        let (Some(&first), Some(&last)) = (found.iter().min(), found.iter().max()) else {
+            return;
+        };
+        let rest = revision.rest.as_ref();
+        let lines = [
+            Some((revision.id, &revision.original, &revision.translated)),
+            rest.map(|r| (r.id, &r.original, &r.translated)),
+        ];
+        // An empty sentence is a blocked one: its lines just go.
+        let lines: Vec<_> = lines
+            .into_iter()
+            .flatten()
+            .filter(|(_, original, _)| !original.is_empty())
+            .collect();
+        let texts: Vec<(&str, &str)> = lines
+            .iter()
+            .map(|(_, original, translated)| (original.as_str(), translated.as_str()))
+            .collect();
+        match self
+            .storage
+            .revise_subtitle_lines(id, first as i64, last as i64, &texts)
+        {
+            Ok(()) => {
+                st.line_ids
+                    .splice(first..=last, lines.iter().map(|(event, ..)| *event));
+            }
+            Err(e) => tracing::warn!("subtitle history: revising lines failed: {e:#}"),
+        }
+    }
+
+    fn record_chunk(
+        &self,
+        event: u64,
+        original: &str,
+        translated: &str,
+        at_ms: u64,
+        duration_ms: u64,
+    ) {
         // Checked for every line, like every other history write:
         // turning history off stops the run in progress from saving too.
         let settings = self.settings.snapshot();
@@ -80,7 +133,10 @@ impl Recorder {
             .storage
             .append_subtitle_line(id, start, end, original, translated)
         {
-            Ok(_) => st.last_end_ms = end,
+            Ok(_) => {
+                st.last_end_ms = end;
+                st.line_ids.push(event);
+            }
             Err(e) => tracing::warn!("subtitle history: appending a line failed: {e:#}"),
         }
     }
@@ -246,7 +302,18 @@ mod tests {
     }
 
     fn chunk(original: &str, translated: &str, at_ms: u64, duration_ms: u64) -> SubtitleEvent {
+        numbered(0, original, translated, at_ms, duration_ms)
+    }
+
+    fn numbered(
+        id: u64,
+        original: &str,
+        translated: &str,
+        at_ms: u64,
+        duration_ms: u64,
+    ) -> SubtitleEvent {
         SubtitleEvent::Chunk {
+            id,
             original: original.into(),
             translated: translated.into(),
             at_ms,
@@ -569,5 +636,76 @@ mod tests {
             "moonlens-字幕-20250131-0942.txt"
         );
         assert!(export_file_name(1_700_000_000, ExportFormat::Txt).starts_with("moonlens-字幕-"));
+    }
+    fn revised(
+        replaces: &[u64],
+        id: u64,
+        original: &str,
+        translated: &str,
+        rest: Option<(u64, &str)>,
+    ) -> SubtitleEvent {
+        SubtitleEvent::Revised(Revision {
+            replaces: replaces.to_vec(),
+            id,
+            original: original.into(),
+            translated: translated.into(),
+            rest: rest.map(|(id, original)| crate::subtitle_revise::RevisedRest {
+                id,
+                original: original.into(),
+                translated: String::new(),
+            }),
+        })
+    }
+
+    fn originals(storage: &Storage) -> Vec<String> {
+        let lines = only_record(storage).lines;
+        lines.into_iter().map(|l| l.original).collect()
+    }
+
+    #[test]
+    fn a_corrected_sentence_replaces_the_lines_it_was_heard_in() {
+        let f = fixture();
+        f.recorder.observe(&numbered(1, "I went to", "行った", 2_000, 2_000));
+        f.recorder.observe(&numbered(2, "the shop. Then", "店。それから", 4_000, 2_000));
+        f.recorder.observe(&revised(
+            &[1, 2],
+            3,
+            "I went to the shop.",
+            "店に行った。",
+            Some((4, "Then")),
+        ));
+        let rec = only_record(&f.storage);
+        assert_eq!(rec.lines.len(), 2);
+        assert_eq!(rec.lines[0].translated, "店に行った。");
+        assert_eq!((rec.lines[0].start_ms, rec.lines[1].end_ms), (0, 4_000));
+        assert_eq!(rec.lines[0].end_ms, rec.lines[1].start_ms);
+        assert_eq!(rec.lines[1].original, "Then");
+
+        // The rest and a new chunk become the next sentence.
+        f.recorder.observe(&numbered(5, "I came home.", "帰った", 6_000, 2_000));
+        f.recorder
+            .observe(&revised(&[4, 5], 6, "Then I came home.", "帰宅した。", None));
+        assert_eq!(
+            originals(&f.storage),
+            ["I went to the shop.", "Then I came home."]
+        );
+        let row = f.storage.recent(1).unwrap().remove(0);
+        assert_eq!(row.result_text.as_deref(), Some("店に行った。\n帰宅した。"));
+    }
+
+    #[test]
+    fn a_blocked_sentence_leaves_the_record_and_unsaved_lines_stay_out() {
+        let f = fixture();
+        f.recorder.observe(&numbered(1, "Hello.", "こんにちは。", 2_000, 2_000));
+        f.recorder.observe(&numbered(2, "Thanks for watching.", "", 4_000, 2_000));
+        f.recorder.observe(&revised(&[2], 3, "", "", None));
+        assert_eq!(originals(&f.storage), ["Hello."]);
+        // Not one of the saved lines: nothing changes.
+        f.recorder.observe(&revised(&[9], 10, "Other.", "他。", None));
+        assert_eq!(originals(&f.storage), ["Hello."]);
+        // The next chunk still lands after the remaining line.
+        f.recorder.observe(&numbered(11, "Bye.", "では。", 6_000, 2_000));
+        f.recorder.observe(&revised(&[11], 12, "Goodbye.", "さようなら。", None));
+        assert_eq!(originals(&f.storage), ["Hello.", "Goodbye."]);
     }
 }

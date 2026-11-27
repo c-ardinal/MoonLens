@@ -1,0 +1,1 @@
+- A window placed beside another one (the text view outside a window translation window, an attached audio translation window) no longer overlaps it when neither side of the screen has room for its full size: it shrinks to the side with more room.

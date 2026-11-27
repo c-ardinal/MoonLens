@@ -462,15 +462,16 @@ impl Storage {
     }
 
     /// Replace the lines `first_seq..=last_seq` (consecutive) by one line
-    /// spanning from the first start to the last end, with the given
-    /// texts. Later lines keep their order; seqs are renumbered from 0.
-    pub fn merge_subtitle_lines(
+    /// per entry of `texts` (original, translated). Together the new
+    /// lines span from the first start to the last end, each a share in
+    /// proportion to the length of its original. No entry: the lines
+    /// just go. Later lines keep their order; seqs are renumbered from 0.
+    pub fn revise_subtitle_lines(
         &self,
         id: i64,
         first_seq: i64,
         last_seq: i64,
-        original: &str,
-        translated: &str,
+        texts: &[(&str, &str)],
     ) -> Result<()> {
         let mut db = self.db.lock();
         let tx = db.transaction()?;
@@ -482,15 +483,23 @@ impl Storage {
         let (Some(first), Some(last)) = (inside.first(), inside.last()) else {
             anyhow::bail!("no subtitle lines in {first_seq}..={last_seq}");
         };
-        let merged = SubtitleLine {
-            seq: first.seq,
-            start_ms: first.start_ms,
-            end_ms: last.end_ms,
-            original: original.to_string(),
-            translated: translated.to_string(),
-        };
+        let (start, span) = (first.start_ms, last.end_ms - first.start_ms);
+        let weight = |t: &(&str, &str)| t.0.chars().count().max(1) as i64;
+        let total: i64 = texts.iter().map(weight).sum();
         let mut out = outside;
-        out.push(merged);
+        let mut before = 0;
+        for text in texts {
+            let from = start + span * before / total;
+            before += weight(text);
+            out.push(SubtitleLine {
+                seq: first.seq,
+                start_ms: from,
+                end_ms: start + span * before / total,
+                original: text.0.to_string(),
+                translated: text.1.to_string(),
+            });
+        }
+        // Stable: the new lines stay in their order at the first seq.
         out.sort_by_key(|l| l.seq);
         write_lines(&tx, id, &out)?;
         rebuild_texts(&tx, id)?;
@@ -1067,7 +1076,8 @@ mod tests {
     fn merging_consecutive_lines_spans_them_and_keeps_order() {
         let s = Storage::open_in_memory().unwrap();
         let id = record_with_three_lines(&s);
-        s.merge_subtitle_lines(id, 0, 1, "one two", "一二").unwrap();
+        s.revise_subtitle_lines(id, 0, 1, &[("one two", "一二")])
+            .unwrap();
         let rec = s.subtitle_record(id).unwrap().unwrap();
         assert_eq!(
             rec.lines,
@@ -1090,11 +1100,33 @@ mod tests {
     fn merging_the_middle_or_a_missing_range() {
         let s = Storage::open_in_memory().unwrap();
         let id = record_with_three_lines(&s);
-        assert!(s.merge_subtitle_lines(id, 5, 6, "x", "y").is_err());
-        s.merge_subtitle_lines(id, 1, 1, "TWO", "二").unwrap();
+        assert!(s.revise_subtitle_lines(id, 5, 6, &[("x", "y")]).is_err());
+        s.revise_subtitle_lines(id, 1, 1, &[("TWO", "二")]).unwrap();
         let rec = s.subtitle_record(id).unwrap().unwrap();
         assert_eq!(rec.lines[1], line(1, 1000, 2500, "TWO", "二"));
         assert_eq!(rec.lines.len(), 3);
+    }
+
+    #[test]
+    fn revising_into_two_lines_shares_the_time_and_into_none_removes() {
+        let s = Storage::open_in_memory().unwrap();
+        let id = record_with_three_lines(&s);
+        s.revise_subtitle_lines(id, 0, 1, &[("abcd", "ア"), ("e", "")])
+            .unwrap();
+        let rec = s.subtitle_record(id).unwrap().unwrap();
+        assert_eq!(
+            rec.lines,
+            vec![
+                line(0, 0, 2000, "abcd", "ア"),
+                line(1, 2000, 2500, "e", ""),
+                line(2, 2500, 4000, "three", "三"),
+            ]
+        );
+        s.revise_subtitle_lines(id, 0, 1, &[]).unwrap();
+        let rec = s.subtitle_record(id).unwrap().unwrap();
+        assert_eq!(rec.lines, vec![line(0, 2500, 4000, "three", "三")]);
+        let row = s.entry(id).unwrap().unwrap();
+        assert_eq!(row.source_text.as_deref(), Some("three"));
     }
 
     #[test]

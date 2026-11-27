@@ -1,0 +1,124 @@
+name: asr-bias
+
+# Measurement, not a gate: does text read off the screen, given to the
+# speech recognizer as a vocabulary prompt, lower its error rate?
+# Recognizes FLEURS recordings (ja / en) with the built-in whisper.cpp
+# under several prompt conditions and reports error rates in the job
+# summary (bench/asr-bias/README.md). About two hours per job on a
+# hosted runner (no GPU), so it runs only when the bench itself changes.
+
+on:
+  pull_request:
+    paths:
+      - 'bench/asr-bias/**'
+      - 'src-tauri/examples/asr_bias_bench.rs'
+      - '.github/workflows/asr-bias.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: asr-bias-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  # Release speed for whisper.cpp without the shipping profile's LTO link.
+  CARGO_PROFILE_RELEASE_LTO: 'false'
+  CARGO_PROFILE_RELEASE_CODEGEN_UNITS: '16'
+
+jobs:
+  bench:
+    strategy:
+      fail-fast: false
+      matrix:
+        run:
+          # Whole recordings (5-25 s each), every condition.
+          - name: ja
+            prepare: --lang ja
+            bench: ''
+          - name: en
+            prepare: --lang en
+            bench: ''
+          # Cut into 3 s chunks like the live subtitle loop on a fast
+          # machine; four recognitions per recording, so a subset.
+          - name: chunked
+            prepare: --lang ja en --limit 20 --conditions none mixed distract
+            bench: --chunk-seconds 3
+          # Sounds without speech: does the prompt come back as text?
+          - name: nonspeech
+            prepare: --lang --nonspeech
+            bench: ''
+    name: ${{ matrix.run.name }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL || true
+          df -h /
+
+      # Same list as build.yml: the example links the whole app library.
+      - name: Linux system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf \
+            libxdo-dev libasound2-dev libsoup-3.0-dev libpipewire-0.3-dev \
+            libspa-0.2-dev libgbm-dev libwayland-dev libegl1-mesa-dev \
+            libdrm-dev libxkbcommon-dev libvulkan-dev glslc spirv-headers
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          key: asr-bias
+          save-if: false
+
+      - name: Stub frontend dist
+        run: mkdir -p build
+
+      - name: Build the bench
+        working-directory: src-tauri
+        run: cargo build --release --locked --example asr_bias_bench
+
+      - name: Cache FLEURS downloads and the speech model
+        uses: actions/cache@v4
+        with:
+          path: |
+            asr-bias-work/cache
+            ~/.local/share/io.moonlens.app/models
+          key: asr-bias-data-v1-${{ matrix.run.name }}
+
+      - name: Prepare recordings and jobs
+        run: python3 bench/asr-bias/prepare.py asr-bias-work ${{ matrix.run.prepare }}
+
+      - name: Recognize
+        working-directory: src-tauri
+        run: |
+          for dir in ../asr-bias-work/ja ../asr-bias-work/en ../asr-bias-work/nonspeech; do
+            [ -f "$dir/jobs.jsonl" ] || continue
+            cargo run --release --locked --example asr_bias_bench -- \
+              "$dir/jobs.jsonl" "$dir/results.jsonl" --fetch ${{ matrix.run.bench }}
+          done
+
+      - name: Score
+        run: |
+          dirs=$(ls -d asr-bias-work/ja asr-bias-work/en asr-bias-work/nonspeech 2>/dev/null || true)
+          python3 bench/asr-bias/score.py $dirs --json asr-bias-work/score-${{ matrix.run.name }}.json | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: asr-bias-${{ matrix.run.name }}
+          path: |
+            asr-bias-work/*/manifest.json
+            asr-bias-work/*/results.jsonl
+            asr-bias-work/score-*.json
+          if-no-files-found: warn
