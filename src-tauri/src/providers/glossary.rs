@@ -96,7 +96,9 @@ impl TranslateOptions {
     /// PFML3 `form` value for `target`, when a style is set and the
     /// target is Japanese (the only language PLaMo supports it for).
     pub fn form_for(&self, target: &str) -> Option<&'static str> {
-        if primary(&norm_lang(target)) != "ja" {
+        // Easy Japanese has its own (polite) register; a style on top of
+        // it made the real model mix both.
+        if primary(&norm_lang(target)) != "ja" || crate::lang::is_easy_japanese(target) {
             return None;
         }
         match self.style {
@@ -329,6 +331,18 @@ mod tests {
             .contains("desu/masu"));
         assert_eq!(o.chat_instructions("x", "en"), None);
         assert_eq!(opts(JaStyle::Plain, &[]).form_for("ja"), Some("plain"));
+    }
+
+    #[test]
+    fn easy_japanese_uses_the_japanese_glossary_without_a_style() {
+        let o = opts(JaStyle::Plain, &[("Owner", "担当者", "ja")]);
+        assert_eq!(o.form_for("ja-easy"), None);
+        assert_eq!(
+            o.terms_for("Ask the owner.", "ja-easy"),
+            vec![("Owner".to_string(), "担当者".to_string())]
+        );
+        let chat = o.chat_instructions("Ask the owner.", "ja-easy").unwrap();
+        assert!(chat.contains("担当者") && !chat.contains("desu/masu"));
     }
 
     #[test]

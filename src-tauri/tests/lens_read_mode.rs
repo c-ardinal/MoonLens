@@ -162,6 +162,7 @@ impl Run {
         let frame = Frame {
             image: DynamicImage::ImageRgba8(img),
             geometry: GEOMETRY,
+            visible: None,
         };
         let emit = |_: LiveEvent| {};
         let geometry_now = || Some(GEOMETRY);

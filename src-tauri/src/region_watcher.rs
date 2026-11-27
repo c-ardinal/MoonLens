@@ -5,8 +5,9 @@
 //! its region to a [`Tracker`] at every tick
 //! (`performance.region_watcher_poll_ms`):
 //!
-//! 1. Capture the region and reduce it to a small greyscale thumbnail.
-//!    Unchanged pixels cost nothing more.
+//! 1. Capture the region (a little wider than the window, see
+//!    [`crate::scan_margin`]) and reduce it to a small greyscale
+//!    thumbnail. Unchanged pixels cost nothing more.
 //! 2. When pixels change, translations whose source area changed are
 //!    hidden at once ([`LiveEvent::Stale`]), so an outdated translation
 //!    never sits over new text while OCR runs.
@@ -35,6 +36,7 @@ use crate::{
     capture,
     pipeline::{CaptureFlowResult, LensBlock, Pipeline, TranslationProgress},
     providers::{Capability, TaskOutput},
+    scan_margin::Visible,
     translate_plan, user_error,
 };
 
@@ -126,6 +128,10 @@ pub type Geometry = [i32; 4];
 pub struct Frame {
     pub image: DynamicImage,
     pub geometry: Geometry,
+    /// Where the region lies in `image` when the capture was taken
+    /// wider than the region (see [`crate::scan_margin`]). `None`: the
+    /// image is the region.
+    pub visible: Option<Visible>,
 }
 
 /// What the caller supplies to [`Tracker::tick`].
@@ -303,8 +309,11 @@ impl Tracker {
                 .iter()
                 .enumerate()
                 .filter(|(i, b)| {
+                    // Blocks are placed in the region, thumbnails cover
+                    // the whole capture.
+                    let bbox = frame.visible.map_or(b.bbox, |v| v.in_capture(b.bbox));
                     !self.shown.stale.contains(i)
-                        && base.changed_share(&thumb, Some(b.bbox)) >= BLOCK_CHANGED
+                        && base.changed_share(&thumb, Some(bbox)) >= BLOCK_CHANGED
                 })
                 .map(|(i, _)| i)
                 .collect();
@@ -322,7 +331,7 @@ impl Tracker {
             waiting => {
                 let png = capture::png_bytes(&frame.image).map_err(|e| e.to_string())?;
                 (env.emit)(LiveEvent::Reading { on: true });
-                let analyzed = env.pipeline.analyze_capture(png).await;
+                let analyzed = env.pipeline.analyze_capture_in(png, frame.visible).await;
                 (env.emit)(LiveEvent::Reading { on: false });
                 match analyzed {
                     Ok(bundle) => (bundle, waiting.map(|p| p.key)),

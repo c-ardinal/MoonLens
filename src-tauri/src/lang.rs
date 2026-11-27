@@ -103,6 +103,19 @@ pub fn primary(tag: &str) -> String {
         .to_ascii_lowercase()
 }
 
+/// Tag of easy Japanese (やさしい日本語): Japanese rewritten with common
+/// words and short sentences for learners and children. A way of
+/// writing Japanese rather than a language of its own, so it is only
+/// ever a target. The spelling is PLaMo's own code for it.
+pub const EASY_JAPANESE: &str = "ja-easy";
+
+/// True for [`EASY_JAPANESE`] in any case / separator spelling.
+pub fn is_easy_japanese(tag: &str) -> bool {
+    tag.trim()
+        .replace('_', "-")
+        .eq_ignore_ascii_case(EASY_JAPANESE)
+}
+
 /// True when `text` does not need translating into `target`: it has no
 /// letters at all (numbers, prices, symbols) or is confidently already
 /// written in that language.
@@ -110,6 +123,11 @@ pub fn already_in(text: &str, target: &str) -> bool {
     let c = count(text);
     if c.kana + c.han + c.hangul + c.latin + c.cyrillic + c.other_letters == 0 {
         return true;
+    }
+    // Ordinary Japanese is exactly what an easy-Japanese target rewrites,
+    // kanji-only labels included.
+    if is_easy_japanese(target) {
+        return false;
     }
     let target = primary(target);
     if detect(text) == Some(target.as_str()) {
@@ -183,6 +201,20 @@ mod tests {
         // …but Chinese sentences are not.
         assert!(!already_in("我们今天去公园散步", "ja"));
         assert!(already_in("我们今天去公园散步", "zh-Hans"));
+    }
+
+    #[test]
+    fn easy_japanese_rewrites_japanese() {
+        assert!(is_easy_japanese("ja-easy"));
+        assert!(is_easy_japanese(" JA_Easy "));
+        assert!(!is_easy_japanese("ja"));
+        assert!(!is_easy_japanese("ja-JP"));
+        // Japanese text and kanji labels go to the translator …
+        assert!(!already_in("不要不急の外出は控えてください", "ja-easy"));
+        assert!(!already_in("設定", "ja-easy"));
+        assert!(!already_in("This is a test of the system", "ja-easy"));
+        // … text without letters still does not.
+        assert!(already_in("12:30 ¥1,980", "ja-easy"));
     }
 
     #[test]

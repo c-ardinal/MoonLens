@@ -42,6 +42,7 @@ on:
       # Live subtitles: loopback capture of what the PC plays, speech
       # recognition and translation (lens-e2e job).
       - 'src-tauri/src/audio.rs'
+      - 'src-tauri/src/audio_apps.rs'
       - 'src-tauri/src/subtitle.rs'
       - 'src-tauri/src/providers/asr_*.rs'
       - 'src-tauri/native/**'
@@ -129,8 +130,15 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: src-tauri
-          key: windows
+          # The target dir is D:/t (CARGO_TARGET_DIR above). rust-cache
+          # only caches `<workspace>/target` unless told otherwise, so
+          # without the `->` part it restores ~/.cargo alone and every
+          # dependency is compiled again. The target is joined onto the
+          # workspace path, so it must be relative: the checkout is
+          # D:\a\MoonLens\MoonLens, four levels below D:\ from src-tauri.
+          # The "Cache Paths" list in the step's log must show D:\t.
+          workspaces: src-tauri -> ../../../../t
+          key: windows-t
           # Written on the PR base branches only (see `push` above); PR
           # runs restore it and never save, which keeps the 10 GB repo
           # cache quota from being evicted by every PR.
@@ -207,8 +215,8 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: src-tauri
-          key: windows-e2e
+          workspaces: src-tauri -> ../../../../t
+          key: windows-e2e-t
           save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/release' }}
 
       - name: Allow long paths for git checkouts
@@ -257,6 +265,13 @@ jobs:
         working-directory: src-tauri
         run: cargo test --release --locked --lib backends_read_the_same_lines -- --ignored --nocapture
 
+      # Korean, Cyrillic, Arabic, Thai, Devanagari, Tamil and Telugu
+      # pages are read by the model of their script; a Japanese page
+      # reads the same with all of them installed.
+      - name: OCR reads the additional scripts
+        working-directory: src-tauri
+        run: cargo test --release --locked --lib -- --ignored --nocapture other_scripts_are_read a_line_read_before_its_script_showed_up_is_read_again
+
       - name: Screen → OCR → translation
         working-directory: src-tauri
         run: cargo test --release --locked --test lens_screen_windows_live -- --ignored --nocapture
@@ -276,7 +291,8 @@ jobs:
 
       # Recorded English speech → subtitle loop → recognized text and its
       # Japanese translation; once fed directly, once played on the
-      # output device and captured by the app's loopback capture.
+      # output device and captured by the app's loopback capture, once
+      # per application with two processes playing at the same time.
       - name: Speech → subtitles
         if: always()
         working-directory: src-tauri

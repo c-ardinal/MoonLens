@@ -44,6 +44,9 @@ macro_rules! all_commands {
             ipc::read_image_file,
             ipc::install_ocr_models,
             ipc::ocr_models_status,
+            ipc::ocr_scripts_status,
+            ipc::install_ocr_script,
+            ipc::delete_ocr_script,
             ipc::list_llm_models,
             ipc::install_llm_model,
             ipc::cancel_llm_download,
@@ -59,7 +62,13 @@ macro_rules! all_commands {
             ipc::toggle_subtitle,
             ipc::subtitle_state,
             ipc::stop_subtitle,
+            ipc::block_subtitle_phrase,
             ipc::start_subtitle,
+            ipc::open_subtitle_window,
+            ipc::close_subtitle_window,
+            ipc::set_subtitle_source,
+            ipc::subtitle_session,
+            ipc::list_audio_apps,
             ipc::get_onboarding_status,
             ipc::get_system_profile,
             ipc::complete_setup,
@@ -75,9 +84,15 @@ macro_rules! all_commands {
             ipc::set_lens_text_dock,
             ipc::close_lens_window,
             ipc::list_lens_windows,
+            crate::attach::list_attach_targets,
+            crate::attach::attach_window,
+            crate::attach::detach_window,
+            crate::attach::window_attachment,
             ipc::set_lens_insets,
             ipc::set_lens_continuous,
             ipc::refresh_lens,
+            ipc::toggle_lens_pause,
+            ipc::lens_controls,
             ipc::fit_lens,
             ipc::restore_lens,
             ipc::capture_lens_now,
@@ -224,6 +239,7 @@ pub fn build() -> Result<()> {
                 tracing::warn!("tray unavailable: {e}");
             }
 
+            app.manage(crate::attach::Handle::default());
             app.manage(AppState {
                 settings,
                 storage,
@@ -249,15 +265,13 @@ pub fn build() -> Result<()> {
                     let _ = window.hide();
                 }
             }
-            // The subtitle window is kept for the next start: closing it
-            // (its × button goes through `stop_subtitle`; this is Alt+F4)
-            // stops the subtitles and hides it.
-            if window.label() == "subtitle" {
-                if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                    api.prevent_close();
+            // A subtitle window closing by itself (Alt+F4; its × button
+            // goes through `close_subtitle_window`): stop its recognition.
+            if crate::subtitle::is_window(window.label()) {
+                if let tauri::WindowEvent::CloseRequested { .. } = event {
                     let app = window.app_handle();
                     if let Some(state) = app.try_state::<AppState>() {
-                        let _ = state.subtitle.stop(app);
+                        state.subtitle.forget(app, window.label());
                     }
                 }
             }
@@ -270,6 +284,13 @@ pub fn build() -> Result<()> {
 fn build_tray(app: &AppHandle) -> Result<()> {
     let open = MenuItem::with_id(app, "open", "MoonLens 表示", true, None::<&str>)?;
     let capture = MenuItem::with_id(app, "capture", "ウィンドウ翻訳", true, None::<&str>)?;
+    let pause = MenuItem::with_id(
+        app,
+        "pause",
+        "ウィンドウ翻訳 一時停止／再開",
+        true,
+        None::<&str>,
+    )?;
     let subtitle = MenuItem::with_id(app, "subtitle", "音声翻訳 開始／停止", true, None::<&str>)?;
     let plugins = MenuItem::with_id(app, "plugins", "拡張機能", true, None::<&str>)?;
     let history = MenuItem::with_id(app, "history", "履歴", true, None::<&str>)?;
@@ -278,7 +299,9 @@ fn build_tray(app: &AppHandle) -> Result<()> {
 
     let menu = Menu::with_items(
         app,
-        &[&open, &capture, &subtitle, &plugins, &history, &sep, &quit],
+        &[
+            &open, &capture, &pause, &subtitle, &plugins, &history, &sep, &quit,
+        ],
     )?;
 
     TrayIconBuilder::with_id("moonlens-tray")
@@ -292,6 +315,10 @@ fn build_tray(app: &AppHandle) -> Result<()> {
         .on_menu_event(move |app, event| match event.id.as_ref() {
             "open" => show_main_window(app),
             "capture" => crate::lens::open_new(app),
+            "pause" => {
+                let state = app.state::<AppState>();
+                crate::lens::toggle_pause(app, &state.lenses);
+            }
             "subtitle" => {
                 let state = app.state::<AppState>();
                 state.subtitle.toggle_checked(app);

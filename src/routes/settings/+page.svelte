@@ -35,6 +35,7 @@
   import DataLocations from '$lib/components/DataLocations.svelte';
   import Plugins from '$lib/components/Plugins.svelte';
   import GlossaryEditor from '$lib/components/GlossaryEditor.svelte';
+  import PhraseList from '$lib/components/PhraseList.svelte';
   import { createRemovalLog, isBlankEntry, type GlossaryEntry } from '$lib/glossary';
   import { close as closeToast, undoable } from '$lib/toast.svelte';
   import InferenceDevice from '$lib/components/InferenceDevice.svelte';
@@ -385,6 +386,13 @@
                     defaultLang={getPath(draft, 'subtitle.target_language') ?? 'ja'}
                     onChange={(v) => update(field.path, v)}
                     onRemove={(i) => removeGlossaryRow(field.path, i)}
+                  />
+                {:else if field.kind === 'phrases'}
+                  <PhraseList
+                    label={field.label}
+                    placeholder={field.placeholder}
+                    value={getPath(draft, field.path)}
+                    onChange={(v) => update(field.path, v)}
                   />
                 {:else}
                   <SettingField
