@@ -68,7 +68,7 @@
 
   const loading = (m: ChoiceRow) => !!busy[m.id] || !!m.downloading || progress[m.id] !== undefined;
   const help = (m: ChoiceRow) =>
-    `${m.note}。${m.id === recommended ? '本 PC の構成に基づく推奨モデル。' : ''}${m.installed ? '' : '未取得。'}`;
+    `${m.note}。${m.id === recommended ? '本 PC の構成を基準とした推奨モデル。' : ''}${m.installed ? '' : '未取得。'}`;
 
   /** 確認欄の表示時：一覧の枠内へ全体を表示。 */
   function reveal(node: HTMLElement) {

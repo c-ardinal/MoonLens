@@ -24,8 +24,8 @@
   will-change: transform;
 }
 
-/* ── 窓の展開：中央の横線から上下へ段階展開（RPG の会話窓の開閉） ──
- * 対象：対話窓・通知・エラー表示・操作結果の窓（px-pop）。 */
+/* ── ウィンドウの展開：中央の横線から上下へ段階展開（RPG の会話ウィンドウの開閉） ──
+ * 対象：ダイアログ・通知・エラー表示・操作結果のウィンドウ（px-pop）。 */
 :root[data-skin='pixel'] :is([role='dialog'], [role='alert'], .px-pop) {
   animation: px-win-open 120ms steps(4, start) backwards;
 }
@@ -37,7 +37,7 @@
     clip-path: inset(0 0 0 0);
   }
 }
-/* 対話窓の背景：2 段階の減光（背景色のみ変化、対話窓自体は半透明化なし） */
+/* ダイアログの背景：2 段階の減光（背景色のみ変化、ダイアログ自体は半透明化なし） */
 :root[data-skin='pixel'] [role='presentation']:has(> [role='dialog']) {
   animation: px-dim-in 120ms steps(2, start) backwards;
 }

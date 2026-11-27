@@ -1,4 +1,5 @@
 import type { SubtitleEvent, SubtitlePhase } from '$lib/ipc';
+import type { InputState } from '$lib/subtitle-level';
 
 /** 字幕 1 件（認識単位）。 */
 export type SubtitleLine = { id: number; original: string; translated: string };
@@ -44,10 +45,18 @@ export function reduce(view: SubtitleView, ev: SubtitleEvent): SubtitleView {
   }
 }
 
-/** タイトルバーの状態表記。 */
-export function statusLabel(view: SubtitleView): string {
+/** タイトルバーの状態表記。音声待機中は入力状態を表示。 */
+export function statusLabel(view: SubtitleView, input: InputState = 'none'): string {
   if (!view.running) return view.error ? 'エラー停止' : '停止中';
   if (view.phase === 'recognizing') return '認識中…';
   if (view.phase === 'translating') return '翻訳中…';
-  return '音声待機中';
+  if (input === 'ok') return '音声検出';
+  return input === 'low' ? '閾値未満' : '入力未検出';
+}
+
+/** 字幕表示前の案内文：入力状態と対処。 */
+export function inputHint(input: InputState): string {
+  if (input === 'ok') return '音声検出。認識結果を字幕表示。';
+  if (input === 'low') return '入力音量が認識閾値未満。再生音量の調整が必要。';
+  return '音声入力未検出。PC の再生音声が認識対象。';
 }

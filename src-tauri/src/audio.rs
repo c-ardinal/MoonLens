@@ -208,6 +208,97 @@ pub mod dsp {
     }
 }
 
+pub mod level {
+    //! Input level metering for the live subtitle window.
+    //!
+    //! Captured audio is reduced to one RMS level per [`BIN_SAMPLES`]
+    //! (25 ms) so the window can draw what arrives and compare it with
+    //! the silence gate of the subtitle loop.
+
+    /// Samples per level bin: 25 ms at 16 kHz (40 bins per second).
+    pub const BIN_SAMPLES: usize = 400;
+
+    /// Level reported for digital silence, in dBFS.
+    pub const FLOOR_DB: i8 = -96;
+
+    /// RMS of 16-bit samples as dBFS (full scale = 0 dB).
+    pub fn dbfs(rms: f64) -> f32 {
+        if rms <= 0.0 {
+            return FLOOR_DB as f32;
+        }
+        ((20.0 * (rms / 32768.0).log10()) as f32).clamp(FLOOR_DB as f32, 0.0)
+    }
+
+    /// Turns a stream of PCM16 frames into level bins. Frame boundaries
+    /// do not matter: a bin completes every [`BIN_SAMPLES`] samples.
+    #[derive(Default)]
+    pub struct Meter {
+        sum_squares: f64,
+        count: usize,
+        bins: Vec<i8>,
+    }
+
+    impl Meter {
+        pub fn push(&mut self, samples: &[i16]) {
+            for &s in samples {
+                self.sum_squares += (s as f64) * (s as f64);
+                self.count += 1;
+                if self.count == BIN_SAMPLES {
+                    let rms = (self.sum_squares / BIN_SAMPLES as f64).sqrt();
+                    self.bins.push(dbfs(rms).round() as i8);
+                    self.sum_squares = 0.0;
+                    self.count = 0;
+                }
+            }
+        }
+
+        /// The bins completed since the last call, oldest first.
+        pub fn take(&mut self) -> Vec<i8> {
+            std::mem::take(&mut self.bins)
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn dbfs_scale() {
+            assert_eq!(dbfs(0.0), -96.0);
+            assert!((dbfs(32768.0) - 0.0).abs() < 0.01);
+            assert!((dbfs(3276.8) + 20.0).abs() < 0.01);
+            // The subtitle loop's silence gate (RMS 100) sits near -50 dBFS.
+            assert!((dbfs(100.0) + 50.3).abs() < 0.1);
+        }
+
+        #[test]
+        fn bins_do_not_depend_on_frame_boundaries() {
+            let tone: Vec<i16> = (0..BIN_SAMPLES * 3)
+                .map(|i| if i % 2 == 0 { 1000 } else { -1000 })
+                .collect();
+            let mut whole = Meter::default();
+            whole.push(&tone);
+            let mut pieces = Meter::default();
+            for frame in tone.chunks(160) {
+                pieces.push(frame);
+            }
+            // RMS 1000 = -30.3 dBFS.
+            assert_eq!(whole.take(), vec![-30, -30, -30]);
+            assert_eq!(pieces.take(), vec![-30, -30, -30]);
+        }
+
+        #[test]
+        fn take_returns_each_bin_once_and_keeps_the_partial_bin() {
+            let mut m = Meter::default();
+            m.push(&vec![0i16; BIN_SAMPLES + 50]);
+            assert_eq!(m.take(), vec![FLOOR_DB]);
+            assert!(m.take().is_empty());
+            m.push(&vec![0i16; BIN_SAMPLES - 50]);
+            assert_eq!(m.take(), vec![FLOOR_DB]);
+        }
+    }
+}
+
 // `cpal::Stream` is `!Send`, so we cannot hand it to async code that may
 // migrate across threads. The capture lives on its own dedicated OS thread;
 // control flows through a stop-notify and the audio frames flow through an
