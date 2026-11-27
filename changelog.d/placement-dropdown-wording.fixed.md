@@ -1,0 +1,1 @@
+- Window translation: the options of the text placement and target language drop-downs were unreadable (dark text on a dark list) when the OS uses a dark colour scheme.

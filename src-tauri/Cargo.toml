@@ -137,6 +137,8 @@ ocrs-engine = ["dep:ocrs", "dep:rten", "dep:rten-tensor", "dep:flate2", "dep:tar
 ocr-onnx = ["ocrs-engine", "dep:ort"]
 
 [dev-dependencies]
+# Paused clock for timer-driven tests.
+tokio = { version = "1", features = ["full", "test-util"] }
 tempfile = "3"
 wat = "1"
 

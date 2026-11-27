@@ -14,6 +14,8 @@
     "test:watch": "vitest",
     "audit:grid": "node scripts/ui-audit/grid-audit.mjs build",
     "audit:overflow": "node scripts/ui-audit/overflow-audit.mjs build",
+    "audit:select": "node scripts/ui-audit/select-contrast.mjs build",
+    "lint:copy": "node scripts/copy-lint.mjs",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build"
