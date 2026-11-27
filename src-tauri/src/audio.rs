@@ -270,6 +270,13 @@ pub mod gate {
     /// quiet end of a word, and the gaps between words.
     const HANGOVER_SAMPLES: usize = 4_800;
 
+    /// Loud without a single quieter frame for this long (3 s): not
+    /// speech, which dips to the room's level between words, but a floor
+    /// that is too low (digital silence, then the microphone comes on:
+    /// creeping up from there would pass noise on for many seconds).
+    /// The quietest level of the run becomes the floor.
+    const LOUD_RUN_SAMPLES: usize = 48_000;
+
     /// Audio from just before the gate opened that is passed on with it
     /// (200 ms): the quiet onset of the first word.
     const PREROLL_SAMPLES: usize = 3_200;
@@ -280,6 +287,10 @@ pub mod gate {
         floor: Option<f64>,
         /// Samples the gate stays open for without another loud frame.
         open_for: usize,
+        /// Samples since the last frame below the threshold, and the
+        /// quietest level among them.
+        loud_run: usize,
+        loud_min: f64,
         preroll: VecDeque<Vec<i16>>,
         preroll_samples: usize,
     }
@@ -312,6 +323,20 @@ pub mod gate {
                 _ => level,
             };
             self.floor = Some(floor.max(1.0));
+            if level >= self.threshold() {
+                self.loud_min = if self.loud_run == 0 {
+                    level
+                } else {
+                    self.loud_min.min(level)
+                };
+                self.loud_run += frame.len();
+                if self.loud_run >= LOUD_RUN_SAMPLES {
+                    self.floor = Some(self.loud_min.max(1.0));
+                    self.loud_run = 0;
+                }
+            } else {
+                self.loud_run = 0;
+            }
             if level >= self.threshold() {
                 self.open_for = HANGOVER_SAMPLES;
                 let mut out: Vec<Vec<i16>> = self.preroll.drain(..).collect();
@@ -407,6 +432,22 @@ pub mod gate {
             // … and the first quiet frame brings it back.
             feed(&mut gate, 60, 1);
             assert_eq!(gate.threshold(), MIN_THRESHOLD.max(60.0 * OVER_FLOOR));
+        }
+
+        #[test]
+        fn noise_after_digital_silence_is_shut_out_within_seconds() {
+            let mut gate = VoiceGate::default();
+            // A muted microphone, then it comes on in a noisy room.
+            feed(&mut gate, 0, 100);
+            let passed = feed(&mut gate, 400, 1000);
+            assert!(
+                passed <= PREROLL_SAMPLES + LOUD_RUN_SAMPLES + HANGOVER_SAMPLES,
+                "{passed}"
+            );
+            assert!(gate.threshold() > 400.0);
+            // From then on only speech passes.
+            assert_eq!(feed(&mut gate, 400, 100), 0);
+            assert!(feed(&mut gate, 4000, 10) > 0);
         }
 
         #[test]
