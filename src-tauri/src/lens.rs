@@ -1061,6 +1061,8 @@ async fn run_watch(
                 lens_drag::MOVING_POLL_MS
             } else if confirming {
                 0
+            } else if tracker.scrolling() && EXCLUDED_FROM_CAPTURE {
+                interval.min(crate::region_watcher::SCROLL_POLL_MS)
             } else {
                 interval
             };

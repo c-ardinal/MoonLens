@@ -445,19 +445,20 @@ impl Pipeline {
         &self,
         image_png: Vec<u8>,
     ) -> Result<CaptureFlowResult, ProviderError> {
-        // Cheap heuristic classifier. A plugin-provided classifier can
-        // override through the `intent_classifier` chain in future work.
+        Ok(self.analyze_capture_lines(image_png).await?.0)
+    }
+
+    /// [`Self::analyze_capture`], with the OCR lines the blocks were
+    /// built from (empty for a QR code). A caller that follows a region
+    /// keeps them: after a scroll it reads only the rows that came into
+    /// view ([`Self::read_lines`]) and lays out old and new lines
+    /// together ([`Self::lay_out`]).
+    pub async fn analyze_capture_lines(
+        &self,
+        image_png: Vec<u8>,
+    ) -> Result<(CaptureFlowResult, Vec<OcrLine>), ProviderError> {
         let img =
             image::load_from_memory(&image_png).map_err(|e| ProviderError::Other(e.to_string()))?;
-        let stats = intent::image_stats(&img);
-        let intent = stats.map_or(Intent::Unknown, intent::classify_stats);
-        tracing::info!(
-            "capture {}x{}: luma mean {:.1} std {:.1}, intent {intent:?}",
-            img.width(),
-            img.height(),
-            stats.map_or(0.0, |s| s.mean),
-            stats.map_or(0.0, |s| s.std),
-        );
 
         // 1) Try QR — decoding is almost free and short-circuits the rest.
         if let Ok(res) = self
@@ -477,7 +478,7 @@ impl Pipeline {
                     Some(&res.used_provider),
                     res.via_cloud,
                 );
-                return Ok(CaptureFlowResult {
+                let bundle = CaptureFlowResult {
                     intent: Intent::Qr,
                     source_text: None,
                     result: res,
@@ -486,22 +487,30 @@ impl Pipeline {
                     image_size: Some([img.width(), img.height()]),
                     source_language: None,
                     target_language: None,
-                });
+                };
+                return Ok((bundle, vec![]));
             }
         }
 
         // 2) OCR → layout → translate. Always attempted for text-like or
         //    unknown regions.
+        let lines = self.read_lines(image_png).await?;
+        Ok((self.lay_out(&img, &lines), lines))
+    }
+
+    /// Text recognition alone: the lines of a picture, positioned in its
+    /// pixels. Empty when every engine ran and found no text.
+    pub async fn read_lines(&self, image_png: Vec<u8>) -> Result<Vec<OcrLine>, ProviderError> {
         let ocr_res = self
             .run(
                 Capability::Ocr,
                 TaskInput::Ocr {
-                    image_png: image_png.clone(),
+                    image_png,
                     languages: vec![],
                 },
             )
             .await;
-        let lines: Vec<OcrLine> = match ocr_res {
+        match ocr_res {
             Ok(TaskResult {
                 output: TaskOutput::Ocr { lines },
                 used_provider,
@@ -513,34 +522,59 @@ impl Pipeline {
                     "OCR: {} lines via {used_provider} in {latency_ms} ms (fallbacks {fallback_reasons:?})",
                     lines.len()
                 );
-                lines
+                Ok(lines)
             }
             Ok(other) => {
                 tracing::warn!("OCR returned unexpected output: {:?}", other.output);
-                vec![]
+                Ok(vec![])
             }
             // No OCR engine at all: "no text found" would be a lie.
-            Err(e @ ProviderError::NotInstalled(_)) => return Err(e),
+            Err(e @ ProviderError::NotInstalled(_)) => Err(e),
             // Every engine ran and found nothing: a real "no text".
             Err(e) if ocr_found_nothing(&e) => {
                 tracing::info!("OCR found no text: {e}");
-                vec![]
+                Ok(vec![])
             }
             // Timeout or engine failure: report it instead of claiming
-            // the region has no text.
+            // the picture has no text.
             Err(e) => {
                 tracing::warn!("OCR failed: {e}");
-                return Err(e);
+                Err(e)
             }
-        };
-        let text_blocks = layout::group_lines(&lines);
+        }
+    }
+
+    /// Paragraph blocks of OCR `lines` positioned in `img`, without
+    /// translations. Lines may lie outside the picture (rows a scroll
+    /// took out of view, kept so their paragraph stays whole): a
+    /// paragraph with no row left in the picture is dropped.
+    pub fn lay_out(&self, img: &image::DynamicImage, lines: &[OcrLine]) -> CaptureFlowResult {
+        // Cheap heuristic classifier. A plugin-provided classifier can
+        // override through the `intent_classifier` chain in future work.
+        let stats = intent::image_stats(img);
+        let intent = stats.map_or(Intent::Unknown, intent::classify_stats);
+        tracing::info!(
+            "capture {}x{}: luma mean {:.1} std {:.1}, intent {intent:?}",
+            img.width(),
+            img.height(),
+            stats.map_or(0.0, |s| s.mean),
+            stats.map_or(0.0, |s| s.std),
+        );
+        let mut text_blocks = layout::group_lines(lines);
+        let height = img.height() as f32;
+        text_blocks.retain(|b| {
+            b.lines
+                .iter()
+                .chain(std::iter::once(&b.bbox).filter(|_| b.lines.is_empty()))
+                .any(|r| r[1] + r[3] / 2.0 >= 0.0 && r[1] + r[3] / 2.0 <= height)
+        });
         let ocr_text = layout::join_blocks(&text_blocks);
         let image_size = Some([img.width(), img.height()]);
 
         if ocr_text.trim().is_empty() {
             // Nothing text-like detected. Return the intent so the UI can
             // offer actions (reverse image search, explain, ...).
-            return Ok(CaptureFlowResult {
+            return CaptureFlowResult {
                 intent,
                 source_text: None,
                 source_rect: None,
@@ -556,7 +590,7 @@ impl Pipeline {
                     latency_ms: 0,
                     fallback_reasons: vec![],
                 },
-            });
+            };
         }
 
         let rgba = img.to_rgba8();
@@ -605,7 +639,7 @@ impl Pipeline {
         };
         let target = self.settings.snapshot().subtitle.target_language.clone();
         self.prepare_translation(&mut bundle, &target);
-        Ok(bundle)
+        bundle
     }
 
     /// Set the target language on an analysed bundle, flag the blocks

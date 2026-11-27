@@ -25,6 +25,7 @@ mod pipeline_tests;
 pub mod plugins;
 pub mod providers;
 pub mod region_watcher;
+pub mod scroll;
 pub mod settings;
 pub mod setup;
 pub mod storage;
