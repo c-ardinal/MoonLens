@@ -113,6 +113,7 @@ fn bundle(texts: &[String]) -> CaptureFlowResult {
                 align: Align::Left,
                 bold: false,
                 lines: vec![],
+                row_limits: vec![],
             })
             .collect(),
         image_size: Some([100, 100]),
