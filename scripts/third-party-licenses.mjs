@@ -86,7 +86,7 @@ for (const [path, info] of Object.entries(lock.packages)) {
 // --- models -----------------------------------------------------------
 const models = [
   {
-    name: 'PLaMo 3 Translate 2B / 0.8B (Preferred Networks)',
+    name: 'PLaMo 3 Translate 2B / 0.8B / 8B (Preferred Networks)',
     license: 'PLaMo Community License',
     url: 'https://plamo.preferredai.jp/info/plamo-community-license-en',
     note: 'Built with PLaMo',

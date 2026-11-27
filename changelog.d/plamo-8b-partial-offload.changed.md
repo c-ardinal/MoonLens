@@ -1,0 +1,1 @@
+- A local model that does not fit the free GPU memory is now split: as many layers as fit run on the GPU and the rest on the CPU, instead of the whole model falling back to the CPU.
