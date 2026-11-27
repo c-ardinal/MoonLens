@@ -202,6 +202,18 @@ export const SECTIONS: Section[] = [
     fields: [
       {
         kind: 'number',
+        path: 'performance.scan_margin_px',
+        label: '読取余白',
+        help: 'ウィンドウ枠の外側へ加算する読取幅。枠で分断された文字を完全な形で認識。訳文の表示はウィンドウ内に限定。',
+        min: 0,
+        max: 128,
+        step: 4,
+        unit: 'px',
+        zeroLabel: '無効',
+        slider: true
+      },
+      {
+        kind: 'number',
         path: 'performance.region_watcher_poll_ms',
         label: '監視間隔',
         help: '画面変化の検出間隔。短時間ほど応答性向上、CPU 負荷増大。',
