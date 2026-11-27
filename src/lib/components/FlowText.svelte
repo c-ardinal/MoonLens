@@ -34,12 +34,16 @@
 
   function rowsOf(b: LensBlock): Row[] {
     const [bx, by] = b.bbox;
-    return (b.lines ?? []).map(([x, y, w, h]) => ({
-      left: (x - bx) / scale + pad,
-      top: (y - by) / scale + pad,
-      width: w / scale,
-      height: h / scale
-    }));
+    return (b.lines ?? []).map(([x, y, w, h], i) => {
+      const limit = b.row_limits?.[i];
+      return {
+        left: (x - bx) / scale + pad,
+        top: (y - by) / scale + pad,
+        width: w / scale,
+        height: h / scale,
+        ...(limit == null ? {} : { limit: (limit - bx) / scale + pad })
+      };
+    });
   }
 
   $effect(() => {
