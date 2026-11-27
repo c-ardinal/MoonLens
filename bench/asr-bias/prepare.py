@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Build the jobs for `examples/asr_bias_bench.rs` from FLEURS (dev split).
 
-    python3 prepare.py <work-dir> [--lang ja en] [--limit N] [--conditions none mixed] [--nonspeech]
+    python3 prepare.py <work-dir> [--lang ja en] [--limit N] [--conditions mixed distract] [--nonspeech]
 
 Downloads the FLEURS transcripts and recordings (Google, CC BY 4.0) for the
 sentences listed in `terms.<lang>.tsv`, converts the recordings to 16 kHz
@@ -278,8 +278,10 @@ def main() -> None:
     ap.add_argument("--limit", type=int, default=0, help="first N sentences only")
     ap.add_argument("--conditions", nargs="+", default=CONDITIONS, choices=CONDITIONS)
     a = ap.parse_args()
+    # The scorer compares every condition with `none`.
+    conditions = [c for c in CONDITIONS if c == "none" or c in a.conditions]
     for lang in a.lang:
-        build(lang, a.work, a.limit, a.conditions)
+        build(lang, a.work, a.limit, conditions)
     if a.nonspeech:
         nonspeech(a.work)
 
