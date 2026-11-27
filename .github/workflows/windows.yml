@@ -128,8 +128,12 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: src-tauri
-          key: windows
+          # The target dir is D:/t (CARGO_TARGET_DIR above). rust-cache
+          # only caches `<workspace>/target` unless told otherwise, so
+          # without the `-> D:/t` part it restores ~/.cargo alone and
+          # every dependency is compiled again.
+          workspaces: src-tauri -> D:/t
+          key: windows-t
           # Written on the PR base branches only (see `push` above); PR
           # runs restore it and never save, which keeps the 10 GB repo
           # cache quota from being evicted by every PR.
@@ -206,8 +210,8 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: src-tauri
-          key: windows-e2e
+          workspaces: src-tauri -> D:/t
+          key: windows-e2e-t
           save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/release' }}
 
       - name: Allow long paths for git checkouts
