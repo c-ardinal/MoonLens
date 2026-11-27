@@ -46,6 +46,9 @@ pub struct Assembler {
     pieces: Vec<Piece>,
     /// Text of the unfinished sentence.
     text: String,
+    /// The chunk added last, in full: the next chunk may repeat its end
+    /// even where that end belongs to a sentence already closed.
+    last_chunk: String,
 }
 
 /// An unfinished sentence longer than this ([`translate_plan::cost`]
@@ -69,6 +72,7 @@ impl Assembler {
     pub fn clear(&mut self) {
         self.pieces.clear();
         self.text.clear();
+        self.last_chunk.clear();
     }
 
     /// Add the chunk shown as line `id`. Returns the text up to the last
@@ -91,7 +95,13 @@ impl Assembler {
         if original.is_empty() {
             return None;
         }
-        self.text = join(&self.text, original, overlapped);
+        let fresh = if overlapped {
+            skip_repeat(&self.last_chunk, original)
+        } else {
+            original
+        };
+        self.text = join(&self.text, fresh);
+        self.last_chunk = original.to_string();
         self.pieces.push(Piece {
             id,
             translated: Some(translated.trim().to_string()).filter(|t| !t.is_empty()),
@@ -170,13 +180,12 @@ fn bare(word: &str) -> String {
 const MAX_REPEAT_WORDS: usize = 6;
 const MAX_REPEAT_CHARS: usize = 12;
 
-/// `prev` followed by `next`, without a full stop the recognizer put at
-/// the cut and, when the chunks share audio (`overlapped`), without the
-/// words that `next` repeats from the end of `prev`.
-fn join(prev: &str, next: &str, overlapped: bool) -> String {
-    let (mut prev, mut next) = (prev.trim_end(), next.trim_start());
+/// `next` without the words at its start that repeat the end of `prev`,
+/// the chunk recognized before it (the two share a little audio).
+fn skip_repeat<'a>(prev: &str, next: &'a str) -> &'a str {
+    let (prev, next) = (prev.trim_end(), next.trim_start());
     if prev.is_empty() {
-        return next.to_string();
+        return next;
     }
     let spaced =
         !prev.chars().next_back().is_some_and(is_cjk) && !next.chars().next().is_some_and(is_cjk);
@@ -192,32 +201,15 @@ fn join(prev: &str, next: &str, overlapped: bool) -> String {
             .take(MAX_REPEAT_WORDS)
             .map(|w| (w.as_ptr() as usize - next.as_ptr() as usize + w.len(), w))
             .collect();
-        let most = if overlapped {
-            tail.len().min(head.len())
-        } else {
-            0
-        };
-        for n in (1..=most).rev() {
+        for n in (1..=tail.len().min(head.len())).rev() {
             let same = (0..n).all(|i| {
                 let word = bare(head[i].1);
                 !word.is_empty() && word == tail[n - 1 - i]
             });
             if same {
-                next = next[head[n - 1].0..].trim_start();
-                break;
+                return next[head[n - 1].0..].trim_start();
             }
         }
-        // "ask not." + "what your country" is one sentence.
-        if next.chars().next().is_some_and(char::is_lowercase)
-            && prev.ends_with('.')
-            && !prev.ends_with("..")
-        {
-            prev = &prev[..prev.len() - 1];
-        }
-        if next.is_empty() {
-            return prev.to_string();
-        }
-        format!("{prev} {next}")
     } else {
         let stem = prev.trim_end_matches(|c: char| !c.is_alphanumeric());
         let head: Vec<usize> = next
@@ -229,12 +221,32 @@ fn join(prev: &str, next: &str, overlapped: bool) -> String {
             .collect();
         // One repeated character is too often a coincidence.
         for &end in head.iter().skip(1).rev() {
-            if overlapped && stem.ends_with(&next[..end]) {
-                return format!("{stem}{}", &next[end..]);
+            if stem.ends_with(&next[..end]) {
+                return &next[end..];
             }
         }
-        format!("{prev}{next}")
     }
+    next
+}
+
+/// `prev` followed by `next`, without a full stop the recognizer put at
+/// the cut.
+fn join(prev: &str, next: &str) -> String {
+    let (mut prev, next) = (prev.trim_end(), next.trim_start());
+    if prev.is_empty() || next.is_empty() {
+        return format!("{prev}{next}");
+    }
+    if prev.chars().next_back().is_some_and(is_cjk) || next.chars().next().is_some_and(is_cjk) {
+        return format!("{prev}{next}");
+    }
+    // "ask not." + "what your country" is one sentence.
+    if next.chars().next().is_some_and(char::is_lowercase)
+        && prev.ends_with('.')
+        && !prev.ends_with("..")
+    {
+        prev = &prev[..prev.len() - 1];
+    }
+    format!("{prev} {next}")
 }
 
 /// Words before a full stop that do not end a sentence.
@@ -622,43 +634,61 @@ mod tests {
         assert_eq!(done[0].rest, Some((5, "The next sentence".into())));
     }
 
+    fn joined(prev: &str, next: &str, overlapped: bool) -> String {
+        let fresh = if overlapped {
+            skip_repeat(prev, next)
+        } else {
+            next
+        };
+        join(prev, fresh)
+    }
+
+    #[test]
+    fn repeat_of_a_closed_sentence_is_not_added_to_the_next() {
+        let mut asm = Assembler::default();
+        let done = chunks(&mut asm, &["We are done. And", "done. And now we go. Then"]);
+        let texts: Vec<&str> = done.iter().map(|s| s.text.as_str()).collect();
+        assert_eq!(texts, ["We are done.", "And now we go."]);
+        assert_eq!(done[1].rest.as_ref().unwrap().1, "Then");
+    }
+
     #[test]
     fn words_repeated_across_the_overlap_appear_once() {
         assert_eq!(
-            join("ask not what your country", "your country can do", true),
+            joined("ask not what your country", "your country can do", true),
             "ask not what your country can do"
         );
         assert_eq!(
-            join("what your Country,", "country can do", true),
+            joined("what your Country,", "country can do", true),
             "what your Country, can do"
         );
         assert_eq!(
-            join("no overlap", "here at all", true),
+            joined("no overlap", "here at all", true),
             "no overlap here at all"
         );
-        assert_eq!(join("the same", "the same", true), "the same");
-        assert_eq!(join("", " first ", true), "first ");
+        assert_eq!(joined("the same", "the same", true), "the same");
+        assert_eq!(joined("", " first ", true), "first ");
         // Without spaces between words: by characters, two or more.
         assert_eq!(
-            join("今日は天気が", "天気がいいですね", true),
+            joined("今日は天気が", "天気がいいですね", true),
             "今日は天気がいいですね"
         );
         assert_eq!(
-            join("今日は天気が、", "天気がいい", true),
-            "今日は天気がいい"
+            joined("今日は天気が、", "天気がいい", true),
+            "今日は天気が、いい"
         );
-        assert_eq!(join("私は", "は元気", true), "私はは元気");
+        assert_eq!(joined("私は", "は元気", true), "私はは元気");
         assert_eq!(
-            join("こんにちは。", "元気ですか", true),
+            joined("こんにちは。", "元気ですか", true),
             "こんにちは。元気ですか"
         );
         // Chunks that share no audio: a repeated word was said twice.
         assert_eq!(
-            join("He said no.", "No one left.", false),
+            joined("He said no.", "No one left.", false),
             "He said no. No one left."
         );
-        assert_eq!(join("天気が", "天気がいい", false), "天気が天気がいい");
-        assert_eq!(join("ask not.", "what you", false), "ask not what you");
+        assert_eq!(joined("天気が", "天気がいい", false), "天気が天気がいい");
+        assert_eq!(joined("ask not.", "what you", false), "ask not what you");
     }
 
     #[test]
