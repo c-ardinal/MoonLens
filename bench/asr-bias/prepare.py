@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Build the jobs for `examples/asr_bias_bench.rs` from FLEURS (dev split).
 
-    python3 prepare.py <work-dir> [--lang ja en] [--limit N] [--conditions none mixed]
+    python3 prepare.py <work-dir> [--lang ja en] [--limit N] [--conditions none mixed] [--nonspeech]
 
 Downloads the FLEURS transcripts and recordings (Google, CC BY 4.0) for the
 sentences listed in `terms.<lang>.tsv`, converts the recordings to 16 kHz
@@ -21,6 +21,12 @@ window would have read off the screen):
     cross     the sentence's terms in the other language (Japanese subtitles
               on screen, English speech; and the reverse)
 
+`--nonspeech` adds `<work-dir>/nonspeech`: synthetic sounds without speech
+(noise at three levels, a wavering tone, chords) recognized with no prompt
+and with a Japanese / English term prompt. A recognizer that repeats its
+prompt over such sounds would put screen text into the subtitles of a
+game's background music.
+
 Only the first recording of each sentence is used. Everything is derived
 from the sentence id, so two runs build identical jobs.
 """
@@ -29,6 +35,7 @@ import argparse
 import array
 import io
 import json
+import math
 import random
 import struct
 import sys
@@ -188,15 +195,93 @@ def build(lang: str, work: Path, limit: int, conditions: list[str]) -> None:
     print(f"{lang}: {len(ids)} sentences, {len(jobs)} jobs -> {out}", file=sys.stderr)
 
 
+def nonspeech(work: Path) -> None:
+    out = work / "nonspeech"
+    (out / "wav").mkdir(parents=True, exist_ok=True)
+    rng = random.Random("nonspeech")
+    rate, seconds = 16000, 6
+    n = rate * seconds
+
+    def noise(level: float) -> list[float]:
+        return [rng.gauss(0, level) for _ in range(n)]
+
+    def tone() -> list[float]:
+        return [
+            3000 * math.sin(2 * math.pi * 440 * i / rate) * (0.5 + 0.5 * math.sin(2 * math.pi * 2 * i / rate))
+            for i in range(n)
+        ]
+
+    def chords() -> list[float]:
+        # A new triad every 0.75 s, each note with a plucked decay.
+        roots = [220.0, 261.6, 196.0, 293.7]
+        out_ = []
+        for i in range(n):
+            step, t = divmod(i / rate, 0.75)
+            root = roots[int(step) % len(roots)]
+            v = sum(math.sin(2 * math.pi * root * k * t) for k in (1.0, 1.26, 1.5))
+            out_.append(2500 * v * math.exp(-3 * t))
+        return out_
+
+    clips = {
+        "noise-faint": noise(150),
+        "noise-mid": noise(600),
+        "noise-loud": noise(2500),
+        "tone": tone(),
+        "chords": chords(),
+        "chords-noise": [a + b for a, b in zip(chords(), noise(300))],
+    }
+    picks = {}
+    for lang in FLEURS:
+        pool = sorted({t for ts in read_terms(lang).values() for t in ts})
+        picks[lang] = random.Random(f"nonspeech-{lang}").sample(pool, DISTRACTORS)
+    manifest, jobs = [], []
+    for name, samples in clips.items():
+        pcm = array.array("h", (int(max(-32768, min(32767, v))) for v in samples))
+        if sys.byteorder == "big":
+            pcm.byteswap()
+        write_wav(out / "wav" / f"{name}.wav", pcm.tobytes())
+        prompts = {"none": "", "ja": prompt("ja", picks["ja"]), "en": prompt("en", picks["en"])}
+        manifest.append(
+            {
+                "id": name,
+                "lang": "nonspeech",
+                "reference": "",
+                "terms": [],
+                "distractors": picks["ja"] + picks["en"],
+                "prompts": prompts,
+            }
+        )
+        for c, p in prompts.items():
+            jobs.append(
+                {
+                    "key": f"nonspeech-{name}",
+                    "wav": f"wav/{name}.wav",
+                    "condition": c,
+                    "language": None,
+                    "prompt": p or None,
+                }
+            )
+    (out / "manifest.json").write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=1), encoding="utf-8"
+    )
+    with io.open(out / "jobs.jsonl", "w", encoding="utf-8") as f:
+        for j in jobs:
+            f.write(json.dumps(j, ensure_ascii=False) + "\n")
+    print(f"nonspeech: {len(clips)} clips, {len(jobs)} jobs -> {out}", file=sys.stderr)
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("work", type=Path)
-    ap.add_argument("--lang", nargs="+", default=["ja", "en"], choices=list(FLEURS))
+    ap.add_argument("--lang", nargs="*", default=["ja", "en"], choices=list(FLEURS))
+    ap.add_argument("--nonspeech", action="store_true", help="also build the no-speech clips")
     ap.add_argument("--limit", type=int, default=0, help="first N sentences only")
     ap.add_argument("--conditions", nargs="+", default=CONDITIONS, choices=CONDITIONS)
     a = ap.parse_args()
     for lang in a.lang:
         build(lang, a.work, a.limit, a.conditions)
+    if a.nonspeech:
+        nonspeech(a.work)
 
 
 if __name__ == "__main__":

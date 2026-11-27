@@ -17,6 +17,8 @@ on:
 
 permissions:
   contents: read
+  # Reads the results artifact of an earlier run (SEED_RUN_ID).
+  actions: read
 
 concurrency:
   group: asr-bias-${{ github.ref }}
@@ -28,6 +30,10 @@ env:
   # Release speed for whisper.cpp without the shipping profile's LTO link.
   CARGO_PROFILE_RELEASE_LTO: 'false'
   CARGO_PROFILE_RELEASE_CODEGEN_UNITS: '16'
+  # A run of this workflow whose recognitions are reused where its jobs
+  # (recording, condition, prompt) are the same as this run's, so a
+  # change to the scoring does not cost two hours again. Empty = none.
+  SEED_RUN_ID: '45950404118'
 
 jobs:
   bench:
@@ -47,6 +53,10 @@ jobs:
           - name: chunked
             prepare: --lang ja en --limit 20 --conditions none mixed distract
             bench: --chunk-seconds 3
+          # Sounds without speech: does the prompt come back as text?
+          - name: nonspeech
+            prepare: --lang --nonspeech
+            bench: ''
     name: ${{ matrix.run.name }}
     runs-on: ubuntu-latest
     timeout-minutes: 300
@@ -94,10 +104,36 @@ jobs:
       - name: Prepare recordings and jobs
         run: python3 bench/asr-bias/prepare.py asr-bias-work ${{ matrix.run.prepare }}
 
+      - name: Earlier results
+        if: env.SEED_RUN_ID != ''
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: asr-bias-${{ matrix.run.name }}
+          path: asr-bias-seed
+          run-id: ${{ env.SEED_RUN_ID }}
+          github-token: ${{ github.token }}
+
+      # Reused only when the sentences and prompts are exactly the same.
+      - name: Reuse earlier results
+        run: |
+          for dir in asr-bias-work/*/; do
+            name=$(basename "$dir")
+            # One language per artifact: its files sit at the root.
+            seed="asr-bias-seed/$name"
+            [ -d "$seed" ] || seed="asr-bias-seed"
+            if [ -f "$seed/results.jsonl" ] && cmp -s "$seed/manifest.json" "$dir/manifest.json"; then
+              cp "$seed/results.jsonl" "$dir/results.jsonl"
+              echo "$name: reusing $(wc -l < "$dir/results.jsonl") results"
+            else
+              echo "$name: nothing to reuse"
+            fi
+          done
+
       - name: Recognize
         working-directory: src-tauri
         run: |
-          for dir in ../asr-bias-work/ja ../asr-bias-work/en; do
+          for dir in ../asr-bias-work/ja ../asr-bias-work/en ../asr-bias-work/nonspeech; do
             [ -f "$dir/jobs.jsonl" ] || continue
             cargo run --release --locked --example asr_bias_bench -- \
               "$dir/jobs.jsonl" "$dir/results.jsonl" --fetch ${{ matrix.run.bench }}
@@ -105,7 +141,7 @@ jobs:
 
       - name: Score
         run: |
-          dirs=$(ls -d asr-bias-work/ja asr-bias-work/en 2>/dev/null)
+          dirs=$(ls -d asr-bias-work/ja asr-bias-work/en asr-bias-work/nonspeech 2>/dev/null || true)
           python3 bench/asr-bias/score.py $dirs --json asr-bias-work/score-${{ matrix.run.name }}.json | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Upload results

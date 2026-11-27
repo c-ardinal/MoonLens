@@ -89,9 +89,40 @@ def pct(v: float) -> str:
     return f"{v * 100:.1f}"
 
 
+def report_nonspeech(directory: Path, results_name: str, manifest: dict) -> dict:
+    """Sounds without speech: any text is wrong, prompt terms in it doubly so."""
+    by_cond: dict[str, list[dict]] = {}
+    for line in (directory / results_name).read_text("utf-8").splitlines():
+        r = json.loads(line)
+        item = manifest[r["key"].split("-", 1)[1]]
+        units = normalize("ja", r["text"])
+        echoed = any(
+            contains(units, normalize("ja", t)) for t in item["distractors"]
+        )
+        by_cond.setdefault(r["condition"], []).append(
+            {"id": item["id"], "text": r["text"], "spoke": len(units) >= 2, "echoed": echoed}
+        )
+    print(f"\n### 非音声（{results_name}）\n")
+    print("| 条件 | 音数 | 文字出力 % | プロンプト用語の出力 % |")
+    print("|---|---:|---:|---:|")
+    for cond, rows in by_cond.items():
+        print(
+            f"| {cond} | {len(rows)} | {pct(sum(r['spoke'] for r in rows) / len(rows))} "
+            f"| {pct(sum(r['echoed'] for r in rows) / len(rows))} |"
+        )
+    print()
+    for cond, rows in by_cond.items():
+        for r in rows:
+            if r["spoke"]:
+                print(f"- `{cond}` {r['id']}：{r['text']}")
+    return {"lang": "nonspeech", "results": results_name, "conditions": by_cond}
+
+
 def report(directory: Path, results_name: str) -> dict:
     manifest = {m["id"]: m for m in json.loads((directory / "manifest.json").read_text("utf-8"))}
     lang = next(iter(manifest.values()))["lang"]
+    if lang == "nonspeech":
+        return report_nonspeech(directory, results_name, manifest)
     by_cond: dict[str, dict[str, dict]] = {}
     for line in (directory / results_name).read_text("utf-8").splitlines():
         r = json.loads(line)
