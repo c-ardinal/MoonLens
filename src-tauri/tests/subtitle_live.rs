@@ -80,9 +80,16 @@ async fn setup() -> Env {
     let config = tmp.path().join("config.toml");
     // A CI runner has no GPU and few cores: a chunk takes 20-45 s there
     // (one second or less on a GPU), close to the default limit of 60 s.
-    std::fs::write(&config, "[providers.asr]\ntimeout_ms = 180000\n").unwrap();
+    // With two windows, a translation shares those cores with the other
+    // window's recognition and passes its default limit of 15 s.
+    std::fs::write(
+        &config,
+        "[providers.asr]\ntimeout_ms = 180000\n\n[providers.translate]\ntimeout_ms = 120000\n",
+    )
+    .unwrap();
     let store = Arc::new(SettingsStore::load_from(config).unwrap());
     assert_eq!(store.snapshot().providers.asr.timeout_ms, 180_000);
+    assert_eq!(store.snapshot().providers.translate.timeout_ms, 120_000);
     let plugins =
         Arc::new(PluginRegistry::load_from(tmp.path().join("plugins"), store.clone()).unwrap());
     std::mem::forget(tmp);
