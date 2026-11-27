@@ -406,6 +406,7 @@ pub async fn run_loop(
             .len()
             .min(MAX_WINDOW_SAMPLES.saturating_sub(overlap.len()));
         // Build a chunk that includes a small lookback for context.
+        let overlapped = !overlap.is_empty();
         let mut to_send = overlap.clone();
         to_send.extend_from_slice(&buffer[..take]);
         // Preserve the tail for the next iteration's overlap.
@@ -486,7 +487,7 @@ pub async fn run_loop(
                 };
                 let id = lines.next_id();
                 if correcting {
-                    if let Some(sentence) = lines.push(id, &original, &translated) {
+                    if let Some(sentence) = lines.push(id, &original, &translated, overlapped) {
                         reviser.push(sentence, languages.clone(), realtime);
                     }
                 }
