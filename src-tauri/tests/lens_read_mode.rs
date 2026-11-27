@@ -171,6 +171,7 @@ impl Run {
             target_language: self.target,
             mode: self.mode,
             history_kind: "lens",
+            app: None,
             emit: &emit,
             geometry_now: &geometry_now,
         };
@@ -195,6 +196,7 @@ impl Run {
             target_language: self.target,
             mode: self.mode,
             history_kind: "lens",
+            app: None,
             emit: &emit,
             geometry_now: &geometry_now,
         };
@@ -290,6 +292,26 @@ async fn a_subtitle_is_translated_with_the_lines_before_it() {
         ]
     );
     assert_eq!(requests[1].0, "Then close the gate.");
+}
+
+#[tokio::test]
+async fn a_line_that_comes_back_after_other_lines_is_translated_again() {
+    let mut run = Run::new(ReadMode::Subtitle);
+    run.show(&["Who goes there?"]).await;
+    run.show(&["I see."]).await;
+    run.show(&["Then close the gate."]).await;
+    run.requests();
+
+    // The same words answer another line now: the translation made
+    // after "Who goes there?" is not shown for them.
+    run.show(&["I see."]).await;
+    let requests = run.requests();
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0].0, "I see.");
+    assert_eq!(
+        requests[0].1.history.last().map(|(s, _)| s.as_str()),
+        Some("Then close the gate.")
+    );
 }
 
 #[tokio::test]
@@ -440,4 +462,24 @@ async fn another_target_language_starts_without_context() {
     let requests = run.requests();
     assert_eq!(requests[0].1.history.len(), 1);
     assert_eq!(requests[0].1.history[0].0, "It is only the wind.");
+}
+
+#[tokio::test]
+async fn text_that_stays_on_screen_is_translated_again_in_another_language() {
+    let mut run = Run::new(ReadMode::Ui);
+    run.show(&["Options"]).await;
+    run.requests();
+
+    // Same language: what is shown is kept.
+    run.show(&["Options", "Quit"]).await;
+    let requests = run.requests();
+    assert_eq!(requests.len(), 1, "{requests:?}");
+    assert_eq!(requests[0].0, "Quit");
+
+    // Another language: nothing made for the old one is shown again.
+    run.target = "fr";
+    run.show(&["Options", "Quit", "Credits"]).await;
+    let requests = run.requests();
+    let asked: Vec<&str> = requests.iter().flat_map(|(t, _)| t.split("\n\n")).collect();
+    assert_eq!(asked, ["Options", "Quit", "Credits"]);
 }

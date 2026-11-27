@@ -1336,6 +1336,7 @@ async fn run_watch(
             target_language: &target_language,
             mode: registry.read_mode(&id).unwrap_or_default(),
             history_kind: crate::pipeline::history_kind::LENS,
+            app: None,
             emit: &emit,
             geometry_now: &geometry_now,
         };

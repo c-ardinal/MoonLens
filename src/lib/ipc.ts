@@ -664,6 +664,24 @@ export const exportSubtitleRecord = (
 
 export const clearHistory = () => safeInvoke<number>('clear_history', undefined, 0);
 
+/** 訳文キャッシュの使用量（端末内保存分）。 */
+export interface TranslationCacheUsage {
+  /** キャッシュファイルの容量（バイト）。 */
+  bytes: number;
+  entries: number;
+  /** アプリ単位の内訳。scope が空文字：追従先アプリ未指定の共通分。 */
+  scopes: { scope: string; entries: number; bytes: number }[];
+}
+export const translationCacheUsage = () =>
+  safeInvoke<TranslationCacheUsage>('translation_cache_usage', undefined, {
+    bytes: 0,
+    entries: 0,
+    scopes: []
+  });
+/** 訳文キャッシュの消去。app 省略：全消去。戻り値：消去件数。 */
+export const clearTranslationCache = (app?: string) =>
+  safeInvoke<number>('clear_translation_cache', { app: app ?? null }, 0);
+
 /* ------------------------------ lifecycle ------------------------------ */
 
 /** A problem found outside a user action (start-up, config file, hotkeys). */

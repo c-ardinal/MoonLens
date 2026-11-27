@@ -1163,6 +1163,33 @@ pub async fn clear_history(state: State<'_, AppState>) -> Result<usize, String> 
     state.storage.clear_all().map_err(|e| e.to_string())
 }
 
+/// Size of the translation cache on disk, in total and per app.
+#[tauri::command]
+pub async fn translation_cache_usage(
+    state: State<'_, AppState>,
+) -> Result<crate::translation_cache::Usage, String> {
+    let pipeline = state.pipeline.clone();
+    tokio::task::spawn_blocking(move || pipeline.translation_cache_usage())
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())
+}
+
+/// Delete cached translations: those of one app (`""` = text that
+/// belongs to no app), or all of them when `app` is absent. Returns the
+/// number of entries removed.
+#[tauri::command]
+pub async fn clear_translation_cache(
+    app: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<usize, String> {
+    let pipeline = state.pipeline.clone();
+    tokio::task::spawn_blocking(move || pipeline.clear_translation_cache(app.as_deref()))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 pub async fn toggle_subtitle(app: AppHandle, state: State<'_, AppState>) -> Result<bool, String> {
     if state.subtitle.has_windows() {

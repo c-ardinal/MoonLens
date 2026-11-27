@@ -103,6 +103,8 @@ macro_rules! all_commands {
             ipc::replace_subtitle_lines,
             ipc::export_subtitle_record,
             ipc::clear_history,
+            ipc::translation_cache_usage,
+            ipc::clear_translation_cache,
             ipc::list_notices,
             ipc::dismiss_notice,
             ipc::list_config_issues,

@@ -30,7 +30,7 @@ use crate::{
     },
     storage::Storage,
     translate_plan,
-    translation_cache::{CachedTranslation, TranslationCache},
+    translation_cache::{self, CachedTranslation, DiskCache, Lookup, TranslationCache},
 };
 
 /// Outcome reported to the UI per task attempt. `used_provider`/`via_cloud`
@@ -85,7 +85,7 @@ pub struct Pipeline {
     /// overlay webview; unset in test builds that construct a pipeline
     /// directly.
     chunk_sink: RwLock<Option<ChunkSink>>,
-    /// Per-paragraph translations, so re-selected text shows instantly.
+    /// Per-paragraph translations, so text seen before shows instantly.
     cache: TranslationCache,
 }
 
@@ -173,6 +173,13 @@ impl Pipeline {
         storage: Arc<Storage>,
         plugins: Arc<PluginRegistry>,
     ) -> Self {
+        let mut cache = TranslationCache::default();
+        if !storage.data_dir.as_os_str().is_empty() {
+            match DiskCache::open(storage.data_dir.join(DiskCache::FILE_NAME)) {
+                Ok(disk) => cache = cache.with_disk(disk),
+                Err(e) => tracing::warn!("translation cache stays in memory: {e:#}"),
+            }
+        }
         let me = Self {
             settings,
             storage,
@@ -180,7 +187,7 @@ impl Pipeline {
             providers: RwLock::new(HashMap::new()),
             sticky: RwLock::new(HashMap::new()),
             chunk_sink: RwLock::new(None),
-            cache: TranslationCache::default(),
+            cache,
         };
         me.rebuild_providers();
         me
@@ -205,6 +212,13 @@ impl Pipeline {
         }
     }
 
+    /// Replace the translation cache (tests: one that also writes to
+    /// disk).
+    pub fn with_translation_cache(mut self, cache: TranslationCache) -> Self {
+        self.cache = cache;
+        self
+    }
+
     /// Install a callback that every Ollama-style streaming provider
     /// will invoke per chunk. Re-runs provider discovery so existing
     /// provider instances see the new sink.
@@ -213,19 +227,78 @@ impl Pipeline {
         self.rebuild_providers();
     }
 
-    /// Forget cached translations (provider or settings changed).
-    pub fn clear_translation_cache(&self) {
-        self.cache.clear();
+    /// Delete cached translations, on disk too: those read from one app
+    /// (`Some("")` = text that belongs to no app), or all of them.
+    pub fn clear_translation_cache(&self, app: Option<&str>) -> anyhow::Result<usize> {
+        self.cache.clear(app)
+    }
+
+    /// Size of the translation cache on disk.
+    pub fn translation_cache_usage(&self) -> anyhow::Result<translation_cache::Usage> {
+        self.cache.usage()
+    }
+
+    /// What cached translations are checked against under the current
+    /// settings. Take one per capture.
+    fn cache_stamp(&self, bundle: &CaptureFlowResult) -> CacheStamp {
+        let s = self.settings.snapshot();
+        // What the translator is shown with the text shapes the result
+        // (who "he" is, which subject was left out): the same words after
+        // other lines are another cache entry.
+        let context = if bundle.earlier.is_empty() || !self.translator_takes_context() {
+            String::new()
+        } else {
+            translation_cache::fingerprint(
+                bundle
+                    .earlier
+                    .iter()
+                    .flat_map(|(source, translation)| [source.as_str(), translation.as_str()]),
+            )
+        };
+        // A translation plugin that was updated answers differently
+        // under the same id and config.
+        let plugins: Vec<(String, String)> = self
+            .plugins
+            .iter()
+            .flat_map(|p| p.list())
+            .filter(|p| p.enabled)
+            .map(|p| (p.id, p.version))
+            .collect();
+        CacheStamp {
+            engine: engine_fingerprint(&s, &plugins),
+            options: TranslateOptions::from_settings(&s.translation),
+            context,
+            persist: s.storage.keep_translation_cache,
+        }
+    }
+
+    /// Digest of everything outside the text that shapes a translation
+    /// for `app` into `target`: engine setup, style, the whole glossary.
+    /// Translations made under one epoch may be shown again without
+    /// asking the cache; after a change each paragraph goes through the
+    /// cache, which knows what the change touched.
+    pub fn translation_epoch(&self, app: Option<&str>, target: &str) -> String {
+        let s = self.settings.snapshot();
+        let plugins: Vec<(String, String)> = self
+            .plugins
+            .iter()
+            .flat_map(|p| p.list())
+            .filter(|p| p.enabled)
+            .map(|p| (p.id, p.version))
+            .collect();
+        let options = format!("{:?}", TranslateOptions::from_settings(&s.translation));
+        translation_cache::fingerprint([
+            engine_fingerprint(&s, &plugins).as_str(),
+            options.as_str(),
+            app.unwrap_or_default(),
+            target.trim().to_ascii_lowercase().as_str(),
+        ])
     }
 
     /// Rebuild the in-memory provider map from the current settings. Called
     /// on startup and whenever settings hot-reload.
     pub fn rebuild_providers(&self) {
-        // A different model or prompt must not be masked by old output.
-        self.clear_translation_cache();
         let s = self.settings.snapshot();
-        self.cache
-            .set_ttl_secs(u64::from(s.performance.cache_ttl_seconds));
         let mut map: HashMap<String, ProviderHandle> = HashMap::new();
         let empty = serde_json::Value::Object(Default::default());
         let sink = self.chunk_sink.read().clone();
@@ -518,6 +591,9 @@ impl Pipeline {
                     image_size: Some(visible.map_or([img.width(), img.height()], |v| [v.w, v.h])),
                     source_language: None,
                     target_language: None,
+                    app: None,
+                    earlier: Vec::new(),
+                    on_screen: Vec::new(),
                 });
             }
         }
@@ -584,6 +660,9 @@ impl Pipeline {
                 image_size,
                 source_language: None,
                 target_language: None,
+                app: None,
+                earlier: Vec::new(),
+                on_screen: Vec::new(),
                 result: TaskResult {
                     task: "capture".into(),
                     output: TaskOutput::Intent(intent),
@@ -640,6 +719,9 @@ impl Pipeline {
             blocks,
             image_size,
             target_language: None,
+            app: None,
+            earlier: Vec::new(),
+            on_screen: Vec::new(),
             result: TaskResult {
                 task: "ocr".into(),
                 output: TaskOutput::Empty,
@@ -672,11 +754,31 @@ impl Pipeline {
     /// (see [`LensBlock::needs_request`]) go to the translator.
     pub fn prepare_translation(&self, bundle: &mut CaptureFlowResult, target: &str) {
         Self::mark_same_language(bundle, target);
-        for b in &mut bundle.blocks {
+        let scope = bundle.app.clone().unwrap_or_default();
+        let stamp = self.cache_stamp(bundle);
+        let CaptureFlowResult {
+            blocks, on_screen, ..
+        } = bundle;
+        for b in blocks {
             if b.same_language {
                 continue;
             }
-            if let Some(hit) = self.cache.get(target, &b.source) {
+            // Still on screen from the reading before: the same
+            // occurrence keeps its translation, whatever was read since.
+            if let Some((_, kept)) = on_screen.iter().find(|(s, _)| s.trim() == b.source.trim()) {
+                b.translation = Some(kept.clone());
+                b.from_cache = true;
+                continue;
+            }
+            let fingerprint = stamp.fingerprint(&b.source, target);
+            if let Some(hit) = self.cache.get(Lookup {
+                scope: &scope,
+                target,
+                source: &b.source,
+                context: &stamp.context,
+                fingerprint: &fingerprint,
+                persist: stamp.persist,
+            }) {
                 b.translation = Some(hit.text);
                 b.from_cache = true;
             }
@@ -747,28 +849,18 @@ impl Pipeline {
         progress: Option<&ProgressSink<'_>>,
         kind: &str,
     ) -> Result<(), ProviderError> {
-        self.translate_capture_after(bundle, target_language, progress, kind, &[])
-            .await
-    }
-
-    /// [`Self::translate_capture_as`] for a capture that continues
-    /// earlier ones (the next subtitle): `earlier` holds their source
-    /// and translation, oldest first, and is history of every request
-    /// to a translator that takes a [`TranslateContext`].
-    pub async fn translate_capture_after(
-        &self,
-        bundle: &mut CaptureFlowResult,
-        target_language: &str,
-        progress: Option<&ProgressSink<'_>>,
-        kind: &str,
-        earlier: &[(String, String)],
-    ) -> Result<(), ProviderError> {
         let s = self.settings.snapshot();
         self.prepare_translation(bundle, target_language);
         let pending: Vec<usize> = (0..bundle.blocks.len())
             .filter(|&i| bundle.blocks[i].needs_request())
             .collect();
         let target_language = target_language.to_string();
+        let scope = bundle.app.clone().unwrap_or_default();
+        let chosen = pick_chain(&s, Capability::Translate)
+            .chain
+            .into_iter()
+            .next();
+        let stamp = self.cache_stamp(bundle);
 
         if pending.is_empty() {
             // Everything is already readable or cached: no round-trip.
@@ -776,7 +868,17 @@ impl Pipeline {
                 .blocks
                 .iter()
                 .filter(|b| b.from_cache)
-                .filter_map(|b| self.cache.get(&target_language, &b.source))
+                .filter_map(|b| {
+                    let fingerprint = stamp.fingerprint(&b.source, &target_language);
+                    self.cache.get(Lookup {
+                        scope: &scope,
+                        target: &target_language,
+                        source: &b.source,
+                        context: &stamp.context,
+                        fingerprint: &fingerprint,
+                        persist: stamp.persist,
+                    })
+                })
                 .collect();
             let text = bundle
                 .blocks
@@ -829,7 +931,7 @@ impl Pipeline {
 
         let started = Instant::now();
         let mut history: Vec<(String, String)> = if in_parts {
-            earlier.to_vec()
+            bundle.earlier.clone()
         } else {
             Vec::new()
         };
@@ -871,9 +973,21 @@ impl Pipeline {
                 TaskOutput::Text(t) => t.clone(),
                 _ => String::new(),
             };
-            let (translations, joined): (Vec<Option<String>>, String) =
+            let (translations, joined): (Vec<Option<Answer>>, String) =
                 match layout::split_translation(&whole, idx.len()) {
-                    Some(parts) => (parts.into_iter().map(Some).collect(), whole.clone()),
+                    Some(parts) => (
+                        parts
+                            .into_iter()
+                            .map(|text| {
+                                Some(Answer {
+                                    text,
+                                    provider: translate.used_provider.clone(),
+                                    via_cloud: translate.via_cloud,
+                                })
+                            })
+                            .collect(),
+                        whole.clone(),
+                    ),
                     None if in_parts => {
                         // The translator merged or split paragraphs, so
                         // the per-block mapping is ambiguous. Translate
@@ -893,15 +1007,15 @@ impl Pipeline {
                                 })
                                 .await;
                             if let Some(t) = &t {
-                                ctx.history.push((src.clone(), t.clone()));
-                                bundle.blocks[bi].translation = Some(t.clone());
+                                ctx.history.push((src.clone(), t.text.clone()));
+                                bundle.blocks[bi].translation = Some(t.text.clone());
                             }
                             out.push(t);
                         }
                         let joined = out
                             .iter()
                             .flatten()
-                            .cloned()
+                            .map(|t| t.text.clone())
                             .collect::<Vec<_>>()
                             .join(layout::BLOCK_SEPARATOR);
                         (out, joined)
@@ -919,7 +1033,7 @@ impl Pipeline {
                                 context: TranslateContext::default(),
                             })
                             .collect();
-                        let out: Vec<Option<String>> = futures::stream::iter(inputs)
+                        let out: Vec<Option<Answer>> = futures::stream::iter(inputs)
                             .map(|input| self.translate_one(input))
                             .buffered(max)
                             .collect()
@@ -928,18 +1042,32 @@ impl Pipeline {
                     }
                 };
             for (&i, t) in idx.iter().zip(translations) {
-                if let Some(text) = &t {
+                if let Some(answer) = &t {
+                    let source = &bundle.blocks[i].source;
+                    let fingerprint = stamp.fingerprint(source, &target_language);
                     self.cache.put(
-                        &target_language,
-                        &bundle.blocks[i].source,
-                        CachedTranslation {
-                            text: text.clone(),
-                            provider: translate.used_provider.clone(),
-                            via_cloud: translate.via_cloud,
+                        Lookup {
+                            scope: &scope,
+                            target: &target_language,
+                            source,
+                            context: &stamp.context,
+                            fingerprint: &fingerprint,
+                            persist: stamp.persist,
                         },
+                        CachedTranslation {
+                            text: answer.text.clone(),
+                            provider: answer.provider.clone(),
+                            via_cloud: answer.via_cloud,
+                        },
+                        // A stand-in engine's answer is not kept past
+                        // the session: the chosen engine translates the
+                        // text once it works again. Judged per paragraph:
+                        // a retry of one block can be served by another
+                        // engine than the batch was.
+                        chosen.as_deref() == Some(answer.provider.as_str()),
                     );
                 }
-                bundle.blocks[i].translation = t;
+                bundle.blocks[i].translation = t.map(|a| a.text);
             }
             if !joined.trim().is_empty() {
                 outputs.push(joined.clone());
@@ -1019,12 +1147,18 @@ impl Pipeline {
         false
     }
 
-    async fn translate_one(&self, input: TaskInput) -> Option<String> {
+    async fn translate_one(&self, input: TaskInput) -> Option<Answer> {
         match self.run(Capability::Translate, input).await {
             Ok(TaskResult {
                 output: TaskOutput::Text(t),
+                used_provider,
+                via_cloud,
                 ..
-            }) => Some(t.trim().to_string()),
+            }) => Some(Answer {
+                text: t.trim().to_string(),
+                provider: used_provider,
+                via_cloud,
+            }),
             _ => None,
         }
     }
@@ -1103,6 +1237,26 @@ pub struct CaptureFlowResult {
     /// Language the blocks were (or will be) translated into.
     #[serde(default)]
     pub target_language: Option<String>,
+    /// Key of the app the capture was read from (a translation window
+    /// that follows an app's window), when there is one. Cached
+    /// translations are kept per app: the same label can mean different
+    /// things in two apps.
+    #[serde(skip)]
+    pub app: Option<String>,
+    /// Source and translation of the captures this one continues (the
+    /// subtitles before this one), oldest first. A translator that takes
+    /// a [`TranslateContext`] gets them as history of every request, and
+    /// a cached translation is used only when it was made after the same
+    /// lines: the same words after other lines can mean something else.
+    /// Empty: the capture stands alone.
+    #[serde(skip)]
+    pub earlier: Vec<(String, String)>,
+    /// Source and translation of blocks that were on screen, translated,
+    /// in the reading before this one. A block that is still there keeps
+    /// that translation instead of being translated again in the context
+    /// of what was read since.
+    #[serde(skip)]
+    pub on_screen: Vec<(String, String)>,
 }
 
 /// One paragraph of recognised text, positioned in the captured image.
@@ -1262,6 +1416,77 @@ fn upgrade_llm_chain(mut chain: TaskChain, local_id: &str) -> TaskChain {
     chain
 }
 
+/// One paragraph's translation and the engine that made it.
+struct Answer {
+    text: String,
+    provider: String,
+    via_cloud: bool,
+}
+
+/// Everything that shapes a translation under one settings snapshot. A
+/// cached translation is used only while its fingerprint is unchanged,
+/// so a new model, prompt or glossary term is never masked by old
+/// output.
+struct CacheStamp {
+    engine: String,
+    options: TranslateOptions,
+    /// Digest of [`CaptureFlowResult::earlier`] as the translator sees
+    /// it; empty for a capture that stands alone.
+    context: String,
+    /// Settings → storage.keep_translation_cache.
+    persist: bool,
+}
+
+impl CacheStamp {
+    /// Digest for translating `source` into `target`: the engine setup,
+    /// the style and the glossary terms that occur in `source`. Editing
+    /// a term therefore re-translates only the paragraphs that hold it.
+    fn fingerprint(&self, source: &str, target: &str) -> String {
+        let signature = self.options.signature_for(source, target);
+        translation_cache::fingerprint(
+            std::iter::once(self.engine.as_str()).chain(signature.iter().map(String::as_str)),
+        )
+    }
+}
+
+/// Digest of the translation engine setup: this build (prompts and
+/// default models change between versions) and the translate chain with
+/// the config of every engine in it. `plugins`: id and version of the
+/// enabled plugins, for the engines that come from one.
+fn engine_fingerprint(
+    s: &crate::settings::schema::Settings,
+    plugins: &[(String, String)],
+) -> String {
+    let chain = pick_chain(s, Capability::Translate).chain;
+    let engines: Vec<String> = chain
+        .iter()
+        .flat_map(|id| {
+            let config = s
+                .providers
+                .configs
+                .get(id)
+                .map(|cfg| cfg.to_string())
+                .unwrap_or_default();
+            // Chain ids of plugin engines are `plugin.<id>.<capability>`.
+            // Plugin ids may hold dots, a capability does not: the id is
+            // everything before the last one.
+            let owner = id
+                .strip_prefix("plugin.")
+                .and_then(|rest| rest.rsplit_once('.'))
+                .map(|(plugin, _)| plugin);
+            let version = plugins
+                .iter()
+                .find(|(plugin, _)| owner == Some(plugin.as_str()))
+                .map(|(_, version)| version.clone())
+                .unwrap_or_default();
+            [id.clone(), config, version]
+        })
+        .collect();
+    translation_cache::fingerprint(
+        std::iter::once(env!("CARGO_PKG_VERSION")).chain(engines.iter().map(String::as_str)),
+    )
+}
+
 fn pick_chain(s: &crate::settings::schema::Settings, cap: Capability) -> TaskChain {
     match cap {
         Capability::Translate => upgrade_llm_chain(s.providers.translate.clone(), LOCAL_LLM_ID),
@@ -1365,4 +1590,44 @@ fn apply_stickiness(
         }
     }
     chain.to_vec()
+}
+
+#[cfg(test)]
+mod cache_stamp_tests {
+    use super::*;
+
+    #[test]
+    fn a_plugin_update_changes_the_engine_fingerprint() {
+        let mut s = crate::settings::schema::Settings::default();
+        s.providers.translate.chain = vec!["plugin.acme.translate".into()];
+        let at = |version: &str| engine_fingerprint(&s, &[("acme".into(), version.into())]);
+        assert_ne!(at("1.0.0"), at("1.0.1"));
+        assert_eq!(at("1.0.0"), at("1.0.0"));
+        // A plugin that is not in the chain does not matter.
+        let other = engine_fingerprint(
+            &s,
+            &[
+                ("acme".into(), "1.0.0".into()),
+                ("acme2".into(), "9".into()),
+            ],
+        );
+        assert_eq!(other, at("1.0.0"));
+    }
+
+    #[test]
+    fn a_plugin_whose_id_starts_with_another_id_has_its_own_version() {
+        let mut s = crate::settings::schema::Settings::default();
+        s.providers.translate.chain = vec!["plugin.com.acme.tool.extra.translate".into()];
+        let at = |tool: &str, extra: &str| {
+            engine_fingerprint(
+                &s,
+                &[
+                    ("com.acme.tool".into(), tool.into()),
+                    ("com.acme.tool.extra".into(), extra.into()),
+                ],
+            )
+        };
+        assert_ne!(at("1", "1"), at("1", "2"));
+        assert_eq!(at("1", "1"), at("2", "1"));
+    }
 }
