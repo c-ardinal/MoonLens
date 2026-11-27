@@ -76,24 +76,95 @@ export function blockCssRect(block: LensBlock, crop: FrameRect, scale: number, p
  * Empty when no row is limited.
  */
 export function maskClip(block: LensBlock, scale: number, pad = 2): string {
+  const bands = maskBands(block, scale, pad);
+  if (!bands.length) return '';
+  const px = (n: number) => `${Math.round(n * 100) / 100}px`;
+  const points = ['0px 0px'];
+  for (const b of bands) points.push(`${px(b.right)} ${px(b.top)}`, `${px(b.right)} ${px(b.bottom)}`);
+  points.push(`0px ${px(bands[bands.length - 1].bottom)}`);
+  return `polygon(${points.join(', ')})`;
+}
+
+/** One row's part of a block's mask, in CSS px from the mask's corner. */
+export interface MaskBand {
+  top: number;
+  bottom: number;
+  right: number;
+}
+
+/**
+ * The bands {@link maskClip} is made of: per row, from the left edge to
+ * the row's limit. Empty when no row is limited (the mask is the whole
+ * rectangle).
+ */
+export function maskBands(block: LensBlock, scale: number, pad = 2): MaskBand[] {
   const rows = block.lines ?? [];
   const limits = block.row_limits ?? [];
-  if (rows.length < 2 || limits.length !== rows.length) return '';
+  if (rows.length < 2 || limits.length !== rows.length) return [];
   const [bx, by, bw, bh] = block.bbox;
   const width = bw / scale + pad * 2;
   const height = bh / scale + pad * 2;
   const rights = limits.map((l) => Math.min(width, (l - bx) / scale + pad * 2));
-  if (rights.every((r) => r >= width - 0.5)) return '';
+  if (rights.every((r) => r >= width - 0.5)) return [];
   const mid = (i: number) => ((rows[i][1] + rows[i][3] + rows[i + 1][1]) / 2 - by) / scale + pad;
-  const px = (n: number) => `${Math.round(n * 100) / 100}px`;
-  const points = ['0px 0px'];
-  rows.forEach((_, i) => {
-    const top = i === 0 ? 0 : mid(i - 1);
-    const bottom = i === rows.length - 1 ? height : mid(i);
-    points.push(`${px(rights[i])} ${px(top)}`, `${px(rights[i])} ${px(bottom)}`);
-  });
-  points.push(`0px ${px(height)}`);
-  return `polygon(${points.join(', ')})`;
+  return rows.map((_, i) => ({
+    top: i === 0 ? 0 : mid(i - 1),
+    bottom: i === rows.length - 1 ? height : mid(i),
+    right: rights[i]
+  }));
+}
+
+/** How the overlay hides the source text of a block and writes over it. */
+export interface BlockPaint {
+  /** Box fill; transparent when the erase picture hides the text. */
+  background: string;
+  /** Translation colour. */
+  color: string;
+  /** `clip-path` of the box. */
+  clip: string;
+  /** Erase picture and its place inside the box (CSS px). */
+  erase: { src: string; rect: CssRect } | null;
+  /** Outline colour of the translation; null for none. */
+  outline: string | null;
+}
+
+/**
+ * Paint of a block. On a plain background the box is filled with the
+ * background colour. On a picture or gradient (`erase`) the box stays
+ * transparent, the erase picture repaints only the text pixels and the
+ * translation gets an outline where the background varies.
+ */
+export function blockPaint(block: LensBlock, scale: number, pad = 2): BlockPaint {
+  const color = rgb(block.colors?.foreground, '#111');
+  const e = block.erase;
+  if (!e) {
+    return {
+      background: rgb(block.colors?.background, 'rgba(255,255,255,0.96)'),
+      color,
+      clip: maskClip(block, scale, pad) || 'none',
+      erase: null,
+      outline: null
+    };
+  }
+  const [bx, by] = block.bbox;
+  const [x, y, w, h] = e.rect;
+  const fg = block.colors?.foreground ?? [17, 17, 17];
+  const light = 0.299 * fg[0] + 0.587 * fg[1] + 0.114 * fg[2] > 140;
+  return {
+    background: 'transparent',
+    color,
+    clip: 'none',
+    erase: {
+      src: e.image,
+      rect: {
+        left: (x - bx) / scale + pad,
+        top: (y - by) / scale + pad,
+        width: w / scale,
+        height: h / scale
+      }
+    },
+    outline: e.outline ? (light ? 'rgba(0,0,0,0.85)' : 'rgba(255,255,255,0.9)') : null
+  };
 }
 
 /**

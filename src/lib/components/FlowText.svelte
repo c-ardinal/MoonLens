@@ -10,7 +10,9 @@
     scale,
     pad = 2,
     grow = 0,
-    background = 'transparent'
+    background = 'transparent',
+    outline = null,
+    onlayout
   }: {
     block: LensBlock;
     text: string;
@@ -22,6 +24,10 @@
     grow?: number;
     /** Mask colour, painted behind text that runs past the box. */
     background?: string;
+    /** Outline colour, for text written straight onto a picture. */
+    outline?: string | null;
+    /** The lines as placed, on every new layout. */
+    onlayout?: (layout: FlowResult) => void;
   } = $props();
 
   let host = $state<HTMLElement | null>(null);
@@ -54,7 +60,7 @@
     if (!ctx) return;
     // Measure at 100 px and scale: widths are linear in the font size.
     ctx.font = `${weight} 100px ${cs.fontFamily}`;
-    layout = flowLayout(text, {
+    const placed = flowLayout(text, {
       width,
       height,
       rows: rowsOf(block),
@@ -63,10 +69,17 @@
       grow,
       measure: (t) => ctx.measureText(t).width / 100
     });
+    layout = placed;
+    onlayout?.(placed);
   });
 </script>
 
-<div bind:this={host} class="flow" style="font-weight: {block.bold ? 700 : 500}">
+<div
+  bind:this={host}
+  class="flow"
+  class:outlined={!!outline}
+  style="font-weight: {block.bold ? 700 : 500}; --flow-outline: {outline ?? 'transparent'}"
+>
   {#if layout}
     {#each layout.lines as l, i (i)}
       <span
@@ -98,6 +111,20 @@
     position: absolute;
     white-space: pre;
     overflow: visible;
+  }
+  /* 縁取り：8 方向の影（静的描画のみ、文字サイズへ比例） */
+  .flow.outlined .flow-line {
+    --o: 0.06em;
+    --d: 0.045em;
+    text-shadow:
+      var(--o) 0 var(--flow-outline),
+      calc(-1 * var(--o)) 0 var(--flow-outline),
+      0 var(--o) var(--flow-outline),
+      0 calc(-1 * var(--o)) var(--flow-outline),
+      var(--d) var(--d) var(--flow-outline),
+      calc(-1 * var(--d)) var(--d) var(--flow-outline),
+      var(--d) calc(-1 * var(--d)) var(--flow-outline),
+      calc(-1 * var(--d)) calc(-1 * var(--d)) var(--flow-outline);
   }
   .flow-text {
     display: inline-block;

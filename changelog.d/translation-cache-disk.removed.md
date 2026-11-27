@@ -1,0 +1,1 @@
+- The "翻訳キャッシュ保持期間" setting (`performance.cache_ttl_seconds`) is gone: cached translations no longer expire by time. Existing config files are cleaned up automatically.

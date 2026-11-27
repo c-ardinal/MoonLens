@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { Check, Magnet, RefreshCw, Unlink } from 'lucide-svelte';
+  import { Cast, Check, Magnet, RefreshCw, Unlink } from 'lucide-svelte';
   import { attachWindow, detachWindow, listAttachTargets } from '$lib/ipc';
   import {
     isUnder,
@@ -11,6 +11,7 @@
     type Attachment
   } from '$lib/attach';
   import { errorText } from '$lib/errors';
+  import type { StreamState } from '$lib/stream';
 
   /**
    * 吸着メニュー：他アプリのウィンドウ一覧から吸着先を選択、吸着中は配置の変更と解除。
@@ -20,6 +21,8 @@
     label,
     attachment,
     docks,
+    stream,
+    onstream,
     onclose
   }: {
     /** 吸着するウィンドウ（自ウィンドウ）のラベル。 */
@@ -27,6 +30,10 @@
     attachment: Attachment;
     /** 選択可能な配置（先頭：新規吸着時の配置）。 */
     docks: { value: AttachDock; label: string; title: string }[];
+    /** 吸着先の配信用ウィンドウの状態（非対応環境では項目なし）。 */
+    stream?: StreamState;
+    /** 配信用ウィンドウの生成（true）・終了。 */
+    onstream?: (on: boolean) => Promise<void>;
     onclose: () => void;
   } = $props();
 
@@ -64,6 +71,10 @@
     if (t) run(() => attachWindow(label, t.id, dock), false);
   };
   const detach = () => run(() => detachWindow(label), true);
+  const toggleStream = () => {
+    const next = !stream?.active;
+    if (onstream) run(() => onstream(next), false);
+  };
 </script>
 
 <div class="am" role="dialog" aria-label="吸着">
@@ -85,6 +96,25 @@
         >
       {/each}
     </div>
+    {#if stream?.supported}
+      <button
+        class="sw"
+        role="switch"
+        aria-checked={stream.active}
+        onclick={toggleStream}
+        title="吸着先と訳文を合成した取込専用ウィンドウを生成（配信・録画ツールのウィンドウ取込用）"
+      >
+        <Cast class="h-4 w-4" />
+        <span class="nm">配信用ウィンドウ</span>
+        <span class="st">{stream.active ? '稼働中' : '停止中'}</span>
+      </button>
+      {#if stream.active && stream.title}
+        <p class="note nm" title={stream.title}>取込対象：{stream.title}</p>
+        <p class="note nm" title="OBS のウィンドウキャプチャでは、キャプチャ方法に「Windows 10 (1903 以降)」を指定">
+          OBS の方式：Windows 10 (1903 以降)
+        </p>
+      {/if}
+    {/if}
   {/if}
 
   <div class="hd">
@@ -185,6 +215,33 @@
     white-space: nowrap;
     transition: background 120ms;
   }
+  .sw {
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    border-radius: 6px;
+    padding: 4px 8px;
+    text-align: left;
+    transition: background 120ms;
+  }
+  .sw .nm {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+  .sw .st {
+    flex: none;
+    font-size: 11px;
+    opacity: 0.75;
+  }
+  .sw[aria-checked='true'] {
+    background: var(--la-pressed, rgba(139, 92, 246, 0.35));
+  }
+  .sw[aria-checked='true'] .st {
+    opacity: 1;
+    color: var(--ml-accent, #a78bfa);
+  }
+  .sw:hover,
   .ib:hover:not(:disabled),
   .seg button:hover,
   .row:hover {

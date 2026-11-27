@@ -11,6 +11,7 @@
     Settings as SettingsIcon,
     Mic,
     MicOff,
+    Pause,
     Power,
     LayoutGrid,
     Save
@@ -25,7 +26,8 @@
     saveLayoutSet,
     startSubtitle,
     stopSubtitle,
-    subtitleState
+    subtitleState,
+    toggleLensPause
   } from '$lib/ipc';
   import { displayAccelerator } from '$lib/hotkey';
   import { errorText } from '$lib/errors';
@@ -87,6 +89,16 @@
       hint: hint('capture_region'),
       icon: Camera,
       run: openWindow
+    },
+    {
+      id: 'window-pause',
+      label: 'ウィンドウ翻訳 一時停止／再開',
+      hint: hint('toggle_window_pause'),
+      icon: Pause,
+      run: async () => {
+        open = false;
+        await toggleLensPause();
+      }
     },
     {
       id: 'subtitle',

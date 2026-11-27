@@ -16,6 +16,9 @@ const GAP_CSS: f64 = 4.0;
 /// pixels): the width beside the anchor, the height above or below it.
 pub const WIDTH_CSS: f64 = 340.0;
 pub const HEIGHT_CSS: f64 = 180.0;
+/// A dock without room on either side shrinks the follower down to this.
+const LEAST_WIDTH_CSS: f64 = 220.0;
+const LEAST_HEIGHT_CSS: f64 = 96.0;
 
 /// Steps to wait for the window system to apply a placement before a
 /// differing position counts as the user's doing.
@@ -65,6 +68,10 @@ pub struct Follow {
     /// Width (beside the anchor, free) and height (above / below,
     /// inside, free).
     size: (u32, u32),
+    /// Size in free placement, once the window was placed freely.
+    free: Option<(u32, u32)>,
+    /// Smallest width and height a dock without room shrinks it to.
+    least: (u32, u32),
     gap: i32,
     /// Strip of the follower that goes above a covered anchor.
     header: u32,
@@ -90,6 +97,8 @@ impl Follow {
             // placement replaces this with the real anchor width.
             offset: (0, 0),
             size: (px(WIDTH_CSS), px(HEIGHT_CSS)),
+            free: None,
+            least: (px(LEAST_WIDTH_CSS), px(LEAST_HEIGHT_CSS)),
             gap: px(GAP_CSS) as i32,
             header: 0,
             anchor: None,
@@ -117,12 +126,23 @@ impl Follow {
         self
     }
 
-    /// A docked follower that is `w` × `h` already and keeps that size
-    /// along the axis its dock leaves free (height above, below and
-    /// inside the anchor, width beside it).
-    pub fn sized(mut self, w: u32, h: u32) -> Self {
-        self.size = (w, h);
+    /// Start from the follower's own size (physical pixels) instead of
+    /// the default one: a dock keeps it along the axis it leaves free.
+    pub fn with_size(mut self, width: u32, height: u32) -> Self {
+        self.size = (width.max(1), height.max(1));
         self
+    }
+
+    /// The follower's own size: what a dock leaves of it along its free
+    /// axis. A dock stretches the other axis to the anchor.
+    pub fn size(&self) -> (u32, u32) {
+        self.size
+    }
+
+    /// The dock stretches the follower along the anchor: detached, it
+    /// gets its own size back.
+    pub fn stretches(&self) -> bool {
+        !matches!(self.dock, Dock::Free | Dock::Cover)
     }
 
     /// Change the header strip (the display scale changed); the next
@@ -153,7 +173,7 @@ impl Follow {
         if dock == Dock::Free {
             if let (Some(anchor), Some(at)) = (self.anchor, self.placed) {
                 self.offset = (at.x - anchor.x, at.y - anchor.y);
-                self.size = (at.w, at.h);
+                self.free = Some((at.w, at.h));
             }
         }
         self.dock = dock;
@@ -209,12 +229,15 @@ impl Follow {
                 w,
                 h: anchor.h,
             },
-            Dock::Free | Dock::Cover | Dock::Inside => Rect {
-                x: anchor.x + self.offset.0,
-                y: anchor.y + self.offset.1,
-                w,
-                h,
-            },
+            Dock::Free | Dock::Cover | Dock::Inside => {
+                let (w, h) = self.free.unwrap_or(self.size);
+                Rect {
+                    x: anchor.x + self.offset.0,
+                    y: anchor.y + self.offset.1,
+                    w,
+                    h,
+                }
+            }
         };
         let want = at(self.dock);
         let Some(m) = monitor else {
@@ -228,6 +251,7 @@ impl Follow {
         };
         let chosen = match self.dock.opposite().map(at) {
             Some(other) if !fits(want) && fits(other) => other,
+            Some(_) if !fits(want) => self.squeezed(anchor, m).unwrap_or(want),
             _ => want,
         };
         let (w, h) = (chosen.w.min(m.w), chosen.h.min(m.h));
@@ -237,6 +261,65 @@ impl Follow {
             w,
             h,
         }
+    }
+
+    /// A follower docked outside without room on either side as large as
+    /// it is: on the side with more room (its own on a tie), shrunk to
+    /// that room. `None` when even the smallest follower does not fit.
+    fn squeezed(&self, anchor: Rect, m: Rect) -> Option<Rect> {
+        let gap = self.gap;
+        let beside = matches!(self.dock, Dock::Left | Dock::Right);
+        let (before, after) = if beside {
+            (
+                anchor.x - gap - m.x,
+                m.x + m.w as i32 - (anchor.x + anchor.w as i32 + gap),
+            )
+        } else {
+            (
+                anchor.y - gap - m.y,
+                m.y + m.h as i32 - (anchor.y + anchor.h as i32 + gap),
+            )
+        };
+        let first = matches!(self.dock, Dock::Left | Dock::Top);
+        let (own, other) = if first {
+            (before, after)
+        } else {
+            (after, before)
+        };
+        let leading = if own >= other { first } else { !first };
+        let room = own.max(other);
+        let (least, wanted) = if beside {
+            (self.least.0, self.size.0)
+        } else {
+            (self.least.1, self.size.1)
+        };
+        if room < least as i32 {
+            return None;
+        }
+        let len = wanted.min(room as u32);
+        Some(if beside {
+            Rect {
+                x: if leading {
+                    anchor.x - gap - len as i32
+                } else {
+                    anchor.x + anchor.w as i32 + gap
+                },
+                y: anchor.y,
+                w: len,
+                h: anchor.h,
+            }
+        } else {
+            Rect {
+                x: anchor.x,
+                y: if leading {
+                    anchor.y - gap - len as i32
+                } else {
+                    anchor.y + anchor.h as i32 + gap
+                },
+                w: anchor.w,
+                h: len,
+            }
+        })
     }
 
     /// One step: the anchor is at `anchor`, the follower at `actual`.
@@ -296,7 +379,7 @@ impl Follow {
     /// Take the follower's place as the one to keep.
     fn adopt(&mut self, anchor: Rect, actual: Rect) {
         self.offset = (actual.x - anchor.x, actual.y - anchor.y);
-        self.size = (actual.w, actual.h);
+        self.free = Some((actual.w, actual.h));
         self.placed = Some(actual);
     }
 
@@ -486,10 +569,10 @@ mod tests {
 
     #[test]
     fn a_docked_follower_keeps_the_size_it_came_with() {
-        let mut below = Follow::new(Dock::Bottom, 1.0).sized(500, 77);
+        let mut below = Follow::new(Dock::Bottom, 1.0).with_size(500, 77);
         let at = below.step(LENS, ELSEWHERE, Some(MONITOR)).unwrap();
         assert_eq!((at.w, at.h), (LENS.w, 77));
-        let mut beside = Follow::new(Dock::Right, 1.0).sized(123, 500);
+        let mut beside = Follow::new(Dock::Right, 1.0).with_size(123, 500);
         let at = beside.step(LENS, ELSEWHERE, Some(MONITOR)).unwrap();
         assert_eq!((at.w, at.h), (123, LENS.h));
     }
@@ -766,6 +849,61 @@ mod tests {
         // This one arrives; the user moving it afterwards is the user.
         assert_eq!(f.step(LENS, at, Some(MONITOR)), None);
         assert_eq!(f.dock(), Dock::Cover);
+    }
+
+    #[test]
+    fn a_docked_follower_keeps_the_size_it_came_with() {
+        let size = |dock| {
+            let mut f = Follow::new(dock, 1.0).with_size(900, 120);
+            let at = f.step(LENS, ELSEWHERE, Some(MONITOR)).expect("placed");
+            (at.w, at.h)
+        };
+        // Along the anchor: the anchor's length; across: its own.
+        assert_eq!(size(Dock::Inside), (LENS.w - 8, 120));
+        assert_eq!(size(Dock::Bottom), (LENS.w, 120));
+        assert_eq!(size(Dock::Right), (900, LENS.h));
+    }
+
+    #[test]
+    fn a_dock_without_room_on_either_side_shrinks_to_the_wider_one() {
+        let anchor = Rect {
+            x: 700,
+            w: 700,
+            ..LENS
+        };
+        // 696 px to the left, 516 px to the right: neither holds 900 px.
+        let f = Follow::new(Dock::Right, 1.0).with_size(900, 120);
+        let r = f.target(anchor, Some(MONITOR));
+        assert_eq!((r.x, r.w), (0, 696));
+        assert_eq!((r.y, r.h), (anchor.y, anchor.h));
+        // Asked for the left: the same spot.
+        let f = Follow::new(Dock::Left, 1.0).with_size(900, 120);
+        assert_eq!(f.target(anchor, Some(MONITOR)), r);
+        // Too little room for the smallest follower: kept as large as it
+        // is, on the monitor.
+        let wide = Rect {
+            x: 100,
+            w: 1700,
+            ..LENS
+        };
+        assert_eq!(f.target(wide, Some(MONITOR)).w, 900);
+    }
+
+    #[test]
+    fn free_placement_leaves_the_own_size_for_the_next_dock() {
+        let mut f = Follow::new(Dock::Left, 1.0).with_size(900, 120);
+        let at = f.step(LENS, ELSEWHERE, Some(MONITOR)).expect("placed");
+        assert_eq!(f.step(LENS, at, Some(MONITOR)), None);
+        // Free: as large as the dock left it.
+        f.set_dock(Dock::Free);
+        assert_eq!(f.step(LENS, at, Some(MONITOR)), None);
+        assert!(!f.stretches());
+        // Docked again: its own height, not the anchor's.
+        f.set_dock(Dock::Inside);
+        let inside = f.step(LENS, at, Some(MONITOR)).expect("moved");
+        assert_eq!(inside.h, 120);
+        assert_eq!(f.size(), (900, 120));
+        assert!(f.stretches());
     }
 
     #[test]

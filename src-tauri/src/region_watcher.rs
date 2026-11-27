@@ -55,6 +55,11 @@ const REGION_CHANGED: f32 = 0.002;
 /// translation before OCR confirms the change.
 const BLOCK_CHANGED: f32 = 0.12;
 
+/// Share of changed pixels inside a block's box above which the picture
+/// behind its text counts as moving (a video): the text-only erase is a
+/// still picture, so such a block goes back to the one-colour box.
+const ERASE_MOVED: f32 = 0.02;
+
 /// Ticks a changing text may take to settle before it is translated
 /// anyway (a clock, a counter).
 const SETTLE_LIMIT: u32 = 6;
@@ -141,6 +146,9 @@ pub struct TickEnv<'a> {
     pub mode: ReadMode,
     /// History kind of new translations (`pipeline::history_kind`).
     pub history_kind: &'a str,
+    /// Key of the app the region belongs to, when it follows one of its
+    /// windows ([`crate::pipeline::CaptureFlowResult::app`]).
+    pub app: Option<&'a str>,
     pub emit: &'a (dyn Fn(LiveEvent) + Send + Sync),
     /// Region geometry now. A translation finished after the region moved
     /// is not shown at the old place; the next tick shows it at the new.
@@ -177,12 +185,18 @@ pub enum Tick {
 #[derive(Default)]
 struct Shown {
     thumb: Option<Thumb>,
-    /// Target language and source text of the shown blocks (or the
+    /// [`shown_for`] and source text of the shown blocks (or the
     /// decoded QR payload): what a new reading is compared with.
     text: Option<String>,
     blocks: Vec<LensBlock>,
+    /// [`Pipeline::translation_epoch`] the blocks were translated under.
+    epoch: String,
     /// Indices already reported stale since the last `Blocks`.
     stale: Vec<usize>,
+    /// The frame the shown erase pictures were made from. Unlike
+    /// `thumb` it does not follow ticks that emit nothing, so slow
+    /// motion behind the text adds up against it.
+    erase_base: Option<Thumb>,
 }
 
 /// Change-driven reading of one screen region, shared by live
@@ -200,8 +214,9 @@ pub struct Tracker {
     unsettled: u32,
     /// Ticks the pending reading has been growing ([`ReadMode::Subtitle`]).
     growing: u32,
-    /// Mode and target language of the last tick: a change drops
-    /// `carried` (its translations are in the old language).
+    /// Mode and [`shown_for`] of the last tick: a change drops
+    /// `carried` (its translations are in the old language, or its
+    /// lines were said in another application).
     carried_for: (ReadMode, String),
     /// Source and translation of earlier readings, oldest first: the
     /// context of the next subtitle. Empty in [`ReadMode::Ui`].
@@ -270,23 +285,25 @@ impl Tracker {
             return Ok(Tick::Moved);
         }
         self.last_geometry = Some(frame.geometry);
-        if self.carried_for.0 != env.mode || self.carried_for.1 != env.target_language {
-            self.carried_for = (env.mode, env.target_language.to_string());
+        let shown_for = shown_for(env);
+        if self.carried_for.0 != env.mode || self.carried_for.1 != shown_for {
+            self.carried_for = (env.mode, shown_for.clone());
             self.carried.clear();
         }
+        let visible = frame.visible;
         let thumb = Thumb::of(&frame.image);
-        let changed = self
-            .last_thumb
+        let previous = self.last_thumb.replace(thumb.clone());
+        let changed = previous
             .as_ref()
             .is_none_or(|t| t.changed_share(&thumb, None) >= REGION_CHANGED);
-        self.last_thumb = Some(thumb.clone());
         // Nothing changed since the last tick and nothing waits to settle.
-        // The target language changed in settings: read and translate again.
+        // The target language changed in settings, or the region now
+        // follows another application: read and translate again.
         let language_changed = self
             .shown
             .text
             .as_deref()
-            .is_some_and(|k| k.split('\u{1}').next() != Some(env.target_language));
+            .is_some_and(|k| k.split('\u{1}').next() != Some(shown_for.as_str()));
         if !changed
             && !force
             && !language_changed
@@ -351,10 +368,11 @@ impl Tracker {
             _ => None,
         };
         // What decides "same as shown": the text read, and the language
-        // it is shown in (a changed target language translates again).
+        // and application it is shown for (a change of either
+        // translates again).
         let key = format!(
             "{}\u{1}{}",
-            env.target_language,
+            shown_for,
             decoded.as_deref().map_or(text.as_str(), |d| d)
         );
 
@@ -370,12 +388,22 @@ impl Tracker {
             // again, at the new positions.
             self.unsettled = 0;
             self.growing = 0;
-            self.shown.thumb = Some(thumb);
             if let (Some(text), true) = (&decoded, force) {
+                self.shown.thumb = Some(thumb);
                 (env.emit)(LiveEvent::Decoded { text: text.clone() });
-            } else if !self.shown.stale.is_empty() || force {
+                return Ok(Tick::SameText);
+            }
+            let mut blocks = carry_translations(&self.shown.blocks, bundle.blocks);
+            // The picture behind the text moves: no still erase picture
+            // over it, now or while this text stays. A refresh tries anew.
+            if !force {
+                keep_plain(&self.shown.blocks, &mut blocks);
+                drop_moving_erase(&mut blocks, visible, self.shown.erase_base.as_ref(), &thumb);
+            }
+            let erase_lost = erase_count(&blocks) < erase_count(&self.shown.blocks);
+            if !self.shown.stale.is_empty() || force || erase_lost {
                 self.shown.stale.clear();
-                let blocks = carry_translations(&self.shown.blocks, bundle.blocks);
+                self.shown.erase_base = Some(thumb.clone());
                 self.shown.blocks = blocks.clone();
                 (env.emit)(LiveEvent::Blocks {
                     blocks,
@@ -384,6 +412,7 @@ impl Tracker {
                     via_cloud: false,
                 });
             }
+            self.shown.thumb = Some(thumb);
             return Ok(Tick::SameText);
         }
 
@@ -428,16 +457,49 @@ impl Tracker {
             return Ok(Tick::Empty);
         }
 
+        // The text-only erase is a still picture: only for blocks whose
+        // area held still since the previous tick. A refresh shows it
+        // at once; the following ticks take it back if the picture moves.
+        if !force {
+            drop_moving_erase(&mut bundle.blocks, visible, previous.as_ref(), &thumb);
+        }
+
         // Cached and same-language blocks are ready now; show them while
         // the rest is translated.
+        bundle.app = env.app.map(str::to_string);
+        // Empty in `ReadMode::Ui`. A reading that the new one continues
+        // (or repeats) is the same line: as history it would be
+        // translated twice.
+        bundle.earlier = match self.carried.split_last() {
+            Some(((last, _), before)) if *last == text || extends(last, &text) => before,
+            _ => &self.carried[..],
+        }
+        .to_vec();
+        // Blocks still shown keep their translation; text that comes
+        // back after other lines is translated in its new context. Not
+        // after another target language, glossary or engine was chosen:
+        // what is shown was made under the old one.
+        let epoch = env.pipeline.translation_epoch(env.app, env.target_language);
+        if self.shown.epoch == epoch {
+            bundle.on_screen = self
+                .shown
+                .blocks
+                .iter()
+                .enumerate()
+                .filter(|(i, b)| !self.shown.stale.contains(i) && !b.same_language)
+                .filter_map(|(_, b)| Some((b.source.clone(), b.translation.clone()?)))
+                .collect();
+        }
         env.pipeline
             .prepare_translation(&mut bundle, env.target_language);
         let requested =
             bundle.needs_translation() && bundle.blocks.iter().any(|b| b.needs_request());
         self.shown = Shown {
+            erase_base: Some(thumb.clone()),
             thumb: Some(thumb),
             text: Some(key),
             blocks: bundle.blocks.clone(),
+            epoch,
             stale: Vec::new(),
         };
         (env.emit)(LiveEvent::Blocks {
@@ -464,21 +526,13 @@ impl Tracker {
                     });
                 }
             };
-            // Empty in `ReadMode::Ui`. A reading that the new one
-            // continues (or repeats) is the same line: as history it
-            // would be translated twice.
-            let earlier = match self.carried.split_last() {
-                Some(((last, _), before)) if *last == text || extends(last, &text) => before,
-                _ => &self.carried[..],
-            };
             let result = env
                 .pipeline
-                .translate_capture_after(
+                .translate_capture_as(
                     &mut bundle,
                     env.target_language,
                     Some(&progress),
                     env.history_kind,
-                    earlier,
                 )
                 .await;
             self.shown.blocks = bundle.blocks.clone();
@@ -561,6 +615,13 @@ fn extends(old: &str, new: &str) -> bool {
 
 /// [`extends`] for two reading keys (target language and text, see
 /// `key` in [`Tracker::tick`]) of the same language.
+/// Whom a translation is shown for: the target language and the
+/// application the text is read from. The same text is another reading
+/// under another of either (translations are cached per application).
+fn shown_for(env: &TickEnv<'_>) -> String {
+    format!("{}\u{2}{}", env.target_language, env.app.unwrap_or(""))
+}
+
 fn key_extends(old: &str, new: &str) -> bool {
     match (old.split_once('\u{1}'), new.split_once('\u{1}')) {
         (Some((old_lang, old)), Some((new_lang, new))) => old_lang == new_lang && extends(old, new),
@@ -576,6 +637,41 @@ fn source_key(blocks: &[LensBlock]) -> String {
         .map(|b| b.source.trim())
         .collect::<Vec<_>>()
         .join("\n\n")
+}
+
+/// Take the erase picture off every block whose area differs between
+/// `base` and `now` (or when there is nothing to compare with).
+/// Blocks are placed in the region (`visible`), thumbnails cover the
+/// whole capture.
+fn drop_moving_erase(
+    blocks: &mut [LensBlock],
+    visible: Option<Visible>,
+    base: Option<&Thumb>,
+    now: &Thumb,
+) {
+    for b in blocks.iter_mut().filter(|b| b.erase.is_some()) {
+        let bbox = visible.map_or(b.bbox, |v| v.in_capture(b.bbox));
+        if base.is_none_or(|t| t.changed_share(now, Some(bbox)) >= ERASE_MOVED) {
+            b.erase = None;
+        }
+    }
+}
+
+/// Blocks shown with the one-colour box keep it in a new reading of the
+/// same text: the box and the erase picture do not swap back and forth.
+fn keep_plain(old: &[LensBlock], new: &mut [LensBlock]) {
+    for b in new.iter_mut() {
+        if old
+            .iter()
+            .any(|o| o.source == b.source && o.erase.is_none())
+        {
+            b.erase = None;
+        }
+    }
+}
+
+fn erase_count(blocks: &[LensBlock]) -> usize {
+    blocks.iter().filter(|b| b.erase.is_some()).count()
 }
 
 /// New readings of the same text: keep the translations, take the new
@@ -683,7 +779,59 @@ mod tests {
             bold: false,
             lines: vec![],
             row_limits: vec![],
+            erase: None,
         }
+    }
+
+    fn erased(source: &str, bbox: [f32; 4]) -> LensBlock {
+        LensBlock {
+            erase: Some(crate::erase::ErasePatch {
+                rect: [0, 0, 1, 1],
+                image: String::new(),
+                outline: false,
+                foreground: [0, 0, 0],
+            }),
+            ..block(source, bbox)
+        }
+    }
+
+    #[test]
+    fn erase_picture_stays_while_the_picture_behind_holds_still() {
+        let frame = Thumb::of(&with_word(100));
+        let mut blocks = vec![erased("a", [80.0, 10.0, 400.0, 40.0])];
+        drop_moving_erase(&mut blocks, None, Some(&frame), &Thumb::of(&with_word(100)));
+        assert!(blocks[0].erase.is_some());
+    }
+
+    #[test]
+    fn erase_picture_goes_when_the_picture_behind_moves() {
+        let before = Thumb::of(&with_word(100));
+        let after = Thumb::of(&with_word(400));
+        // The block where the word was is dropped, the one elsewhere stays.
+        let mut blocks = vec![
+            erased("moved", [80.0, 10.0, 400.0, 40.0]),
+            erased("still", [560.0, 0.0, 200.0, 60.0]),
+        ];
+        drop_moving_erase(&mut blocks, None, Some(&before), &after);
+        assert!(blocks[0].erase.is_none());
+        assert!(blocks[1].erase.is_some());
+        // Nothing to compare with: not known to be still.
+        drop_moving_erase(&mut blocks, None, None, &after);
+        assert!(blocks[1].erase.is_none());
+    }
+
+    #[test]
+    fn a_block_shown_with_the_box_keeps_it_for_the_same_text() {
+        let old = vec![block("a", [0.0; 4]), erased("b", [0.0; 4])];
+        let mut new = vec![
+            erased("a", [0.0; 4]),
+            erased("b", [0.0; 4]),
+            erased("c", [0.0; 4]),
+        ];
+        keep_plain(&old, &mut new);
+        assert!(new[0].erase.is_none());
+        assert!(new[1].erase.is_some());
+        assert!(new[2].erase.is_some());
     }
 
     #[test]

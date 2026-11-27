@@ -1,0 +1,44 @@
+name: stream (windows)
+
+# The composite window for stream capture (src-tauri/crates/stream) on a
+# real Windows desktop: a window is mirrored with translations drawn
+# over it and read back the way capture tools read it. The crate has no
+# dependency on the rest of the app, so this takes a few minutes.
+
+on:
+  pull_request:
+    paths:
+      - 'src-tauri/crates/stream/**'
+      - '.github/workflows/stream-windows.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: stream-windows-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  stream:
+    name: stream (windows)
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Clippy
+        working-directory: src-tauri/crates/stream
+        run: cargo clippy --all-targets --locked -- -D warnings
+
+      - name: Tests
+        working-directory: src-tauri/crates/stream
+        run: cargo test --locked -- --nocapture --test-threads 1

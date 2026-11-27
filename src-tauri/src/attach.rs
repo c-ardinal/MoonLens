@@ -96,6 +96,19 @@ impl Attachments {
         }
     }
 
+    /// The windows attached to window `target`.
+    pub fn attached_to(&self, target: u64) -> Vec<String> {
+        let mut labels: Vec<String> = self
+            .entries
+            .lock()
+            .iter()
+            .filter(|(_, e)| e.target.id == target)
+            .map(|(label, _)| label.clone())
+            .collect();
+        labels.sort();
+        labels
+    }
+
     /// The application `label` is attached to a window of.
     pub fn app(&self, label: &str) -> Option<AppIdentity> {
         self.entries
@@ -127,6 +140,7 @@ fn emit(app: &AppHandle, registry: &Attachments, label: &str) {
         label: label.to_string(),
     };
     let _ = app.emit_to(target, EVENT, registry.attachment(label));
+    crate::stream::attachment_changed(app, label);
 }
 
 /// Attach window `label` to `target` at `dock`. The top `header_css`
@@ -148,15 +162,23 @@ pub fn attach(
     }
     let scale = win.scale_factor().unwrap_or(1.0);
     let mut follow = Follow::new(dock, scale).with_header(header_px(header_css, scale));
-    if let Ok(at) = lens::inner_rect(&win) {
-        follow = match dock {
-            // Free placement keeps the window where it is on its target.
-            Dock::Free => follow.keeping(target.rect, at),
-            Dock::Cover => follow,
-            // A dock keeps the size the window has (one restored from a
-            // layout set comes at its saved size).
-            _ => follow.sized(at.w, at.h),
-        };
+    // Docked, the window keeps its own size along the free axis: the
+    // one it had before a dock stretched it.
+    let own = registry
+        .entries
+        .lock()
+        .get(label)
+        .filter(|e| e.follow.stretches())
+        .map(|e| e.follow.size())
+        .or_else(|| win.inner_size().ok().map(|s| (s.width, s.height)));
+    if let Some((width, height)) = own {
+        follow = follow.with_size(width, height);
+    }
+    if dock == Dock::Free {
+        // Free placement keeps the window where it is on its target.
+        if let Ok(at) = lens::inner_rect(&win) {
+            follow = follow.keeping(target.rect, at);
+        }
     }
     let serial = registry.serial.fetch_add(1, Ordering::Relaxed) + 1;
     let was_hidden = registry
@@ -213,13 +235,18 @@ pub fn set_dock(app: &AppHandle, registry: &Handle, label: &str, dock: Dock) {
     emit(app, registry, label);
 }
 
-/// End the attachment of `label`; the window stays where it is.
+/// End the attachment of `label`; the window stays where it is. A
+/// dock stretched it along the target: it gets its own size back.
 pub fn detach(app: &AppHandle, registry: &Handle, label: &str) {
     let Some(old) = registry.entries.lock().remove(label) else {
         return;
     };
-    if old.hidden {
-        if let Some(win) = app.get_webview_window(label) {
+    if let Some(win) = app.get_webview_window(label) {
+        if old.follow.stretches() {
+            let (width, height) = old.follow.size();
+            let _ = win.set_size(tauri::PhysicalSize::new(width, height));
+        }
+        if old.hidden {
             follow::show_inactive(&win);
         }
     }

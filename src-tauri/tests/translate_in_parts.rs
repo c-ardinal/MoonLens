@@ -114,11 +114,15 @@ fn bundle(texts: &[String]) -> CaptureFlowResult {
                 bold: false,
                 lines: vec![],
                 row_limits: vec![],
+                erase: None,
             })
             .collect(),
         image_size: Some([100, 100]),
         source_language: None,
         target_language: None,
+        app: None,
+        earlier: Vec::new(),
+        on_screen: Vec::new(),
     }
 }
 
@@ -289,7 +293,7 @@ async fn real_model_first_part_arrives_early() {
             .iter()
             .map(|v| v.as_str().unwrap().to_string())
             .collect();
-        p.clear_translation_cache();
+        p.clear_translation_cache(None).unwrap();
         *first_delta.lock() = None;
         let mut b = bundle(&texts);
         let t0 = std::time::Instant::now();
