@@ -599,7 +599,21 @@ impl Pipeline {
             .map(|b| {
                 // Colours and stroke weight are read from one row: the
                 // box of a paragraph may also hold a picture beside it.
-                let sample = layout::sample_row(b);
+                // Of the rows in the picture: a scroll may have taken
+                // the others out of view.
+                let in_picture = layout::TextBlock {
+                    lines: b
+                        .lines
+                        .iter()
+                        .filter(|r| r[1] >= 0.0 && r[1] + r[3] <= height)
+                        .copied()
+                        .collect(),
+                    ..b.clone()
+                };
+                let sample = match in_picture.lines.is_empty() {
+                    true => b.bbox,
+                    false => layout::sample_row(&in_picture),
+                };
                 let colors = (b.bbox[2] > 0.0).then(|| layout::estimate_colors(&rgba, sample));
                 let bold = colors.is_some_and(|c| {
                     layout::looks_bold(
