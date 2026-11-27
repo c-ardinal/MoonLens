@@ -81,6 +81,16 @@ impl TranslateOptions {
         app.and_then(|key| self.apps.get(key)).unwrap_or(self)
     }
 
+    /// What applies to text from application `app`, and nothing else:
+    /// equal before and after a change to another application's
+    /// glossary.
+    pub fn effective(&self, app: Option<&str>) -> TranslateOptions {
+        TranslateOptions {
+            apps: BTreeMap::new(),
+            ..self.for_app(app).clone()
+        }
+    }
+
     pub fn is_empty(&self) -> bool {
         self.style == JaStyle::Auto && self.terms.is_empty() && self.apps.is_empty()
     }

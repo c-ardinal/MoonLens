@@ -345,7 +345,16 @@ async fn an_apps_glossary_change_retranslates_that_apps_text_only() {
             }]
         }
     };
+    let epochs = |run: &Run| {
+        [None, Some("game"), Some("novel")].map(|app| run.pipe.translation_epoch(app, "ja"))
+    };
+    let before = epochs(&run);
     run.change(glossary_of_game(vec![term("Sword", "剣")]));
+    // What is on screen stays valid for every app but that one.
+    let after = epochs(&run);
+    assert_eq!(before[0], after[0]);
+    assert_ne!(before[1], after[1]);
+    assert_eq!(before[2], after[2]);
     // The paragraph with the term, read from that app.
     let r = run.translate(Some("game")).await;
     assert_eq!(run.requests(), ["Iron Sword"]);

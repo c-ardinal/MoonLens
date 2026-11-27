@@ -268,8 +268,7 @@ impl Pipeline {
             engine: engine_fingerprint(&s, &plugins),
             // The glossary of the app the text was read from.
             options: TranslateOptions::from_settings(&s.translation)
-                .for_app(bundle.app.as_deref())
-                .clone(),
+                .effective(bundle.app.as_deref()),
             context,
             persist: s.storage.keep_translation_cache,
         }
@@ -292,7 +291,7 @@ impl Pipeline {
         // The app's own glossary where it has one: editing another
         // app's leaves this one's translations as they are.
         let options = TranslateOptions::from_settings(&s.translation);
-        let options = format!("{:?}", options.for_app(app));
+        let options = format!("{:?}", options.effective(app));
         translation_cache::fingerprint([
             engine_fingerprint(&s, &plugins).as_str(),
             options.as_str(),
