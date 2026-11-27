@@ -119,6 +119,8 @@ fn bundle(texts: &[String]) -> CaptureFlowResult {
         source_language: None,
         target_language: None,
         app: None,
+        earlier: Vec::new(),
+        on_screen: Vec::new(),
     }
 }
 

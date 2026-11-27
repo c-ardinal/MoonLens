@@ -225,11 +225,25 @@ impl Pipeline {
 
     /// What cached translations are checked against under the current
     /// settings. Take one per capture.
-    fn cache_stamp(&self) -> CacheStamp {
+    fn cache_stamp(&self, bundle: &CaptureFlowResult) -> CacheStamp {
         let s = self.settings.snapshot();
+        // What the translator is shown with the text shapes the result
+        // (who "he" is, which subject was left out): a translation made
+        // after other lines is used again only after the same lines.
+        let context = if bundle.earlier.is_empty() || !self.translator_takes_context() {
+            String::new()
+        } else {
+            translation_cache::fingerprint(
+                bundle
+                    .earlier
+                    .iter()
+                    .flat_map(|(source, translation)| [source.as_str(), translation.as_str()]),
+            )
+        };
         CacheStamp {
             engine: engine_fingerprint(&s),
             options: TranslateOptions::from_settings(&s.translation),
+            context,
             persist: s.storage.keep_translation_cache,
         }
     }
@@ -514,6 +528,8 @@ impl Pipeline {
                     source_language: None,
                     target_language: None,
                     app: None,
+                    earlier: Vec::new(),
+                    on_screen: Vec::new(),
                 });
             }
         }
@@ -577,6 +593,8 @@ impl Pipeline {
                 source_language: None,
                 target_language: None,
                 app: None,
+                earlier: Vec::new(),
+                on_screen: Vec::new(),
                 result: TaskResult {
                     task: "capture".into(),
                     output: TaskOutput::Intent(intent),
@@ -624,6 +642,8 @@ impl Pipeline {
             image_size,
             target_language: None,
             app: None,
+            earlier: Vec::new(),
+            on_screen: Vec::new(),
             result: TaskResult {
                 task: "ocr".into(),
                 output: TaskOutput::Empty,
@@ -657,9 +677,19 @@ impl Pipeline {
     pub fn prepare_translation(&self, bundle: &mut CaptureFlowResult, target: &str) {
         Self::mark_same_language(bundle, target);
         let scope = bundle.app.clone().unwrap_or_default();
-        let stamp = self.cache_stamp();
-        for b in &mut bundle.blocks {
+        let stamp = self.cache_stamp(bundle);
+        let CaptureFlowResult {
+            blocks, on_screen, ..
+        } = bundle;
+        for b in blocks {
             if b.same_language {
+                continue;
+            }
+            // Still on screen from the reading before: the same
+            // occurrence keeps its translation, whatever was read since.
+            if let Some((_, kept)) = on_screen.iter().find(|(s, _)| s.trim() == b.source.trim()) {
+                b.translation = Some(kept.clone());
+                b.from_cache = true;
                 continue;
             }
             let fingerprint = stamp.fingerprint(&b.source, target);
@@ -751,7 +781,7 @@ impl Pipeline {
             .chain
             .into_iter()
             .next();
-        let stamp = self.cache_stamp();
+        let stamp = self.cache_stamp(bundle);
 
         if pending.is_empty() {
             // Everything is already readable or cached: no round-trip.
@@ -820,7 +850,11 @@ impl Pipeline {
         };
 
         let started = Instant::now();
-        let mut history: Vec<(String, String)> = Vec::new();
+        let mut history: Vec<(String, String)> = if in_parts {
+            bundle.earlier.clone()
+        } else {
+            Vec::new()
+        };
         let mut first: Option<TaskResult> = None;
         let mut reasons: Vec<String> = Vec::new();
         let mut outputs: Vec<String> = Vec::new();
@@ -1106,6 +1140,20 @@ pub struct CaptureFlowResult {
     /// things in two apps.
     #[serde(skip)]
     pub app: Option<String>,
+    /// Source and translation of the captures this one continues (the
+    /// subtitles before this one), oldest first. A translator that takes
+    /// a [`TranslateContext`] gets them as history of every request, and
+    /// a cached translation is used only when it was made after the same
+    /// lines: the same words after other lines can mean something else.
+    /// Empty: the capture stands alone.
+    #[serde(skip)]
+    pub earlier: Vec<(String, String)>,
+    /// Source and translation of blocks that were on screen, translated,
+    /// in the reading before this one. A block that is still there keeps
+    /// that translation instead of being translated again in the context
+    /// of what was read since.
+    #[serde(skip)]
+    pub on_screen: Vec<(String, String)>,
 }
 
 /// One paragraph of recognised text, positioned in the captured image.
@@ -1267,6 +1315,9 @@ fn upgrade_llm_chain(mut chain: TaskChain, local_id: &str) -> TaskChain {
 struct CacheStamp {
     engine: String,
     options: TranslateOptions,
+    /// Digest of [`CaptureFlowResult::earlier`] as the translator sees
+    /// it; empty for a capture that stands alone.
+    context: String,
     /// Settings → storage.keep_translation_cache.
     persist: bool,
 }
@@ -1278,7 +1329,9 @@ impl CacheStamp {
     fn fingerprint(&self, source: &str, target: &str) -> String {
         let signature = self.options.signature_for(source, target);
         translation_cache::fingerprint(
-            std::iter::once(self.engine.as_str()).chain(signature.iter().map(String::as_str)),
+            [self.engine.as_str(), self.context.as_str()]
+                .into_iter()
+                .chain(signature.iter().map(String::as_str)),
         )
     }
 }
