@@ -458,6 +458,13 @@ pub async fn run_loop(
                         String::new()
                     }
                 };
+                // Approved for blocking while it was being translated
+                // (the window asked before translation began): the
+                // window dropped its copies, do not bring one back.
+                if stock.blocks_all(&settings.snapshot().subtitle, &original) {
+                    set_phase(Phase::Waiting);
+                    continue;
+                }
                 emit(SubtitleEvent::Chunk {
                     original,
                     translated,

@@ -59,6 +59,9 @@ impl Provider for ScriptedAsr {
 /// A translator that records what it was asked to translate.
 struct RecordingTranslator {
     asked: Arc<Mutex<Vec<String>>>,
+    settings: Arc<SettingsStore>,
+    /// Runs while a text is being translated.
+    during: fn(&SettingsStore, &str),
 }
 
 #[async_trait]
@@ -77,6 +80,7 @@ impl Provider for RecordingTranslator {
             return Err(ProviderError::Other("not a translation".into()));
         };
         self.asked.lock().unwrap().push(text.clone());
+        (self.during)(&self.settings, &text);
         Ok(TaskOutput::Text(format!("訳：{text}")))
     }
 }
@@ -117,6 +121,26 @@ async fn subtitles(
     script: Vec<Vec<&'static str>>,
     between: impl Fn(usize, &SettingsStore),
 ) -> Outcome {
+    subtitles_with(configure, script, between, |_, _| {}).await
+}
+
+/// What `block_subtitle_phrase` does when the user approves a candidate.
+fn approve(settings: &SettingsStore, phrase: &str) -> bool {
+    let mut next = (*settings.snapshot()).clone();
+    let added =
+        moonlens_lib::subtitle_filter::add_phrase(&mut next.subtitle.blocked_phrases, phrase);
+    if added {
+        settings.save(next).unwrap();
+    }
+    added
+}
+
+async fn subtitles_with(
+    configure: impl FnOnce(&mut Settings),
+    script: Vec<Vec<&'static str>>,
+    between: impl Fn(usize, &SettingsStore),
+    during: fn(&SettingsStore, &str),
+) -> Outcome {
     let tmp = tempfile::tempdir().unwrap();
     let store = SettingsStore::load_from(tmp.path().join("config.toml")).unwrap();
     let mut s = Settings::default();
@@ -144,6 +168,8 @@ async fn subtitles(
         "tr".into(),
         Arc::new(RecordingTranslator {
             asked: asked.clone(),
+            settings: settings.clone(),
+            during,
         }),
     );
     let storage = Arc::new(Storage::open_in_memory().unwrap());
@@ -256,13 +282,7 @@ async fn a_repeated_sentence_is_suggested_and_blocked_only_after_approval() {
         ],
         |n, settings| {
             if n == 3 {
-                // What `block_subtitle_phrase` does on approval.
-                let mut next = (*settings.snapshot()).clone();
-                assert!(moonlens_lib::subtitle_filter::add_phrase(
-                    &mut next.subtitle.blocked_phrases,
-                    "Thank you."
-                ));
-                settings.save(next).unwrap();
+                assert!(approve(settings, "Thank you."));
             }
         },
     )
@@ -287,4 +307,52 @@ async fn a_repeated_sentence_is_suggested_and_blocked_only_after_approval() {
         out.settings.snapshot().subtitle.blocked_phrases,
         ["Thank you."]
     );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_sentence_cut_across_segments_is_judged_whole() {
+    let out = subtitles(
+        |_| {},
+        vec![
+            vec!["Thanks for watching", "the kids yesterday."],
+            vec!["Thanks for", "watching!"],
+        ],
+        |_, _| {},
+    )
+    .await;
+    assert_eq!(out.shown(), ["Thanks for watching the kids yesterday."]);
+    assert_eq!(out.translated.len(), 1);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn approval_during_translation_keeps_the_pending_chunk_out() {
+    let out = subtitles_with(
+        |_| {},
+        vec![
+            vec!["Thank you."],
+            vec!["Thank you."],
+            // Suggested here; approved while this chunk is translated.
+            vec!["Thank you."],
+            vec!["Thank you all for coming."],
+        ],
+        |_, _| {},
+        |settings, text| {
+            let asked_before = !settings.snapshot().subtitle.blocked_phrases.is_empty();
+            if text == "Thank you." && !asked_before && seen_twice() {
+                approve(settings, text);
+            }
+        },
+    )
+    .await;
+    assert_eq!(out.candidates(), ["Thank you."]);
+    assert_eq!(
+        out.shown(),
+        ["Thank you.", "Thank you.", "Thank you all for coming."]
+    );
+}
+
+/// `true` from the third call on.
+fn seen_twice() -> bool {
+    static CALLS: AtomicUsize = AtomicUsize::new(0);
+    CALLS.fetch_add(1, Ordering::SeqCst) >= 2
 }

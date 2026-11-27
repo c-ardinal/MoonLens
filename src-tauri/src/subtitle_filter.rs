@@ -224,6 +224,38 @@ impl StockFilter {
                 ..Default::default()
             };
         }
+        let (text, blocked, kept) = self.strip(settings, segments);
+
+        // A candidate is a chunk that says one short thing and nothing
+        // else, again and again. Sentences inside longer speech repeat
+        // for honest reasons.
+        let candidate = match kept.split_first() {
+            Some(((k, sentence), others)) if others.iter().all(|(o, _)| o == k) => {
+                self.note(k, now).then(|| sentence.clone())
+            }
+            _ => None,
+        };
+        Screened {
+            text,
+            blocked,
+            candidate,
+        }
+    }
+
+    /// Whether `text`, screened earlier, consists only of phrases blocked
+    /// by now: the user may approve a candidate while its chunk is still
+    /// being translated, and that chunk must not come back.
+    pub fn blocks_all(&mut self, settings: &SubtitleSettings, text: &str) -> bool {
+        settings.block_stock_phrases && self.strip(settings, &[text]).0.is_empty()
+    }
+
+    /// Remove the stock sentences from a chunk. Returns what is left,
+    /// what was removed, and the kept sentences as (key, text).
+    fn strip(
+        &mut self,
+        settings: &SubtitleSettings,
+        segments: &[&str],
+    ) -> (String, Vec<String>, Vec<(String, String)>) {
         if self
             .list
             .as_ref()
@@ -237,39 +269,24 @@ impl StockFilter {
         let list = &self.list.as_ref().expect("built above").1;
 
         let mut blocked = Vec::new();
-        let mut kept_keys = Vec::new();
-        let mut kept: Vec<String> = Vec::new();
-        for segment in segments {
-            let mut rest = String::new();
-            for sentence in sentences(segment) {
+        let mut kept = Vec::new();
+        let mut rest: Vec<String> = Vec::new();
+        for unit in units(segments) {
+            let mut left = String::new();
+            for sentence in sentences(&unit) {
                 let k = key(sentence);
                 if is_annotation(sentence) || list.has(&k) {
                     if !k.is_empty() {
                         blocked.push(sentence.trim().to_string());
                     }
                 } else {
-                    rest.push_str(sentence);
-                    kept_keys.push((k, sentence.trim()));
+                    left.push_str(sentence);
+                    kept.push((k, sentence.trim().to_string()));
                 }
             }
-            kept.push(rest);
+            rest.push(left);
         }
-        let text = join(kept.iter().map(String::as_str));
-
-        // A candidate is a chunk that says one short thing and nothing
-        // else, again and again. Sentences inside longer speech repeat
-        // for honest reasons.
-        let candidate = match kept_keys.split_first() {
-            Some(((k, sentence), others)) if others.iter().all(|(o, _)| o == k) => {
-                self.note(k, now).then(|| sentence.to_string())
-            }
-            _ => None,
-        };
-        Screened {
-            text,
-            blocked,
-            candidate,
-        }
+        (join(rest.iter().map(String::as_str)), blocked, kept)
     }
 
     /// Record that a chunk said only `k`; `true` when that makes it a
@@ -299,6 +316,33 @@ impl StockFilter {
         self.suggested.insert(k.to_string());
         true
     }
+}
+
+/// Segments regrouped so that no sentence is cut in two: recognition
+/// breaks segments at pauses, which may fall inside a sentence. A segment
+/// that starts in lower case after one without closing punctuation
+/// continues it ("Thanks for watching" + "the kids yesterday."); any
+/// other boundary ends a sentence, as invented phrases usually arrive
+/// unpunctuated in a segment of their own.
+fn units(segments: &[&str]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for segment in segments.iter().map(|s| s.trim()).filter(|s| !s.is_empty()) {
+        let continues = segment.chars().next().is_some_and(char::is_lowercase);
+        match out.last_mut() {
+            Some(last) if continues && !ends_a_sentence(last) => {
+                last.push(' ');
+                last.push_str(segment);
+            }
+            _ => out.push(segment.to_string()),
+        }
+    }
+    out
+}
+
+fn ends_a_sentence(text: &str) -> bool {
+    text.trim_end_matches(['」', '』', '"', '”', ']', ')', '）', '】', '♪'])
+        .ends_with(['。', '！', '？', '…', '.', '!', '?'])
+        || is_annotation(text)
 }
 
 /// Segments as one line, the way the subtitle shows them.
@@ -402,6 +446,39 @@ mod tests {
             screen(&[" Hello. ", "", "How are you?"]).text,
             "Hello. How are you?"
         );
+    }
+
+    #[test]
+    fn a_sentence_cut_across_segments_is_judged_whole() {
+        // Real speech that only starts like a stock phrase.
+        let s = screen(&["Thanks for watching", "the kids yesterday."]);
+        assert_eq!(s.text, "Thanks for watching the kids yesterday.");
+        assert!(s.blocked.is_empty());
+        // A stock phrase in two pieces.
+        assert_eq!(screen(&["Thanks for", "watching!"]).text, "");
+        assert_eq!(
+            screen(&["That is all.", "thanks for", "watching", "See you."]).text,
+            "That is all. See you."
+        );
+        // A finished sentence or an annotation is not continued.
+        assert_eq!(
+            screen(&["Thanks for watching!", "see you."]).text,
+            "see you."
+        );
+        assert_eq!(screen(&["[Music]", "welcome back."]).text, "welcome back.");
+    }
+
+    #[test]
+    fn a_chunk_blocked_while_it_was_translated_is_recognized() {
+        let mut settings = on();
+        let mut f = StockFilter::default();
+        let shown = f.screen(&settings, &["Thank you."], Instant::now()).text;
+        assert!(!f.blocks_all(&settings, &shown));
+        settings.blocked_phrases.push("Thank you.".into());
+        assert!(f.blocks_all(&settings, &shown));
+        assert!(!f.blocks_all(&settings, "Thank you. Please sit."));
+        settings.block_stock_phrases = false;
+        assert!(!f.blocks_all(&settings, &shown));
     }
 
     #[test]
