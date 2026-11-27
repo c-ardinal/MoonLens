@@ -9,7 +9,7 @@
 //! Per-user only, no administrator rights:
 //! - Windows: `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`
 //! - macOS: `~/Library/LaunchAgents/MoonLens.plist`
-//! - Linux: `~/.config/autostart/MoonLens.desktop`
+//! - Linux: `$XDG_CONFIG_HOME/autostart/MoonLens.desktop` (`~/.config` by default)
 //!
 //! A login launch carries [`START_HIDDEN_FLAG`], so the app goes straight
 //! to the tray instead of opening the main window at every login.
@@ -40,7 +40,8 @@ pub trait LoginItem {
     /// Create the entry, or rewrite it with the current path.
     fn enable(&self) -> Result<()>;
     fn disable(&self) -> Result<()>;
-    /// Registered and not switched off in the OS (Windows: Task Manager).
+    /// Registered and not switched off in the OS (Windows: Task Manager,
+    /// Linux: `Hidden=true` in the entry).
     fn is_enabled(&self) -> Result<bool>;
 }
 
@@ -135,7 +136,12 @@ pub fn desktop_exec_quote(arg: &str) -> String {
 }
 
 /// The real login item of this OS, pointing at the running executable.
-pub struct OsLoginItem(auto_launch::AutoLaunch);
+pub struct OsLoginItem(Backend);
+
+#[cfg(not(target_os = "linux"))]
+type Backend = auto_launch::AutoLaunch;
+#[cfg(target_os = "linux")]
+type Backend = XdgEntry;
 
 impl OsLoginItem {
     pub fn for_running_app() -> Result<Self> {
@@ -148,18 +154,34 @@ impl OsLoginItem {
         let path = path
             .to_str()
             .with_context(|| format!("executable path is not UTF-8: {}", path.display()))?;
+        Self::build(&command_path(path))
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    fn build(command: &str) -> Result<Self> {
         let mut builder = auto_launch::AutoLaunchBuilder::new();
         builder
             .set_app_name(ITEM_NAME)
-            .set_app_path(&command_path(path))
+            .set_app_path(command)
             .set_args(&[START_HIDDEN_FLAG]);
         #[cfg(windows)]
         builder.set_windows_enable_mode(auto_launch::WindowsEnableMode::CurrentUser);
         #[cfg(target_os = "macos")]
         builder.set_macos_launch_mode(auto_launch::MacOSLaunchMode::LaunchAgent);
-        #[cfg(target_os = "linux")]
-        builder.set_linux_launch_mode(auto_launch::LinuxLaunchMode::XdgAutostart);
         Ok(Self(builder.build().context("building the login item")?))
+    }
+
+    #[cfg(target_os = "linux")]
+    fn build(command: &str) -> Result<Self> {
+        let dir = xdg_autostart_dir(
+            std::env::var_os("XDG_CONFIG_HOME").as_deref(),
+            std::env::var_os("HOME").as_deref(),
+        )
+        .context("no XDG_CONFIG_HOME or HOME for the autostart folder")?;
+        Ok(Self(XdgEntry {
+            file: dir.join(format!("{ITEM_NAME}.desktop")),
+            exec: format!("{command} {START_HIDDEN_FLAG}"),
+        }))
     }
 }
 
@@ -174,6 +196,74 @@ impl LoginItem for OsLoginItem {
 
     fn is_enabled(&self) -> Result<bool> {
         self.0.is_enabled().context("reading the login item")
+    }
+}
+
+/// `$XDG_CONFIG_HOME/autostart`, or `~/.config/autostart` when the
+/// variable is unset, empty or relative (XDG Base Directory rules). The
+/// desktop session reads the same folder, so a relocated config home
+/// must be followed or the entry is never seen.
+pub fn xdg_autostart_dir(config_home: Option<&OsStr>, home: Option<&OsStr>) -> Option<PathBuf> {
+    let base = match config_home.map(Path::new) {
+        Some(dir) if dir.is_absolute() => dir.to_path_buf(),
+        _ => Path::new(home.filter(|h| !h.is_empty())?).join(".config"),
+    };
+    Some(base.join("autostart"))
+}
+
+/// Whether a desktop session would start this autostart entry. Desktops
+/// switch an entry off without deleting it: `Hidden=true` (the
+/// specification's "treat as deleted") or GNOME's
+/// `X-GNOME-Autostart-enabled=false`.
+pub fn desktop_entry_active(text: &str) -> bool {
+    !text.lines().any(|line| {
+        let Some((key, value)) = line.split_once('=') else {
+            return false;
+        };
+        let value = value.trim();
+        match key.trim() {
+            "Hidden" => value.eq_ignore_ascii_case("true"),
+            "X-GNOME-Autostart-enabled" => value.eq_ignore_ascii_case("false"),
+            _ => false,
+        }
+    })
+}
+
+/// XDG autostart entry (Linux).
+#[cfg(target_os = "linux")]
+pub struct XdgEntry {
+    file: PathBuf,
+    /// Value of the `Exec` key, already quoted.
+    exec: String,
+}
+
+#[cfg(target_os = "linux")]
+impl XdgEntry {
+    fn enable(&self) -> std::io::Result<()> {
+        if let Some(dir) = self.file.parent() {
+            std::fs::create_dir_all(dir)?;
+        }
+        let text = format!(
+            "[Desktop Entry]\nType=Application\nVersion=1.0\nName={ITEM_NAME}\n\
+             Exec={}\nStartupNotify=false\nTerminal=false\n",
+            self.exec
+        );
+        std::fs::write(&self.file, text)
+    }
+
+    fn disable(&self) -> std::io::Result<()> {
+        match std::fs::remove_file(&self.file) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e),
+            _ => Ok(()),
+        }
+    }
+
+    fn is_enabled(&self) -> std::io::Result<bool> {
+        match std::fs::read_to_string(&self.file) {
+            Ok(text) => Ok(desktop_entry_active(&text)),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+            Err(e) => Err(e),
+        }
     }
 }
 
@@ -313,5 +403,33 @@ mod tests {
         );
         assert_eq!(desktop_exec_quote("/x/$HOME/`a`"), "\"/x/\\$HOME/\\`a\\`\"");
         assert_eq!(desktop_exec_quote("/x/100%/m"), "\"/x/100%%/m\"");
+    }
+
+    #[test]
+    fn a_relocated_config_home_is_followed() {
+        let home = Some(OsStr::new("/home/u"));
+        assert_eq!(
+            xdg_autostart_dir(Some(OsStr::new("/data/cfg")), home).unwrap(),
+            Path::new("/data/cfg/autostart")
+        );
+        for unusable in [None, Some(OsStr::new("")), Some(OsStr::new("rel/cfg"))] {
+            assert_eq!(
+                xdg_autostart_dir(unusable, home).unwrap(),
+                Path::new("/home/u/.config/autostart")
+            );
+        }
+        assert_eq!(xdg_autostart_dir(None, None), None);
+    }
+
+    #[test]
+    fn an_entry_the_desktop_switched_off_counts_as_off() {
+        let base = "[Desktop Entry]\nType=Application\nExec=\"/m\" --hidden\n";
+        assert!(desktop_entry_active(base));
+        assert!(!desktop_entry_active(&format!("{base}Hidden=true\n")));
+        assert!(!desktop_entry_active(&format!("{base}Hidden = True\n")));
+        assert!(desktop_entry_active(&format!("{base}Hidden=false\n")));
+        assert!(!desktop_entry_active(&format!(
+            "{base}X-GNOME-Autostart-enabled=false\n"
+        )));
     }
 }

@@ -110,9 +110,9 @@ MoonLens の導入〜削除の各段階で発生するケースと、期待動�
 | C-6 | 起動中に `config.toml` を手動編集し構文エラー | 直前の設定を維持し、ホームに通知 | 修正 | Xvfb：保存直後にホームへ通知表示 |
 | C-7 | 構文エラーの `config.toml` で起動 | 既定値で起動、元ファイルを `config.toml.broken-<時刻>` に退避、通知 | 修正 | `settings_file_roundtrip`、Xvfb |
 | C-8 | 一部の値のみ不正（型不一致・誤記・選択肢外・範囲外） | 不正な値のみ無視し他は有効。ホームに項目単位の警告と修正案（改名・補正・既定値復元・削除）。個別／全件修正、修正前のファイルは `config.toml.bak-<時刻>` に退避 | 修正 | `settings::validate::tests`、Xvfb（`docs/settings-validation.md`） |
-| C-15 | 「ログイン時の自動起動」を ON／OFF | ユーザー単位のログイン項目を登録／解除（管理者権限不要。Windows：`HKCU\…\Run`、macOS：`~/Library/LaunchAgents/MoonLens.plist`、Linux：`~/.config/autostart/MoonLens.desktop`）。ログイン時は `--hidden` 付きで通知領域へ常駐起動。登録・解除の失敗時はホームに通知 | 新規 | `autostart::tests`、`tests/autostart_live.rs`（Linux 実ファイル） |
+| C-15 | 「ログイン時の自動起動」を ON／OFF | ユーザー単位のログイン項目を登録／解除（管理者権限不要。Windows：`HKCU\…\Run`、macOS：`~/Library/LaunchAgents/MoonLens.plist`、Linux：`$XDG_CONFIG_HOME/autostart/MoonLens.desktop`、既定 `~/.config`）。ログイン時は `--hidden` 付きで通知領域へ常駐起動。登録・解除の失敗時はホームに通知 | 新規 | `autostart::tests`、`tests/autostart_live.rs`（Linux 実ファイル） |
 | C-16 | 自動起動 ON のまま実行ファイルを移動（ポータブル配布） | 次回の手動起動時、現在の実行ファイルの位置で登録を更新。AppImage はマウント先でなくイメージ本体を登録 | 新規 | `start_rewrites_an_active_entry_so_it_follows_a_moved_exe`、`an_appimage_registers_the_image_not_its_mount_point` |
-| C-17 | 自動起動 ON の状態で OS 側（タスクマネージャー等）から無効化・削除 | OS 側の選択を優先。次回起動時に設定を OFF へ同期（再登録なし） | 新規 | `start_does_not_re_register_what_the_os_switched_off` |
+| C-17 | 自動起動 ON の状態で OS 側（タスクマネージャー、Linux は `Hidden=true` 等）から無効化・削除 | OS 側の選択を優先。次回起動時に設定を OFF へ同期（再登録なし） | 新規 | `start_does_not_re_register_what_the_os_switched_off` |
 | C-13 | チェーンに未登録・機能非対応のプロバイダー識別子 | 登録済みプロバイダーから動的に判定。候補を添えて警告し、除外または既定値復元を提案（以前は「文字なし」等に誤分類） | 修正 | `chains_are_checked_against_registered_providers`、Xvfb |
 | C-9 | `config.toml` から一部セクションを削除 | 削除部分は同梱の既定値（以前は空チェーン等となり OCR が動作停止） | 修正 | `missing_sections_and_keys_come_from_default_toml` |
 | C-10 | 保存中のクラッシュ・電源断 | 一時ファイル経由の置換で、不完全な `config.toml` の残存を防止 | 修正 | `write_atomic` |

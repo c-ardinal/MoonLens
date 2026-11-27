@@ -12,9 +12,11 @@ fn login_item_follows_a_portable_copy_and_is_removed_on_request() {
     let home = tempfile::tempdir().unwrap();
     // The only test in this binary, so no other thread reads HOME.
     std::env::set_var("HOME", home.path());
+    // A config home outside ~/.config, as the desktop session would read.
+    std::env::set_var("XDG_CONFIG_HOME", home.path().join("cfg"));
     let entry = home
         .path()
-        .join(".config/autostart")
+        .join("cfg/autostart")
         .join(format!("{ITEM_NAME}.desktop"));
 
     // Switched on from the settings screen, from a folder with spaces.
@@ -39,7 +41,15 @@ fn login_item_follows_a_portable_copy_and_is_removed_on_request() {
         "{text}"
     );
 
-    // Removed in the desktop's own startup list: the OS wins.
+    // Switched off in the desktop's own startup list (entry kept, marked
+    // hidden): the OS wins and the mark is not overwritten.
+    std::fs::write(&entry, format!("{text}Hidden=true\n")).unwrap();
+    assert_eq!(reconcile(&moved, true).unwrap(), StartupStep::SettingOff);
+    assert!(std::fs::read_to_string(&entry)
+        .unwrap()
+        .contains("Hidden=true"));
+
+    // Removed there instead: same outcome.
     std::fs::remove_file(&entry).unwrap();
     assert_eq!(reconcile(&moved, true).unwrap(), StartupStep::SettingOff);
     assert!(!entry.exists());
