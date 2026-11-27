@@ -250,6 +250,9 @@ pub enum OverlayPosition {
 pub struct SubtitleSettings {
     pub source_language: String,
     pub target_language: String,
+    /// Face-to-face conversation (microphone): the language of the
+    /// person the user talks to. The user's own is `target_language`.
+    pub conversation_language: String,
     pub model: String,
     pub fallback_model: String,
     #[schemars(range(min = 0, max = 3))]
@@ -281,6 +284,7 @@ impl Default for SubtitleSettings {
         Self {
             source_language: "auto".into(),
             target_language: "ja".into(),
+            conversation_language: "en".into(),
             model: "large-v3-turbo".into(),
             fallback_model: "base".into(),
             vad_aggressiveness: 2,

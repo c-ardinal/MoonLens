@@ -3,7 +3,7 @@
 Upstream: https://github.com/ggml-org/whisper.cpp, tag `v1.9.5`
 (commit `d1be6fde11ac6e0407606b4e42fe72d34add8037`), MIT License (see `LICENSE`).
 
-Only the library sources are kept, with one local change (below):
+Only the library sources are kept, with two local changes (below):
 
 - `include/whisper.h`
 - `src/whisper.cpp`, `src/whisper-arch.h`
@@ -16,7 +16,7 @@ set of GPU backends) for both. When the llama.cpp revision moves, check that
 this whisper.cpp still compiles against its ggml headers; if not, update to the
 whisper.cpp release whose `ggml` sync is closest to it.
 
-## Local change
+## Local changes
 
 `moonlens.patch` (already applied to `src/whisper.cpp`; re-apply it after an
 upstream update with `patch -p1 < moonlens.patch`):
@@ -26,3 +26,9 @@ upstream update with `patch -p1 < moonlens.patch`):
   reuses the encoding from the detection. Live subtitles detect the language of
   every chunk (speech can switch language at any time), so this halves the
   encoder work per chunk; the output is unchanged.
+- `whisper_full` accepts `language = "auto:ja,en"`: the language is detected,
+  but only among the listed codes (the most probable of them is used). A
+  face-to-face conversation is known to be in one of two languages; a free
+  detection now and then picks a third one for a short utterance, which is then
+  decoded (and translated) as that language. Unknown codes are skipped, and a
+  list without a known code detects freely.

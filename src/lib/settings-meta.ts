@@ -209,6 +209,13 @@ export const SECTIONS: Section[] = [
         options: [{ value: 'auto', label: 'common:detect' }, ...SOURCE_LANGUAGE_OPTIONS]
       },
       {
+        kind: 'select',
+        path: 'subtitle.conversation_language',
+        label: 'settings:conversation_partner_language',
+        help: 'settings:face_to_face_conversation_translates_both_ways',
+        options: SOURCE_LANGUAGE_OPTIONS
+      },
+      {
         kind: 'toggle',
         path: 'subtitle.show_original',
         label: 'common:show_source',

@@ -6996,7 +6996,9 @@ int whisper_full_with_state(
     const int lang_detect_audio_ctx = state->exp_n_audio_ctx;
 
     // auto-detect language if not specified
-    if (params.language == nullptr || strlen(params.language) == 0 || strcmp(params.language, "auto") == 0 || params.detect_language) {
+    // (MoonLens: "auto:ja,en" detects among the listed languages only)
+    const bool lang_detect_limited = params.language != nullptr && strncmp(params.language, "auto:", 5) == 0;
+    if (params.language == nullptr || strlen(params.language) == 0 || strcmp(params.language, "auto") == 0 || lang_detect_limited || params.detect_language) {
         std::vector<float> probs(whisper_lang_max_id() + 1, 0.0f);
 
         if (params.encoder_begin_callback) {
@@ -7006,10 +7008,31 @@ int whisper_full_with_state(
             }
         }
 
-        const auto lang_id = whisper_lang_auto_detect_internal(ctx, state, 0, params.n_threads, probs.data(), params.abort_callback, params.abort_callback_user_data);
+        auto lang_id = whisper_lang_auto_detect_internal(ctx, state, 0, params.n_threads, probs.data(), params.abort_callback, params.abort_callback_user_data);
         if (lang_id < 0) {
             WHISPER_LOG_ERROR("%s: failed to auto-detect language\n", __func__);
             return -3;
+        }
+        // MoonLens: the most probable of the listed languages. Unknown
+        // codes are skipped; a list without a known code detects freely.
+        if (lang_detect_limited) {
+            int best = -1;
+            const std::string list = params.language + 5;
+            size_t from = 0;
+            while (from <= list.size()) {
+                size_t to = list.find(',', from);
+                if (to == std::string::npos) {
+                    to = list.size();
+                }
+                const auto it = g_lang.find(list.substr(from, to - from));
+                if (it != g_lang.end() && (best < 0 || probs[it->second.first] > probs[best])) {
+                    best = it->second.first;
+                }
+                from = to + 1;
+            }
+            if (best >= 0) {
+                lang_id = best;
+            }
         }
         state->lang_id = lang_id;
         params.language = whisper_lang_str(lang_id);

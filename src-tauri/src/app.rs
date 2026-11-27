@@ -66,6 +66,7 @@ macro_rules! all_commands {
             ipc::stop_subtitle,
             ipc::block_subtitle_phrase,
             ipc::start_subtitle,
+            ipc::start_conversation,
             ipc::open_subtitle_window,
             ipc::close_subtitle_window,
             ipc::set_subtitle_source,

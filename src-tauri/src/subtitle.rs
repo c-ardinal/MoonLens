@@ -3,8 +3,9 @@
 //! Drives loopback audio capture, slices it into chunks, sends each chunk
 //! to whisper.cpp via the ASR provider chain, optionally translates the
 //! transcript, and emits the result to the subtitle window. Any number
-//! of windows can run, each on its own audio source (the whole PC or one
-//! application).
+//! of windows can run, each on its own audio source (the whole PC, one
+//! application, or the microphone: a face-to-face conversation,
+//! translated in both directions, see `conversation`).
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -23,9 +24,12 @@ use crate::{
     app_identity::AppIdentity,
     audio::{
         backend::{AudioFrame, LoopbackStream},
+        gate::VoiceGate,
         level, AudioSource,
     },
-    clipboard, overlay,
+    clipboard,
+    conversation::{Pair, Speaker},
+    overlay,
     pipeline::Pipeline,
     providers::{Capability, TaskInput, TaskOutput, TranslateContext},
     settings::SettingsStore,
@@ -58,6 +62,10 @@ pub enum SubtitleEvent {
         at_ms: u64,
         /// Length of the audio sent to recognition.
         duration_ms: u64,
+        /// Face-to-face conversation: who said it. The translation is
+        /// in the language of the other person.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        speaker: Option<Speaker>,
     },
     /// A short sentence that keeps coming back: the window asks whether
     /// to block it from now on (see `subtitle_filter`).
@@ -83,12 +91,60 @@ pub enum Phase {
     Revising,
 }
 
+/// What a recognition loop translates.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Mode {
+    /// Subtitles: everything goes into the target language. `app`: key
+    /// of the application the audio comes from, when it is one
+    /// application's (its glossary is used).
+    Subtitle { app: Option<String> },
+    /// A face-to-face conversation: each utterance goes into the
+    /// language of the other person (`conversation`).
+    Conversation,
+}
+
+impl Default for Mode {
+    fn default() -> Self {
+        Mode::Subtitle { app: None }
+    }
+}
+
+impl Mode {
+    /// What a window listening to `source` does.
+    pub fn of(source: AudioSource) -> Self {
+        match source {
+            AudioSource::Microphone => Mode::Conversation,
+            AudioSource::App { pid } => Mode::Subtitle {
+                app: AppIdentity::of_pid(pid).map(|a| a.key),
+            },
+            AudioSource::System => Mode::Subtitle { app: None },
+        }
+    }
+
+    fn app(&self) -> Option<&str> {
+        match self {
+            Mode::Subtitle { app } => app.as_deref(),
+            Mode::Conversation => None,
+        }
+    }
+}
+
 /// Label prefix of the subtitle windows (`subtitle-1`, `subtitle-2`, …).
 pub const WINDOW_PREFIX: &str = "subtitle-";
 
 /// Title of a subtitle window, in the display language.
 pub fn window_title() -> String {
     tr!("subtitle:moonlens_audio_translation")
+}
+
+/// Initial size of a window listening to `source` (logical pixels).
+/// Subtitles are a strip at the bottom of the screen; a conversation is
+/// read by two people and keeps several turns in view.
+fn initial_size(source: AudioSource) -> (f64, f64) {
+    match source {
+        AudioSource::Microphone => (760.0, 440.0),
+        _ => (900.0, 190.0),
+    }
 }
 
 /// `label` is a subtitle window.
@@ -309,6 +365,38 @@ impl SubtitleService {
             .map_err(failed)
     }
 
+    /// Start a face-to-face conversation: a window on the microphone,
+    /// or the one already open. Returns a coded, user-facing message on
+    /// failure.
+    pub async fn start_conversation(&self, app: &AppHandle) -> Result<(), String> {
+        self.preflight().await?;
+        let open = self
+            .sessions
+            .lock()
+            .iter()
+            .find(|(_, s)| s.source == AudioSource::Microphone)
+            .map(|(label, s)| (label.clone(), s.running.is_some()));
+        let started = match open {
+            Some((label, true)) => {
+                if let Some(win) = app.get_webview_window(&label) {
+                    let _ = win.set_focus();
+                }
+                Ok(())
+            }
+            Some((label, false)) => self.set_source(app, &label, AudioSource::Microphone),
+            None => self.open(app, AudioSource::Microphone, None).map(|_| ()),
+        };
+        started.map_err(|e| {
+            crate::user_error::coded(
+                "error",
+                tr!(
+                    "common:could_not_start_audio_capture_e",
+                    e = format!("{:#}", e)
+                ),
+            )
+        })
+    }
+
     /// Open one more subtitle window listening to `source`, next to the
     /// window `beside` when given. Returns its label.
     pub fn open(
@@ -321,9 +409,13 @@ impl SubtitleService {
             "{WINDOW_PREFIX}{}",
             self.next_window.fetch_add(1, Ordering::Relaxed)
         );
+        let (width, height) = initial_size(source);
         let win = WebviewWindowBuilder::new(app, &label, WebviewUrl::App("/subtitle".into()))
-            .title(window_title())
-            .inner_size(900.0, 190.0)
+            .title(match source {
+                AudioSource::Microphone => tr!("subtitle:moonlens_conversation"),
+                _ => window_title(),
+            })
+            .inner_size(width, height)
             .min_inner_size(220.0, 96.0)
             .decorations(false)
             .transparent(true)
@@ -340,6 +432,10 @@ impl SubtitleService {
         }
         match beside.and_then(|b| app.get_webview_window(b)) {
             Some(other) => place_beside(&win, &other),
+            // Between the two people, not at the edge of the screen.
+            None if source == AudioSource::Microphone => {
+                let _ = win.center();
+            }
             None => place_first(&win),
         }
         win.show().ok();
@@ -376,7 +472,9 @@ impl SubtitleService {
         let (tap_tx, tap_rx) = mpsc::channel::<AudioFrame>(TAP_QUEUE);
         let stream = LoopbackStream::start_with(source, tap_tx)?;
         let (app_level, level_to) = (app.clone(), label.to_string());
-        tauri::async_runtime::spawn(meter_relay(tap_rx, tx, move |ev| {
+        // A microphone never pauses by itself: the gate passes speech only.
+        let gate = source.is_continuous().then(VoiceGate::default);
+        tauri::async_runtime::spawn(meter_relay(tap_rx, tx, gate, move |ev| {
             let _ = app_level.emit_to(level_to.as_str(), LEVEL_EVENT, ev);
         }));
         let device = stream.device().to_string();
@@ -388,12 +486,10 @@ impl SubtitleService {
         let pipeline = self.pipeline.clone();
         let settings = self.settings.clone();
         let app_emit = app.clone();
-        let recorder = Recorder::new(self.storage.clone(), self.settings.clone());
+        let recorder = Recorder::new(self.storage.clone(), self.settings.clone())
+            .conversation(source == AudioSource::Microphone);
         let id = label.to_string();
-        let audio_app = match source {
-            AudioSource::App { pid } => AppIdentity::of_pid(pid).map(|a| a.key),
-            _ => None,
-        };
+        let mode = Mode::of(source);
         let started = SubtitleEvent::Started {
             device: device.clone(),
             source,
@@ -433,7 +529,7 @@ impl SubtitleService {
                 }
             };
             emit(started);
-            let gave_up = run_loop(&emit, settings, pipeline, rx, stop_in, audio_app).await;
+            let gave_up = run_loop(&emit, settings, pipeline, rx, stop_in, mode).await;
             // The loop also ends when the capture closes the frame
             // channel: the application exited or its stream failed.
             let lost = lost.load(Ordering::Relaxed);
@@ -639,16 +735,16 @@ fn beside_y(y: i32, height: i32, gap: i32, top: i32) -> i32 {
 /// The subtitle loop: audio frames in, [`SubtitleEvent`]s out. Runs
 /// until `stop` fires or the frame channel closes (what is still
 /// buffered is recognized first). Returns `true` when it gave up after
-/// repeated recognition failures. `app`: key of the application the
-/// audio comes from, when it is one application's (its glossary is used).
+/// repeated recognition failures.
 pub async fn run_loop(
     emit: &(impl Fn(SubtitleEvent) + Sync),
     settings: Arc<SettingsStore>,
     pipeline: Arc<Pipeline>,
     mut rx: mpsc::Receiver<AudioFrame>,
     stop: Arc<tokio::sync::Notify>,
-    app: Option<String>,
+    mode: Mode,
 ) -> bool {
+    let app = mode.app().map(str::to_string);
     let mut failures = 0u32;
     let mut buffer: Vec<i16> = Vec::with_capacity(16_000 * 4);
     let mut overlap: Vec<i16> = Vec::new();
@@ -679,6 +775,13 @@ pub async fn run_loop(
         }
         emit(SubtitleEvent::Revised(revision))
     };
+    // The languages of the sentence being recognized. A conversation
+    // learns them from each utterance; subtitles read them from the
+    // settings on every pass.
+    let mut languages = Languages {
+        source: String::new(),
+        target: String::new(),
+    };
     loop {
         let snap = settings.snapshot();
         let realtime = snap.subtitle.realtime_correction;
@@ -687,14 +790,15 @@ pub async fn run_loop(
             lines.clear();
             reviser.clear();
         }
-        let languages = Languages {
-            source: snap.subtitle.source_language.clone(),
-            target: snap.subtitle.target_language.clone(),
-        };
+        let conversation = mode == Mode::Conversation;
+        if !conversation {
+            languages = Languages {
+                source: snap.subtitle.source_language.clone(),
+                target: snap.subtitle.target_language.clone(),
+            };
+        }
         let chunk_samples = (snap.subtitle.chunk_seconds * 16_000.0) as usize;
         let overlap_samples = (snap.subtitle.overlap_seconds * 16_000.0) as usize;
-        let target_lang = snap.subtitle.target_language.clone();
-        let source_lang = snap.subtitle.source_language.clone();
         drop(snap);
 
         // Wait for the next frame, a stop notification, or a pause in
@@ -702,10 +806,16 @@ pub async fn run_loop(
         // without the pause the end of a sentence would sit in the
         // buffer until sound returns.
         let mut flush = closed;
+        // A conversation: the microphone's gate reported a pause (an
+        // empty frame). What follows it may be the other person, in the
+        // other language, so the audio before it is recognized alone,
+        // also when both were queued during a recognition.
+        let mut turn_ended = false;
         if !closed {
             tokio::select! {
                 _ = stop.notified() => break,
                 maybe = rx.recv() => match maybe {
+                    Some(frame) if frame.is_empty() => turn_ended = conversation,
                     Some(frame) => {
                         buffer.extend_from_slice(&frame);
                         heard_until = loop_started.elapsed();
@@ -731,10 +841,17 @@ pub async fn run_loop(
             }
         }
         // Collect whatever arrived during the previous recognition.
-        while let Ok(frame) = rx.try_recv() {
-            buffer.extend_from_slice(&frame);
-            heard_until = loop_started.elapsed();
+        while !turn_ended {
+            match rx.try_recv() {
+                Ok(frame) if frame.is_empty() => turn_ended = conversation,
+                Ok(frame) => {
+                    buffer.extend_from_slice(&frame);
+                    heard_until = loop_started.elapsed();
+                }
+                Err(_) => break,
+            }
         }
+        flush |= turn_ended;
         if !heard && !buffer.is_empty() {
             heard = true;
             tracing::info!("subtitle: first audio frames received");
@@ -800,6 +917,9 @@ pub async fn run_loop(
             revised(&mut stock, revision);
         }
         set_phase(Phase::Recognizing);
+        // Read now, not when the wait for this audio began: a partner
+        // language chosen during a silence applies to what is said next.
+        let pair = conversation.then(|| Pair::from_settings(&settings.snapshot().subtitle));
         let seconds = to_send.len() as f32 / 16_000.0;
         let started = std::time::Instant::now();
         let pcm_bytes = pcm16_to_bytes(&to_send);
@@ -807,22 +927,25 @@ pub async fn run_loop(
             Capability::Asr,
             TaskInput::Asr {
                 audio_pcm16_mono_16k: pcm_bytes,
-                language_hint: if source_lang == "auto" {
-                    None
-                } else {
-                    Some(source_lang.clone())
+                // A conversation is in one of its two languages, whoever
+                // speaks: recognition chooses between them per chunk.
+                language_hint: match &pair {
+                    None if languages.source != "auto" => Some(languages.source.clone()),
+                    _ => None,
                 },
+                language_candidates: pair.as_ref().map(Pair::candidates).unwrap_or_default(),
             },
         );
         match recognition.await {
             Ok(res) => {
                 failures = 0;
-                let segments: Vec<&str> = match &res.output {
-                    TaskOutput::Transcript { segments } => {
-                        segments.iter().map(|s| s.text.as_str()).collect()
-                    }
-                    TaskOutput::Text(t) => vec![t.as_str()],
-                    _ => Vec::new(),
+                let (segments, heard_in): (Vec<&str>, Option<&str>) = match &res.output {
+                    TaskOutput::Transcript { segments, language } => (
+                        segments.iter().map(|s| s.text.as_str()).collect(),
+                        language.as_deref(),
+                    ),
+                    TaskOutput::Text(t) => (vec![t.as_str()], None),
+                    _ => (Vec::new(), None),
                 };
                 // Stock misrecognitions go no further: not shown, and
                 // not worth a translation.
@@ -850,13 +973,23 @@ pub async fn run_loop(
                     set_phase(idle(&reviser));
                     continue;
                 }
+                // The other person answers: the sentence of the first
+                // one ends here, in its own languages.
+                let speaker = pair.as_ref().map(|pair| {
+                    let turn = pair.turn(heard_in, &original);
+                    if correcting && turn.languages != languages {
+                        pause(&mut lines, &mut reviser, &languages);
+                    }
+                    languages = turn.languages;
+                    turn.speaker
+                });
                 set_phase(Phase::Translating);
                 let translation = pipeline.run(
                     Capability::Translate,
                     TaskInput::Translate {
                         text: original.clone(),
-                        source_language: source_lang.clone(),
-                        target_language: target_lang.clone(),
+                        source_language: languages.source.clone(),
+                        target_language: languages.target.clone(),
                         context: TranslateContext::of_app(app.as_deref()),
                     },
                 );
@@ -892,6 +1025,7 @@ pub async fn run_loop(
                     translated,
                     at_ms,
                     duration_ms,
+                    speaker,
                 });
                 if correcting && flush {
                     pause(&mut lines, &mut reviser, &languages);
@@ -986,12 +1120,19 @@ fn translator(pipeline: Arc<Pipeline>, app: Option<String>) -> Translator {
 /// loopback is silent while nothing plays), one event with no bins says
 /// so and reporting pauses until audio returns. Ends when the capture
 /// stops; the loop then sees its channel close.
+///
+/// `gate` (a microphone): only what it lets through goes on to the
+/// loop, and the reported threshold is the gate's, which follows the
+/// room's noise. The level shown is always that of the input.
 pub async fn meter_relay(
     mut rx: mpsc::Receiver<AudioFrame>,
     tx: mpsc::Sender<AudioFrame>,
+    mut gate: Option<VoiceGate>,
     emit: impl Fn(LevelEvent),
 ) {
-    let gate_db = level::dbfs(SILENCE_RMS);
+    let gate_db = |gate: &Option<VoiceGate>| {
+        level::dbfs(gate.as_ref().map_or(SILENCE_RMS, VoiceGate::threshold))
+    };
     let mut meter = level::Meter::default();
     let mut tick = tokio::time::interval(LEVEL_INTERVAL);
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -1002,9 +1143,15 @@ pub async fn meter_relay(
             maybe = rx.recv() => match maybe {
                 Some(frame) => {
                     meter.push(&frame);
+                    let passed = match gate.as_mut() {
+                        Some(gate) => gate.push(frame),
+                        None => vec![frame],
+                    };
                     // A full queue drops the frame, as the capture
                     // callback did before the meter sat in between.
-                    let _ = tx.try_send(frame);
+                    for frame in passed {
+                        let _ = tx.try_send(frame);
+                    }
                 }
                 None => break,
             },
@@ -1013,12 +1160,12 @@ pub async fn meter_relay(
                 if !bins.is_empty() {
                     empty_ticks = 0;
                     idle = false;
-                    emit(LevelEvent { bins, gate_db });
+                    emit(LevelEvent { bins, gate_db: gate_db(&gate) });
                 } else if !idle {
                     empty_ticks += 1;
                     if empty_ticks >= IDLE_TICKS {
                         idle = true;
-                        emit(LevelEvent { bins, gate_db });
+                        emit(LevelEvent { bins, gate_db: gate_db(&gate) });
                     }
                 }
             }
@@ -1055,7 +1202,7 @@ const FLUSH_AFTER: Duration = Duration::from_millis(700);
 const MIN_FLUSH_SAMPLES: usize = 8_000;
 
 /// RMS level below which a chunk counts as silence (about -50 dBFS).
-const SILENCE_RMS: f64 = 100.0;
+const SILENCE_RMS: f64 = crate::audio::gate::MIN_THRESHOLD;
 
 fn is_silent(samples: &[i16]) -> bool {
     if samples.is_empty() {
@@ -1088,6 +1235,7 @@ mod tests {
                 translated: "b".into(),
                 at_ms: 0,
                 duration_ms: 0,
+                speaker: None,
             },
             SubtitleEvent::Revised(crate::subtitle_revise::Revision {
                 replaces: vec![7],
@@ -1117,7 +1265,9 @@ mod tests {
         let (tx, mut rx) = mpsc::channel::<AudioFrame>(64);
         let events = Arc::new(Mutex::new(Vec::<LevelEvent>::new()));
         let sink = events.clone();
-        let relay = tokio::spawn(meter_relay(tap_rx, tx, move |ev| sink.lock().push(ev)));
+        let relay = tokio::spawn(meter_relay(tap_rx, tx, None, move |ev| {
+            sink.lock().push(ev)
+        }));
 
         // 50 ms of a steady tone in 10 ms frames, as a capture delivers.
         let frame: Vec<i16> = (0..160)
@@ -1158,6 +1308,76 @@ mod tests {
         relay.await.unwrap();
         while rx.try_recv().is_ok() {}
         assert!(rx.recv().await.is_none());
+    }
+
+    /// A microphone: room noise stays out of the loop (which then sees
+    /// the pause that ends a sentence), while the level display still
+    /// shows it, against the threshold that follows the noise.
+    #[tokio::test(start_paused = true)]
+    async fn a_gated_relay_passes_speech_only_and_reports_the_gates_threshold() {
+        let (tap_tx, tap_rx) = mpsc::channel::<AudioFrame>(512);
+        let (tx, mut rx) = mpsc::channel::<AudioFrame>(512);
+        let events = Arc::new(Mutex::new(Vec::<LevelEvent>::new()));
+        let sink = events.clone();
+        let gate = Some(VoiceGate::default());
+        let relay = tokio::spawn(meter_relay(tap_rx, tx, gate, move |ev| {
+            sink.lock().push(ev)
+        }));
+        let frame = |level: i16| -> Vec<i16> {
+            (0..160)
+                .map(|i| if i % 2 == 0 { level } else { -level })
+                .collect()
+        };
+
+        // One second of hiss above the fixed silence gate (RMS 100).
+        for _ in 0..100 {
+            tap_tx.send(frame(200)).await.unwrap();
+        }
+        tokio::time::sleep(Duration::from_millis(60)).await;
+        assert!(rx.try_recv().is_err(), "noise reached the loop");
+        {
+            let seen = events.lock();
+            let last = seen.last().expect("the level is still reported");
+            assert!(last.bins.iter().all(|&db| db == -44), "{:?}", last.bins);
+            assert!(last.gate_db > level::dbfs(200.0), "{}", last.gate_db);
+        }
+
+        // Speech passes, with the audio right before it.
+        for _ in 0..50 {
+            tap_tx.send(frame(3000)).await.unwrap();
+        }
+        tokio::time::sleep(Duration::from_millis(60)).await;
+        let mut passed = 0;
+        while let Ok(f) = rx.try_recv() {
+            passed += f.len();
+        }
+        assert!(passed >= 50 * 160, "{passed}");
+        drop(tap_tx);
+        relay.await.unwrap();
+    }
+
+    #[test]
+    fn a_microphone_window_is_a_conversation() {
+        assert_eq!(Mode::of(AudioSource::Microphone), Mode::Conversation);
+        assert_eq!(Mode::of(AudioSource::System), Mode::default());
+        assert!(AudioSource::Microphone.is_continuous());
+        assert!(!AudioSource::System.is_continuous());
+        assert_eq!(
+            serde_json::to_value(AudioSource::Microphone).unwrap(),
+            serde_json::json!({ "kind": "microphone" })
+        );
+        let said = SubtitleEvent::Chunk {
+            id: 1,
+            original: "a".into(),
+            translated: "b".into(),
+            at_ms: 0,
+            duration_ms: 0,
+            speaker: Some(Speaker::Partner),
+        };
+        assert_eq!(
+            serde_json::to_value(&said).unwrap()["speaker"],
+            serde_json::json!("partner")
+        );
     }
 
     #[test]
