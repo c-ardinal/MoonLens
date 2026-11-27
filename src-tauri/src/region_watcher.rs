@@ -178,6 +178,8 @@ struct Shown {
     /// decoded QR payload): what a new reading is compared with.
     text: Option<String>,
     blocks: Vec<LensBlock>,
+    /// [`Pipeline::translation_epoch`] the blocks were translated under.
+    epoch: String,
     /// Indices already reported stale since the last `Blocks`.
     stale: Vec<usize>,
 }
@@ -434,15 +436,20 @@ impl Tracker {
         }
         .to_vec();
         // Blocks still shown keep their translation; text that comes
-        // back after other lines is translated in its new context.
-        bundle.on_screen = self
-            .shown
-            .blocks
-            .iter()
-            .enumerate()
-            .filter(|(i, b)| !self.shown.stale.contains(i) && !b.same_language)
-            .filter_map(|(_, b)| Some((b.source.clone(), b.translation.clone()?)))
-            .collect();
+        // back after other lines is translated in its new context. Not
+        // after another target language, glossary or engine was chosen:
+        // what is shown was made under the old one.
+        let epoch = env.pipeline.translation_epoch(env.app, env.target_language);
+        if self.shown.epoch == epoch {
+            bundle.on_screen = self
+                .shown
+                .blocks
+                .iter()
+                .enumerate()
+                .filter(|(i, b)| !self.shown.stale.contains(i) && !b.same_language)
+                .filter_map(|(_, b)| Some((b.source.clone(), b.translation.clone()?)))
+                .collect();
+        }
         env.pipeline
             .prepare_translation(&mut bundle, env.target_language);
         let requested =
@@ -451,6 +458,7 @@ impl Tracker {
             thumb: Some(thumb),
             text: Some(key),
             blocks: bundle.blocks.clone(),
+            epoch,
             stale: Vec::new(),
         };
         (env.emit)(LiveEvent::Blocks {

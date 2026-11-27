@@ -257,6 +257,29 @@ impl Pipeline {
         }
     }
 
+    /// Digest of everything outside the text that shapes a translation
+    /// for `app` into `target`: engine setup, style, the whole glossary.
+    /// Translations made under one epoch may be shown again without
+    /// asking the cache; after a change each paragraph goes through the
+    /// cache, which knows what the change touched.
+    pub fn translation_epoch(&self, app: Option<&str>, target: &str) -> String {
+        let s = self.settings.snapshot();
+        let plugins: Vec<(String, String)> = self
+            .plugins
+            .iter()
+            .flat_map(|p| p.list())
+            .filter(|p| p.enabled)
+            .map(|p| (p.id, p.version))
+            .collect();
+        let options = format!("{:?}", TranslateOptions::from_settings(&s.translation));
+        translation_cache::fingerprint([
+            engine_fingerprint(&s, &plugins).as_str(),
+            options.as_str(),
+            app.unwrap_or_default(),
+            target.trim().to_ascii_lowercase().as_str(),
+        ])
+    }
+
     /// Rebuild the in-memory provider map from the current settings. Called
     /// on startup and whenever settings hot-reload.
     pub fn rebuild_providers(&self) {

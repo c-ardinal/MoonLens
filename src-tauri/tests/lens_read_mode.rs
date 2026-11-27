@@ -462,3 +462,23 @@ async fn another_target_language_starts_without_context() {
     assert_eq!(requests[0].1.history.len(), 1);
     assert_eq!(requests[0].1.history[0].0, "It is only the wind.");
 }
+
+#[tokio::test]
+async fn text_that_stays_on_screen_is_translated_again_in_another_language() {
+    let mut run = Run::new(ReadMode::Ui);
+    run.show(&["Options"]).await;
+    run.requests();
+
+    // Same language: what is shown is kept.
+    run.show(&["Options", "Quit"]).await;
+    let requests = run.requests();
+    assert_eq!(requests.len(), 1, "{requests:?}");
+    assert_eq!(requests[0].0, "Quit");
+
+    // Another language: nothing made for the old one is shown again.
+    run.target = "fr";
+    run.show(&["Options", "Quit", "Credits"]).await;
+    let requests = run.requests();
+    let asked: Vec<&str> = requests.iter().flat_map(|(t, _)| t.split("\n\n")).collect();
+    assert_eq!(asked, ["Options", "Quit", "Credits"]);
+}
