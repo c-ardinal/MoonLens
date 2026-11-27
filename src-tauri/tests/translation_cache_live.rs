@@ -75,7 +75,11 @@ async fn cached_translations_survive_a_restart_and_follow_the_glossary() {
     );
     let usage = pipe.translation_cache_usage().unwrap();
     println!("on disk: {} entries, {} bytes", usage.entries, usage.bytes);
-    assert_eq!(usage.entries as usize, first.blocks.len());
+    // Blocks already in the target language (the fixture has Japanese
+    // notes) are shown as they are: no request, nothing to keep.
+    let requested = first.blocks.iter().filter(|b| !b.same_language).count();
+    assert!(requested > 0);
+    assert_eq!(usage.entries as usize, requested);
     assert_eq!(usage.scopes[0].scope, "game");
     drop(pipe);
 
@@ -83,7 +87,7 @@ async fn cached_translations_survive_a_restart_and_follow_the_glossary() {
     let (pipe, store) = start(dir.path());
     let (again, ms) = translate(&pipe, &png).await;
     println!("after restart: {} blocks in {ms} ms", again.blocks.len());
-    assert!(again.blocks.iter().all(|b| b.from_cache));
+    assert!(again.blocks.iter().all(|b| b.from_cache || b.same_language));
     assert_eq!(texts(&again), texts(&first));
     assert_eq!(again.result.latency_ms, 0);
     assert_eq!(again.result.used_provider, first.result.used_provider);
@@ -109,6 +113,10 @@ async fn cached_translations_survive_a_restart_and_follow_the_glossary() {
             .any(|w| w == TERM.to_lowercase());
         let now = b.translation.as_deref().unwrap_or_default();
         println!("  cache={} | {} → {now}", b.from_cache, b.source);
+        if b.same_language {
+            assert_eq!(now, b.source);
+            continue;
+        }
         if holds_term {
             touched += 1;
             assert!(!b.from_cache, "translated again under the new glossary");
