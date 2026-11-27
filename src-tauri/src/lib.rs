@@ -18,6 +18,7 @@ pub mod intent;
 pub mod ipc;
 pub mod lang;
 pub mod layout;
+pub mod layout_sets;
 pub mod lens;
 pub mod lens_drag;
 pub mod lens_fit;

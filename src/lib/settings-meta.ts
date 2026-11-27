@@ -39,7 +39,14 @@ export type Section =
   /** A section rendered by a dedicated component. */
   | { id: string; title: string; description?: string; component: SectionComponent };
 
-export type SectionComponent = 'llm-translate' | 'llm-assist' | 'ocr' | 'asr' | 'data' | 'plugins';
+export type SectionComponent =
+  | 'llm-translate'
+  | 'llm-assist'
+  | 'ocr'
+  | 'asr'
+  | 'data'
+  | 'plugins'
+  | 'layout-sets';
 
 /**
  * 大分類（左の一覧）。各分類は SECTIONS の小分類（右枠上部のタブ）を束ねる。
@@ -91,6 +98,12 @@ export const SECTIONS: Section[] = [
         help: '原文中の用語を指定の訳語に固定。'
       }
     ]
+  },
+  {
+    id: 'layout-sets',
+    title: '配置セット',
+    description: 'ウィンドウ翻訳の配置を保存。対象アプリの起動時に自動復元。',
+    component: 'layout-sets'
   },
   {
     id: 'models',
@@ -400,7 +413,7 @@ export const SECTIONS: Section[] = [
 ];
 
 export const GROUPS: Group[] = [
-  { id: 'translation', title: '翻訳', sections: ['translation', 'glossary', 'pin'] },
+  { id: 'translation', title: '翻訳', sections: ['translation', 'glossary', 'layout-sets', 'pin'] },
   { id: 'subtitle', title: '音声翻訳', sections: ['subtitle'] },
   { id: 'models', title: 'モデル', sections: ['models', 'model-assist', 'model-ocr', 'model-asr'] },
   { id: 'output', title: '履歴・コピー', sections: ['history', 'clipboard'] },

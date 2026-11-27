@@ -34,6 +34,7 @@
   import OcrModels from '$lib/components/OcrModels.svelte';
   import DataLocations from '$lib/components/DataLocations.svelte';
   import Plugins from '$lib/components/Plugins.svelte';
+  import LayoutSets from '$lib/components/LayoutSets.svelte';
   import GlossaryEditor from '$lib/components/GlossaryEditor.svelte';
   import { createRemovalLog, isBlankEntry, type GlossaryEntry } from '$lib/glossary';
   import { close as closeToast, undoable } from '$lib/toast.svelte';
@@ -374,6 +375,8 @@
             <DataLocations />
           {:else if component === 'plugins'}
             <Plugins />
+          {:else if component === 'layout-sets'}
+            <LayoutSets />
           {:else if !component}
             {#each shown.fields as field (field.path)}
               <SettingRow id={field.path} help={field.help}>

@@ -404,6 +404,8 @@ pub struct LensDescriptor {
     /// Language it translates into; `None` = the configured target.
     pub target_language: Option<String>,
     pub read_mode: ReadMode,
+    /// What the renderer shows and how (see [`LensRegistry::set_view`]).
+    pub view: serde_json::Value,
 }
 
 struct LensEntry {
@@ -420,6 +422,8 @@ struct LensEntry {
     operate: bool,
     /// Text view shown outside the window (see [`crate::lens_text`]).
     text: Option<Follow>,
+    /// View state of the renderer, kept as it reports it.
+    view: serde_json::Value,
 }
 
 /// Where a lens opens: the range to observe and the language to show.
@@ -467,6 +471,7 @@ impl LensRegistry {
                 continuous: e.watch.is_some(),
                 target_language: e.target_language.clone(),
                 read_mode: e.read_mode,
+                view: e.view.clone(),
             })
             .collect()
     }
@@ -476,6 +481,16 @@ impl LensRegistry {
     }
 
     fn track_with(&self, id: String, target_language: Option<String>, read_mode: ReadMode) {
+        self.track_viewing(id, target_language, read_mode, serde_json::Value::Null);
+    }
+
+    fn track_viewing(
+        &self,
+        id: String,
+        target_language: Option<String>,
+        read_mode: ReadMode,
+        view: serde_json::Value,
+    ) {
         self.entries.lock().push((
             id,
             LensEntry {
@@ -492,8 +507,19 @@ impl LensRegistry {
                 interactive: false,
                 operate: false,
                 text: None,
+                view,
             },
         ));
+    }
+
+    /// Keep the view state the renderer of `id` reports: which of its
+    /// switches are on (continuous reading, text view and the like).
+    /// The registry only stores it; a window opened with a view state
+    /// ([`create_at`]) starts in it.
+    pub fn set_view(&self, id: &str, view: serde_json::Value) {
+        if let Some((_, e)) = self.entries.lock().iter_mut().find(|(i, _)| i == id) {
+            e.view = view;
+        }
     }
 
     pub fn target_language(&self, id: &str) -> Option<String> {
@@ -636,6 +662,74 @@ pub fn create(
     placement: Option<Placement>,
     beside: Option<&str>,
 ) -> Result<String> {
+    let (target_language, read_mode) = match &placement {
+        Some(p) => (p.target_language.clone(), p.read_mode),
+        // Opened from a window: the same language and reading mode as
+        // that window.
+        None => (
+            beside.and_then(|b| registry.target_language(b)),
+            beside
+                .and_then(|b| registry.read_mode(b))
+                .unwrap_or_default(),
+        ),
+    };
+    let spot = match (&placement, beside) {
+        (Some(p), _) => Spot::Region(&p.rect),
+        (None, Some(b)) => Spot::Beside(b),
+        (None, None) => Spot::Pointer,
+    };
+    open(
+        app,
+        registry,
+        spot,
+        target_language,
+        read_mode,
+        serde_json::Value::Null,
+    )
+}
+
+/// Open a lens window whose client area (header included) is `client`
+/// (physical pixels), in the view state `view`, without taking the
+/// keyboard from the app the user is in.
+pub fn create_at(
+    app: &AppHandle,
+    registry: &LensRegistryHandle,
+    client: geometry::LensOuterRect,
+    target_language: Option<String>,
+    read_mode: ReadMode,
+    view: serde_json::Value,
+) -> Result<String> {
+    open(
+        app,
+        registry,
+        Spot::Client(client),
+        target_language,
+        read_mode,
+        view,
+    )
+}
+
+/// Where a new lens window goes.
+enum Spot<'a> {
+    /// Its body over a range of a monitor.
+    Region(&'a CaptureRect),
+    /// Next to the window with this id.
+    Beside(&'a str),
+    /// Its header under the mouse pointer.
+    Pointer,
+    /// Its client area exactly here; shown without activating it.
+    Client(geometry::LensOuterRect),
+}
+
+fn open(
+    app: &AppHandle,
+    registry: &LensRegistryHandle,
+    spot: Spot<'_>,
+    target_language: Option<String>,
+    read_mode: ReadMode,
+    view: serde_json::Value,
+) -> Result<String> {
+    let quiet = matches!(spot, Spot::Client(_));
     let id = ids::next();
     let label = id.clone();
     let url = format!("/lens/?id={id}");
@@ -656,31 +750,30 @@ pub fn create(
         // Windows excludes the window per grab instead (see `grab`).
         .content_protected(hidden_from_captures(app))
         .visible(false)
+        .focused(!quiet)
         .build()
         .context("create lens window")?;
-    let source = beside.and_then(|b| app.get_webview_window(b));
-    let (target_language, read_mode) = match &placement {
-        Some(p) => (p.target_language.clone(), p.read_mode),
-        // Opened from a window: the same language and reading mode as
-        // that window.
-        None => (
-            beside.and_then(|b| registry.target_language(b)),
-            beside
-                .and_then(|b| registry.read_mode(b))
-                .unwrap_or_default(),
-        ),
-    };
-    let placed = match (&placement, &source) {
-        (Some(p), _) => place(&win, &p.rect),
-        (None, Some(source)) => place_beside(&win, source),
-        (None, None) => place_at_pointer(app, &win),
+    let placed = match spot {
+        Spot::Region(rect) => place(&win, rect),
+        Spot::Beside(b) => match app.get_webview_window(b) {
+            Some(source) => place_beside(&win, &source),
+            None => place_at_pointer(app, &win),
+        },
+        Spot::Pointer => place_at_pointer(app, &win),
+        Spot::Client(rect) => inner_rect(&win).map(|actual| {
+            crate::follow::move_to(&win, actual, rect);
+        }),
     };
     if let Err(e) = placed {
         tracing::warn!("placing lens window: {e:#}");
     }
-    win.show().ok();
+    if quiet {
+        crate::follow::show_inactive(&win);
+    } else {
+        win.show().ok();
+    }
     let _ = win.set_always_on_top(true);
-    registry.track_with(id.clone(), target_language, read_mode);
+    registry.track_viewing(id.clone(), target_language, read_mode, view);
     // An outside text view goes along with every move, in the same turn
     // of the event loop (the poll in `run_passthrough` alone left it
     // trailing behind in jumps).
