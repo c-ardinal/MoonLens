@@ -59,6 +59,7 @@ macro_rules! all_commands {
             ipc::toggle_subtitle,
             ipc::subtitle_state,
             ipc::stop_subtitle,
+            ipc::block_subtitle_phrase,
             ipc::start_subtitle,
             ipc::get_onboarding_status,
             ipc::get_system_profile,

@@ -10,6 +10,8 @@ export type SubtitleView = {
   /** 音声取得中のデバイス名。 */
   device: string;
   lines: SubtitleLine[];
+  /** 遮断リストへの追加候補（利用者の判断待ち、検出順）。 */
+  candidates: string[];
   error: string | null;
 };
 
@@ -21,6 +23,7 @@ export const initialView = (): SubtitleView => ({
   phase: 'waiting',
   device: '',
   lines: [],
+  candidates: [],
   error: null
 });
 
@@ -39,9 +42,35 @@ export function reduce(view: SubtitleView, ev: SubtitleEvent): SubtitleView {
       const line = { id, original: ev.original, translated: ev.translated };
       return { ...view, error: null, lines: [...view.lines, line].slice(-MAX_LINES) };
     }
+    case 'candidate':
+      return view.candidates.includes(ev.phrase)
+        ? view
+        : { ...view, candidates: [...view.candidates, ev.phrase] };
     case 'error':
       return { ...view, error: ev.message };
   }
+}
+
+/**
+ * 候補への判断を反映。遮断（`blocked`）の場合、表示済みの同一文の字幕も除去
+ * （誤認識と判断済みのため）。無視の場合、字幕は維持。
+ */
+export function settle(view: SubtitleView, phrase: string, blocked: boolean): SubtitleView {
+  const candidates = view.candidates.filter((c) => c !== phrase);
+  if (!blocked) return { ...view, candidates };
+  const key = phraseKey(phrase);
+  return { ...view, candidates, lines: view.lines.filter((l) => !saysOnly(l.original, key)) };
+}
+
+/** 表記差（大小文字・空白・約物）を除去した照合用の文字列。 */
+export function phraseKey(text: string): string {
+  return text.normalize('NFKC').toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
+}
+
+/** `text` の内容が `key` の文の反復のみか。 */
+function saysOnly(text: string, key: string): boolean {
+  const said = phraseKey(text);
+  return key !== '' && said !== '' && said.length % key.length === 0 && said === key.repeat(said.length / key.length);
 }
 
 /** タイトルバーの状態表記。 */

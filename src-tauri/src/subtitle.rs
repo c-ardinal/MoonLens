@@ -20,6 +20,7 @@ use crate::{
     pipeline::Pipeline,
     providers::{Capability, TaskInput, TaskOutput},
     settings::SettingsStore,
+    subtitle_filter::StockFilter,
 };
 
 #[derive(Debug, Clone, Serialize)]
@@ -37,6 +38,11 @@ pub enum SubtitleEvent {
     Chunk {
         original: String,
         translated: String,
+    },
+    /// A short sentence that keeps coming back: the window asks whether
+    /// to block it from now on (see `subtitle_filter`).
+    Candidate {
+        phrase: String,
     },
     Error {
         message: String,
@@ -310,6 +316,7 @@ pub async fn run_loop(
     };
     let mut heard = false;
     let mut closed = false;
+    let mut stock = StockFilter::default();
     loop {
         let snap = settings.snapshot();
         let chunk_samples = (snap.subtitle.chunk_seconds * 16_000.0) as usize;
@@ -399,15 +406,27 @@ pub async fn run_loop(
         {
             Ok(res) => {
                 failures = 0;
-                let original = match &res.output {
-                    TaskOutput::Transcript { segments } => segments
-                        .iter()
-                        .map(|s| s.text.trim())
-                        .collect::<Vec<_>>()
-                        .join(" "),
-                    TaskOutput::Text(t) => t.clone(),
-                    _ => String::new(),
+                let segments: Vec<&str> = match &res.output {
+                    TaskOutput::Transcript { segments } => {
+                        segments.iter().map(|s| s.text.as_str()).collect()
+                    }
+                    TaskOutput::Text(t) => vec![t.as_str()],
+                    _ => Vec::new(),
                 };
+                // Stock misrecognitions go no further: not shown, and
+                // not worth a translation.
+                let screened = stock.screen(
+                    &settings.snapshot().subtitle,
+                    &segments,
+                    std::time::Instant::now(),
+                );
+                for phrase in &screened.blocked {
+                    tracing::debug!("subtitle: stock phrase removed: {phrase}");
+                }
+                if let Some(phrase) = screened.candidate {
+                    emit(SubtitleEvent::Candidate { phrase });
+                }
+                let original = screened.text;
                 tracing::debug!(
                     "subtitle: {seconds:.1} s of audio recognized in {} ms ({} chars)",
                     started.elapsed().as_millis(),

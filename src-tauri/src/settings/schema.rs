@@ -216,6 +216,14 @@ pub struct SubtitleSettings {
     pub show_original: bool,
     #[schemars(range(min = 14, max = 48))]
     pub font_size_px: u32,
+    /// Remove stock misrecognitions (video sign-offs, subtitle credits,
+    /// sound annotations) before they are shown or translated; see
+    /// `subtitle_filter`.
+    pub block_stock_phrases: bool,
+    /// The user's additions to the bundled list of stock phrases. Only
+    /// ever changed by the user (settings screen, or approving a
+    /// suggestion in the subtitle window).
+    pub blocked_phrases: Vec<String>,
 }
 
 impl Default for SubtitleSettings {
@@ -230,6 +238,8 @@ impl Default for SubtitleSettings {
             overlap_seconds: 0.5,
             show_original: true,
             font_size_px: 22,
+            block_stock_phrases: true,
+            blocked_phrases: Vec::new(),
         }
     }
 }

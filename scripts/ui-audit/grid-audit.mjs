@@ -59,6 +59,7 @@ async function subtitleWindow() {
     await emit({ kind: 'status', phase: 'translating' });
     await emit({ kind: 'chunk', original: 'And so, my fellow Americans,', translated: 'そして、同胞であるアメリカ国民の皆さん、' }); await m('chunk');
     await pg.mouse.move(w / 2, 20); await m('hover');
+    await emit({ kind: 'candidate', phrase: 'Thank you.' }); await m('candidate');
     await emit({ kind: 'error', message: '音声認識の連続失敗により停止：モデル読込失敗' }); await emit({ kind: 'stopped' }); await m('error');
     await pg.context().close();
   }

@@ -331,12 +331,17 @@ export type SubtitleEvent =
   | { kind: 'stopped' }
   | { kind: 'status'; phase: SubtitlePhase }
   | { kind: 'chunk'; original: string; translated: string }
+  /** 短時間に反復した文：遮断リストへの追加候補。 */
+  | { kind: 'candidate'; phrase: string }
   | { kind: 'error'; message: string };
 
 export const toggleSubtitle = () => safeInvoke<boolean>('toggle_subtitle');
 export const subtitleState = () => safeInvoke<boolean>('subtitle_state', undefined, false);
 export const stopSubtitle = () => safeInvoke<void>('stop_subtitle');
 export const startSubtitle = () => safeInvoke<void>('start_subtitle');
+/** 音声翻訳の遮断リスト（`subtitle.blocked_phrases`）へ追加。 */
+export const blockSubtitlePhrase = (phrase: string) =>
+  safeInvoke<void>('block_subtitle_phrase', { phrase });
 export const onSubtitle = (handler: (event: SubtitleEvent) => void): Promise<UnlistenFn> =>
   listen<SubtitleEvent>('moonlens://subtitle', (e) => handler(e.payload));
 
