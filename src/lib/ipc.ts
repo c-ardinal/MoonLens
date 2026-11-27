@@ -390,7 +390,7 @@ export type SubtitleEvent =
   | { kind: 'status'; phase: SubtitlePhase }
   | { kind: 'chunk'; id: number; original: string; translated: string }
   | {
-      /** 文単位の再翻訳結果。`replaces` の各行を 1 行（＋次文の冒頭 `rest`）へ置換。 */
+      /** 文単位の再翻訳結果。`replaces` の各行を 1 行（＋次文の冒頭 `rest`）へ置換。`original` が空の場合は遮断済みの文：行の除去のみ。 */
       kind: 'revised';
       replaces: number[];
       id: number;

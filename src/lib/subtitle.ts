@@ -84,9 +84,10 @@ export function reduce(view: SubtitleView, ev: SubtitleEvent): SubtitleView {
       // 置換対象が保持範囲外（破棄済み）の場合、行は不変。
       const at = view.lines.findIndex((l) => replaces.includes(l.id));
       if (at < 0) return lastId === view.lastId ? view : { ...view, lastId };
-      const next: SubtitleLine[] = [
-        { id: base + ev.id, original: ev.original, translated: ev.translated, revised: true }
-      ];
+      // 原文が空：補正前に遮断済みとなった文。置換対象の行は除去、次文の冒頭のみ残置。
+      const next: SubtitleLine[] = ev.original
+        ? [{ id: base + ev.id, original: ev.original, translated: ev.translated, revised: true }]
+        : [];
       if (ev.rest) next.push({ ...ev.rest, id: base + ev.rest.id });
       const lines = view.lines.filter((l) => !replaces.includes(l.id));
       lines.splice(at, 0, ...next);

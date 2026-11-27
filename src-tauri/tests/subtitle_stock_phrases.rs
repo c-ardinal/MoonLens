@@ -300,6 +300,50 @@ async fn sentence_correction_never_sees_a_stock_phrase() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_sentence_approved_after_it_was_shown_is_not_corrected_back() {
+    let out = subtitles(
+        |s| {
+            s.subtitle.realtime_correction = true;
+            s.subtitle.batch_correction = true;
+        },
+        vec![
+            // Shown, and still waiting for its end when it is approved.
+            vec!["Thank you."],
+            vec!["Please sit."],
+            vec!["Come in."],
+        ],
+        |n, settings| {
+            if n == 0 {
+                assert!(approve(settings, "Thank you."));
+            }
+        },
+    )
+    .await;
+    let corrected: Vec<_> = out
+        .events
+        .iter()
+        .filter_map(|e| match e {
+            SubtitleEvent::Revised(r) => Some(r),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        corrected.iter().all(|r| !r.original.contains("Thank")),
+        "{corrected:?}"
+    );
+    // Its lines are taken away, the start of the next sentence stays.
+    let gone = corrected
+        .iter()
+        .find(|r| r.original.is_empty())
+        .expect("the blocked sentence is reported as removed");
+    assert_eq!(gone.replaces, [1, 2]);
+    assert_eq!(
+        gone.rest.as_ref().map(|r| r.original.as_str()),
+        Some("Please sit.")
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn switched_off_everything_is_shown() {
     let out = subtitles(
         |s| s.subtitle.block_stock_phrases = false,

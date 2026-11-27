@@ -230,6 +230,20 @@ describe('遮断候補（反復検出）', () => {
     expect(next.lines.map((l) => l.original)).toEqual(['Thank you for coming.']);
   });
 
+  it('遮断済みの文の補正結果（原文が空）：置換対象の行を除去、次文の冒頭のみ残置', () => {
+    const v = run([heard('Thank you.'), heard('Please sit.')]);
+    const [first, second] = v.lines.map((l) => l.id);
+    const next = reduce(settle(v, 'Thank you.', true), {
+      kind: 'revised',
+      replaces: [first, second],
+      id: second + 1,
+      original: '',
+      translated: '',
+      rest: { id: second + 2, original: 'Please sit.', translated: '' }
+    });
+    expect(next.lines.map((l) => l.original)).toEqual(['Please sit.']);
+  });
+
   it('無視：候補のみ除去、字幕は維持', () => {
     const v = run([heard('Thank you.'), { kind: 'candidate', phrase: 'Thank you.' }]);
     const next = settle(v, 'Thank you.', false);

@@ -605,7 +605,16 @@ pub async fn run_loop(
     let mut stock = StockFilter::default();
     let mut lines = Assembler::default();
     let mut reviser = Reviser::new(translator(pipeline.clone()));
-    let revised = |revision: Revision| emit(SubtitleEvent::Revised(revision));
+    // A sentence approved for blocking after its chunks were shown must
+    // not come back as a correction: its lines go (empty text), the
+    // start of the next sentence stays.
+    let revised = |stock: &mut StockFilter, mut revision: Revision| {
+        if stock.blocks_all(&settings.snapshot().subtitle, &revision.original) {
+            revision.original.clear();
+            revision.translated.clear();
+        }
+        emit(SubtitleEvent::Revised(revision))
+    };
     loop {
         let snap = settings.snapshot();
         let realtime = snap.subtitle.realtime_correction;
@@ -647,7 +656,7 @@ pub async fn run_loop(
                 // `None`: the work left needed no new translation.
                 revision = reviser.next(), if reviser.is_busy() => {
                     if let Some(revision) = revision {
-                        revised(revision);
+                        revised(&mut stock, revision);
                     }
                     set_phase(idle(&reviser));
                     continue;
@@ -676,7 +685,7 @@ pub async fn run_loop(
                 // The audio ended (stopping drops this task instead):
                 // finish what the pause above released.
                 while let Some(revision) = reviser.next().await {
-                    revised(revision);
+                    revised(&mut stock, revision);
                 }
                 set_phase(Phase::Waiting);
                 break;
@@ -716,7 +725,7 @@ pub async fn run_loop(
         // sentence under way finishes first; the next one starts when
         // the loop waits for audio again.
         if let Some(revision) = reviser.settle().await {
-            revised(revision);
+            revised(&mut stock, revision);
         }
         set_phase(Phase::Recognizing);
         let seconds = to_send.len() as f32 / 16_000.0;
