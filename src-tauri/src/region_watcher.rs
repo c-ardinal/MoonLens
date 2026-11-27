@@ -101,6 +101,9 @@ pub struct TickEnv<'a> {
     pub target_language: &'a str,
     /// History kind of new translations (`pipeline::history_kind`).
     pub history_kind: &'a str,
+    /// Key of the app the region belongs to, when it follows one of its
+    /// windows ([`crate::pipeline::CaptureFlowResult::app`]).
+    pub app: Option<&'a str>,
     pub emit: &'a (dyn Fn(LiveEvent) + Send + Sync),
     /// Region geometry now. A translation finished after the region moved
     /// is not shown at the old place; the next tick shows it at the new.
@@ -360,6 +363,7 @@ impl Tracker {
 
         // Cached and same-language blocks are ready now; show them while
         // the rest is translated.
+        bundle.app = env.app.map(str::to_string);
         env.pipeline
             .prepare_translation(&mut bundle, env.target_language);
         let requested =

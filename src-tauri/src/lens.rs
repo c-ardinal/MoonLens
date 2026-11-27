@@ -1077,6 +1077,7 @@ async fn run_watch(
             pipeline: &pipeline,
             target_language: &target_language,
             history_kind: crate::pipeline::history_kind::LENS,
+            app: None,
             emit: &emit,
             geometry_now: &geometry_now,
         };

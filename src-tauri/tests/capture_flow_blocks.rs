@@ -337,8 +337,8 @@ async fn cache_is_per_target_language() {
     assert_eq!(calls.load(Ordering::Relaxed), 2);
     assert!(r.blocks.iter().all(|b| b.from_cache));
 
-    // Settings / provider changes drop the cache.
-    pipe.clear_translation_cache();
+    // Clearing drops every entry.
+    pipe.clear_translation_cache(None).unwrap();
     pipe.translate_capture_to(&mut r, "fr").await.unwrap();
     assert_eq!(calls.load(Ordering::Relaxed), 3);
 }

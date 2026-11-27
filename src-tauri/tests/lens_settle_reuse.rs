@@ -169,6 +169,7 @@ impl Run {
             pipeline: &self.pipeline,
             target_language: "ja",
             history_kind: "lens",
+            app: None,
             emit: &emit,
             geometry_now: &geometry_now,
         };

@@ -82,6 +82,8 @@ macro_rules! all_commands {
             ipc::delete_history_entry,
             ipc::restore_history_entry,
             ipc::clear_history,
+            ipc::translation_cache_usage,
+            ipc::clear_translation_cache,
             ipc::list_notices,
             ipc::dismiss_notice,
             ipc::list_config_issues,

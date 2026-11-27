@@ -29,7 +29,7 @@ use crate::{
     },
     storage::Storage,
     translate_plan,
-    translation_cache::{CachedTranslation, TranslationCache},
+    translation_cache::{self, CachedTranslation, DiskCache, Lookup, TranslationCache},
 };
 
 /// Outcome reported to the UI per task attempt. `used_provider`/`via_cloud`
@@ -84,7 +84,7 @@ pub struct Pipeline {
     /// overlay webview; unset in test builds that construct a pipeline
     /// directly.
     chunk_sink: RwLock<Option<ChunkSink>>,
-    /// Per-paragraph translations, so re-selected text shows instantly.
+    /// Per-paragraph translations, so text seen before shows instantly.
     cache: TranslationCache,
 }
 
@@ -158,6 +158,13 @@ impl Pipeline {
         storage: Arc<Storage>,
         plugins: Arc<PluginRegistry>,
     ) -> Self {
+        let mut cache = TranslationCache::default();
+        if !storage.data_dir.as_os_str().is_empty() {
+            match DiskCache::open(storage.data_dir.join(DiskCache::FILE_NAME)) {
+                Ok(disk) => cache = cache.with_disk(disk),
+                Err(e) => tracing::warn!("translation cache stays in memory: {e:#}"),
+            }
+        }
         let me = Self {
             settings,
             storage,
@@ -165,7 +172,7 @@ impl Pipeline {
             providers: RwLock::new(HashMap::new()),
             sticky: RwLock::new(HashMap::new()),
             chunk_sink: RwLock::new(None),
-            cache: TranslationCache::default(),
+            cache,
         };
         me.rebuild_providers();
         me
@@ -190,6 +197,13 @@ impl Pipeline {
         }
     }
 
+    /// Replace the translation cache (tests: one that also writes to
+    /// disk).
+    pub fn with_translation_cache(mut self, cache: TranslationCache) -> Self {
+        self.cache = cache;
+        self
+    }
+
     /// Install a callback that every Ollama-style streaming provider
     /// will invoke per chunk. Re-runs provider discovery so existing
     /// provider instances see the new sink.
@@ -198,19 +212,32 @@ impl Pipeline {
         self.rebuild_providers();
     }
 
-    /// Forget cached translations (provider or settings changed).
-    pub fn clear_translation_cache(&self) {
-        self.cache.clear();
+    /// Delete cached translations, on disk too: those read from one app
+    /// (`Some("")` = text that belongs to no app), or all of them.
+    pub fn clear_translation_cache(&self, app: Option<&str>) -> anyhow::Result<usize> {
+        self.cache.clear(app)
+    }
+
+    /// Size of the translation cache on disk.
+    pub fn translation_cache_usage(&self) -> anyhow::Result<translation_cache::Usage> {
+        self.cache.usage()
+    }
+
+    /// What cached translations are checked against under the current
+    /// settings. Take one per capture.
+    fn cache_stamp(&self) -> CacheStamp {
+        let s = self.settings.snapshot();
+        CacheStamp {
+            engine: engine_fingerprint(&s),
+            options: TranslateOptions::from_settings(&s.translation),
+            persist: s.storage.keep_translation_cache,
+        }
     }
 
     /// Rebuild the in-memory provider map from the current settings. Called
     /// on startup and whenever settings hot-reload.
     pub fn rebuild_providers(&self) {
-        // A different model or prompt must not be masked by old output.
-        self.clear_translation_cache();
         let s = self.settings.snapshot();
-        self.cache
-            .set_ttl_secs(u64::from(s.performance.cache_ttl_seconds));
         let mut map: HashMap<String, ProviderHandle> = HashMap::new();
         let empty = serde_json::Value::Object(Default::default());
         let sink = self.chunk_sink.read().clone();
@@ -486,6 +513,7 @@ impl Pipeline {
                     image_size: Some([img.width(), img.height()]),
                     source_language: None,
                     target_language: None,
+                    app: None,
                 });
             }
         }
@@ -548,6 +576,7 @@ impl Pipeline {
                 image_size,
                 source_language: None,
                 target_language: None,
+                app: None,
                 result: TaskResult {
                     task: "capture".into(),
                     output: TaskOutput::Intent(intent),
@@ -594,6 +623,7 @@ impl Pipeline {
             blocks,
             image_size,
             target_language: None,
+            app: None,
             result: TaskResult {
                 task: "ocr".into(),
                 output: TaskOutput::Empty,
@@ -626,11 +656,20 @@ impl Pipeline {
     /// (see [`LensBlock::needs_request`]) go to the translator.
     pub fn prepare_translation(&self, bundle: &mut CaptureFlowResult, target: &str) {
         Self::mark_same_language(bundle, target);
+        let scope = bundle.app.clone().unwrap_or_default();
+        let stamp = self.cache_stamp();
         for b in &mut bundle.blocks {
             if b.same_language {
                 continue;
             }
-            if let Some(hit) = self.cache.get(target, &b.source) {
+            let fingerprint = stamp.fingerprint(&b.source, target);
+            if let Some(hit) = self.cache.get(Lookup {
+                scope: &scope,
+                target,
+                source: &b.source,
+                fingerprint: &fingerprint,
+                persist: stamp.persist,
+            }) {
                 b.translation = Some(hit.text);
                 b.from_cache = true;
             }
@@ -707,6 +746,12 @@ impl Pipeline {
             .filter(|&i| bundle.blocks[i].needs_request())
             .collect();
         let target_language = target_language.to_string();
+        let scope = bundle.app.clone().unwrap_or_default();
+        let chosen = pick_chain(&s, Capability::Translate)
+            .chain
+            .into_iter()
+            .next();
+        let stamp = self.cache_stamp();
 
         if pending.is_empty() {
             // Everything is already readable or cached: no round-trip.
@@ -714,7 +759,16 @@ impl Pipeline {
                 .blocks
                 .iter()
                 .filter(|b| b.from_cache)
-                .filter_map(|b| self.cache.get(&target_language, &b.source))
+                .filter_map(|b| {
+                    let fingerprint = stamp.fingerprint(&b.source, &target_language);
+                    self.cache.get(Lookup {
+                        scope: &scope,
+                        target: &target_language,
+                        source: &b.source,
+                        fingerprint: &fingerprint,
+                        persist: stamp.persist,
+                    })
+                })
                 .collect();
             let text = bundle
                 .blocks
@@ -863,14 +917,25 @@ impl Pipeline {
                 };
             for (&i, t) in idx.iter().zip(translations) {
                 if let Some(text) = &t {
+                    let source = &bundle.blocks[i].source;
+                    let fingerprint = stamp.fingerprint(source, &target_language);
                     self.cache.put(
-                        &target_language,
-                        &bundle.blocks[i].source,
+                        Lookup {
+                            scope: &scope,
+                            target: &target_language,
+                            source,
+                            fingerprint: &fingerprint,
+                            persist: stamp.persist,
+                        },
                         CachedTranslation {
                             text: text.clone(),
                             provider: translate.used_provider.clone(),
                             via_cloud: translate.via_cloud,
                         },
+                        // A stand-in engine's answer is not kept past
+                        // the session: the chosen engine translates the
+                        // text once it works again.
+                        chosen.as_deref() == Some(translate.used_provider.as_str()),
                     );
                 }
                 bundle.blocks[i].translation = t;
@@ -1035,6 +1100,12 @@ pub struct CaptureFlowResult {
     /// Language the blocks were (or will be) translated into.
     #[serde(default)]
     pub target_language: Option<String>,
+    /// Key of the app the capture was read from (a translation window
+    /// that follows an app's window), when there is one. Cached
+    /// translations are kept per app: the same label can mean different
+    /// things in two apps.
+    #[serde(skip)]
+    pub app: Option<String>,
 }
 
 /// One paragraph of recognised text, positioned in the captured image.
@@ -1187,6 +1258,51 @@ fn upgrade_llm_chain(mut chain: TaskChain, local_id: &str) -> TaskChain {
         chain.chain = vec![local_id.to_string()];
     }
     chain
+}
+
+/// Everything that shapes a translation under one settings snapshot. A
+/// cached translation is used only while its fingerprint is unchanged,
+/// so a new model, prompt or glossary term is never masked by old
+/// output.
+struct CacheStamp {
+    engine: String,
+    options: TranslateOptions,
+    /// Settings → storage.keep_translation_cache.
+    persist: bool,
+}
+
+impl CacheStamp {
+    /// Digest for translating `source` into `target`: the engine setup,
+    /// the style and the glossary terms that occur in `source`. Editing
+    /// a term therefore re-translates only the paragraphs that hold it.
+    fn fingerprint(&self, source: &str, target: &str) -> String {
+        let signature = self.options.signature_for(source, target);
+        translation_cache::fingerprint(
+            std::iter::once(self.engine.as_str()).chain(signature.iter().map(String::as_str)),
+        )
+    }
+}
+
+/// Digest of the translation engine setup: this build (prompts and
+/// default models change between versions) and the translate chain with
+/// the config of every engine in it.
+fn engine_fingerprint(s: &crate::settings::schema::Settings) -> String {
+    let chain = pick_chain(s, Capability::Translate).chain;
+    let configs: Vec<String> = chain
+        .iter()
+        .map(|id| {
+            s.providers
+                .configs
+                .get(id)
+                .map(|cfg| cfg.to_string())
+                .unwrap_or_default()
+        })
+        .collect();
+    translation_cache::fingerprint(
+        std::iter::once(env!("CARGO_PKG_VERSION"))
+            .chain(chain.iter().map(String::as_str))
+            .chain(configs.iter().map(String::as_str)),
+    )
 }
 
 fn pick_chain(s: &crate::settings::schema::Settings, cap: Capability) -> TaskChain {
