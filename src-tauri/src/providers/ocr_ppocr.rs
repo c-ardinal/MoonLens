@@ -509,6 +509,27 @@ pub mod post {
     }
 }
 
+/// Count the loaded engine as used now (see [`unload_idle`]): for an
+/// engine that waits for the screen to change under an open window.
+pub fn touch() {
+    #[cfg(feature = "ocrs-engine")]
+    engine::touch();
+}
+
+/// Free the engine when nobody asked for it for `limit` and no reading
+/// runs on it; the next reading loads it again. True when it was freed.
+pub fn unload_idle(limit: std::time::Duration) -> bool {
+    #[cfg(feature = "ocrs-engine")]
+    {
+        engine::unload_idle(limit)
+    }
+    #[cfg(not(feature = "ocrs-engine"))]
+    {
+        let _ = limit;
+        false
+    }
+}
+
 #[cfg(feature = "ocrs-engine")]
 pub mod engine {
     //! Model loading and inference.
@@ -1014,9 +1035,15 @@ pub mod engine {
     /// the app runs.
     type Loaded = (PathBuf, Want, bool, Option<Generation>, Vec<&'static str>);
 
-    static CACHE: Mutex<Option<(Loaded, Arc<PpOcr>)>> = Mutex::new(None);
+    /// The loaded engine and when it was last asked for.
+    static CACHE: Mutex<Option<(Loaded, Arc<PpOcr>, std::time::Instant)>> = Mutex::new(None);
 
-    /// Cached engine for `dir` (models load once per process).
+    /// The backend the last load settled on. A reload after
+    /// [`unload_idle`] takes it without measuring the candidates again.
+    static CHOSEN: Mutex<Option<(Loaded, Backend)>> = Mutex::new(None);
+
+    /// Cached engine for `dir` (models load once, and again after
+    /// [`unload_idle`] freed them).
     pub fn engine_for(dir: &Path, want: Want) -> Result<Arc<PpOcr>> {
         let want = Want {
             gpu: want.gpu && !GPU_FAILED.load(std::sync::atomic::Ordering::Relaxed),
@@ -1030,14 +1057,56 @@ pub mod engine {
             ocr_scripts::installed(dir).iter().map(|s| s.id).collect(),
         );
         let mut guard = CACHE.lock();
-        if let Some((k, e)) = guard.as_ref() {
+        if let Some((k, e, used)) = guard.as_mut() {
             if *k == key {
+                *used = std::time::Instant::now();
                 return Ok(e.clone());
             }
         }
-        let e = Arc::new(PpOcr::load(dir, want)?);
-        *guard = Some((key, e.clone()));
+        // Free the old engine before loading its replacement.
+        *guard = None;
+        let e = Arc::new(load_remembering(dir, want, &key)?);
+        *guard = Some((key, e.clone(), std::time::Instant::now()));
         Ok(e)
+    }
+
+    fn load_remembering(dir: &Path, want: Want, key: &Loaded) -> Result<PpOcr> {
+        let known = CHOSEN
+            .lock()
+            .as_ref()
+            .filter(|(k, _)| k == key)
+            .map(|(_, b)| *b);
+        if let Some(backend) = known {
+            match PpOcr::load(dir, Want { backend, ..want }) {
+                Ok(e) if e.backend() == backend => return Ok(e),
+                // It no longer loads as it did: choose afresh.
+                _ => tracing::info!("ocr backend {} gone, measuring again", backend.name()),
+            }
+        }
+        let e = PpOcr::load(dir, want)?;
+        *CHOSEN.lock() = Some((key.clone(), e.backend()));
+        Ok(e)
+    }
+
+    /// Count the loaded engine as used now (see [`unload_idle`]).
+    pub fn touch() {
+        if let Some((_, _, used)) = CACHE.lock().as_mut() {
+            *used = std::time::Instant::now();
+        }
+    }
+
+    /// Free the engine when nobody asked for it for `limit` and no
+    /// reading runs on it. True when it was freed.
+    pub fn unload_idle(limit: std::time::Duration) -> bool {
+        let mut guard = CACHE.lock();
+        let unused = matches!(
+            guard.as_ref(),
+            Some((_, e, used)) if Arc::strong_count(e) == 1 && used.elapsed() >= limit
+        );
+        if unused {
+            *guard = None;
+        }
+        unused
     }
 
     /// Set once a reading on the GPU failed: for the rest of the run
@@ -1622,6 +1691,23 @@ impl Provider for PpOcrProvider {
     }
     fn is_local(&self) -> bool {
         true
+    }
+
+    async fn warm_up(&self) -> Result<(), ProviderError> {
+        #[cfg(feature = "ocrs-engine")]
+        if models_installed(&self.models_dir) {
+            let dir = self.models_dir.clone();
+            let want = engine::Want {
+                backend: self.params.backend,
+                gpu: self.use_gpu,
+            };
+            return tokio::task::spawn_blocking(move || engine::engine_for(&dir, want).map(|_| ()))
+                .await
+                .map_err(|e| ProviderError::Other(e.to_string()))?
+                .map_err(|e| ProviderError::Other(format!("{e:#}")));
+        }
+        // The caller warms the next recogniser of the chain instead.
+        Err(ProviderError::NotInstalled("PP-OCR".into()))
     }
 
     async fn run(&self, input: TaskInput) -> Result<TaskOutput, ProviderError> {

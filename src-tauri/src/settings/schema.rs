@@ -412,6 +412,10 @@ pub struct PerformanceSettings {
     #[schemars(range(min = 1, max = 8))]
     pub max_concurrent_tasks: u32,
     pub use_gpu_if_available: bool,
+    /// Minutes without use after which loaded models are freed
+    /// (0 = keep them loaded).
+    #[schemars(range(min = 0, max = 240))]
+    pub model_idle_unload_minutes: u32,
 }
 
 impl Default for PerformanceSettings {
@@ -422,6 +426,7 @@ impl Default for PerformanceSettings {
             scan_margin_px: 32,
             max_concurrent_tasks: 4,
             use_gpu_if_available: true,
+            model_idle_unload_minutes: 10,
         }
     }
 }

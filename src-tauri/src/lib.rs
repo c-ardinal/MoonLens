@@ -26,6 +26,7 @@ pub mod lens_fit;
 pub mod lens_shield;
 pub mod lens_text;
 pub mod macos_permissions;
+pub mod model_idle;
 pub mod notices;
 pub mod overlay;
 pub mod pipeline;

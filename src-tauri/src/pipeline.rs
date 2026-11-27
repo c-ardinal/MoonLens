@@ -394,21 +394,48 @@ impl Pipeline {
     /// multi-second load. Set `preload = false` in its config to skip.
     pub fn preload_local_llm(&self) {
         let s = self.settings.snapshot();
-        if !pick_chain(&s, Capability::Translate)
-            .chain
-            .iter()
-            .any(|id| id == LOCAL_LLM_ID)
-        {
+        let Some((path, cfg)) = local_llm(&s) else {
             return;
-        }
-        let empty = serde_json::Value::Object(Default::default());
-        let cfg = s.providers.configs.get(LOCAL_LLM_ID).unwrap_or(&empty);
+        };
         if cfg.get("preload").and_then(|v| v.as_bool()) == Some(false) {
             return;
         }
         let use_gpu = s.performance.use_gpu_if_available;
-        let p = LlamaTranslator::new(LOCAL_LLM_ID, cfg, use_gpu);
-        crate::providers::translate_llama::preload(p.model_path().to_path_buf(), use_gpu, cfg);
+        crate::providers::translate_llama::preload(path, use_gpu, &cfg);
+    }
+
+    /// The file of the built-in translation model when the translate
+    /// chain uses it.
+    pub fn local_llm_path(&self) -> Option<std::path::PathBuf> {
+        local_llm(&self.settings.snapshot()).map(|(path, _)| path)
+    }
+
+    /// Load what reading the screen needs (the translation model and
+    /// the first installed local text recogniser) in the background: both may
+    /// have been freed while unused (see [`crate::model_idle`]), and a
+    /// window that opens should not wait for them at its first reading.
+    pub fn preload_for_reading(&self) {
+        self.preload_local_llm();
+        let s = self.settings.snapshot();
+        let providers = self.providers.read();
+        // In chain order, as `run` falls through: the first local
+        // recogniser that loads is the one a reading will use.
+        let chain: Vec<ProviderHandle> = pick_chain(&s, Capability::Ocr)
+            .chain
+            .iter()
+            .filter_map(|id| providers.get(id))
+            .filter(|p| p.is_local())
+            .cloned()
+            .collect();
+        tauri::async_runtime::spawn(async move {
+            for p in chain {
+                match p.warm_up().await {
+                    Ok(()) => break,
+                    Err(ProviderError::NotInstalled(_)) => {}
+                    Err(e) => tracing::warn!("loading {} ahead of use failed: {e}", p.id()),
+                }
+            }
+        });
     }
 
     /// Run a task through the configured chain, respecting privacy gates,
@@ -1414,6 +1441,30 @@ fn upgrade_llm_chain(mut chain: TaskChain, local_id: &str) -> TaskChain {
         chain.chain = vec![local_id.to_string()];
     }
     chain
+}
+
+/// The built-in translation model (file and provider config) when the
+/// translate chain uses it.
+fn local_llm(
+    s: &crate::settings::schema::Settings,
+) -> Option<(std::path::PathBuf, serde_json::Value)> {
+    if !pick_chain(s, Capability::Translate)
+        .chain
+        .iter()
+        .any(|id| id == LOCAL_LLM_ID)
+    {
+        return None;
+    }
+    let cfg = s
+        .providers
+        .configs
+        .get(LOCAL_LLM_ID)
+        .cloned()
+        .unwrap_or_else(|| serde_json::Value::Object(Default::default()));
+    let path = LlamaTranslator::new(LOCAL_LLM_ID, &cfg, s.performance.use_gpu_if_available)
+        .model_path()
+        .to_path_buf();
+    Some((path, cfg))
 }
 
 /// One paragraph's translation and the engine that made it.

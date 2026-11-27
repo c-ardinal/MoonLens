@@ -679,6 +679,11 @@ pub fn create(
     placement: Option<Placement>,
     beside: Option<&str>,
 ) -> Result<String> {
+    // The models may have been freed while unused (see `model_idle`):
+    // load them while the window comes up.
+    if let Some(state) = app.try_state::<crate::app::AppState>() {
+        state.pipeline.preload_for_reading();
+    }
     let id = ids::next();
     let label = id.clone();
     let url = format!("/lens/?id={id}");

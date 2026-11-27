@@ -242,6 +242,13 @@ pub fn build() -> Result<()> {
             ));
             let lenses: LensRegistryHandle = Arc::new(LensRegistry::new());
 
+            crate::model_idle::spawn(
+                settings.clone(),
+                pipeline.clone(),
+                lenses.clone(),
+                subtitle.clone(),
+            );
+
             // A hotkey another app already owns must not stop MoonLens
             // from starting; the others still register.
             if let Err(e) = hotkey::register_all(
@@ -283,6 +290,13 @@ pub fn build() -> Result<()> {
                 if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                     api.prevent_close();
                     let _ = window.hide();
+                }
+                // Coming back to the app after a while: the translation
+                // model may have been freed (see `model_idle`).
+                if let tauri::WindowEvent::Focused(true) = event {
+                    if let Some(state) = window.app_handle().try_state::<AppState>() {
+                        state.pipeline.preload_local_llm();
+                    }
                 }
             }
             // A subtitle window closing by itself (Alt+F4; its × button
