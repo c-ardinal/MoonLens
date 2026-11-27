@@ -403,15 +403,15 @@ fn starts_list_item(text: &str) -> bool {
 
 /// Width (px) the first word of a line takes, with the space after it,
 /// estimated from the line's average character width. Text without
-/// spaces (CJK) breaks anywhere, so its first word is one character.
+/// spaces (CJK) breaks at any character, so the word ends there.
 fn first_word_width(text: &str, b: &BBox) -> f32 {
     let t = text.trim();
     let total = t.chars().count().max(1);
-    let word = if t.chars().next().is_some_and(is_cjk) {
-        1
-    } else {
-        t.chars().take_while(|c| !c.is_whitespace()).count() + 1
-    };
+    let word = t
+        .chars()
+        .take_while(|c| !c.is_whitespace() && !is_cjk(*c))
+        .count()
+        + 1;
     b[2] * word.min(total) as f32 / total as f32
 }
 
@@ -1203,6 +1203,39 @@ mod tests {
         ];
         let blocks = group_lines(&lines);
         assert!(row_limits(&img, &blocks[0], [255, 255, 255]).is_empty());
+    }
+
+    #[test]
+    fn note_in_another_script_below_a_short_last_line_stays_apart() {
+        // english0004 fixture: an English paragraph, then a Japanese
+        // note that starts with an ASCII bracket.
+        let lines = vec![
+            line(
+                "reading, which cause them to turn immediately to whichever sections",
+                29.0,
+                189.0,
+                560.0,
+                15.0,
+            ),
+            line(
+                "interest them, and to ignore the rest. Thus, most of the paper remains",
+                28.0,
+                208.0,
+                571.0,
+                17.0,
+            ),
+            line(
+                "unread, yet you still have to buy all of it.",
+                29.0,
+                227.0,
+                326.0,
+                15.0,
+            ),
+            line("(某大学入試過去問題から抜粋)", 39.0, 248.0, 218.0, 13.0),
+        ];
+        let blocks = group_lines(&lines);
+        assert_eq!(blocks.len(), 2);
+        assert_eq!(blocks[1].text, "(某大学入試過去問題から抜粋)");
     }
 
     #[test]
