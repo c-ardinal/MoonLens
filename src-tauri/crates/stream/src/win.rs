@@ -647,7 +647,12 @@ impl Composite {
         // SAFETY: see above; all arguments outlive the calls.
         unsafe {
             self.brush.SetColor(&color(item.background));
-            self.d2d.FillRectangle(&rect(x, y, w, h), &self.brush);
+            if item.fills.is_empty() {
+                self.d2d.FillRectangle(&rect(x, y, w, h), &self.brush);
+            }
+            for &[x, y, w, h] in &item.fills {
+                self.d2d.FillRectangle(&rect(x, y, w, h), &self.brush);
+            }
             if item.lines.is_empty() || item.font_px <= 0.0 {
                 return Ok(());
             }

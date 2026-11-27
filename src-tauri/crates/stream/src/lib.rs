@@ -48,6 +48,10 @@ pub struct Line {
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Item {
     pub rect: [f32; 4],
+    /// The parts of `rect` the background covers, when it is not all
+    /// of it (rows that end before a picture beside them).
+    #[serde(default)]
+    pub fills: Vec<[f32; 4]>,
     pub background: [u8; 3],
     pub foreground: [u8; 3],
     #[serde(default)]

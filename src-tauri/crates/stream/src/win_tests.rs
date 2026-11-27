@@ -245,6 +245,7 @@ fn the_composite_shows_the_target_with_the_translations_over_it() {
         window: lens,
         items: vec![Item {
             rect: [20.0, 20.0, 200.0, 60.0],
+            fills: Vec::new(),
             background: RED,
             foreground: [255, 255, 255],
             bold: false,

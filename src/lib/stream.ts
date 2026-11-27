@@ -5,6 +5,7 @@
  */
 
 import type { FlowResult } from './flow-layout';
+import { maskBands } from './lens-overlay';
 import type { LiveBox } from './live';
 
 /** 当該ウィンドウの配信用ウィンドウの状態。 */
@@ -37,6 +38,8 @@ export interface StreamLine {
 /** 訳文 1 段落：原文を隠蔽する枠と、枠上の各行。 */
 export interface StreamItem {
   rect: [number, number, number, number];
+  /** 枠の塗装範囲（行単位）。空：`rect` 全体。隣接する画像を隠蔽しない枠で使用。 */
+  fills: [number, number, number, number][];
   background: Rgb;
   foreground: Rgb;
   bold: boolean;
@@ -68,6 +71,7 @@ export function streamItems(
     const y = b.rect.top + top;
     return {
       rect: [px(x), px(y), px(b.rect.width), px(b.rect.height)],
+      fills: maskBands(b.block, dpr).map((m) => [px(x), px(y + m.top), px(m.right), px(m.bottom - m.top)]),
       background: b.block.colors?.background ?? PAPER,
       foreground: b.block.colors?.foreground ?? INK,
       bold: !!b.block.bold,

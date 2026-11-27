@@ -32,6 +32,24 @@ describe('streamItems', () => {
     ]);
   });
 
+  it('keeps the background off a picture beside the rows', () => {
+    const rows: [number, number, number, number][] = [
+      [10, 10, 180, 20],
+      [10, 40, 380, 20]
+    ];
+    const limited = block({ bbox: [10, 10, 380, 50], lines: rows, row_limits: [200, 390] });
+    const boxes = liveBoxes([limited, block()], new Set(), 1);
+    const [item, whole] = streamItems(boxes, new Map(), 1, 32);
+    // First row ends at the picture (x = 200, 2 px of padding each
+    // side); the second takes the whole width.
+    expect(item.rect).toEqual([8, 40, 384, 54]);
+    expect(item.fills).toEqual([
+      [8, 40, 194, 27],
+      [8, 67, 384, 27]
+    ]);
+    expect(whole.fills).toEqual([]);
+  });
+
   it('uses the sampled colours, or the window defaults', () => {
     const boxes = liveBoxes(
       [
