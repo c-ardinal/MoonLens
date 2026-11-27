@@ -115,8 +115,10 @@ pub async fn run(
         let offset_ms = samples_ms(window_start);
         let chunk_ms = samples_ms(chunk.len() as u64);
         let mut cut = chunk.len();
-        // Silence makes Whisper invent stock phrases; skip it.
-        if !is_silent(chunk) {
+        // Silence makes Whisper invent stock phrases; skip it. Second
+        // by second: a short quiet line among silence is no silence,
+        // though the level of the whole window says so.
+        if !chunk.chunks(RATE).all(is_silent) {
             let at = |s: f32| ((s.max(0.0) * 1000.0) as u64).min(chunk_ms);
             let mut segments: Vec<(u64, u64, String)> = engine
                 .recognize(chunk)
@@ -776,6 +778,20 @@ mod tests {
         result.unwrap();
         assert_eq!(engine.calls.load(Ordering::SeqCst), 0);
         assert_eq!(events.last(), Some(&Event::Progress { done_ms: 40_000 }));
+    }
+
+    #[tokio::test]
+    async fn a_short_quiet_line_among_silence_is_recognized() {
+        // A second at four times the silence level, then silence: the
+        // level of the whole window is below it.
+        let quiet: Vec<i16> = tone(RATE).iter().map(|s| s / 5).collect();
+        let mut blocks = vec![quiet];
+        blocks.extend(vec![vec![0; RATE]; 27]);
+        assert!(is_silent(&blocks.concat()));
+        let engine = Stub::default();
+        let (_, result) = cues_of(blocks, &engine).await;
+        result.unwrap();
+        assert_eq!(engine.calls.load(Ordering::SeqCst), 1);
     }
 
     #[tokio::test]
