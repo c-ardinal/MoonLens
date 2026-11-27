@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { LOCALES, locale, onLocaleChange, resolveLocale, setLocale, t, textEm } from './index';
+import { LOCALES, locale, onLocaleChange, resolveLocale, setLocale, sourceText, t, textEm } from './index';
 
 afterEach(() => setLocale('ja'));
 
@@ -22,28 +22,33 @@ describe('resolveLocale', () => {
 });
 
 describe('t', () => {
-  it('日本語表示は原文、英語表示は辞書の訳文', () => {
-    expect(t('設定')).toBe('設定');
+  it('キー ID の文言を表示言語で取得', () => {
+    expect(t('common:settings')).toBe('設定');
     setLocale('en');
     expect(locale()).toBe('en');
-    expect(t('設定')).toBe('Settings');
+    expect(t('common:settings')).toBe('Settings');
   });
-  it('{name} を値へ置換（両言語）', () => {
-    expect(t('{n} スレッド', { n: 8 })).toBe('8 スレッド');
+  it('{name} を値へ置換（全言語）', () => {
+    expect(t('models:n_threads', { n: 8 })).toBe('8 スレッド');
     setLocale('en');
-    expect(t('{n} スレッド', { n: 8 })).toBe('8 threads');
+    expect(t('models:n_threads', { n: 8 })).toBe('8 threads');
   });
-  it('未登録の文言は原文で代替', () => {
+  it('未登録のキーはキー ID のまま表示', () => {
     setLocale('en');
-    expect(t('辞書未登録の文言')).toBe('辞書未登録の文言');
+    expect(t('no:such_key')).toBe('no:such_key');
   });
-  it('#文脈：日本語表示は除去、英語表示は文脈別の訳文', () => {
-    expect(t('翻訳#action')).toBe('翻訳');
+  it('同一の日本語でも、キー単位で訳し分け', () => {
+    expect(t('common:translate_action')).toBe(t('common:translation'));
     setLocale('en');
-    expect(t('翻訳#action')).toBe('Translate');
-    expect(t('翻訳')).toBe('Translation');
-    // 文脈付きの訳文が未登録：文脈を除去した原文
-    expect(t('辞書未登録の文言#ctx')).toBe('辞書未登録の文言');
+    expect(t('common:translate_action')).toBe('Translate');
+    expect(t('common:translation')).toBe('Translation');
+  });
+});
+
+describe('sourceText', () => {
+  it('表示言語に依存せず日本語の文言を取得', () => {
+    setLocale('en');
+    expect(sourceText('common:settings')).toBe('設定');
   });
 });
 
@@ -68,7 +73,7 @@ describe('textEm', () => {
 });
 
 describe('LOCALES', () => {
-  it('原文の言語と、locales/ の全言語ファイルを列挙（言語名は各ファイルの @language）', () => {
+  it('locales/ の全言語ファイルを列挙（基準の言語が先頭、言語名は各ファイルの @language）', () => {
     expect(LOCALES[0]).toEqual({ code: 'ja', name: '日本語' });
     expect(LOCALES).toContainEqual({ code: 'en', name: 'English' });
   });

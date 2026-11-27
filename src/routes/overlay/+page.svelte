@@ -163,7 +163,7 @@
       // Uses the target language from settings (it may have changed).
       if (source) {
         status = 'processing';
-        statusMessage = t('翻訳中…');
+        statusMessage = t('common:translating');
         try {
           const settings = await getSettings().catch(() => null);
           const r = await runTranslate({
@@ -189,7 +189,7 @@
         // copy-lint-ignore i18n-ignore（LLM プロンプト）
         : `次の翻訳結果について背景を簡潔に説明してください:\n\n${translation}`;
       status = 'processing';
-      statusMessage = t('説明中…');
+      statusMessage = t('overlay:explaining');
       try {
         const r = await runExplain(prompt);
         translation = extractText(r);
@@ -210,7 +210,7 @@
 </script>
 
 <section
-  aria-label={t('訳文')}
+  aria-label={t('common:translated_text')}
   class="pointer-events-auto m-2 rounded-ml border border-border p-4 shadow-ml-lg"
   style="max-width: min({look.maxWidth}px, calc(100vw - 16px));
          background: color-mix(in oklab, var(--ml-surface-elevated) {Math.round(look.opacity * 100)}%, transparent);
@@ -229,14 +229,14 @@
         class="rounded-ml-sm p-1 transition hover:bg-surface-muted disabled:opacity-40"
         disabled={!sourceRect}
         onclick={keepTranslating}
-        title={t('常時翻訳：同一範囲を画面変化へ追従して再翻訳')}
+        title={t('overlay:continuous_retranslates_the_same_area_as_the')}
       >
         <Radio class="h-4 w-4 text-ink-faint" />
       </button>
       <button
         class="rounded-ml-sm p-1 transition hover:bg-surface-muted"
         onclick={dismiss}
-        title={t('閉じる')}
+        title={t('common:close')}
       >
         <X class="h-4 w-4 text-ink-faint" />
       </button>
@@ -244,7 +244,7 @@
   </header>
 
   {#if status === 'processing'}
-    <p class="text-sm text-ink-muted">{statusMessage || t('処理中…')}</p>
+    <p class="text-sm text-ink-muted">{statusMessage || t('overlay:working')}</p>
   {:else if status === 'error'}
     <p class="text-sm text-red-500">{statusMessage}</p>
   {:else if status === 'result'}
@@ -258,6 +258,6 @@
     >{translation}</p>
     <ActionRibbon {intent} onAction={onRibbonAction} />
   {:else}
-    <p class="text-sm text-ink-faint">{t('ウィンドウ翻訳の結果を表示。')}</p>
+    <p class="text-sm text-ink-faint">{t('overlay:shows_window_translation_results')}</p>
   {/if}
 </section>

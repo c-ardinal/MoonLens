@@ -127,21 +127,21 @@ function saysOnly(text: string, key: string): boolean {
 
 /** タイトルバーの状態表記。音声待機中は入力状態を表示。 */
 export function statusLabel(view: SubtitleView, input: InputState = 'none'): string {
-  if (!view.running) return view.error ? t('エラー停止') : t('停止中');
-  if (view.phase === 'recognizing') return t('認識中…');
-  if (view.phase === 'translating') return t('翻訳中…');
-  if (view.phase === 'revising') return t('補正中…');
-  if (input === 'ok') return t('音声検出');
-  return input === 'low' ? t('閾値未満') : t('入力未検出');
+  if (!view.running) return view.error ? t('subtitle:stopped_error') : t('common:stopped');
+  if (view.phase === 'recognizing') return t('subtitle:listening');
+  if (view.phase === 'translating') return t('common:translating');
+  if (view.phase === 'revising') return t('subtitle:correcting');
+  if (input === 'ok') return t('subtitle:audio_detected');
+  return input === 'low' ? t('subtitle:below_threshold') : t('subtitle:no_input');
 }
 
 /** 字幕表示前の案内文：入力状態と対処。`app`：アプリ単位の音源名（PC 全体は null）。 */
 export function inputHint(input: InputState, app: string | null = null): string {
-  if (input === 'ok') return t('音声検出。認識結果を字幕表示。');
-  if (input === 'low') return t('入力音量が認識閾値未満。再生音量の調整が必要。');
+  if (input === 'ok') return t('subtitle:audio_detected_subtitles_will_appear_here');
+  if (input === 'low') return t('subtitle:input_is_below_the_recognition_threshold');
   return app
-    ? t('音声入力未検出。アプリ「{app}」の再生音声が認識対象。', { app })
-    : t('音声入力未検出。PC の再生音声が認識対象。');
+    ? t('subtitle:no_audio_input_detected_listening_to_audio', { app })
+    : t('subtitle:no_audio_detected_moonlens_listens_to_what');
 }
 
 /** 再読込時：照会した現況を表示状態へ反映。 */
@@ -152,7 +152,7 @@ export function restore(view: SubtitleView, session: SubtitleSession | null): Su
 
 /** 音源の表記（タイトルバー）。 */
 export function sourceLabel(view: Pick<SubtitleView, 'source' | 'device'>): string {
-  if (view.source.kind === 'system') return t('PC 全体');
+  if (view.source.kind === 'system') return t('subtitle:whole_pc');
   return view.device || `PID ${view.source.pid}`;
 }
 
@@ -181,8 +181,8 @@ export function sourceOptions(
   const options: SourceOption[] = [
     {
       source: { kind: 'system' },
-      label: t('PC 全体'),
-      detail: t('全アプリの再生音声'),
+      label: t('subtitle:whole_pc'),
+      detail: t('subtitle:audio_from_all_apps'),
       playing: apps.some((a) => a.playing),
       selected: current.kind === 'system'
     },
@@ -195,7 +195,7 @@ export function sourceOptions(
     }))
   ];
   if (current.kind === 'app' && !options.some((o) => o.selected)) {
-    options.push({ source: current, label: sourceLabel(view), detail: t('音声出力なし'), playing: false, selected: true });
+    options.push({ source: current, label: sourceLabel(view), detail: t('subtitle:no_audio_output'), playing: false, selected: true });
   }
   return options;
 }

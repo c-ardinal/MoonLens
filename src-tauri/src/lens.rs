@@ -475,7 +475,7 @@ impl LensRegistry {
             .iter()
             .map(|(id, e)| LensDescriptor {
                 id: id.clone(),
-                title: tr!("ウィンドウ翻訳 {id}", id = short(id)),
+                title: tr!("lens:window_translation_id", id = short(id)),
                 insets: e.insets,
                 continuous: e.watch.is_some(),
                 target_language: e.target_language.clone(),

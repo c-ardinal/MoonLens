@@ -18,7 +18,7 @@ import { fileURLToPath } from 'node:url';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 /** 検査対象（リポジトリ基準）。 */
-const TARGETS = ['src', 'src-tauri/src', 'src-tauri/tauri.conf.json', 'static', 'plugin-sdk'];
+const TARGETS = ['src', 'src-tauri/src', 'src-tauri/tauri.conf.json', 'static', 'plugin-sdk', 'locales/ja.json'];
 const EXTENSIONS = /\.(svelte|ts|js|mjs|cjs|rs|css|html|json)$/;
 const IGNORED_DIRS = /(^|\/)(node_modules|target|build|dist|\.svelte-kit|gen)(\/|$)/;
 

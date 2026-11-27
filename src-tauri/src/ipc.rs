@@ -280,7 +280,7 @@ pub async fn capture_and_process(
     overlay::emit(
         &app,
         overlay::OverlayEvent::Processing {
-            message: tr!("キャプチャ中…"),
+            message: tr!("ipc:capturing"),
         },
     )
     .ok();
@@ -420,7 +420,7 @@ pub async fn translate_image(
     state: State<'_, AppState>,
 ) -> Result<CaptureFlowResult, String> {
     let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else {
-        return Err(user_error::coded("error", tr!("画像データなし")));
+        return Err(user_error::coded("error", tr!("ipc:no_image_data")));
     };
     let header = |name: &str| {
         request
@@ -440,7 +440,7 @@ pub async fn translate_image(
     let png = tokio::task::spawn_blocking(move || capture::image_file_png(&bytes))
         .await
         .map_err(|e| e.to_string())?
-        .map_err(|_| user_error::coded("error", tr!("画像読込失敗（PNG・JPEG・WebP のみ対応）")))?;
+        .map_err(|_| user_error::coded("error", tr!("ipc:could_not_read_the_image_png_jpeg")))?;
     let mut bundle = state
         .pipeline
         .analyze_capture(png)
@@ -492,18 +492,18 @@ pub async fn read_image_file(path: String) -> Result<tauri::ipc::Response, Strin
     if !is_image_path(&p) {
         return Err(user_error::coded(
             "error",
-            tr!("非対応形式（PNG・JPEG・WebP のみ対応）"),
+            tr!("common:unsupported_format_png_jpeg_and_webp_only"),
         ));
     }
     let len = std::fs::metadata(&p)
-        .map_err(|e| user_error::coded("error", tr!("読込失敗：{e}", e = e)))?
+        .map_err(|e| user_error::coded("error", tr!("ipc:could_not_read_the_file_e", e = e)))?
         .len();
     if len as usize > capture::MAX_IMAGE_FILE_BYTES {
         return Err(user_error::coded("error", image_too_large()));
     }
     let bytes = tokio::fs::read(&p)
         .await
-        .map_err(|e| user_error::coded("error", tr!("読込失敗：{e}", e = e)))?;
+        .map_err(|e| user_error::coded("error", tr!("ipc:could_not_read_the_file_e", e = e)))?;
     Ok(tauri::ipc::Response::new(bytes))
 }
 
@@ -732,7 +732,7 @@ pub async fn install_llm_model(
         if llm_models::require_consent(m, &accepted).is_err() {
             return Err(user_error::coded(
                 "license_consent",
-                crate::tr!("利用許諾への同意が必要"),
+                crate::tr!("ipc:you_need_to_agree_to_the_licence"),
             ));
         }
     }
@@ -1151,7 +1151,7 @@ pub async fn export_subtitle_record(
         .storage
         .subtitle_record(id)
         .map_err(|e| e.to_string())?
-        .ok_or_else(|| crate::tr!("字幕記録なし"))?;
+        .ok_or_else(|| crate::tr!("ipc:subtitle_record_not_found"))?;
     let created_at = state
         .storage
         .entry(id)
@@ -1160,8 +1160,8 @@ pub async fn export_subtitle_record(
     let text = crate::subtitle_record::render(&record, format, content);
     let name = crate::subtitle_record::export_file_name(created_at, format);
     let label = match format {
-        crate::subtitle_record::ExportFormat::Srt => crate::tr!("SRT 字幕"),
-        crate::subtitle_record::ExportFormat::Txt => crate::tr!("テキスト"),
+        crate::subtitle_record::ExportFormat::Srt => crate::tr!("ipc:srt_subtitles"),
+        crate::subtitle_record::ExportFormat::Txt => crate::tr!("common:text"),
     };
     let dialog = app.dialog().clone();
     let chosen = tokio::task::spawn_blocking(move || {
@@ -1259,7 +1259,10 @@ pub async fn start_subtitle(app: AppHandle, state: State<'_, AppState>) -> Resul
 fn subtitle_failure(e: anyhow::Error) -> String {
     user_error::coded(
         "error",
-        tr!("音声取得の開始失敗：{e}", e = format!("{:#}", e)),
+        tr!(
+            "common:could_not_start_audio_capture_e",
+            e = format!("{:#}", e)
+        ),
     )
 }
 
@@ -1812,7 +1815,10 @@ pub async fn apply_config_fixes(
     state: State<'_, AppState>,
 ) -> Result<usize, String> {
     let n = state.settings.apply_fixes(&ids).map_err(|e| {
-        crate::user_error::coded("error", tr!("設定修正失敗：{e}", e = format!("{:#}", e)))
+        crate::user_error::coded(
+            "error",
+            tr!("ipc:could_not_fix_the_settings_e", e = format!("{:#}", e)),
+        )
     })?;
     // A reload that left the settings unchanged does not broadcast;
     // re-check the chains anyway.
@@ -1829,7 +1835,7 @@ pub async fn open_external_url(url: String, app: AppHandle) -> Result<(), String
     if !(lower.starts_with("https://") || lower.starts_with("http://")) {
         return Err(user_error::coded(
             "error",
-            tr!("http／https 以外のリンクは非対応"),
+            tr!("ipc:only_http_and_https_links_are_supported"),
         ));
     }
     tauri_plugin_opener::OpenerExt::opener(&app)
@@ -1988,13 +1994,13 @@ mod image_file_tests {
 }
 
 fn image_too_large() -> String {
-    tr!("画像サイズ超過（上限 40 MB）")
+    tr!("common:image_too_large_limit_40_mb")
 }
 
 /// Disk-full message for a download that needs `need` bytes with `free` left.
 fn not_enough_space(need: u64, free: u64) -> String {
     tr!(
-        "残容量不足：必要 {need} GB／残容量 {free} GB",
+        "ipc:not_enough_free_space_need_gb_needed",
         need = format!("{:.1}", need as f64 / 1e9),
         free = format!("{:.1}", free as f64 / 1e9)
     )

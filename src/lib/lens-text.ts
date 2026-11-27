@@ -7,14 +7,14 @@ import type { LensBlock } from './ipc';
 /** テキスト表示の位置。`inside` 以外はウィンドウ外（別ウィンドウ、本体の移動へ追従）。 */
 export type TextPlacement = 'inside' | 'top' | 'bottom' | 'left' | 'right' | 'free';
 
-/** label は日本語の原文（表示時は `t()` で翻訳）。 */
+/** label は文言のキー ID（表示時は `t()` で取得）。 */
 export const TEXT_PLACEMENTS: { value: TextPlacement; label: string }[] = [
-  { value: 'inside', label: 'ウィンドウ内' },
-  { value: 'top', label: 'ウィンドウ外上側' },
-  { value: 'bottom', label: 'ウィンドウ外下側' },
-  { value: 'left', label: 'ウィンドウ外左側' },
-  { value: 'right', label: 'ウィンドウ外右側' },
-  { value: 'free', label: 'ウィンドウ外自由配置' }
+  { value: 'inside', label: 'lens-text:inside_window' },
+  { value: 'top', label: 'lens-text:outside_above' },
+  { value: 'bottom', label: 'lens-text:outside_below' },
+  { value: 'left', label: 'lens-text:outside_left' },
+  { value: 'right', label: 'lens-text:outside_right' },
+  { value: 'free', label: 'lens-text:outside_free' }
 ];
 
 export function parsePlacement(v: unknown): TextPlacement {

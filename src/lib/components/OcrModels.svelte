@@ -47,7 +47,7 @@
   <!-- 選択肢は PP-OCR のみ（常に選択状態）。未取得時は取得を案内 -->
   <ModelChoice
     key="ocr"
-    feature={t('文字認識')}
+    feature={t('common:text_recognition')}
     rows={[ocrChoice(status)]}
     selected={OCR_CHOICE_ID}
     recommended={OCR_CHOICE_ID}

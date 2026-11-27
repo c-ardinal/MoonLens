@@ -1,6 +1,6 @@
 /**
- * What the settings screen shows, in which group, under which Japanese
- * label (the i18n source text: the screen passes labels, help texts and
+ * What the settings screen shows, in which group, under which label
+ * (text keys of `locales/`: the screen passes labels, help texts and
  * titles through `t()` when it renders them). The settings struct (src-tauri/src/settings/schema.rs) holds more
  * fields than this list on purpose: fields the app does not act on yet,
  * cloud / network switches (MoonLens is fully local), and internal state
@@ -60,127 +60,127 @@ const SOURCE_LANGUAGE_OPTIONS: Option[] = SOURCE_LANGUAGES.map((l) => ({
 export const SECTIONS: Section[] = [
   {
     id: 'translation',
-    title: '基本',
-    description: 'ウィンドウ翻訳・音声翻訳の共通設定。',
+    title: 'settings:general',
+    description: 'settings:settings_shared_by_window_and_audio',
     fields: [
       {
         kind: 'select',
         path: 'subtitle.target_language',
-        label: '翻訳先言語',
-        help: 'ウィンドウ翻訳・音声翻訳に共通。ウィンドウ翻訳のツールバーでも一時変更可能。',
+        label: 'common:target_language',
+        help: 'settings:shared_by_window_and_audio_translation_the',
         options: LANGUAGE_OPTIONS
       },
       {
         kind: 'select',
         path: 'translation.style',
-        label: '文体',
-        help: '日本語への翻訳時のみ適用。やさしい日本語は対象外。',
+        label: 'settings:style',
+        help: 'settings:applies_only_when_translating_into_japanese',
         options: [
-          { value: 'auto', label: '自動' },
-          { value: 'polite', label: '敬体（です・ます）' },
-          { value: 'plain', label: '常体（だ・である）' }
+          { value: 'auto', label: 'settings:auto' },
+          { value: 'polite', label: 'settings:polite_desu_masu' },
+          { value: 'plain', label: 'settings:plain_da_de_aru' }
         ]
       }
     ]
   },
   {
     id: 'glossary',
-    title: '用語集',
-    description: '原文中の用語を指定の訳語に固定。',
+    title: 'settings:glossary',
+    description: 'settings:pins_terms_in_the_source_to_the',
     fields: [
       {
         kind: 'glossary',
         path: 'translation.glossary',
-        label: '用語集',
-        help: '原文中の用語を指定の訳語に固定。'
+        label: 'settings:glossary',
+        help: 'settings:pins_terms_in_the_source_to_the'
       }
     ]
   },
   {
     id: 'models',
-    title: '翻訳',
-    description: '翻訳用モデル。推奨：PLaMo 3 Translate。',
+    title: 'common:translation',
+    description: 'settings:translation_model_recommended_plamo_3',
     component: 'llm-translate'
   },
   {
     id: 'model-assist',
-    title: '説明・要約',
-    description: '説明・要約用モデル。推奨：Gemma 4。',
+    title: 'common:explain_summarize',
+    description: 'settings:model_for_explanations_and_summaries',
     component: 'llm-assist'
   },
   {
     id: 'model-ocr',
-    title: '文字認識',
-    description: '画面上の文字認識（OCR）用モデル。',
+    title: 'common:text_recognition',
+    description: 'settings:model_for_reading_on_screen_text_ocr',
     component: 'ocr'
   },
   {
     id: 'model-asr',
-    title: '音声認識',
-    description: '音声翻訳用の音声認識モデル。',
+    title: 'common:speech_recognition',
+    description: 'settings:speech_recognition_model_for_audio',
     component: 'asr'
   },
   {
     id: 'hotkeys',
-    title: 'ショートカット',
-    description: '全アプリ共通のグローバルショートカット。欄をクリック後、キー入力で変更。',
+    title: 'settings:shortcuts',
+    description: 'settings:global_shortcuts_that_work_in_every_app',
     fields: [
       {
         kind: 'hotkey',
         path: 'hotkeys.capture_region',
-        label: 'ウィンドウ翻訳',
-        help: 'マウス位置へウィンドウ翻訳を追加。'
+        label: 'common:window_translation',
+        help: 'settings:adds_a_translation_window_at_the_pointer'
       },
       {
         kind: 'hotkey',
         path: 'hotkeys.toggle_pin_overlay',
-        label: 'ウィンドウ翻訳 表示／全終了',
-        help: 'ウィンドウなし：1 件表示。ウィンドウあり：全件終了。'
+        label: 'settings:window_translation_open_close_all',
+        help: 'settings:no_window_open_opens_one_windows_open'
       },
       {
         kind: 'hotkey',
         path: 'hotkeys.toggle_window_operate',
-        label: 'ウィンドウ翻訳 透過／操作',
-        help: '全ウィンドウの切替。透過：ウィンドウ上のクリックは背面へ。操作：訳文の選択・コピー可。'
+        label: 'settings:window_translation_click_through_interact',
+        help: 'settings:switches_every_window_click_through_clicks'
       },
       {
         kind: 'hotkey',
         path: 'hotkeys.toggle_window_pause',
-        label: 'ウィンドウ翻訳 一時停止／再開',
-        help: '全ウィンドウの読取・翻訳を停止（配置は維持、訳文は非表示）。再押下で再開。'
+        label: 'common:window_translation_pause_resume',
+        help: 'settings:stops_reading_and_translation_in_all_windows'
       },
       {
         kind: 'hotkey',
         path: 'hotkeys.hold_window_original',
-        label: 'ウィンドウ翻訳 原文表示（押下中）',
-        help: '押下中のみ全ウィンドウの訳文を非表示化し、原文を表示。解放で訳文を再表示。'
+        label: 'settings:window_translation_show_source_while_held',
+        help: 'settings:hides_translations_in_all_windows_and_shows'
       },
-      { kind: 'hotkey', path: 'hotkeys.toggle_subtitle', label: '音声翻訳 開始／停止' },
-      { kind: 'hotkey', path: 'hotkeys.open_command_palette', label: 'コマンドパレット' },
-      { kind: 'hotkey', path: 'hotkeys.open_history', label: '履歴表示' }
+      { kind: 'hotkey', path: 'hotkeys.toggle_subtitle', label: 'common:audio_translation_start_stop' },
+      { kind: 'hotkey', path: 'hotkeys.open_command_palette', label: 'settings:command_palette' },
+      { kind: 'hotkey', path: 'hotkeys.open_history', label: 'settings:open_history' }
     ]
   },
   {
     id: 'subtitle',
-    title: '音声翻訳',
-    description: 'システム音声を認識・翻訳し、字幕表示。',
+    title: 'common:audio_translation',
+    description: 'common:subtitles_for_system_audio_translated_live',
     fields: [
       {
         kind: 'select',
         path: 'subtitle.source_language',
-        label: '音声言語',
-        options: [{ value: 'auto', label: '自動判定' }, ...SOURCE_LANGUAGE_OPTIONS]
+        label: 'settings:spoken_language',
+        options: [{ value: 'auto', label: 'common:detect' }, ...SOURCE_LANGUAGE_OPTIONS]
       },
       {
         kind: 'toggle',
         path: 'subtitle.show_original',
-        label: '原文表示',
-        help: '訳文の上に原文を併記。'
+        label: 'common:show_source',
+        help: 'settings:shows_the_source_above_the_translation'
       },
       {
         kind: 'number',
         path: 'subtitle.font_size_px',
-        label: '文字サイズ',
+        label: 'settings:text_size',
         min: 14,
         max: 48,
         step: 1,
@@ -190,214 +190,214 @@ export const SECTIONS: Section[] = [
       {
         kind: 'number',
         path: 'subtitle.chunk_seconds',
-        label: '分割長',
-        help: '短：低遅延。長：文脈保持・訳質安定。',
+        label: 'settings:chunk_length',
+        help: 'settings:short_lower_delay_long_more_context_and',
         min: 1,
         max: 10,
         step: 0.5,
-        unit: '秒',
+        unit: 'settings:s',
         slider: true
       },
       {
         kind: 'number',
         path: 'subtitle.overlap_seconds',
-        label: '重複区間',
-        help: '分割境界での語の欠落防止用。',
+        label: 'settings:overlap',
+        help: 'settings:prevents_words_from_being_lost_at_chunk',
         min: 0,
         max: 2,
         step: 0.1,
-        unit: '秒',
+        unit: 'settings:s',
         slider: true
       },
       {
         kind: 'toggle',
         path: 'subtitle.realtime_correction',
-        label: 'リアルタイム補正',
-        help: '文の認識完了時、文脈を参照して文全体を再翻訳、訳文を更新。負荷増。'
+        label: 'settings:real_time_correction',
+        help: 'settings:when_a_sentence_is_fully_recognized'
       },
       {
         kind: 'toggle',
         path: 'subtitle.batch_correction',
-        label: '一括補正',
-        help: '無音時・終了時に未補正の文を一括で再翻訳。発話中の負荷なし。'
+        label: 'settings:batch_correction',
+        help: 'settings:retranslates_uncorrected_sentences_in_one'
       },
       {
         kind: 'toggle',
         path: 'subtitle.block_stock_phrases',
-        label: '定型誤認識の遮断',
-        help: '無音・BGM 区間で音声認識が出力する定型文（視聴謝辞・字幕提供表記・効果音表記）を字幕から除外。除外分は翻訳も省略。'
+        label: 'settings:block_stock_misrecognitions',
+        help: 'settings:removes_stock_phrases_that_speech'
       },
       {
         kind: 'phrases',
         path: 'subtitle.blocked_phrases',
-        label: '遮断文（追加分）',
-        help: '同梱リストへの追加分。文全体の一致で遮断（大小文字・空白・約物の差は無視）。音声翻訳ウィンドウの反復検出からも追加可能。',
-        placeholder: '例：Thank you.'
+        label: 'settings:blocked_phrases_additions',
+        help: 'settings:additions_to_the_bundled_list_blocks_on',
+        placeholder: 'settings:e_g_thank_you'
       }
     ]
   },
   {
     id: 'pin',
-    title: '常時翻訳',
-    description: 'ウィンドウ翻訳の常時モード。画面変化へ追従して再翻訳。',
+    title: 'common:continuous',
+    description: 'settings:continuous_mode_of_window_translation',
     fields: [
       {
         kind: 'number',
         path: 'performance.scan_margin_px',
-        label: '読取余白',
-        help: 'ウィンドウ枠の外側へ加算する読取幅。枠で分断された文字を完全な形で認識。訳文の表示はウィンドウ内に限定。',
+        label: 'settings:scan_margin',
+        help: 'settings:extra_width_read_outside_the_window_frame',
         min: 0,
         max: 128,
         step: 4,
         unit: 'px',
-        zeroLabel: '無効',
+        zeroLabel: 'settings:off',
         slider: true
       },
       {
         kind: 'number',
         path: 'performance.region_watcher_poll_ms',
-        label: '監視間隔',
-        help: '画面変化の検出間隔。短時間ほど応答性向上、CPU 負荷増大。',
+        label: 'settings:check_interval',
+        help: 'settings:how_often_the_screen_is_checked_for',
         min: 100,
         max: 2000,
         step: 50,
-        unit: 'ミリ秒',
+        unit: 'settings:ms',
         slider: true
       },
       {
         kind: 'toggle',
         path: 'overlay.show_in_screenshots',
-        label: '撮影への表示',
-        help: 'スクリーンショット・録画へ翻訳ウィンドウを表示。OFF：常時除外。Windows 専用。'
+        label: 'settings:show_in_captures',
+        help: 'settings:show_translation_windows_in_screenshots_and'
       }
     ]
   },
   {
     id: 'clipboard',
-    title: '自動コピー',
-    description: '翻訳・認識の結果をクリップボードへ自動コピー。',
+    title: 'settings:auto_copy',
+    description: 'settings:copies_translation_and_recognition_results',
     fields: [
-      { kind: 'toggle', path: 'clipboard.auto_copy_translation', label: '訳文' },
+      { kind: 'toggle', path: 'clipboard.auto_copy_translation', label: 'common:translated_text' },
       {
         kind: 'toggle',
         path: 'clipboard.auto_copy_source',
-        label: '原文',
-        help: '訳文と併用時は訳文を優先。'
+        label: 'common:source',
+        help: 'settings:when_both_are_on_the_translation_is'
       },
-      { kind: 'toggle', path: 'clipboard.auto_copy_qr', label: 'QR コード内容' },
-      { kind: 'toggle', path: 'clipboard.auto_copy_transcript', label: '音声翻訳の認識結果' }
+      { kind: 'toggle', path: 'clipboard.auto_copy_qr', label: 'settings:qr_code_content' },
+      { kind: 'toggle', path: 'clipboard.auto_copy_transcript', label: 'settings:audio_translation_transcript' }
     ]
   },
   {
     id: 'history',
-    title: '履歴',
-    description: '履歴はローカルにのみ保存。',
+    title: 'common:history',
+    description: 'settings:history_is_stored_on_this_pc_only',
     fields: [
-      { kind: 'toggle', path: 'storage.keep_history', label: '履歴保存' },
+      { kind: 'toggle', path: 'storage.keep_history', label: 'settings:save_history' },
       {
         kind: 'number',
         path: 'storage.retention_days',
-        label: '保持期間',
-        help: '期間超過分を自動削除。0：無期限。',
+        label: 'settings:retention',
+        help: 'settings:older_items_are_deleted_automatically_0_keep',
         min: 0,
         max: 3650,
         step: 1,
-        unit: '日',
-        zeroLabel: '無期限'
+        unit: 'settings:days',
+        zeroLabel: 'settings:forever'
       },
       {
         kind: 'number',
         path: 'storage.max_entries',
-        label: '最大件数',
-        help: '超過時、最古の履歴から自動削除。0：無制限。',
+        label: 'settings:maximum_items',
+        help: 'settings:beyond_this_the_oldest_items_are_deleted',
         min: 0,
         max: 1000000,
         step: 100,
-        unit: '件',
-        zeroLabel: '無制限'
+        unit: 'settings:items',
+        zeroLabel: 'settings:unlimited'
       }
     ]
   },
   {
     id: 'appearance',
-    title: '外観',
-    description: '表示言語とメインウィンドウの外観。',
+    title: 'settings:appearance',
+    description: 'settings:display_language_and_main_window_appearance',
     fields: [
       {
         kind: 'select',
         path: 'appearance.ui_language',
-        label: '表示言語',
-        help: '全ウィンドウ・通知・トレイメニューの言語。自動：OS の言語へ追従（未対応の言語は英語）。',
+        label: 'settings:display_language',
+        help: 'settings:language_of_all_windows_notifications_and',
         options: [
-          { value: 'auto', label: '自動（OS の言語）' },
+          { value: 'auto', label: 'settings:auto_os_language' },
           ...LOCALES.map((l) => ({ value: l.code, label: l.name }))
         ]
       },
       {
         kind: 'select',
         path: 'appearance.theme',
-        label: 'テーマ',
-        help: 'メインウィンドウの配色。システム設定：OS の配色へ追従。',
+        label: 'settings:theme',
+        help: 'settings:main_window_colors_system_setting_follows',
         options: [
-          { value: 'system', label: 'システム設定' },
-          { value: 'light', label: 'ライト' },
-          { value: 'dark', label: 'ダーク' }
+          { value: 'system', label: 'settings:system_setting' },
+          { value: 'light', label: 'settings:light' },
+          { value: 'dark', label: 'settings:dark' }
         ]
       },
       {
         kind: 'select',
         path: 'appearance.text_size',
-        label: '文字サイズ',
-        help: '履歴・設定・翻訳画面の文字寸法。操作部も同率で拡縮。ホームは文字のみ拡縮。ナビゲーション・見出しは対象外。',
+        label: 'settings:text_size',
+        help: 'settings:text_size_of_the_history_settings_and',
         options: [
-          { value: 'xsmall', label: '最小（16px）' },
-          { value: 'small', label: '小（20px）' },
-          { value: 'medium', label: '標準（24px）' },
-          { value: 'large', label: '大（28px）' },
-          { value: 'xlarge', label: '最大（32px）' }
+          { value: 'xsmall', label: 'settings:smallest_16px' },
+          { value: 'small', label: 'settings:small_20px' },
+          { value: 'medium', label: 'settings:medium_24px' },
+          { value: 'large', label: 'settings:large_28px' },
+          { value: 'xlarge', label: 'settings:largest_32px' }
         ]
       },
       {
         kind: 'select',
         path: 'appearance.density',
-        label: '表示密度',
-        help: '設定・履歴の行間と区画間隔。文字・操作部の寸法は「文字サイズ」で変更。',
+        label: 'settings:density',
+        help: 'settings:row_and_section_spacing_in_settings_and',
         options: [
-          { value: 'compact', label: 'コンパクト' },
-          { value: 'normal', label: '標準' },
-          { value: 'comfortable', label: 'ワイド' }
+          { value: 'compact', label: 'settings:compact' },
+          { value: 'normal', label: 'settings:normal' },
+          { value: 'comfortable', label: 'settings:comfortable' }
         ]
       },
       {
         kind: 'color',
         path: 'appearance.accent',
-        label: 'アクセントカラー',
-        help: 'メインウィンドウの基調色。色相・彩度を反映、明度はテーマ単位で固定（可読性維持）。'
+        label: 'settings:accent_color',
+        help: 'settings:base_color_of_the_main_window_hue'
       },
       {
         kind: 'toggle',
         path: 'appearance.reduced_motion',
-        label: 'モーション軽減',
-        help: 'アニメーション無効化。'
+        label: 'settings:reduce_motion',
+        help: 'settings:turns_animations_off'
       }
     ]
   },
   {
     id: 'performance',
-    title: 'パフォーマンス',
-    description: '翻訳処理の速度・負荷。',
+    title: 'settings:performance',
+    description: 'settings:translation_speed_and_load',
     fields: [
       {
         kind: 'toggle',
         path: 'performance.use_gpu_if_available',
-        label: 'GPU 使用',
-        help: '利用可能な GPU で翻訳を高速化。次回翻訳時から適用。'
+        label: 'settings:use_gpu',
+        help: 'settings:speeds_up_translation_with_an_available_gpu'
       },
       {
         kind: 'number',
         path: 'performance.max_concurrent_tasks',
-        label: '並列翻訳数',
-        help: '拡張機能の翻訳エンジン使用時、段落単位の再翻訳の同時要求数。内蔵エンジンは逐次実行のため対象外。',
+        label: 'settings:parallel_translations',
+        help: 'settings:concurrent_per_paragraph_requests_when_an',
         min: 1,
         max: 8,
         step: 1,
@@ -406,52 +406,52 @@ export const SECTIONS: Section[] = [
       {
         kind: 'toggle',
         path: 'storage.keep_translation_cache',
-        label: '訳文キャッシュ保存',
-        help: '同一原文の再出現時、保存済の訳文を即時表示（再起動後も有効、保存先は端末内のみ）。翻訳モデル・文体・用語集の変更分は自動で再翻訳。無効時：アプリ終了時に破棄。'
+        label: 'settings:save_translation_cache',
+        help: 'settings:shows_the_saved_translation_at_once_when'
       }
     ]
   },
   {
     id: 'startup',
-    title: '起動',
-    description: 'OS ログイン時の動作。',
+    title: 'settings:startup',
+    description: 'settings:behavior_at_os_sign_in',
     fields: [
       {
         kind: 'toggle',
         path: 'startup.launch_at_login',
-        label: 'ログイン時の自動起動',
-        help: 'OS ログイン時、通知領域へ常駐状態で起動。実行ファイルの移動後は、次回の手動起動時に登録を更新。'
+        label: 'settings:launch_at_login',
+        help: 'settings:starts_in_the_notification_area_when_you'
       }
     ]
   },
   {
     id: 'plugins',
-    title: '拡張機能',
-    description: '拡張機能の追加・有効化・権限確認。変更は即時反映。',
+    title: 'common:extensions',
+    description: 'settings:add_and_enable_extensions_and_review_their',
     component: 'plugins'
   },
   {
     id: 'data',
-    title: 'データ',
-    description: '保存先と使用容量。完全削除：本体の削除後、各保存先を削除。',
+    title: 'settings:data',
+    description: 'settings:storage_locations_and_sizes_to_remove',
     component: 'data'
   },
   {
     id: 'advanced',
-    title: '詳細',
-    description: '不具合調査用の設定。',
+    title: 'settings:advanced',
+    description: 'settings:settings_for_troubleshooting',
     fields: [
       {
         kind: 'select',
         path: 'privacy.log_level',
-        label: 'ログレベル',
-        help: '不具合調査時のみ変更推奨。出力先はローカルのみ。',
+        label: 'settings:log_level',
+        help: 'settings:change_only_when_investigating_a_problem',
         options: [
-          { value: 'error', label: 'エラー' },
-          { value: 'warn', label: '警告' },
-          { value: 'info', label: '標準' },
-          { value: 'debug', label: '詳細' },
-          { value: 'trace', label: 'トレース' }
+          { value: 'error', label: 'settings:error' },
+          { value: 'warn', label: 'settings:warning' },
+          { value: 'info', label: 'settings:normal' },
+          { value: 'debug', label: 'settings:advanced' },
+          { value: 'trace', label: 'settings:trace' }
         ]
       }
     ]
@@ -459,14 +459,14 @@ export const SECTIONS: Section[] = [
 ];
 
 export const GROUPS: Group[] = [
-  { id: 'translation', title: '翻訳', sections: ['translation', 'glossary', 'pin'] },
+  { id: 'translation', title: 'common:translation', sections: ['translation', 'glossary', 'pin'] },
   // `#group`：英語表示は帯幅内の短縮名（Audio）
-  { id: 'subtitle', title: '音声翻訳#group', sections: ['subtitle'] },
-  { id: 'models', title: 'モデル', sections: ['models', 'model-assist', 'model-ocr', 'model-asr'] },
-  { id: 'output', title: '履歴・コピー', sections: ['history', 'clipboard'] },
-  { id: 'hotkeys', title: 'ショートカット', sections: ['hotkeys'] },
-  { id: 'plugins', title: '拡張', sections: ['plugins'] },
-  { id: 'system', title: 'システム', sections: ['appearance', 'performance', 'startup', 'data', 'advanced'] }
+  { id: 'subtitle', title: 'settings:audio_group', sections: ['subtitle'] },
+  { id: 'models', title: 'common:models', sections: ['models', 'model-assist', 'model-ocr', 'model-asr'] },
+  { id: 'output', title: 'settings:history_copy', sections: ['history', 'clipboard'] },
+  { id: 'hotkeys', title: 'settings:shortcuts', sections: ['hotkeys'] },
+  { id: 'plugins', title: 'settings:extensions', sections: ['plugins'] },
+  { id: 'system', title: 'settings:system', sections: ['appearance', 'performance', 'startup', 'data', 'advanced'] }
 ];
 
 /** 小分類の所属する大分類。 */

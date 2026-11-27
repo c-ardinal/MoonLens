@@ -46,9 +46,9 @@
   /** The selector remembers the language last picked in its toolbar. */
   const SELECTOR_LANG_KEY = 'moonlens.selector.targetLanguage';
 
-  /** 日本語の原文（表示時に `t()` で翻訳）。 */
+  /** 文言のキー ID（表示時に `t()` で取得）。 */
   const DEVICE_HELP =
-    '翻訳・音声認識の実行先。文字認識（OCR）は CPU 専用。実行結果の詳細はログに記録。';
+    'settings:where_translation_and_speech_recognition_run';
 
   /** Bundled defaults, for each field's reset button. */
   let defaults = $state<Settings | null>(null);
@@ -149,8 +149,8 @@
     update(path, list);
     if (isBlankEntry(row.entry)) return;
     const id = undoable({
-      text: t('用語 1 件：削除完了'),
-      failure: t('復元失敗'),
+      text: t('settings:1_term_deleted'),
+      failure: t('common:restore_failed'),
       undo: async () => {
         glossaryUndo.delete(id);
         update(path, glossaryRemovals.restore($state.snapshot(getPath(draft, path)) ?? [], row));
@@ -307,28 +307,28 @@
 
 <div class="cfg px-body" class:with-bar={clashes.length > 0 || !!saveError}>
   <header class="head">
-    <div class="page-title"><PixelTitle text={t('設定')} tag="h1" height={40} fit /></div>
+    <div class="page-title"><PixelTitle text={t('common:settings')} tag="h1" height={40} fit /></div>
     <p class="status" class:done={status === 'saved'} role="status">
-      {status === 'saving' ? t('保存中…') : status === 'saved' ? t('保存完了') : t('変更は即時保存')}
+      {status === 'saving' ? t('settings:saving') : status === 'saved' ? t('settings:saved') : t('settings:autosave_on')}
     </p>
     <!-- 操作案内：全文を収容不可の幅では非表示（途中切れを防止） -->
-    <p class="hint" data-grid-glyph data-overflow-exempt><span>{t('↑↓項目 ←→タブ PgUp/Dn分類')}</span></p>
+    <p class="hint" data-grid-glyph data-overflow-exempt><span>{t('settings:item_tab_pgup_dn_category')}</span></p>
     <div class="search">
       <Search class="icon" />
-      <input id="settings-search" bind:value={query} type="search" placeholder={t('設定を検索')} aria-label={t('設定を検索')} />
+      <input id="settings-search" bind:value={query} type="search" placeholder={t('settings:search')} aria-label={t('settings:search')} />
     </div>
   </header>
 
   {#if loadError}
-    <p class="px-win error">{t('設定の読込に失敗：{loadError}', { loadError })}</p>
+    <p class="px-win error">{t('settings:could_not_load_settings_loaderror', { loadError })}</p>
   {:else if !draft || !defaults}
-    <p class="loading">{t('読込中…')}</p>
+    <p class="loading">{t('common:loading')}</p>
   {:else if visible.length === 0}
-    <p class="px-win empty">{t('「{query}」：該当なし', { query })}</p>
+    <p class="px-win empty">{t('settings:no_results_for_query', { query })}</p>
   {:else}
     <div class="body">
       <!-- 大分類：等幅の斜め帯を階段状に配置（左右端とも同じ傾きで整列） -->
-      <nav aria-label={t('設定の分類')} class="tabs scrollbar-minimal" style="--n: {groups.length}" use:wheelStep={wheelGroup}>
+      <nav aria-label={t('settings:settings_categories')} class="tabs scrollbar-minimal" style="--n: {groups.length}" use:wheelStep={wheelGroup}>
         {#each groups as { group }, i (group.id)}
           <button
             class="px-chip tab"
@@ -352,7 +352,7 @@
         <div class="frame" aria-hidden="true"></div>
         {#if (shownGroup?.sections.length ?? 0) > 1}
           <!-- 小分類：枠上部の矩形タブ -->
-          <div class="subtabs" role="tablist" aria-label={t('{title}の小分類', { title: t(shownGroup.group.title) })} use:wheelStep={wheelSection}>
+          <div class="subtabs" role="tablist" aria-label={t('settings:title_sections', { title: t(shownGroup.group.title) })} use:wheelStep={wheelSection}>
             {#each shownGroup.sections as { section } (section.id)}
               <button
                 class="subtab"
@@ -422,7 +422,7 @@
       </section>
       <!-- 説明欄：右列の下部（タブ列は全高を使用し、分類の見切れを防止） -->
       <section class="px-win desc" aria-live="polite">
-        <span class="px-chip px-win-title" data-tone="amber" use:slant>{t('説明')}</span>
+        <span class="px-chip px-win-title" data-tone="amber" use:slant>{t('common:explain')}</span>
         <p use:replay={{ key: explain, effect: 'type' }}>
           <!-- 文と参照先の間隔は余白トークンで指定（空白文字の幅は文字サイズ設定により 4px 格子から逸脱） -->
           {explain}{#if rows.link}<a href={rows.link.href} target="_blank" rel="noreferrer">{rows.link.label}</a>{/if}
@@ -437,12 +437,12 @@
   <!-- 通知バー：保存不可の変更・保存時のエラー。画面下端固定。本文と同じ左右余白で整列 -->
   <div class="savebar px-zoom">
     <p class="msg error" role="alert">
-      {#if clashes.length > 0}{t('ショートカット重複：該当項目は未保存。重複解消後に自動保存。')}{/if}
+      {#if clashes.length > 0}{t('settings:duplicate_shortcuts_those_items_are_not')}{/if}
       {#if clashes.length > 0 && saveError}<br />{/if}
       {#if saveError}{saveError}{/if}
     </p>
     {#if saveError}
-      <button class="px-btn" onclick={() => (saveError = null)}>{t('閉じる')}</button>
+      <button class="px-btn" onclick={() => (saveError = null)}>{t('common:close')}</button>
     {/if}
   </div>
 {/if}

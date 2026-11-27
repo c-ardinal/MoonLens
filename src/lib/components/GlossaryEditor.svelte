@@ -40,41 +40,41 @@
       class="mr-10 inline-flex shrink-0 items-center gap-1 rounded-ml-sm border border-border bg-surface px-2.5 py-1 text-sm text-ink"
       onclick={add}
     >
-      <Plus class="h-3.5 w-3.5" />{t('追加')}
+      <Plus class="h-3.5 w-3.5" />{t('common:add')}
     </button>
   </div>
 
   {#if entries.length === 0}
-    <p class="rounded-ml-sm border border-dashed border-border px-3 py-2 text-xs text-ink-faint row-value">{t('登録なし')}</p>
+    <p class="rounded-ml-sm border border-dashed border-border px-3 py-2 text-xs text-ink-faint row-value">{t('common:no_entries')}</p>
   {:else}
     <div class="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_7.5rem_1.75rem] items-center gap-x-2 gap-y-1.5">
-      <span class="row-value text-xs text-ink-faint">{t('原語')}</span>
-      <span class="row-value text-xs text-ink-faint">{t('訳語')}</span>
-      <span class="row-value text-xs text-ink-faint">{t('翻訳先')}</span>
+      <span class="row-value text-xs text-ink-faint">{t('glossary-editor:term')}</span>
+      <span class="row-value text-xs text-ink-faint">{t('glossary-editor:translation')}</span>
+      <span class="row-value text-xs text-ink-faint">{t('common:to')}</span>
       <span></span>
       {#each entries as e, i (i)}
         <input
           data-glossary-source
           class={input}
           value={e.source}
-          placeholder={t('例：Dashboard')}
-          aria-label={t('原語 {n}', { n: i + 1 })}
+          placeholder={t('glossary-editor:e_g_dashboard')}
+          aria-label={t('glossary-editor:term_n', { n: i + 1 })}
           oninput={(ev) => onChange(updateEntry(entries, i, { source: (ev.currentTarget as HTMLInputElement).value }))}
         />
         <input
           class={input}
           value={e.target}
-          placeholder={t('例：管理画面')}
-          aria-label={t('訳語 {n}', { n: i + 1 })}
+          placeholder={t('glossary-editor:e_g_admin_console')}
+          aria-label={t('glossary-editor:translation_n', { n: i + 1 })}
           oninput={(ev) => onChange(updateEntry(entries, i, { target: (ev.currentTarget as HTMLInputElement).value }))}
         />
         <select
           class="{input} px-1"
           value={e.lang ?? ''}
-          aria-label={t('翻訳先 {n}', { n: i + 1 })}
+          aria-label={t('glossary-editor:target_n', { n: i + 1 })}
           onchange={(ev) => onChange(updateEntry(entries, i, { lang: (ev.currentTarget as HTMLSelectElement).value }))}
         >
-          <option value="">{t('全言語')}</option>
+          <option value="">{t('glossary-editor:all_languages')}</option>
           {#if e.lang && !SOURCE_LANGUAGES.some((l) => l.code === e.lang)}
             <option value={e.lang}>{e.lang}</option>
           {/if}
@@ -85,8 +85,8 @@
         <button
           type="button"
           class="row-value rounded-ml-sm p-1 text-ink-faint transition hover:bg-surface-muted hover:text-ink"
-          title={t('削除')}
-          aria-label={t('用語 {n} を削除', { n: i + 1 })}
+          title={t('common:delete')}
+          aria-label={t('glossary-editor:delete_term_n', { n: i + 1 })}
           onclick={() => onRemove(i)}
         >
           <X class="h-3.5 w-3.5" />

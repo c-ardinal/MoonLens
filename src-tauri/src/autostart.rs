@@ -305,9 +305,15 @@ pub fn sync_on_change(wanted: bool) {
         }
         Err(e) => {
             let message = if wanted {
-                crate::tr!("自動起動の登録失敗：{e}", e = format!("{:#}", e))
+                crate::tr!(
+                    "autostart:could_not_register_launch_at_login_e",
+                    e = format!("{:#}", e)
+                )
             } else {
-                crate::tr!("自動起動の解除失敗：{e}", e = format!("{:#}", e))
+                crate::tr!(
+                    "autostart:could_not_remove_launch_at_login_e",
+                    e = format!("{:#}", e)
+                )
             };
             crate::notices::push(NOTICE_ID, message, Some("/settings/#section-startup"));
         }

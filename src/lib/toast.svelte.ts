@@ -116,10 +116,10 @@ export const notifyError = (text: string): number => show({ text, kind: 'error' 
 export async function copyText(text: string, label: string): Promise<boolean> {
   try {
     await navigator.clipboard.writeText(text);
-    notify(t('{label}：コピー完了', { label }));
+    notify(t('toast:label_copied', { label }));
     return true;
   } catch (e) {
-    notifyError(t('コピー失敗：{error}', { error: errorText(e) }));
+    notifyError(t('toast:copy_failed_error', { error: errorText(e) }));
     return false;
   }
 }
@@ -136,10 +136,10 @@ export function undoable(options: {
 }): number {
   return show({
     text: options.text,
-    action: t('取消'),
+    action: t('toast:undo'),
     onClose: (reason) => {
       if (reason !== 'action') return;
-      options.undo().catch((e) => notifyError(t('{label}：{detail}', { label: options.failure, detail: errorText(e) })));
+      options.undo().catch((e) => notifyError(t('toast:label_detail', { label: options.failure, detail: errorText(e) })));
     }
   });
 }

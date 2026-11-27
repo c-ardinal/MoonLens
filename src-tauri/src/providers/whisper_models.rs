@@ -37,7 +37,7 @@ pub const CATALOG: &[AsrModel] = &[
     AsrModel {
         id: "whisper-large-v3-turbo",
         label: "Whisper large-v3-turbo",
-        note: Text::new("推奨。日英双方で高精度"),
+        note: Text::new("models:recommended_accurate_in_japanese_and_english"),
         file: "ggml-large-v3-turbo-q8_0.bin",
         url:
             "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo-q8_0.bin",
@@ -49,7 +49,7 @@ pub const CATALOG: &[AsrModel] = &[
     AsrModel {
         id: "whisper-small",
         label: "Whisper small",
-        note: Text::new("軽量・高速。低スペック PC 用。精度は中程度"),
+        note: Text::new("models:light_and_fast_for_low_spec_pcs"),
         file: "ggml-small-q5_1.bin",
         url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small-q5_1.bin",
         size: 190_085_487,

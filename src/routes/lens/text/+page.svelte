@@ -67,7 +67,7 @@
     onexplain={() => send({ kind: 'explain' })}
     onclose={() => send({ kind: 'close' })}
   />
-  <div class="grip" role="presentation" title={t('サイズ変更')} onpointerdown={startResize}></div>
+  <div class="grip" role="presentation" title={t('common:resize')} onpointerdown={startResize}></div>
 </main>
 
 <style>

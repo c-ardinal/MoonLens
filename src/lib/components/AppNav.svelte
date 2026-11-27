@@ -20,11 +20,11 @@
   }
 
   // 機能（翻訳・画像翻訳など）の入口はホームの魔法陣へ一本化。上部は画面単位の経路のみ
-  /** label は日本語の原文（表示時に `t()` で翻訳）。 */
+  /** label は文言のキー ID（表示時に `t()` で取得）。 */
   const items = [
-    { href: '/', label: 'ホーム' },
-    { href: '/history/', label: '履歴' },
-    { href: '/settings/', label: '設定' }
+    { href: '/', label: 'common:home' },
+    { href: '/history/', label: 'common:history' },
+    { href: '/settings/', label: 'common:settings' }
   ];
 
   /** 翻訳先言語（ライブ字幕・画面翻訳の共通設定）。 */
@@ -52,9 +52,9 @@
   const current = $derived(items.findIndex((item) => active(item.href)));
 </script>
 
-<nav class="sticky top-0 z-30" aria-label={t('メインメニュー')} data-tauri-drag-region>
+<nav class="sticky top-0 z-30" aria-label={t('app-nav:main_menu')} data-tauri-drag-region>
   <div class="bar" data-tauri-drag-region>
-    <a href="/" class="logo" aria-label={t('MoonLens ホーム')}><PixelLogo /></a>
+    <a href="/" class="logo" aria-label={t('app-nav:moonlens_home')}><PixelLogo /></a>
     <ul class="tabs" data-tauri-drag-region>
       {#each items as item (item.href)}
         <li>
@@ -72,13 +72,13 @@
       {/if}
     </ul>
     {#if target}
-      <a href="/settings/" class="px-chip target" title={t('翻訳先言語：{target}（設定で変更）', { target })}>{target}<span class="px-tri" aria-hidden="true"></span></a>
+      <a href="/settings/" class="px-chip target" title={t('app-nav:target_language_target_change_in_settings', { target })}>{target}<span class="px-tri" aria-hidden="true"></span></a>
     {/if}
     <div class="ctls" data-tauri-drag-region>
-      <button class="ctl" title={t('最小化')} aria-label={t('最小化')} onclick={minimize}>
+      <button class="ctl" title={t('app-nav:minimize')} aria-label={t('app-nav:minimize')} onclick={minimize}>
         <Minus class="h-6 w-6" />
       </button>
-      <button class="ctl close" title={t('非表示（常駐継続）')} aria-label={t('非表示（常駐継続）')} onclick={() => hideMain().catch(() => {})}>
+      <button class="ctl close" title={t('app-nav:hide_keeps_running_in_the_tray')} aria-label={t('app-nav:hide_keeps_running_in_the_tray')} onclick={() => hideMain().catch(() => {})}>
         <X class="h-6 w-6" />
       </button>
     </div>

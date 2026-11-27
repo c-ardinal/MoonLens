@@ -170,7 +170,7 @@ pub fn register_all(
         Ok(())
     } else {
         let msg = tr!(
-            "ショートカット登録失敗（他アプリと重複、または形式不正）：{keys}",
+            "hotkey:could_not_register_shortcuts_used_by_another",
             keys = failed.join(", ")
         );
         // Also shown on the home screen: at start-up nobody is looking

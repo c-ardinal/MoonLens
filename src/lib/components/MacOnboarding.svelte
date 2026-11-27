@@ -29,33 +29,33 @@
     detectable: boolean;
   };
 
-  /** title・description は日本語の原文（表示時に `t()` で翻訳）。 */
+  /** title・description は文言のキー ID（表示時に `t()` で取得）。 */
   const rows: PermissionRow[] = [
     {
       id: 'screen_capture',
-      title: '画面収録',
-      description: 'ウィンドウ翻訳・音声翻訳に必須。',
+      title: 'mac-onboarding:screen_recording',
+      description: 'mac-onboarding:required_for_window_and_audio_translation',
       icon: Monitor,
       detectable: true
     },
     {
       id: 'accessibility',
-      title: 'アクセシビリティ',
-      description: '他アプリ使用中のショートカット起動に必須。',
+      title: 'mac-onboarding:accessibility',
+      description: 'mac-onboarding:required_to_trigger_shortcuts_while_other',
       icon: MousePointer,
       detectable: true
     },
     {
       id: 'microphone',
-      title: 'マイク',
-      description: 'マイク入力の音声認識に必須。',
+      title: 'mac-onboarding:microphone',
+      description: 'mac-onboarding:required_to_transcribe_microphone_input',
       icon: Mic,
       detectable: false
     },
     {
       id: 'input_monitoring',
-      title: '入力モニタリング',
-      description: 'ショートカットの安定動作に必須。',
+      title: 'mac-onboarding:input_monitoring',
+      description: 'mac-onboarding:required_for_reliable_shortcuts',
       icon: Keyboard,
       detectable: false
     }
@@ -113,18 +113,18 @@
     >
       <header class="flex items-start justify-between gap-3">
         <div>
-          <h2 class="text-base font-semibold">{t('macOS の権限設定')}</h2>
+          <h2 class="text-base font-semibold">{t('mac-onboarding:macos_permissions')}</h2>
           <p class="mt-1 text-sm text-ink-muted">
-            {t('主要機能に OS 権限が必要。各項目のシステム設定で MoonLens を許可。')}
+            {t('mac-onboarding:core_features_need_os_permissions_allow')}
           </p>
         </div>
         <button
           class="inline-flex items-center gap-2 rounded-ml-sm border border-border bg-surface px-2 py-1 text-xs text-ink-muted hover:border-accent/60 hover:text-ink"
           onclick={refreshNow}
-          title={t('権限状態の再確認')}
+          title={t('mac-onboarding:recheck_permission_status')}
         >
           <RefreshCw class="h-3.5 w-3.5" />
-          {t('再確認')}
+          {t('mac-onboarding:recheck')}
         </button>
       </header>
 
@@ -144,21 +144,21 @@
                       class="inline-flex items-center gap-1 rounded-full bg-accent-soft px-2 py-1 text-[10px] font-medium uppercase tracking-wide text-accent"
                     >
                       <CheckCircle2 class="h-3 w-3" />
-                      {t('許可済')}
+                      {t('mac-onboarding:allowed')}
                     </span>
                   {:else if st === 'denied'}
                     <span
                       class="inline-flex items-center gap-1 rounded-full bg-red-500/10 px-2 py-1 text-[10px] font-medium uppercase tracking-wide text-red-500"
                     >
                       <CircleAlert class="h-3 w-3" />
-                      {t('未許可')}
+                      {t('mac-onboarding:not_allowed')}
                     </span>
                   {:else}
                     <span
                       class="inline-flex items-center gap-1 rounded-full bg-surface-muted px-2 py-1 text-[10px] font-medium uppercase tracking-wide text-ink-faint"
                     >
                       <CircleHelp class="h-3 w-3" />
-                      {t('不明')}
+                      {t('common:unknown')}
                     </span>
                   {/if}
                 </p>
@@ -171,14 +171,14 @@
                   class="rounded-ml-sm bg-accent px-3 py-1 text-xs font-medium text-white hover:opacity-90"
                   onclick={requestScreenCapture}
                 >
-                  {t('許可要求')}
+                  {t('mac-onboarding:request')}
                 </button>
               {/if}
               <button
                 class="rounded-ml-sm border border-border bg-surface-elevated px-3 py-1 text-xs text-ink-muted hover:border-accent/60 hover:text-ink"
                 onclick={() => openPane(row.id)}
               >
-                {t('設定を開く')}
+                {t('mac-onboarding:open_settings')}
               </button>
             </div>
           </li>
@@ -190,7 +190,7 @@
           class="rounded-ml-sm bg-accent px-3 py-2 text-sm font-medium text-white"
           onclick={dismiss}
         >
-          {t('完了／スキップ')}
+          {t('mac-onboarding:done_skip')}
         </button>
       </footer>
     </div>

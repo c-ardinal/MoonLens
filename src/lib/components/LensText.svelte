@@ -30,10 +30,10 @@
 
 <div class="lt">
   <header class="head" class:drag data-tauri-drag-region={drag ? '' : undefined}>
-    <span class="name" data-tauri-drag-region={drag ? '' : undefined}>{t('テキスト')}</span>
-    <label class="place" title={t('表示位置')}>
+    <span class="name" data-tauri-drag-region={drag ? '' : undefined}>{t('common:text')}</span>
+    <label class="place" title={t('lens-text:position')}>
       <select
-        aria-label={t('表示位置')}
+        aria-label={t('lens-text:position')}
         style="width: calc({textEm(placementLabel)}em + 6px)"
         value={view.placement}
         onchange={(e) => onplacement(parsePlacement((e.currentTarget as HTMLSelectElement).value))}
@@ -44,11 +44,11 @@
       </select>
       <ChevronDown class="h-3 w-3 opacity-70" />
     </label>
-    <button class="close" onclick={onclose} title={t('閉じる')}><X class="h-3.5 w-3.5" /></button>
+    <button class="close" onclick={onclose} title={t('common:close')}><X class="h-3.5 w-3.5" /></button>
   </header>
   <div class="content">
     {#if view.mode === 'paused'}
-      <p class="none">{t('一時停止中')}</p>
+      <p class="none">{t('common:paused')}</p>
     {:else if view.mode === 'original'}
       {#each view.blocks as b, i (i)}
         <p class="para">{b.source}</p>
@@ -57,14 +57,14 @@
       {/each}
     {:else}
       {#if view.explanation?.status === 'pending'}
-        <section class="explain" role="status">{t('説明を生成中…')}</section>
+        <section class="explain" role="status">{t('lens-text:generating_explanation')}</section>
       {:else if view.explanation?.status === 'done'}
         <section class="explain">{view.explanation.text}</section>
       {:else if view.explanation?.status === 'failed'}
         <section class="explain failed" role="alert">
-          <span>{t('説明の生成に失敗：{error}', { error: view.explanation.message })}</span>
+          <span>{t('lens-text:could_not_generate_the_explanation_error', { error: view.explanation.message })}</span>
           <button class="retry" onclick={onexplain}>
-            <RotateCw class="h-3 w-3" />{t('再試行')}
+            <RotateCw class="h-3 w-3" />{t('common:retry')}
           </button>
         </section>
       {/if}
@@ -73,7 +73,7 @@
           {#if b.same_language}
             <p class="para">{b.source}</p>
           {:else}
-            <p class="para tight">{b.translation ?? t('（翻訳中）')}</p>
+            <p class="para tight">{b.translation ?? t('lens-text:translating')}</p>
             <p class="para src">{b.source}</p>
           {/if}
         {/each}
@@ -81,7 +81,7 @@
         <p class="para tight">{view.translation}</p>
         {#if view.source}<p class="para src">{view.source}</p>{/if}
       {:else}
-        <p class="none">{t('文字なし')}</p>
+        <p class="none">{t('common:no_text')}</p>
       {/if}
     {/if}
   </div>

@@ -22,13 +22,13 @@
   type Action = { id: ActionId; label: string; icon: any };
 
   // Base catalogue keyed by id so intent-specific lists can reuse labels.
-  /** label は日本語の原文（表示時に `t()` で翻訳）。 */
+  /** label は文言のキー ID（表示時に `t()` で取得）。 */
   const all: Record<ActionId, Action> = {
-    translate: { id: 'translate', label: '翻訳#action', icon: Languages },
-    copy: { id: 'copy', label: 'コピー', icon: Copy },
-    explain: { id: 'explain', label: '説明', icon: Sparkles },
-    pin: { id: 'pin', label: '常時', icon: Radio },
-    open_url: { id: 'open_url', label: 'URL を開く', icon: ExternalLink }
+    translate: { id: 'translate', label: 'common:translate_action', icon: Languages },
+    copy: { id: 'copy', label: 'common:copy', icon: Copy },
+    explain: { id: 'explain', label: 'common:explain', icon: Sparkles },
+    pin: { id: 'pin', label: 'action-ribbon:pin', icon: Radio },
+    open_url: { id: 'open_url', label: 'action-ribbon:open_url', icon: ExternalLink }
   };
 
   const order: ActionId[] = $derived.by(() => {

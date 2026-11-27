@@ -6,12 +6,12 @@ import type { AudioApp, AudioSource } from './ipc';
 
 /** 選択可能な配置（先頭：新規吸着時の配置）。 */
 export const SUBTITLE_DOCKS: { value: AttachDock; label: string; title: string }[] = [
-  { value: 'inside', label: '内', title: '吸着先の内側下端' },
-  { value: 'bottom', label: '下', title: '吸着先の下側（外側）' },
-  { value: 'top', label: '上', title: '吸着先の上側（外側）' },
-  { value: 'left', label: '左', title: '吸着先の左側（外側）' },
-  { value: 'right', label: '右', title: '吸着先の右側（外側）' },
-  { value: 'free', label: '自由', title: '現在位置を保持（吸着先との相対位置で追従）' }
+  { value: 'inside', label: 'subtitle-attach:inside', title: 'subtitle-attach:bottom_edge_inside_the_target' },
+  { value: 'bottom', label: 'subtitle-attach:below', title: 'subtitle-attach:below_the_target_outside' },
+  { value: 'top', label: 'subtitle-attach:above', title: 'subtitle-attach:above_the_target_outside' },
+  { value: 'left', label: 'subtitle-attach:left', title: 'subtitle-attach:left_of_the_target_outside' },
+  { value: 'right', label: 'subtitle-attach:right', title: 'subtitle-attach:right_of_the_target_outside' },
+  { value: 'free', label: 'subtitle-attach:free', title: 'subtitle-attach:keep_the_current_position_follows_relative' }
 ];
 
 const stem = (name: string) => name.trim().toLowerCase().replace(/\.exe$/, '');

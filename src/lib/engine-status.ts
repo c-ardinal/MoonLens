@@ -14,12 +14,12 @@ export interface EngineRow {
   state: EngineState;
 }
 
-/** 状態名（日本語の原文）。表示時は `t()` で翻訳。 */
+/** 状態名（文言のキー ID）。表示時は `t()` で取得。 */
 export const STATE_LABELS: Record<EngineState, string> = {
-  ready: '準備完了',
-  missing: '未導入',
-  downloading: 'ダウンロード中',
-  unset: '未設定'
+  ready: 'common:ready',
+  missing: 'common:missing',
+  downloading: 'engine-status:downloading',
+  unset: 'common:not_set'
 };
 
 function modelRow(
@@ -41,14 +41,14 @@ function modelRow(
 
 export function engineRows(llm: LlmModels, ocr: OcrModelsStatus, asr: AsrModels): EngineRow[] {
   return [
-    modelRow('translate', '翻訳#engine', llm.selected, llm.models),
-    modelRow('assistant', '説明・要約#engine', llm.assistant, llm.models),
+    modelRow('translate', 'engine-status:translate_engine', llm.selected, llm.models),
+    modelRow('assistant', 'engine-status:explain_engine', llm.assistant, llm.models),
     {
       id: 'ocr',
-      label: t('文字認識#engine'),
-      model: ocr.ppocr ? (ocr.current ? 'PP-OCRv6' : 'PP-OCRv5') : ocr.ocrs ? t('ocrs（英語のみ）') : 'PP-OCRv6',
+      label: t('engine-status:ocr_engine'),
+      model: ocr.ppocr ? (ocr.current ? 'PP-OCRv6' : 'PP-OCRv5') : ocr.ocrs ? t('engine-status:ocrs_english_only') : 'PP-OCRv6',
       state: ocr.ppocr || ocr.ocrs ? 'ready' : 'missing'
     },
-    modelRow('asr', '音声認識#engine', asr.selected, asr.models)
+    modelRow('asr', 'engine-status:speech_engine', asr.selected, asr.models)
   ];
 }

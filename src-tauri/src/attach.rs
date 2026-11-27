@@ -431,7 +431,7 @@ pub async fn attach_window(
     .ok_or_else(|| {
         crate::user_error::coded(
             "attach_target_gone",
-            crate::tr!("吸着先のウィンドウが存在しません"),
+            crate::tr!("common:the_target_window_no_longer_exists"),
         )
     })?;
     let header = header_css(&app, &label);

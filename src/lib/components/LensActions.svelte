@@ -120,21 +120,21 @@
     {
       key: 'continuous',
       icon: Radio,
-      label: t('常時翻訳'),
+      label: t('common:continuous'),
       title: continuous
-        ? t('常時翻訳：ON（画面変化時に再翻訳）')
-        : t('常時翻訳：OFF（クリックで画面変化へ追従）'),
+        ? t('lens-actions:continuous_on_retranslates_when_the_screen')
+        : t('lens-actions:continuous_off_click_to_follow_screen'),
       pressed: continuous,
       run: oncontinuous
     },
     {
       key: 'operate',
       icon: operate ? MousePointerClick : MousePointerBan,
-      label: operate ? t('操作モード') : t('透過モード'),
+      label: operate ? t('lens-actions:interact_mode') : t('lens-actions:click_through_mode'),
       title:
         (operate
-          ? t('操作モード：訳文の選択・コピー可（クリックで透過モードへ）')
-          : t('透過モード：ウィンドウ上のクリックは背面へ（クリックで操作モードへ）')) +
+          ? t('lens-actions:interact_mode_select_and_copy_translations')
+          : t('lens-actions:click_through_mode_clicks_pass_to_what')) +
         (operateKey ? ` (${operateKey})` : ''),
       pressed: operate,
       run: onoperate
@@ -142,18 +142,18 @@
     {
       key: 'attach',
       icon: Magnet,
-      label: t('吸着'),
+      label: t('common:attach'),
       title: attachedTo
-        ? t('吸着中：{name}（移動・サイズ変更へ追従）', { name: attachedTo })
-        : t('吸着：他アプリのウィンドウへ追従'),
+        ? t('lens-actions:attached_name_follows_moves_and_resizes', { name: attachedTo })
+        : t('lens-actions:attach_follow_another_apps_window'),
       pressed: !!attachedTo || attachOpen,
       run: onattach
     },
     {
       key: 'refresh',
       icon: RefreshCw,
-      label: t('再取得'),
-      title: t('再取得'),
+      label: t('lens-actions:recapture'),
+      title: t('lens-actions:recapture'),
       disabled: busy,
       spin: busy,
       run: onrefresh
@@ -161,8 +161,8 @@
     {
       key: 'original',
       icon: showOriginal ? Eye : EyeOff,
-      label: showOriginal ? t('訳文表示') : t('原文表示'),
-      title: t('原文／訳文の切替'),
+      label: showOriginal ? t('common:show_translation') : t('common:show_source'),
+      title: t('lens-actions:toggle_source_translation'),
       pressed: showOriginal,
       disabled: !hasText,
       run: onoriginal
@@ -171,47 +171,47 @@
     {
       key: 'readmode',
       icon: readMode === 'ui' ? AppWindow : Captions,
-      label: readMode === 'ui' ? t('読取方式：UI') : t('読取方式：字幕'),
+      label: readMode === 'ui' ? t('lens-actions:read_mode_ui') : t('lens-actions:read_mode_subtitles'),
       title:
         readMode === 'ui'
-          ? t('読取方式：UI（読取単位で翻訳、前文脈の継承なし）。クリックで字幕方式へ')
-          : t('読取方式：字幕（逐次表示の完了後、前文脈を継承して翻訳）。クリックでUI方式へ'),
+          ? t('lens-actions:read_mode_ui_translates_each_read_on')
+          : t('lens-actions:read_mode_subtitles_translates_once_the_text'),
       run: () => onreadmode?.(readMode === 'ui' ? 'subtitle' : 'ui')
     },
     {
       key: 'copy',
       icon: ClipboardCopy,
-      label: t('コピー'),
-      title: t('コピー (Ctrl+C)'),
+      label: t('common:copy'),
+      title: t('lens-actions:copy_ctrl_c'),
       disabled: !hasText,
       run: oncopy
     },
     {
       key: 'text',
       icon: TextSelect,
-      label: t('テキスト表示'),
-      title: t('テキスト表示'),
+      label: t('lens-actions:show_text'),
+      title: t('lens-actions:show_text'),
       pressed: showText,
       run: ontext
     },
     {
       key: 'fit',
       icon: ScanText,
-      label: fit === 'observing' ? t('観測中止#action') : fit === 'fitted' ? t('整形前へ復元') : t('字幕領域へ整形'),
+      label: fit === 'observing' ? t('lens-actions:stop_observing_action') : fit === 'fitted' ? t('lens-actions:restore_before_reflow') : t('lens-actions:fit_to_subtitles'),
       title:
         fit === 'observing'
-          ? t('字幕領域を観測中（クリックで中止）')
+          ? t('lens-actions:observing_the_subtitle_area_click_to_stop')
           : fit === 'fitted'
-            ? t('整形前の位置・サイズへ復元')
-            : t('字幕領域へ整形：文字の出現範囲を観測し、ウィンドウを自動整形'),
+            ? t('lens-actions:restore_the_position_and_size_from_before')
+            : t('lens-actions:fit_to_subtitles_observes_where_text_appears'),
       pressed: fit === 'observing',
       run: onfit
     },
     {
       key: 'explain',
       icon: Languages,
-      label: t('内容説明'),
-      title: t('内容説明'),
+      label: t('lens-actions:explain'),
+      title: t('lens-actions:explain'),
       disabled: !hasText,
       run: onexplain
     }
@@ -264,11 +264,11 @@
 <svelte:window onpointerdown={outside} onblur={() => (menuOpen = false)} />
 
 {#snippet language(inMenu: boolean)}
-  <label class={inMenu ? 'mi lang' : 'tb lang'} title={t('翻訳先言語')}>
-    {#if inMenu}<Languages class="h-4 w-4" /><span class="lb">{t('翻訳先')}</span>{/if}
+  <label class={inMenu ? 'mi lang' : 'tb lang'} title={t('common:target_language')}>
+    {#if inMenu}<Languages class="h-4 w-4" /><span class="lb">{t('common:to')}</span>{/if}
     <span class="sel">
       <select
-        aria-label={t('翻訳先言語')}
+        aria-label={t('common:target_language')}
         style="width: calc({textEm(languageLabel(targetLanguage))}em + 2px)"
         value={targetLanguage}
         onchange={(e) => onlanguage((e.currentTarget as HTMLSelectElement).value)}
@@ -285,12 +285,12 @@
   </label>
 {/snippet}
 
-<button class="tb" onclick={onadd} title={t('ウィンドウ追加（同一サイズで隣へ配置）')}>
+<button class="tb" onclick={onadd} title={t('lens-actions:add_window_same_size_placed_alongside')}>
   <Plus class="h-4 w-4" />
 </button>
 {@render lead?.()}
 
-<div class="fit" bind:this={fitEl} role="group" aria-label={t('ウィンドウ翻訳の操作')} data-tauri-drag-region>
+<div class="fit" bind:this={fitEl} role="group" aria-label={t('lens-actions:window_translation_controls')} data-tauri-drag-region>
   {#each actions as a, i (a === 'language' ? a : a.key)}
     {#if a === 'language'}
       <span class="item" class:off={i >= shown} data-item>{@render language(false)}</span>
@@ -318,18 +318,18 @@
     aria-expanded={menuOpen}
     aria-pressed={menuOpen}
     onclick={() => (menuOpen = !menuOpen)}
-    title={t('他の操作')}
+    title={t('lens-actions:more_actions')}
   >
     <EllipsisVertical class="h-4 w-4" />
   </button>
 {/if}
-<button class="tb" onclick={onmaximize} title={maximized ? t('元のサイズ') : t('最大化（全画面翻訳）')}>
+<button class="tb" onclick={onmaximize} title={maximized ? t('lens-actions:restore_size') : t('lens-actions:maximize_full_screen_translation')}>
   {#if maximized}<Minimize2 class="h-4 w-4" />{:else}<Maximize2 class="h-4 w-4" />{/if}
 </button>
-<button class="tb" onclick={onclose} title={t('閉じる (Esc)')}><X class="h-4 w-4" /></button>
+<button class="tb" onclick={onclose} title={t('lens-actions:close_esc')}><X class="h-4 w-4" /></button>
 
 {#if menuOpen && overflow}
-  <div class="menu" role="menu" aria-label={t('他の操作')}>
+  <div class="menu" role="menu" aria-label={t('lens-actions:more_actions')}>
     {#each actions.slice(shown) as a (a === 'language' ? a : a.key)}
       {#if a === 'language'}
         {@render language(true)}

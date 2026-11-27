@@ -9,10 +9,11 @@ const { chromium } = createRequire(import.meta.url)('playwright');
 export const HERE = dirname(fileURLToPath(import.meta.url));
 export const MOCK = readFileSync(join(HERE, 'mock.json'), 'utf8');
 /** 英語辞書（日本語の原文 → 英訳）。 */
-/** 言語ファイル（locales/<言語コード>.json）。原文の言語（ja）は空の辞書。 */
-export const dict = (lang) => (lang === 'ja' ? {} : JSON.parse(readFileSync(join(HERE, `../../locales/${lang}.json`), 'utf8')));
+/** 言語ファイル（locales/<言語コード>.json）。 */
+export const dict = (lang) => JSON.parse(readFileSync(join(HERE, `../../locales/${lang}.json`), 'utf8'));
 /** 表示言語の文言：操作対象の名称（ボタン名等）の指定に使用。 */
-export const label = (lang) => { const d = dict(lang); return (ja) => d[ja] ?? ja; };
+/** キー ID から指定言語の文言を取得する関数。 */
+export const label = (lang) => { const d = dict(lang); return (key) => d[key] ?? key; };
 export const TEXT_SIZES = ['xsmall', 'small', 'medium', 'large', 'xlarge'];
 
 /** 引数の解析：`--key value` を取出し、残余を位置引数として返却。 */
@@ -67,8 +68,8 @@ const mockPlamoMissing = (ts, lang) => {
     profile: { os: 'windows', cpu_name: 'Ryzen 7 7840U', cpu_cores: 16, ram_total: 32 * 2 ** 30, gpus: [], disk_free: 400 * 2 ** 30, use_gpu: true },
     accelerator: null,
     recommended: {
-      translate: { model: 'plamo-3-translate-2b', reason: '高品質・高速。本 PC で快適動作' },
-      assistant: { model: 'gemma-4-e4b', reason: '高品質・高速。本 PC で快適動作' },
+      translate: { model: 'plamo-3-translate-2b', reason: 'setup:high_quality_and_fast_runs_comfortably_on' },
+      assistant: { model: 'gemma-4-e4b', reason: 'setup:high_quality_and_fast_runs_comfortably_on' },
       ocr: { model: 'ppocr', reason: '' },
       asr: { model: 'whisper-small', reason: '' }
     }
@@ -156,24 +157,24 @@ export async function walkMain(browser, url, { textSize = 'medium', width = 1280
   pg = await open('/translate/'); await visit(pg, 'translate');
   await pg.locator('textarea').first().fill('The quick brown fox.\nSecond line.'); await pg.keyboard.press('Control+Enter');
   await reach('translate-result', () => pg.getByText('素早い茶色の狐。').first().waitFor({ timeout: 5000 })); await visit(pg, 'translate-result');
-  await reach('translate-toast', async () => { await pg.getByRole('button', { name: l('訳文をコピー') }).click({ timeout: 2000 }); await pg.locator('.toast').first().waitFor({ timeout: 2000 }); }); await visit(pg, 'translate-toast');
+  await reach('translate-toast', async () => { await pg.getByRole('button', { name: l('common:copy_translation') }).click({ timeout: 2000 }); await pg.locator('.toast').first().waitFor({ timeout: 2000 }); }); await visit(pg, 'translate-toast');
   await reach('context-menu', async () => { await pg.locator('textarea').first().click({ button: 'right', timeout: 2000 }); await pg.locator('.ctx-menu').waitFor({ timeout: 2000 }); }); await visit(pg, 'context-menu');
   await pg.close();
   pg = await open('/image/'); await visit(pg, 'image');
   await reach('image-result', async () => { await pg.locator('input[type=file]').setInputFiles(await imageFile(pg)); await pg.getByText('Phone: 555-0123').first().waitFor({ timeout: 5000 }); await wait(pg, 300); }); await visit(pg, 'image-result');
   await pg.close();
   pg = await open('/history/'); await visit(pg, 'history');
-  await reach('history-subtitle', async () => { await pg.locator('li button').filter({ hasText: l('音声翻訳') }).first().click({ timeout: 2000 }); await pg.getByText(l('音源：{source}').split('{')[0]).first().waitFor({ timeout: 2000 }); await wait(pg, 300); }); await visit(pg, 'history-subtitle');
-  await reach('history-toast', async () => { await pg.getByRole('button', { name: l('当該履歴を削除') }).first().click({ timeout: 2000 }); await pg.locator('.toast').first().waitFor({ timeout: 2000 }); }); await visit(pg, 'history-toast');
-  await reach('history-confirm', async () => { await pg.getByText(l('全消去')).click({ timeout: 2000 }); await pg.getByRole('dialog').waitFor({ timeout: 2000 }); }); await visit(pg, 'history-confirm');
+  await reach('history-subtitle', async () => { await pg.locator('li button').filter({ hasText: l('common:audio_translation') }).first().click({ timeout: 2000 }); await pg.getByText(l('subtitle-record-detail:audio_source').split('{')[0]).first().waitFor({ timeout: 2000 }); await wait(pg, 300); }); await visit(pg, 'history-subtitle');
+  await reach('history-toast', async () => { await pg.getByRole('button', { name: l('common:delete_this_item') }).first().click({ timeout: 2000 }); await pg.locator('.toast').first().waitFor({ timeout: 2000 }); }); await visit(pg, 'history-toast');
+  await reach('history-confirm', async () => { await pg.getByText(l('common:clear_all')).click({ timeout: 2000 }); await pg.getByRole('dialog').waitFor({ timeout: 2000 }); }); await visit(pg, 'history-confirm');
   await pg.close();
   pg = await open('/setup/'); await visit(pg, 'setup'); await pg.close();
   // 初期設定：許諾確認（取得対象に同意が必要なモデルを含む場合のみ表示される手順）
   const ctx2 = await browser.newContext({ viewport: { width, height }, deviceScaleFactor: scale, reducedMotion: 'reduce' });
   await ctx2.addInitScript(init('main', mockPlamoMissing(textSize, lang)));
   pg = await ctx2.newPage(); await pg.goto(url('/setup/')); await wait(pg, 1200);
-  await reach('setup-select', async () => { await pg.getByRole('button', { name: l('次へ') }).click({ timeout: 3000 }); await pg.getByRole('radiogroup').first().waitFor({ timeout: 3000 }); }); await visit(pg, 'setup-select');
-  await reach('setup-consent', async () => { await pg.getByRole('button', { name: l('承認・一括取得') }).click({ timeout: 3000 }); await pg.getByRole('checkbox').waitFor({ timeout: 3000 }); }); await visit(pg, 'setup-consent');
+  await reach('setup-select', async () => { await pg.getByRole('button', { name: l('setup:next') }).click({ timeout: 3000 }); await pg.getByRole('radiogroup').first().waitFor({ timeout: 3000 }); }); await visit(pg, 'setup-select');
+  await reach('setup-consent', async () => { await pg.getByRole('button', { name: l('setup:accept_and_download') }).click({ timeout: 3000 }); await pg.getByRole('checkbox').waitFor({ timeout: 3000 }); }); await visit(pg, 'setup-consent');
   await pg.getByRole('checkbox').check(); await wait(pg, 200); await visit(pg, 'setup-consent-checked');
   await ctx2.close();
   pg = await open('/settings/');
@@ -190,7 +191,7 @@ export async function walkMain(browser, url, { textSize = 'medium', width = 1280
   pg = await open('/settings/#section-models');
   await reach('settings-consent', async () => {
     await pg.getByRole('radio', { name: /^PLaMo 3 Translate 0\.8B/ }).first().click({ timeout: 3000 });
-    await pg.getByRole('button', { name: l('取得・切替') }).click({ timeout: 3000 });
+    await pg.getByRole('button', { name: l('model-choice:download_and_switch') }).click({ timeout: 3000 });
     await pg.getByRole('checkbox').waitFor({ timeout: 3000 });
   }); await visit(pg, 'settings-consent'); await pg.close();
   await ctx.close();
@@ -205,7 +206,7 @@ const lensMock = (lang) => JSON.stringify({
   list_lens_windows: [{ id: 'lens-1', target_language: 'ja' }], refresh_lens: true, subtitle_state: false,
   window_attachment: { target: null, dock: null },
   stream_state: { supported: true, active: false, title: null },
-  set_stream: { supported: true, active: true, title: label(lang)('MoonLens 配信 - {name}').replace('{name}', 'Chapter 1 — The Lighthouse') },
+  set_stream: { supported: true, active: true, title: label(lang)('stream:moonlens_stream_name').replace('{name}', 'Chapter 1 — The Lighthouse') },
   list_attach_targets: [
     { id: 11, pid: 100, app: 'Game.exe', title: 'Chapter 1 — The Lighthouse', rect: { x: 0, y: 0, w: 800, h: 600 }, overlap: 0.8 },
     { id: 12, pid: 101, app: 'firefox', title: 'MoonLens docs — Mozilla Firefox', rect: { x: 0, y: 0, w: 800, h: 600 }, overlap: 0 }
@@ -286,7 +287,7 @@ export async function walkWindows(browser, url, { only = null, lang = 'ja' } = {
       await pg.evaluate((a) => window.__emit('moonlens://attach', a), { ...ATTACHED, dock: 'inside' });
       await attachMenu('attached');
       await pg.keyboard.press('Escape');
-      await emit({ kind: 'error', message: label(lang)('音声認識の連続失敗により停止：{detail}').replace('{detail}', 'model load failed') }); await emit({ kind: 'stopped' }); await m('error');
+      await emit({ kind: 'error', message: label(lang)('subtitle:stopped_after_repeated_speech_recognition').replace('{detail}', 'model load failed') }); await emit({ kind: 'stopped' }); await m('error');
       await pg.context().close();
     }
   }
@@ -294,7 +295,7 @@ export async function walkWindows(browser, url, { only = null, lang = 'ja' } = {
     const pg = await win('overlay', '/overlay/', 480, 320);
     const emit = (p) => pg.evaluate((p) => window.__emit('moonlens://overlay', p), p);
     await visit(pg, 'overlay-idle');
-    await emit({ kind: 'processing', message: label(lang)('翻訳中…') }); await wait(pg, 200); await visit(pg, 'overlay-processing');
+    await emit({ kind: 'processing', message: label(lang)('common:translating') }); await wait(pg, 200); await visit(pg, 'overlay-processing');
     await emit({ kind: 'result', source_text: 'The North Wind and the Sun', result: { output: { Text: '北風と太陽' }, via_cloud: false, used_provider: 'PLaMo' }, intent: 'translate', source_rect: null });
     await wait(pg, 300); await visit(pg, 'overlay-result');
     await emit({ kind: 'error', message: '翻訳失敗：モデル未導入' }); await wait(pg, 200); await visit(pg, 'overlay-error');

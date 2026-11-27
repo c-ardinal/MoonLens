@@ -11,5 +11,5 @@ export function cacheSize(bytes: number): string {
 
 /** 内訳の名称。空文字：追従先アプリ未指定の共通分。 */
 export function scopeLabel(scope: string): string {
-  return scope ? t('アプリ「{scope}」', { scope }) : t('共通（追従先アプリ未指定）');
+  return scope ? t('translation-cache:app_scope', { scope }) : t('translation-cache:shared_no_attached_app');
 }

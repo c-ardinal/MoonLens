@@ -38,7 +38,7 @@
 {#if info}
   <div class="lc">
     <p class="lead">{t(info.lead)}</p>
-    <p class="cap">{t('要点（要約）')}</p>
+    <p class="cap">{t('license-consent:key_points_summary')}</p>
     <ul>
       {#each info.points as p (p)}<li>{t(p)}</li>{/each}
     </ul>
@@ -51,10 +51,10 @@
     <div class="acts">
       <label class="agree">
         <input type="checkbox" bind:checked />
-        {t('{label}を確認、内容へ同意', { label: t(info.fullText.label) })}
+        {t('license-consent:i_have_read_the_label_and_agree', { label: t(info.fullText.label) })}
       </label>
-      <button class="sbtn on" disabled={!checked || busy} onclick={agree}>{agreeLabel ?? t('同意・取得')}</button>
-      <button class="sbtn" disabled={busy} onclick={oncancel}>{cancelLabel ?? t('中止')}</button>
+      <button class="sbtn on" disabled={!checked || busy} onclick={agree}>{agreeLabel ?? t('license-consent:agree_and_download')}</button>
+      <button class="sbtn" disabled={busy} onclick={oncancel}>{cancelLabel ?? t('common:cancel')}</button>
     </div>
   </div>
 {/if}

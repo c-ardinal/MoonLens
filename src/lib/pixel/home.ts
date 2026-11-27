@@ -98,12 +98,12 @@ export function homeRegions(w: number, h: number): Record<HomeRegion, Rect> {
   };
 }
 
-/** 状態名（日本語の原文、描画時に `t()` で翻訳）と色番号。 */
+/** 状態名（文言のキー ID、描画時に `t()` で取得）と色番号。 */
 const STATE_TEXT: Record<EngineState, [string, number]> = {
-  ready: ['準備完了', 8],
-  missing: ['未導入', 7],
-  downloading: ['取得中', 4],
-  unset: ['未設定', 3]
+  ready: ['common:ready', 8],
+  missing: ['common:missing', 7],
+  downloading: ['common:downloading', 4],
+  unset: ['common:not_set', 3]
 };
 
 /** 動作層（魔法陣の回転要素）。t は経過秒。 */
@@ -156,14 +156,14 @@ export function drawHome(p: Pix, v: HomeView) {
   // 名札：ショートカット・動作状態
   let x = mx + COL_X;
   if (v.hotkey) x += chip(p, x, c.chips, v.hotkey, 0, 9) + 4;
-  if (v.running) chip(p, x, c.chips, t('動作中'), 8, 1, true);
+  if (v.running) chip(p, x, c.chips, t('home:running'), 8, 1, true);
 
   // 説明欄
   p.slantWin(mx + COL_X, c.desc, COL_W, 70, 0.2, { shadow: 2 });
   let ty = p.wrap(v.desc, mx + 352, c.desc + 10, 260, 6, 18, v.error || v.preview ? 1 : 2);
   if (v.error) ty = p.wrap(v.error, mx + 352, ty, 260, 7, 18, 1);
   else if (v.preview) p.wrap(v.preview, mx + 352, ty, 260, 3, 18, 1);
-  const go = v.running ? t('Enter で停止') : t('Enter で開始');
+  const go = v.running ? t('home:enter_to_stop') : t('home:enter_to_start');
   const goCol = v.hot === 'go' ? 9 : 5;
   const goW = p.text(go, mx + 612, c.desc + 48, goCol, { align: 'right' });
   p.tri(mx + 612 - goW - TRI_GAP - TRI_W, triY(p, go, c.desc + 48), goCol);
@@ -171,7 +171,7 @@ export function drawHome(p: Pix, v: HomeView) {
   // エンジン欄
   const E = R.engines;
   p.slantWin(E.x, E.y + 8, E.w, 86, 0.2, { shadow: 2 });
-  chip(p, E.x + 14, E.y, t('エンジン'), 0, v.hot === 'engines' ? 9 : 5);
+  chip(p, E.x + 14, E.y, t('home:engines'), 0, v.hot === 'engines' ? 9 : 5);
   // 種別・モデル・状態の 3 列：列頭を行間で統一し、モデル名は状態列の手前で省略
   const rows = v.engines.slice(0, 4);
   const labelW = Math.max(0, ...rows.map((r) => p.textW(r.label)));
@@ -190,17 +190,17 @@ export function drawHome(p: Pix, v: HomeView) {
   // 最近の翻訳（下端基準）
   const Rr = R.recent;
   p.slab(Rr.x, Rr.y, Rr.w, 20, K, 1);
-  p.text(t('最近'), Rr.x + 16, Rr.y + 2, 3);
+  p.text(t('home:recent'), Rr.x + 16, Rr.y + 2, 3);
   // 右端から「履歴」＋三角・時刻の順に右寄せ、本文は残りの幅で省略
   const linkR = Rr.x + Rr.w - 4;
   const linkCol = v.hot === 'recent' ? 9 : 5;
-  p.tri(linkR - TRI_W, triY(p, t('履歴'), Rr.y + 2), linkCol);
-  const linkW = p.text(t('履歴'), linkR - TRI_W - TRI_GAP, Rr.y + 2, linkCol, { align: 'right' }) + TRI_GAP + TRI_W;
+  p.tri(linkR - TRI_W, triY(p, t('common:history'), Rr.y + 2), linkCol);
+  const linkW = p.text(t('common:history'), linkR - TRI_W - TRI_GAP, Rr.y + 2, linkCol, { align: 'right' }) + TRI_GAP + TRI_W;
   if (v.recent) {
     const timeR = linkR - linkW - 12;
     const timeW = p.text(v.recent.time, timeR, Rr.y + 2, 3, { align: 'right' });
     p.text(p.fit(v.recent.text, timeR - timeW - 12 - (Rr.x + 54)), Rr.x + 54, Rr.y + 2, 6);
-  } else p.text(t('履歴なし'), Rr.x + 54, Rr.y + 2, 3);
+  } else p.text(t('home:no_history'), Rr.x + 54, Rr.y + 2, 3);
 
   // 案内行：情報欄の右端（説明欄の右下角）へ揃える
   if (h >= HINT_MIN_H) p.text(p.fit(v.hint, COL_W + 20), mx + COL_X + COL_W, h - 20, 3, { align: 'right' });

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
-// 表示言語の監査：指定言語（既定：英語）の表示で全ウィンドウの全状態を巡回し、未翻訳の日本語文言（言語ファイルの原文）の残存を検出。
+// 表示言語の監査：指定言語（既定：英語）の表示で全ウィンドウの全状態を巡回し、未翻訳の日本語文言（ja.json の文言）の残存と、キー ID の露出を検出。
 // 対象：表示中の本文、title／aria-label／placeholder／alt 属性。
-// 対象外：利用者由来の文字列（履歴の本文、訳文等。言語ファイルの原文と不一致のため検出対象外）、
+// 対象外：利用者由来の文字列（履歴の本文、訳文等。ja.json の文言と不一致のため検出対象外）、
 //         Canvas 描画（ホームの魔法陣・見出し。`--shots` の画像で目視確認）。
 // 使用法：node scripts/ui-audit/i18n-audit.mjs [buildDir] [--lang en] [--json out.json] [--shots dir]
 // 違反が有れば終了コード 1。
@@ -16,14 +16,17 @@ const lang = opt('--lang') ?? 'en';
 const DICT = dict(lang);
 const { url, close } = await serve(rest[0] ?? 'build');
 
-/** 辞書の原文：`{name}` は任意の文字列と一致。訳文が原文と同一の項目は対象外。 */
-const KEYS = Object.keys(DICT).filter((k) => DICT[k] !== k && /[ぁ-ゖァ-ヺ一-鿿]/.test(k));
+/** 日本語の文言（ja.json）：`{name}` は任意の文字列と一致。指定言語の文言と同一の項目は対象外。 */
+const SOURCE = dict('ja');
+// 言語名の自称（表示言語の選択肢「日本語」）は全言語で同一表示のため対象外
+const KEYS = [...new Set(Object.keys(SOURCE).filter((k) => DICT[k] !== SOURCE[k] && /[ぁ-ゖァ-ヺ一-鿿]/.test(SOURCE[k])).map((k) => SOURCE[k]))].filter((v) => v !== SOURCE['@language']);
 
 /** ページ内の計測：表示中の文言から、辞書の原文と一致するものを列挙。 */
 const MEASURE = ([keys, lang]) => {
   const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const res = keys.map((k) => new RegExp('^' + k.split(/\{\w+\}/).map(esc).join('.+') + '$'));
-  const leak = (s) => { const v = s.replace(/\s+/g, ' ').trim(); return v && res.some((r) => r.test(v)) ? v : null; };
+  // untranslated：日本語の文言の残存。key：キー ID の露出（言語ファイルに未登録のキーを参照）
+  const leak = (s) => { const v = s.replace(/\s+/g, ' ').trim(); return !v ? null : /^[a-z][a-z0-9-]*:[a-z0-9_]+$/.test(v) ? ['key', v] : res.some((r) => r.test(v)) ? ['untranslated', v] : null; };
   const where = (el) => {
     const parts = [];
     for (let e = el; e && e !== document.body && parts.length < 3; e = e.parentElement)
@@ -36,12 +39,12 @@ const MEASURE = ([keys, lang]) => {
     const el = n.parentElement;
     if (!el || el.closest('script, style')) continue;
     const v = leak(n.nodeValue);
-    if (v) out.push({ rule: 'untranslated', where: where(el), detail: v, value: 0 });
+    if (v) out.push({ rule: v[0], where: where(el), detail: v[1], value: 0 });
   }
   for (const el of document.body.querySelectorAll('[title], [aria-label], [placeholder], [alt]'))
     for (const a of ['title', 'aria-label', 'placeholder', 'alt']) {
       const v = el.hasAttribute(a) ? leak(el.getAttribute(a)) : null;
-      if (v) out.push({ rule: 'untranslated', where: `${where(el)}[${a}]`, detail: v, value: 0 });
+      if (v) out.push({ rule: v[0], where: `${where(el)}[${a}]`, detail: v[1], value: 0 });
     }
   if (document.documentElement.lang !== lang) out.push({ rule: 'lang', where: 'html', detail: `lang="${document.documentElement.lang}"`, value: 0 });
   return out;

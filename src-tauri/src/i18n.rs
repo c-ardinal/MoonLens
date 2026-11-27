@@ -1,22 +1,21 @@
 //! Display language of everything the backend words itself: tray menu,
 //! window titles, error messages, notices and settings diagnostics.
 //!
-//! Japanese is the source text and the lookup key. The translations live
-//! in `locales/<code>.json` at the repository root, one file per language,
-//! shared with the frontend (`src/lib/i18n`). `build.rs` embeds every file
-//! in that folder, so a new language is a new file and nothing else:
+//! The texts live in `locales/<code>.json` at the repository root, one
+//! file per language (Japanese included), shared with the frontend
+//! (`src/lib/i18n`). The source refers to a text by its key. `build.rs`
+//! embeds every file in that folder, so a new language is a new file and
+//! nothing else:
 //!
 //! ```ignore
-//! tr!("画像データなし");
-//! tr!("読込失敗：{e}", e = e);
-//! tr!("残容量不足：必要 {need} GB", need = format!("{gb:.1}"));
+//! tr!("ipc:no_image_data");
+//! tr!("ipc:read_failed", e = e);
 //! ```
 //!
-//! `{name}` is replaced by the argument of that name. A key may carry a
-//! `#context` suffix (`"翻訳#task"`) to tell apart two uses of one source
-//! text; the suffix never shows. `npm run lint:i18n` checks that every
-//! key used here exists in every language file and that the arguments
-//! match the placeholders.
+//! `{name}` in a text is replaced by the argument of that name. A key
+//! missing from the display language falls back to Japanese.
+//! `npm run lint:i18n` checks that every key used here exists in every
+//! language file and that the arguments match the placeholders.
 //!
 //! The language follows `appearance.ui_language` (see [`apply`]).
 
@@ -27,7 +26,7 @@ use std::sync::OnceLock;
 // `LOCALE_FILES: &[(&str, &str)]`: language code and file contents.
 include!(concat!(env!("OUT_DIR"), "/locales.rs"));
 
-/// Language of the source text.
+/// Reference language: what a key missing elsewhere falls back to.
 pub const SOURCE: &str = "ja";
 /// Language for systems whose own language has no file.
 const FALLBACK: &str = "en";
@@ -37,51 +36,42 @@ struct Table {
     entries: HashMap<String, String>,
 }
 
+/// Every language file, the reference language first.
 fn tables() -> &'static [Table] {
     static TABLES: OnceLock<Vec<Table>> = OnceLock::new();
     TABLES.get_or_init(|| {
-        LOCALE_FILES
+        let mut tables: Vec<Table> = LOCALE_FILES
             .iter()
             .map(|(code, raw)| Table {
                 code,
                 entries: serde_json::from_str(raw)
                     .unwrap_or_else(|e| panic!("locales/{code}.json: {e}")),
             })
-            .collect()
+            .collect();
+        tables.sort_by_key(|t| t.code != SOURCE);
+        assert_eq!(tables[0].code, SOURCE, "locales/{SOURCE}.json is missing");
+        tables
     })
 }
 
-/// 0: source text; n: `tables()[n - 1]`.
+/// Index into [`tables`].
 static CURRENT: AtomicUsize = AtomicUsize::new(0);
 
 fn index_of(code: &str) -> Option<usize> {
-    if code.eq_ignore_ascii_case(SOURCE) {
-        return Some(0);
-    }
     tables()
         .iter()
         .position(|t| t.code.eq_ignore_ascii_case(code))
-        .map(|i| i + 1)
-}
-
-fn code_at(index: usize) -> &'static str {
-    match index {
-        0 => SOURCE,
-        n => tables()[n - 1].code,
-    }
 }
 
 /// The setting names a language, or `auto` (as does any unknown value):
 /// the OS display language when it has a file, English otherwise.
 pub fn resolve(setting: &str, system: Option<&str>) -> &'static str {
-    if let Some(i) = index_of(setting) {
-        return code_at(i);
-    }
     let primary = system.and_then(|tag| tag.split(['-', '_']).next());
-    primary
-        .and_then(index_of)
+    let index = index_of(setting)
+        .or_else(|| primary.and_then(index_of))
         .or_else(|| index_of(FALLBACK))
-        .map_or(SOURCE, code_at)
+        .unwrap_or(0);
+    tables()[index].code
 }
 
 /// Apply the setting. Returns `true` when the language changed.
@@ -97,34 +87,21 @@ pub fn set(code: &str) -> bool {
 
 /// Code of the display language.
 pub fn locale() -> &'static str {
-    code_at(CURRENT.load(Ordering::Relaxed))
+    tables()[CURRENT.load(Ordering::Relaxed)].code
 }
 
-/// The source text without its `#context` suffix.
-fn plain(ja: &str) -> &str {
-    match ja.rfind('#') {
-        Some(i)
-            if ja[i + 1..].starts_with(|c: char| c.is_ascii_lowercase())
-                && ja[i + 1..]
-                    .chars()
-                    .all(|c| c.is_ascii_lowercase() || c == '-') =>
-        {
-            &ja[..i]
-        }
-        _ => ja,
-    }
-}
-
-fn text_at(index: usize, ja: &'static str) -> &'static str {
-    index
-        .checked_sub(1)
-        .and_then(|i| tables()[i].entries.get(ja))
-        .map_or_else(|| plain(ja), String::as_str)
+fn text_at(index: usize, key: &'static str) -> &'static str {
+    let tables = tables();
+    tables[index]
+        .entries
+        .get(key)
+        .or_else(|| tables[0].entries.get(key))
+        .map_or(key, String::as_str)
 }
 
 /// A ready-made text in the display language.
-pub fn text(ja: &'static str) -> &'static str {
-    text_at(CURRENT.load(Ordering::Relaxed), ja)
+pub fn text(key: &'static str) -> &'static str {
+    text_at(CURRENT.load(Ordering::Relaxed), key)
 }
 
 fn fill(template: &str, args: &[(&str, String)]) -> String {
@@ -153,20 +130,20 @@ fn fill(template: &str, args: &[(&str, String)]) -> String {
 }
 
 /// [`tr!`] behind the macro.
-pub fn render(ja: &'static str, args: &[(&str, String)]) -> String {
-    fill(text(ja), args)
+pub fn render(key: &'static str, args: &[(&str, String)]) -> String {
+    fill(text(key), args)
 }
 
 /// A ready-made text (catalog notes, recommendation reasons). Serializes
-/// as its source text: the frontend translates it when it renders, so
-/// cached catalogs follow a later language switch.
+/// as its key: the frontend looks it up when it renders, so cached
+/// catalogs follow a later language switch.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 #[serde(transparent)]
 pub struct Text(&'static str);
 
 impl Text {
-    pub const fn new(ja: &'static str) -> Self {
-        Self(ja)
+    pub const fn new(key: &'static str) -> Self {
+        Self(key)
     }
 
     pub fn get(&self) -> &'static str {
@@ -174,13 +151,13 @@ impl Text {
     }
 }
 
-/// A message in the display language: the Japanese source text, then the
-/// values of its `{name}` placeholders as `name = value`.
+/// A message in the display language: the key of its text, then the
+/// values of the text's `{name}` placeholders as `name = value`.
 #[macro_export]
 macro_rules! tr {
-    ($ja:literal $(, $name:ident = $value:expr)* $(,)?) => {
+    ($key:literal $(, $name:ident = $value:expr)* $(,)?) => {
         $crate::i18n::render(
-            $ja,
+            $key,
             &[$((stringify!($name), ::std::string::ToString::to_string(&$value))),*],
         )
     };
@@ -211,20 +188,18 @@ mod tests {
 
     #[test]
     fn every_language_file_is_loaded() {
-        assert!(tables().iter().any(|t| t.code == "en"));
-        let en = index_of("en").unwrap();
-        assert_eq!(text_at(en, "設定"), "Settings");
-        assert_eq!(text_at(0, "設定"), "設定");
+        let (ja, en) = (index_of("ja").unwrap(), index_of("en").unwrap());
+        assert_eq!(ja, 0);
+        assert_eq!(text_at(ja, "common:settings"), "設定");
+        assert_eq!(text_at(en, "common:settings"), "Settings");
     }
 
     #[test]
-    fn context_suffix_never_shows() {
-        assert_eq!(text_at(0, "翻訳#task"), "翻訳");
-        assert_eq!(text_at(index_of("en").unwrap(), "翻訳#task"), "translation");
-        // Unknown text falls back to the source.
-        assert_eq!(text_at(index_of("en").unwrap(), "未登録#x"), "未登録");
-        assert_eq!(plain("C# 言語"), "C# 言語");
-        assert_eq!(plain("C#"), "C#");
+    fn unknown_key_shows_as_is() {
+        assert_eq!(
+            text_at(index_of("en").unwrap(), "no:such_key"),
+            "no:such_key"
+        );
     }
 
     #[test]
@@ -235,8 +210,8 @@ mod tests {
     }
 
     #[test]
-    fn text_serializes_as_its_source() {
-        let v = serde_json::to_value(Text::new("翻訳#task")).unwrap();
-        assert_eq!(v, serde_json::json!("翻訳#task"));
+    fn text_serializes_as_its_key() {
+        let v = serde_json::to_value(Text::new("common:translation_task")).unwrap();
+        assert_eq!(v, serde_json::json!("common:translation_task"));
     }
 }

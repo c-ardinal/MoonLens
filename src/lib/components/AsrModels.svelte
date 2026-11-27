@@ -73,13 +73,13 @@
         if (data.selected !== replacement) return;
       }
       await deleteAsrModel(id);
-      notify(t('{name}：削除完了', { name: data.models.find((m) => m.id === id)?.label ?? id }));
+      notify(t('common:name_deleted', { name: data.models.find((m) => m.id === id)?.label ?? id }));
     });
 </script>
 
 <ModelChoice
   key="asr"
-  feature={t('音声認識')}
+  feature={t('common:speech_recognition')}
   rows={data.models}
   selected={data.selected}
   {recommended}

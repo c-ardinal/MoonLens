@@ -25,12 +25,12 @@
   const current = $derived(role === 'assistant' ? data.assistant : data.selected);
   const recommended = $derived(systemProfile.recommended?.[role]?.model ?? '');
   const progress = $derived(Object.fromEntries(Object.entries(store.progress).map(([k, p]) => [k, p.fraction])));
-  const feature = $derived(role === 'assistant' ? t('説明・要約') : t('翻訳'));
+  const feature = $derived(role === 'assistant' ? t('common:explain_summarize') : t('common:translation'));
 
   /** 他用途で使用中のモデル（削除不可）。 */
   function usedElsewhere(id: string): string | null {
-    if (role === 'translate' && id === data.assistant) return t('説明・要約');
-    if (role === 'assistant' && id === data.selected) return t('翻訳');
+    if (role === 'translate' && id === data.assistant) return t('common:explain_summarize');
+    if (role === 'assistant' && id === data.selected) return t('common:translation');
     return null;
   }
 
@@ -66,7 +66,7 @@
         if (current !== replacement) return;
       }
       await deleteLlmModel(id);
-      notify(t('{name}：削除完了', { name: data.models.find((m) => m.id === id)?.label ?? id }));
+      notify(t('common:name_deleted', { name: data.models.find((m) => m.id === id)?.label ?? id }));
     });
 </script>
 

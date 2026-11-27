@@ -38,6 +38,6 @@ export function providerLabel(result: TaskResult): string {
  */
 export function summarizeFallback(reasons: string[]): string {
   if (reasons.length === 0) return '';
-  if (reasons.length === 1) return t('フォールバック: {reason}', { reason: reasons[0] });
-  return t('フォールバック {n} 段: {reasons}', { n: reasons.length, reasons: reasons.join(' → ') });
+  if (reasons.length === 1) return t('result:fallback_reason', { reason: reasons[0] });
+  return t('result:n_fallbacks_reasons', { n: reasons.length, reasons: reasons.join(' → ') });
 }

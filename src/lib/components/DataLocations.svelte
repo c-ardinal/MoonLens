@@ -25,11 +25,11 @@
   const places = $derived(
     info
       ? [
-          { id: 'models', label: t('モデル'), value: size(info.models_bytes), path: info.models_dir },
-          { id: 'data', label: t('履歴・キャッシュ・拡張機能'), value: size(info.data_bytes), path: info.data_dir },
-          { id: 'config', label: t('設定ファイル'), value: '', path: info.config_dir },
+          { id: 'models', label: t('common:models'), value: size(info.models_bytes), path: info.models_dir },
+          { id: 'data', label: t('data-locations:history_cache_extensions'), value: size(info.data_bytes), path: info.data_dir },
+          { id: 'config', label: t('data-locations:settings_file'), value: '', path: info.config_dir },
           ...(info.log_dir
-            ? [{ id: 'log', label: t('ログ'), value: t('不具合報告時に添付'), path: info.log_dir }]
+            ? [{ id: 'log', label: t('data-locations:logs'), value: t('data-locations:attach_to_bug_reports'), path: info.log_dir }]
             : [])
         ]
       : []
@@ -49,7 +49,7 @@
     error = null;
     try {
       await deleteOrphanLlmFile(name);
-      notify(t('{name}：削除完了', { name }));
+      notify(t('common:name_deleted', { name }));
     } catch (e) {
       error = errorText(e);
     }
@@ -58,14 +58,14 @@
 </script>
 
 {#if info}
-  <SettingRow id="data:version" help={t('バージョン：{version}', { version: info.version })}>
+  <SettingRow id="data:version" help={t('data-locations:version_version', { version: info.version })}>
     <div class="srow">
-      <span class="row-label">{t('バージョン')}</span>
+      <span class="row-label">{t('data-locations:version')}</span>
       <span class="row-ctl"><span class="row-value">{info.version}</span></span>
     </div>
   </SettingRow>
   {#each places as p (p.id)}
-    <SettingRow id="data:{p.id}" help={t('保存先：{path}', { path: p.path })}>
+    <SettingRow id="data:{p.id}" help={t('data-locations:location_path', { path: p.path })}>
       <div class="srow">
         <span class="row-label">{p.label}</span>
         <span class="row-ctl"><span class="row-value">{p.value}</span></span>
@@ -73,12 +73,12 @@
     </SettingRow>
   {/each}
   {#each orphans as o (o.name)}
-    <SettingRow id="data:orphan:{o.name}" help={t('旧版のモデル（現行版で未使用）。削除で容量を解放。{name}', { name: o.name })}>
+    <SettingRow id="data:orphan:{o.name}" help={t('data-locations:a_model_from_an_earlier_version_no', { name: o.name })}>
       <div class="srow">
-        <span class="row-label" title={o.name}>{t('旧モデル：{name}', { name: o.name })}</span>
+        <span class="row-label" title={o.name}>{t('data-locations:old_model_name', { name: o.name })}</span>
         <span class="row-ctl">
           <span class="row-value">{size(o.size)}</span>
-          <button class="sbtn icon" title={t('削除')} aria-label={t('{name} を削除', { name: o.name })} onclick={() => removeOrphan(o.name)}>
+          <button class="sbtn icon" title={t('common:delete')} aria-label={t('common:delete_name', { name: o.name })} onclick={() => removeOrphan(o.name)}>
             <Trash2 class="h-4 w-4" />
           </button>
         </span>
@@ -86,7 +86,7 @@
     </SettingRow>
   {/each}
 {:else if !error}
-  <p class="srow"><span class="row-label">{t('読込中…')}</span></p>
+  <p class="srow"><span class="row-label">{t('common:loading')}</span></p>
 {/if}
 {#if error}
   <div class="srow error"><p class="row-label">{error}</p></div>

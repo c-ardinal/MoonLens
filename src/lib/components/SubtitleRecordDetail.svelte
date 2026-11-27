@@ -47,9 +47,9 @@
   const long = $derived((record?.lines.at(-1)?.end_ms ?? 0) >= 3_600_000);
 
   const CONTENT_LABELS: [SubtitleExportContent, string][] = [
-    ['translated', '訳文'],
-    ['original', '原文'],
-    ['both', '併記']
+    ['translated', 'common:translated_text'],
+    ['original', 'common:source'],
+    ['both', 'subtitle-record-detail:both']
   ];
 
   function cancel() {
@@ -103,7 +103,7 @@
         { signal: mine.signal, onProgress: (done, total) => (progress = { done, total }) }
       );
       if (failed === total) {
-        notifyError(t('再翻訳失敗：全件の翻訳不可（変更なし）'));
+        notifyError(t('subtitle-record-detail:retranslation_failed_no_line_could_be'));
         return;
       }
       // 再翻訳中に記録が変化（音声翻訳の実行中）した場合は失敗し、記録中の行を保護
@@ -111,8 +111,8 @@
       if (entry.id === id) record = { ...rec, revision, lines };
       onchanged();
       undoable({
-        text: failed > 0 ? t('再翻訳完了（{n} 件は旧訳を維持）', { n: failed }) : t('再翻訳完了'),
-        failure: t('取消失敗'),
+        text: failed > 0 ? t('subtitle-record-detail:retranslation_complete_n_lines_kept_the', { n: failed }) : t('subtitle-record-detail:retranslation_complete'),
+        failure: t('subtitle-record-detail:undo_failed'),
         undo: async () => {
           const restored = await replaceSubtitleLines(id, revision, before);
           if (entry.id === id) record = { ...rec, revision: restored, lines: before };
@@ -120,7 +120,7 @@
         }
       });
     } catch (e) {
-      if (!mine.signal.aborted) notifyError(t('再翻訳失敗：{error}', { error: errorText(e) }));
+      if (!mine.signal.aborted) notifyError(t('subtitle-record-detail:retranslation_failed_error', { error: errorText(e) }));
     } finally {
       if (ctl === mine) {
         ctl = null;
@@ -130,12 +130,12 @@
   }
 
   async function save(format: SubtitleExportFormat) {
-    const label = format === 'srt' ? 'SRT' : t('テキスト');
+    const label = format === 'srt' ? 'SRT' : t('common:text');
     try {
       const path = await exportSubtitleRecord(entry.id, format, content);
-      if (path) notify(t('{label} 出力完了：{file}', { label, file: path.split(/[\\/]/).pop() ?? '' }));
+      if (path) notify(t('subtitle-record-detail:label_exported_file', { label, file: path.split(/[\\/]/).pop() ?? '' }));
     } catch (e) {
-      notifyError(t('{label} 出力失敗：{error}', { label, error: errorText(e) }));
+      notifyError(t('subtitle-record-detail:label_export_failed_error', { label, error: errorText(e) }));
     }
   }
 
@@ -144,7 +144,7 @@
       .map((l) => l.translated)
       .filter(Boolean)
       .join('\n');
-    if (text) void copyText(text, '訳文');
+    if (text) void copyText(text, 'common:translated_text');
   }
 </script>
 
@@ -152,7 +152,7 @@
   <span class="rounded-full bg-surface-muted px-2 py-0.5">{kindLabel(entry.kind)}</span>
   <time datetime={new Date(entry.created_at * 1000).toISOString()}>{dateLabel(entry.created_at)}</time>
   {#if record}
-    <span class="min-w-0 break-words rounded-full bg-surface-muted px-2 py-0.5">{t('音源：{source}', { source: record.source })}</span>
+    <span class="min-w-0 break-words rounded-full bg-surface-muted px-2 py-0.5">{t('subtitle-record-detail:audio_source', { source: record.source })}</span>
     <span class="tabular-nums">{durationLabel(record.lines)}</span>
   {/if}
   {#if entry.provider}
@@ -168,7 +168,7 @@
 </div>
 
 {#if record}
-  <ol class="scrollbar-minimal flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-4" aria-label={t('字幕の行')} style:--tc={long ? '7.5rem' : '5rem'}>
+  <ol class="scrollbar-minimal flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-4" aria-label={t('subtitle-record-detail:subtitle_lines')} style:--tc={long ? '7.5rem' : '5rem'}>
     {#each record.lines as l (l.seq)}
       <li class="grid grid-cols-[var(--tc)_minmax(0,1fr)] gap-2">
         <time class="text-xs tabular-nums text-ink-faint">{timeLabel(l.start_ms)}</time>
@@ -184,7 +184,7 @@
 {:else}
   <div class="scrollbar-minimal flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4">
     {#if record === undefined}
-      <p class="text-sm text-ink-muted">{t('読込中…')}</p>
+      <p class="text-sm text-ink-muted">{t('common:loading')}</p>
     {:else}
       {@render plain()}
     {/if}
@@ -194,37 +194,37 @@
 <div class="flex flex-wrap items-center gap-2 border-t border-border px-4 py-2">
   {#if record}
     {#if progress}
-      <span class="text-sm tabular-nums text-ink-muted" role="status">{t('再翻訳中 {done}/{total}', { done: progress.done, total: progress.total })}</span>
-      <button class="sbtn" onclick={cancel}>{t('中止')}</button>
+      <span class="text-sm tabular-nums text-ink-muted" role="status">{t('subtitle-record-detail:retranslating_done_total', { done: progress.done, total: progress.total })}</span>
+      <button class="sbtn" onclick={cancel}>{t('common:cancel')}</button>
     {:else}
-      <button class="sbtn icon neutral" title={t('再翻訳')} aria-label={t('再翻訳')} onclick={start}>
+      <button class="sbtn icon neutral" title={t('subtitle-record-detail:retranslate')} aria-label={t('subtitle-record-detail:retranslate')} onclick={start}>
         <Languages class="h-3.5 w-3.5" />
       </button>
     {/if}
-    <button class="sbtn icon neutral" title={t('SRT 出力')} aria-label={t('SRT 出力')} onclick={() => save('srt')}>
+    <button class="sbtn icon neutral" title={t('subtitle-record-detail:export_srt')} aria-label={t('subtitle-record-detail:export_srt')} onclick={() => save('srt')}>
       <Captions class="h-3.5 w-3.5" />
     </button>
-    <button class="sbtn icon neutral" title={t('テキスト出力')} aria-label={t('テキスト出力')} onclick={() => save('txt')}>
+    <button class="sbtn icon neutral" title={t('subtitle-record-detail:export_text')} aria-label={t('subtitle-record-detail:export_text')} onclick={() => save('txt')}>
       <FileText class="h-3.5 w-3.5" />
     </button>
     <select
       class="rounded-ml-sm border border-border bg-surface px-2 py-1.5 text-sm text-ink"
-      title={t('出力内容')}
-      aria-label={t('出力内容')}
+      title={t('subtitle-record-detail:export_content')}
+      aria-label={t('subtitle-record-detail:export_content')}
       bind:value={content}
     >
       {#each CONTENT_LABELS as [value, label] (value)}
         <option {value}>{t(label)}</option>
       {/each}
     </select>
-    <button class="sbtn icon neutral" title={t('訳文をコピー')} aria-label={t('訳文をコピー')} onclick={copyTranslation}>
+    <button class="sbtn icon neutral" title={t('common:copy_translation')} aria-label={t('common:copy_translation')} onclick={copyTranslation}>
       <Copy class="h-3.5 w-3.5" />
     </button>
   {/if}
   <button
     class="sbtn icon ml-auto"
-    title={t('当該履歴を削除')}
-    aria-label={t('当該履歴を削除')}
+    title={t('common:delete_this_item')}
+    aria-label={t('common:delete_this_item')}
     onclick={onremove}
   >
     <Trash2 class="h-3.5 w-3.5" />

@@ -34,11 +34,11 @@ const DEFAULT_TOML: &str = include_str!("default.toml");
 /// First lines of the user file. Kept short; the reference file carries
 /// every key with its default.
 fn user_header() -> &'static str {
-    crate::i18n::text("# MoonLens 設定（変更値のみ）。\n# 既定値の一覧：同一フォルダーの config.default.toml\n# 未記載の項目は既定値を使用。保存時に即時反映。\n")
+    crate::i18n::text("config:moonlens_settings_changed_values_only_every")
 }
 
 fn defaults_header() -> &'static str {
-    crate::i18n::text("# MoonLens 既定値（参照用。起動時に再生成、編集は無効）。\n# 変更は config.toml に該当キーのみ記述。\n")
+    crate::i18n::text("config:moonlens_defaults_for_reference_rewritten_at")
 }
 
 /// Notice id for problems found in config.toml.
@@ -464,14 +464,11 @@ fn report(outcome: &LoadOutcome, backup: Option<&Path>) {
     }
     let saved = backup
         .and_then(|p| p.file_name())
-        .map(|n| tr!("元ファイル：{file}。", file = n.to_string_lossy()))
+        .map(|n| tr!("config:original_file_file", file = n.to_string_lossy()))
         .unwrap_or_default();
     crate::notices::push(
         NOTICE_CONFIG,
-        tr!(
-            "設定ファイルの構文エラー。既定値を使用。{saved}",
-            saved = saved
-        ),
+        tr!("config:the_settings_file_has_a_syntax_error", saved = saved),
         None,
     );
 }
@@ -514,21 +511,21 @@ fn load_user_file(path: &Path) -> (Settings, LoadOutcome, Option<toml::Table>) {
                 let shown: Vec<&str> = ordered.into_iter().take(2).collect();
                 let more = done.len().saturating_sub(shown.len());
                 let more = if more > 0 {
-                    tr!("他 {more} 件", more = more)
+                    tr!("config:and_more_more", more = more)
                 } else {
                     String::new()
                 };
                 let saved = kept
                     .as_deref()
                     .and_then(|p| p.file_name())
-                    .map(|n| tr!("元ファイル：{file}。", file = n.to_string_lossy()))
+                    .map(|n| tr!("config:original_file_file", file = n.to_string_lossy()))
                     .unwrap_or_default();
                 crate::notices::push(
                     NOTICE_CONFIG_MIGRATED,
                     tr!(
-                        "旧形式の設定を自動更新（{done} 件）：{items}{more}。{saved}",
+                        "config:updated_settings_from_an_older_format_done",
                         done = done.len(),
-                        items = shown.join(crate::i18n::text("、")),
+                        items = shown.join(crate::i18n::text("common:list_separator")),
                         more = more,
                         saved = saved
                     ),

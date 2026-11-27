@@ -20,14 +20,14 @@
 </script>
 
 <div class="flex min-h-[60px] items-center justify-between gap-6 py-2">
-  <span class="row-label text-sm font-medium text-ink">{t('推論デバイス')}</span>
+  <span class="row-label text-sm font-medium text-ink">{t('inference-device:inference_device')}</span>
   <span class="row-value value-text text-right text-sm text-ink-muted">
     {#if profile}
       {inferenceDevice(profile, useGpu)}
     {:else if failed}
-      {t('取得不可')}
+      {t('common:unavailable')}
     {:else}
-      {t('確認中…')}
+      {t('common:checking')}
     {/if}
   </span>
 </div>

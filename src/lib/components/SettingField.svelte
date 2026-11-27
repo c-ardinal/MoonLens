@@ -45,7 +45,7 @@
 >
   <div class="min-w-0 flex-1">
     <label for={id} class="text-sm font-medium {invalid ? 'text-red-500' : 'text-ink'}">
-      {t(field.label)}{#if invalid}<span class="ml-2 text-xs font-normal">{t('重複')}</span>{/if}
+      {t(field.label)}{#if invalid}<span class="ml-2 text-xs font-normal">{t('setting-field:duplicate')}</span>{/if}
     </label>
     {#if field.help && !compact}
       <p class="mt-0.5 text-xs leading-relaxed text-ink-muted">{t(field.help)}</p>
@@ -89,7 +89,7 @@
         onchange={(e) => onChange((e.currentTarget as HTMLSelectElement).value)}
       >
         {#if !field.options.some((o) => o.value === value)}
-          <option value={value ?? ''}>{value ?? t('未設定')}</option>
+          <option value={value ?? ''}>{value ?? t('common:not_set')}</option>
         {/if}
         {#each field.options as o (o.value)}
           <option value={o.value}>{t(o.label)}</option>
@@ -146,8 +146,8 @@
       class="reset rounded-ml-sm p-1 text-ink-faint transition hover:bg-surface-muted hover:text-ink {isDefault
         ? 'invisible'
         : ''}"
-      title={t('初期値に復元')}
-      aria-label={t('{label}：初期値に復元', { label: t(field.label) })}
+      title={t('setting-field:reset_to_default')}
+      aria-label={t('setting-field:label_reset_to_default', { label: t(field.label) })}
       onclick={() => onChange(defaultValue)}
     >
       <RotateCcw class="h-3.5 w-3.5" />

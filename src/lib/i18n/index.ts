@@ -1,19 +1,18 @@
 /**
  * 表示言語（UI 言語）。
  *
- * 原文は日本語：ソース中の日本語文言が辞書の検索キー。`t('保存')` は日本語表示で
- * 原文、他言語の表示で言語ファイル `locales/<言語コード>.json` の訳文を返却。
- * 未登録の文言は原文で代替表示。
- * 言語ファイルは Rust 側（`src-tauri/src/i18n.rs`）と共用。言語の追加：`locales/` へ
- * ファイルを追加（`@language`：設定画面に表示する言語名）。ソースの変更は不要。
- * 文言の追加手順：日本語で記述 → `t()` で包囲 → 各言語ファイルへ訳文を追加
- * 訳し分け：原文へ `#文脈` を付記（`plain` 参照）。
+ * 文言は言語ファイル `locales/<言語コード>.json` で一覧管理（1 言語 1 ファイル、Rust 側
+ * `src-tauri/src/i18n.rs` と共用）。ソースはキー ID（`区分:名称`）で参照：`t('common:save')`。
+ * 表示言語のファイルに無いキーは日本語（`ja.json`）で代替表示。
+ * 言語の追加：`locales/` へファイルを追加（`@language`：設定画面に表示する言語名）。
+ * ソースの変更は不要。
+ * 文言の追加手順：全言語ファイルへキーと文言を追加 → `t('区分:名称')` で参照
  * （検査：`npm run lint:i18n`）。
  *
  * 本モジュールは Svelte 非依存（Node のテストから利用可能）。画面の再描画は
  * `reactive.svelte.ts` が `setTracker` 経由で接続。
  */
-/** 原文の言語。 */
+/** 基準の言語：文言の代替表示と、文体検査の対象。 */
 export const SOURCE_LOCALE = 'ja';
 /** OS の言語に該当する言語ファイルが無い場合の表示言語。 */
 const FALLBACK_LOCALE = 'en';
@@ -30,16 +29,12 @@ const DICTS: Record<Locale, Dict> = Object.fromEntries(
   )
 );
 
-/** 表示言語の一覧（原文の言語、言語ファイルの符号位置順）。name：当該言語での自称。 */
-export const LOCALES: { code: Locale; name: string }[] = [
-  { code: SOURCE_LOCALE, name: '日本語' }, // i18n-ignore
-  ...Object.keys(DICTS)
-    .sort()
-    .map((code) => ({ code, name: DICTS[code][NAME_KEY] ?? code }))
-];
+/** 表示言語の一覧（基準の言語、他は言語コード順）。name：当該言語での自称。 */
+export const LOCALES: { code: Locale; name: string }[] = Object.keys(DICTS)
+  .sort((a, b) => Number(b === SOURCE_LOCALE) - Number(a === SOURCE_LOCALE) || (a < b ? -1 : 1))
+  .map((code) => ({ code, name: DICTS[code][NAME_KEY] ?? code }));
 
-const known = (code: unknown): code is Locale =>
-  typeof code === 'string' && (code === SOURCE_LOCALE || code in DICTS);
+const known = (code: unknown): code is Locale => typeof code === 'string' && code in DICTS;
 /** 前回の表示言語の控え（起動直後、設定の取得前の表示に使用）。 */
 const CACHE_KEY = 'moonlens.locale';
 
@@ -117,16 +112,15 @@ const fill = (s: string, vars?: Vars) =>
   vars ? s.replace(/\{(\w+)\}/g, (m, k) => (k in vars ? String(vars[k]) : m)) : s;
 
 /**
- * 文言の翻訳。`ja` は日本語の原文（辞書の検索キー）、`{name}` は `vars` の値へ置換。
- * 例：`t('{n} 件', { n: 3 })`。
+ * 文言の取得。`key` は言語ファイルのキー ID、`{name}` は `vars` の値へ置換。
+ * 例：`t('history:count', { n: 3 })`。
  */
-export function t(ja: string, vars?: Vars): string {
+export function t(key: string, vars?: Vars): string {
   track();
-  return fill(DICTS[current]?.[ja] ?? plain(ja), vars);
+  return fill(DICTS[current]?.[key] ?? DICTS[SOURCE_LOCALE]?.[key] ?? key, vars);
 }
 
-/**
- * 文脈指定の除去。同一の原文を表示箇所で訳し分ける場合、原文へ `#文脈` を付記
- * （例：`t('翻訳#engine')`。日本語表示は「翻訳」、英語表示は辞書の `翻訳#engine`）。
- */
-const plain = (ja: string) => ja.replace(/#[a-z][a-z-]*$/, '');
+/** 基準の言語（日本語）の文言。表示言語に依存しない用途（LLM プロンプト等）に使用。 */
+export function sourceText(key: string, vars?: Vars): string {
+  return fill(DICTS[SOURCE_LOCALE]?.[key] ?? key, vars);
+}

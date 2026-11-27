@@ -35,30 +35,30 @@
 
   const updateOf = (id: string) => updates?.find((u) => u.plugin_id === id);
 
-  /** 日本語の原文（表示時に `t()` で翻訳）。 */
+  /** 文言のキー ID（表示時に `t()` で取得）。 */
   const ADD_HELP =
-    '「ファイル追加」で .moonlens-plugin を読込。手動配置：$APPDATA/plugins/<id>/plugin.toml';
+    'plugins:use_add_file_to_load_a_moonlens';
 
   function help(p: PluginDescriptor): string {
     const u = updateOf(p.id);
     return [
-      t('{id}（{kind}）v{version}・{author}・{license}', {
+      t('plugins:id_kind_v_version_author_license', {
         id: p.id,
         kind: p.kind,
         version: p.version,
         author: p.author,
         license: p.license
       }),
-      p.provides.length ? t('提供機能：{list}', { list: p.provides.join(t('、')) }) : '',
-      p.permissions_summary.length ? t('権限：{list}', { list: p.permissions_summary.join(t('／')) }) : '',
+      p.provides.length ? t('plugins:provides_list', { list: p.provides.join(t('common:list_separator')) }) : '',
+      p.permissions_summary.length ? t('plugins:permissions_list', { list: p.permissions_summary.join(t('common:choice_separator')) }) : '',
       u
         ? u.notes
-          ? t('更新あり：v{version}（{notes}）', { version: u.latest_version, notes: u.notes })
-          : t('更新あり：v{version}', { version: u.latest_version })
+          ? t('plugins:update_available_v_version_notes', { version: u.latest_version, notes: u.notes })
+          : t('plugins:update_available_v_version', { version: u.latest_version })
         : ''
     ]
       .filter(Boolean)
-      .join(t('。'));
+      .join(t('plugins:text'));
   }
 
   async function refresh() {
@@ -90,7 +90,7 @@
     try {
       const result = await pickAndInstallPlugin();
       if (result) {
-        notify(t('追加完了：{name}', { name: result }));
+        notify(t('plugins:added_name', { name: result }));
         await refresh();
       }
     } catch (e) {
@@ -106,9 +106,9 @@
     error = null;
     try {
       updates = await checkPluginUpdates();
-      notify(updates.length === 0 ? t('全拡張機能最新') : t('更新あり：{n} 件', { n: updates.length }));
+      notify(updates.length === 0 ? t('plugins:all_extensions_are_up_to_date') : t('plugins:updates_available_n', { n: updates.length }));
     } catch (e) {
-      error = t('更新確認失敗：{error}', { error: errorText(e) });
+      error = t('plugins:update_check_failed_error', { error: errorText(e) });
     } finally {
       checking = false;
     }
@@ -117,15 +117,15 @@
 
 <SettingRow id="plugins:add" help={t(ADD_HELP)}>
   <div class="srow">
-    <span class="row-label">{t('拡張機能の追加')}</span>
+    <span class="row-label">{t('plugins:add_extension')}</span>
     <span class="row-ctl">
       {#if plugins.length > 0}
         <button class="sbtn" onclick={checkUpdates} disabled={checking}>
-          {checking ? t('確認中…') : t('更新確認')}
+          {checking ? t('common:checking') : t('plugins:check_for_updates')}
         </button>
       {/if}
       <button class="sbtn on" onclick={install} disabled={installing}>
-        {installing ? t('追加中…') : t('ファイル追加')}
+        {installing ? t('plugins:adding') : t('plugins:add_file')}
       </button>
     </span>
   </div>
@@ -136,9 +136,9 @@
 {/if}
 
 {#if loading}
-  <p class="srow"><span class="row-label">{t('読込中…')}</span></p>
+  <p class="srow"><span class="row-label">{t('common:loading')}</span></p>
 {:else if plugins.length === 0}
-  <p class="srow"><span class="row-label empty">{t('拡張機能なし')}</span></p>
+  <p class="srow"><span class="row-label empty">{t('plugins:no_extensions')}</span></p>
 {:else}
   {#each plugins as p (p.id)}
     {@const u = updateOf(p.id)}
@@ -147,15 +147,15 @@
         <span class="row-label">{p.name}</span>
         <span class="row-ctl">
           {#if u}
-            <span class="stag rec">{t('更新 v{version}', { version: u.latest_version })}</span>
+            <span class="stag rec">{t('plugins:update_v_version', { version: u.latest_version })}</span>
             {#if u.download_url}
               <a
                 class="sbtn icon"
                 href={u.download_url}
                 target="_blank"
                 rel="noreferrer"
-                title={t('更新版ダウンロード')}
-                aria-label={t('{name}：更新版ダウンロード', { name: p.name })}
+                title={t('plugins:download_update')}
+                aria-label={t('plugins:name_download_update', { name: p.name })}
               >
                 <Download class="h-4 w-4" />
               </a>
@@ -167,7 +167,7 @@
             <input
               type="checkbox"
               class="sr-only"
-              aria-label={t('{name}：有効化', { name: p.name })}
+              aria-label={t('plugins:name_enable', { name: p.name })}
               checked={p.enabled}
               onchange={(e) => toggle(p, e.currentTarget.checked)}
             />

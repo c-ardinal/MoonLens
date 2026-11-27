@@ -100,7 +100,7 @@
     class="ctx-menu"
     role="menu"
     tabindex="-1"
-    aria-label={t('編集メニュー')}
+    aria-label={t('context-menu:edit_menu')}
     style:left="{pos.x}px"
     style:top="{pos.y}px"
     onmousedown={(e) => e.preventDefault()}

@@ -310,14 +310,14 @@ pub fn build() -> Result<()> {
 /// Tray menu in the current display language.
 fn tray_menu(app: &AppHandle) -> Result<Menu<tauri::Wry>> {
     let item = |id: &str, text: String| MenuItem::with_id(app, id, text, true, None::<&str>);
-    let open = item("open", tr!("MoonLens 表示"))?;
-    let capture = item("capture", tr!("ウィンドウ翻訳"))?;
-    let pause = item("pause", tr!("ウィンドウ翻訳 一時停止／再開"))?;
-    let subtitle = item("subtitle", tr!("音声翻訳 開始／停止"))?;
-    let plugins = item("plugins", tr!("拡張機能"))?;
-    let history = item("history", tr!("履歴"))?;
+    let open = item("open", tr!("app:show_moonlens"))?;
+    let capture = item("capture", tr!("common:window_translation"))?;
+    let pause = item("pause", tr!("common:window_translation_pause_resume"))?;
+    let subtitle = item("subtitle", tr!("common:audio_translation_start_stop"))?;
+    let plugins = item("plugins", tr!("common:extensions"))?;
+    let history = item("history", tr!("common:history"))?;
     let sep = tauri::menu::PredefinedMenuItem::separator(app)?;
-    let quit = item("quit", tr!("終了"))?;
+    let quit = item("quit", tr!("app:quit"))?;
     Ok(Menu::with_items(
         app,
         &[

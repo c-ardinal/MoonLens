@@ -29,8 +29,8 @@
   const help = (s: OcrScript) => {
     const note = OCR_SCRIPTS[s.id] ? t(OCR_SCRIPTS[s.id].note) : '';
     return s.installed
-      ? t('{note}。標準モデルで読取不能な行のみ再認識（通常時の読取速度は不変）。', { note })
-      : t('{note}。標準モデルで読取不能な行のみ再認識（通常時の読取速度は不変）。未取得。', { note });
+      ? t('ocr-scripts:help', { note })
+      : t('ocr-scripts:help_not_downloaded', { note });
   };
 
   async function refresh() {
@@ -55,7 +55,7 @@
     progress = { ...progress, [id]: 0 };
     try {
       await installOcrScript(id);
-      notify(t('{name}：取得完了', { name: label(id) }));
+      notify(t('ocr-scripts:name_downloaded', { name: label(id) }));
     } catch (e) {
       error = errorText(e);
     } finally {
@@ -70,7 +70,7 @@
     error = null;
     try {
       await deleteOcrScript(id);
-      notify(t('{name}：削除完了', { name: label(id) }));
+      notify(t('common:name_deleted', { name: label(id) }));
     } catch (e) {
       error = errorText(e);
     }
@@ -79,8 +79,8 @@
 </script>
 
 {#if scripts.length}
-  <div class="srow head"><p class="row-label">{t('追加の文字体系')}</p></div>
-  <div role="group" aria-label={t('追加の文字体系')}>
+  <div class="srow head"><p class="row-label">{t('ocr-scripts:additional_scripts')}</p></div>
+  <div role="group" aria-label={t('ocr-scripts:additional_scripts')}>
     {#each scripts as s (s.id)}
       {@const p = progress[s.id]}
       <SettingRow id="ocr-script:{s.id}" help={help(s)}>
@@ -89,20 +89,20 @@
           <span class="row-ctl">
             <span class="row-value">{p !== undefined ? `${Math.round(p * 100)}%` : formatBytes(s.size)}</span>
             {#if p !== undefined}
-              <span class="stag off">{t('取得中')}</span>
+              <span class="stag off">{t('common:downloading')}</span>
             {:else if !s.installed}
-              <button class="sbtn" disabled={!ready} onclick={() => install(s.id)} aria-label={t('{name} を取得', { name: label(s.id) })}>
-                {t('取得')}
+              <button class="sbtn" disabled={!ready} onclick={() => install(s.id)} aria-label={t('ocr-scripts:download_name', { name: label(s.id) })}>
+                {t('common:download')}
               </button>
             {:else if confirmDelete === s.id}
               <button class="sbtn danger" onclick={() => remove(s.id)} onblur={() => (confirmDelete = null)}>
-                {t('削除確定')}
+                {t('common:confirm_delete')}
               </button>
             {:else}
               <button
                 class="sbtn icon"
-                title={t('削除')}
-                aria-label={t('{name} を削除', { name: label(s.id) })}
+                title={t('common:delete')}
+                aria-label={t('common:delete_name', { name: label(s.id) })}
                 onclick={() => (confirmDelete = s.id)}
               >
                 <Trash2 class="h-4 w-4" />

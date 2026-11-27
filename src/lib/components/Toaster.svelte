@@ -9,7 +9,7 @@
   左寄せの理由：各画面の右下は操作部（履歴の削除・訳文のコピー）の定位置で、通知による遮蔽を回避。
   常設の領域（role=status）：通知の追加を読上げ対象とし、エラーのみ role=alert で即時読上げ。
 -->
-<div class="toaster px-zoom" role="status" aria-label={t('通知')}>
+<div class="toaster px-zoom" role="status" aria-label={t('toaster:notifications')}>
   {#each toasts.items as toast (toast.id)}
     <!-- svelte-ignore a11y_no_static_element_interactions -->
     <div
@@ -25,7 +25,7 @@
       {#if toast.action}
         <button class="act" onclick={() => close(toast.id, 'action')}>{toast.action}</button>
       {/if}
-      <button class="x" title={t('閉じる')} aria-label={t('通知を閉じる')} onclick={() => close(toast.id, 'dismiss')}>
+      <button class="x" title={t('common:close')} aria-label={t('common:dismiss_notification')} onclick={() => close(toast.id, 'dismiss')}>
         <X class="h-4 w-4" />
       </button>
     </div>

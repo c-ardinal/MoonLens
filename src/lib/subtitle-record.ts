@@ -86,7 +86,7 @@ export interface RetranslateResult {
 }
 
 function abortError(signal: AbortSignal): unknown {
-  return signal.reason ?? new DOMException('中止', 'AbortError');
+  return signal.reason ?? new DOMException('common:cancel', 'AbortError');
 }
 
 /**
