@@ -1012,9 +1012,77 @@ pub async fn delete_history_entry(id: i64, state: State<'_, AppState>) -> Result
 #[tauri::command]
 pub async fn restore_history_entry(
     entry: crate::storage::HistoryEntry,
+    record: Option<crate::storage::SubtitleRecord>,
     state: State<'_, AppState>,
 ) -> Result<usize, String> {
-    state.storage.restore(&entry).map_err(|e| e.to_string())
+    state
+        .storage
+        .restore_with_record(&entry, record.as_ref())
+        .map_err(|e| e.to_string())
+}
+
+/// 音声翻訳の履歴（時刻付き行）。記録なしの行は null。
+#[tauri::command]
+pub async fn get_subtitle_record(
+    id: i64,
+    state: State<'_, AppState>,
+) -> Result<Option<crate::storage::SubtitleRecord>, String> {
+    state.storage.subtitle_record(id).map_err(|e| e.to_string())
+}
+
+/// 記録の全行を置換（再翻訳とその取消）。
+#[tauri::command]
+pub async fn replace_subtitle_lines(
+    id: i64,
+    lines: Vec<crate::storage::SubtitleLine>,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    state
+        .storage
+        .replace_subtitle_lines(id, &lines)
+        .map_err(|e| format!("{e:#}"))
+}
+
+/// 記録を SRT・テキストで保存。保存先ダイアログの取消は `None`。
+#[tauri::command]
+pub async fn export_subtitle_record(
+    id: i64,
+    format: crate::subtitle_record::ExportFormat,
+    content: crate::subtitle_record::ExportContent,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<Option<String>, String> {
+    use tauri_plugin_dialog::DialogExt;
+    let record = state
+        .storage
+        .subtitle_record(id)
+        .map_err(|e| e.to_string())?
+        .ok_or("字幕記録なし")?;
+    let created_at = state
+        .storage
+        .entry(id)
+        .map_err(|e| e.to_string())?
+        .map_or(0, |e| e.created_at);
+    let text = crate::subtitle_record::render(&record, format, content);
+    let name = crate::subtitle_record::export_file_name(created_at, format);
+    let label = match format {
+        crate::subtitle_record::ExportFormat::Srt => "SRT 字幕",
+        crate::subtitle_record::ExportFormat::Txt => "テキスト",
+    };
+    let dialog = app.dialog().clone();
+    let chosen = tokio::task::spawn_blocking(move || {
+        dialog
+            .file()
+            .set_file_name(name)
+            .add_filter(label, &[format.extension()])
+            .blocking_save_file()
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+    let Some(file) = chosen else { return Ok(None) };
+    let path = file.into_path().map_err(|e| e.to_string())?;
+    std::fs::write(&path, text).map_err(|e| e.to_string())?;
+    Ok(Some(path.to_string_lossy().to_string()))
 }
 
 #[tauri::command]

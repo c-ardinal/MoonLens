@@ -20,6 +20,8 @@ use crate::{
     pipeline::Pipeline,
     providers::{Capability, TaskInput, TaskOutput},
     settings::SettingsStore,
+    storage::Storage,
+    subtitle_record::Recorder,
 };
 
 #[derive(Debug, Clone, Serialize)]
@@ -37,6 +39,11 @@ pub enum SubtitleEvent {
     Chunk {
         original: String,
         translated: String,
+        /// Milliseconds from the start of the loop to the moment this
+        /// chunk's audio was cut from the buffer.
+        at_ms: u64,
+        /// Length of the audio sent to recognition.
+        duration_ms: u64,
     },
     Error {
         message: String,
@@ -55,6 +62,7 @@ pub enum Phase {
 pub struct SubtitleService {
     settings: Arc<SettingsStore>,
     pipeline: Arc<Pipeline>,
+    storage: Arc<Storage>,
     inner: Mutex<Option<Inner>>,
 }
 
@@ -65,10 +73,15 @@ struct Inner {
 }
 
 impl SubtitleService {
-    pub fn new(settings: Arc<SettingsStore>, pipeline: Arc<Pipeline>) -> Self {
+    pub fn new(
+        settings: Arc<SettingsStore>,
+        pipeline: Arc<Pipeline>,
+        storage: Arc<Storage>,
+    ) -> Self {
         Self {
             settings,
             pipeline,
+            storage,
             inner: Mutex::new(None),
         }
     }
@@ -170,14 +183,17 @@ impl SubtitleService {
         let pipeline = self.pipeline.clone();
         let settings = self.settings.clone();
         let app_emit = app.clone();
+        let recorder = Recorder::new(self.storage.clone(), self.settings.clone());
         let handle = tauri::async_runtime::spawn(async move {
             let emit = {
                 let app = app_emit.clone();
                 let settings = settings.clone();
                 move |ev: SubtitleEvent| {
+                    recorder.observe(&ev);
                     if let SubtitleEvent::Chunk {
                         original,
                         translated,
+                        ..
                     } = &ev
                     {
                         let text = if translated.is_empty() {
@@ -310,6 +326,7 @@ pub async fn run_loop(
     };
     let mut heard = false;
     let mut closed = false;
+    let loop_started = std::time::Instant::now();
     loop {
         let snap = settings.snapshot();
         let chunk_samples = (snap.subtitle.chunk_seconds * 16_000.0) as usize;
@@ -365,6 +382,8 @@ pub async fn run_loop(
         // Build a chunk that includes a small lookback for context.
         let mut to_send = overlap.clone();
         to_send.extend_from_slice(&buffer[..take]);
+        let at_ms = loop_started.elapsed().as_millis() as u64;
+        let duration_ms = to_send.len() as u64 * 1000 / 16_000;
         // Preserve the tail for the next iteration's overlap.
         if overlap_samples > 0 && take >= overlap_samples && !flush {
             overlap = buffer[take - overlap_samples..take].to_vec();
@@ -442,6 +461,8 @@ pub async fn run_loop(
                 emit(SubtitleEvent::Chunk {
                     original,
                     translated,
+                    at_ms,
+                    duration_ms,
                 });
                 set_phase(Phase::Waiting);
                 // Avoid bursting work when chunks arrive too quickly.

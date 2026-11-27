@@ -1008,6 +1008,8 @@ pub mod history_kind {
     pub const IMAGE: &str = "image";
     /// Decoded QR code.
     pub const QR: &str = "qr";
+    /// One live-subtitle run (音声翻訳), with its timed lines.
+    pub const SUBTITLE: &str = "subtitle";
 }
 
 /// Output of [`Pipeline::run_capture_flow`]. The frontend renders `result`

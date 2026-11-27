@@ -162,6 +162,7 @@ fn assert_subtitles(events: &[SubtitleEvent]) {
             SubtitleEvent::Chunk {
                 original: o,
                 translated: t,
+                ..
             } => {
                 original.push_str(&o.to_lowercase());
                 original.push(' ');
@@ -251,6 +252,7 @@ async fn english_after_a_japanese_aside_stays_english() {
             SubtitleEvent::Chunk {
                 original,
                 translated,
+                ..
             } => Some((original.as_str(), translated.as_str())),
             SubtitleEvent::Error { message } => panic!("error event: {message}"),
             _ => None,

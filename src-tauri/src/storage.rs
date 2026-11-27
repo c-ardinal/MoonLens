@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use parking_lot::Mutex;
-use rusqlite::Connection;
+use rusqlite::{Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
 
@@ -27,6 +27,31 @@ pub struct HistoryEntry {
     pub provider: Option<String>,
     pub via_cloud: bool,
     pub image_path: Option<String>,
+}
+
+/// One timed line of a live-subtitle record. Offsets count from the start
+/// of the recognition run.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SubtitleLine {
+    /// 0-based order inside the record.
+    pub seq: i64,
+    pub start_ms: i64,
+    pub end_ms: i64,
+    pub original: String,
+    /// Empty when translation failed or was not needed.
+    pub translated: String,
+}
+
+/// A live-subtitle run saved to history: the `history` row (kind
+/// `subtitle`) holds the joined texts, this holds the timed lines.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SubtitleRecord {
+    pub history_id: i64,
+    /// Name of the captured device or application.
+    pub source: String,
+    pub source_language: String,
+    pub target_language: String,
+    pub lines: Vec<SubtitleLine>,
 }
 
 impl Storage {
@@ -118,8 +143,28 @@ impl Storage {
                 image_path TEXT
              );
              CREATE INDEX IF NOT EXISTS history_created_at
-                ON history(created_at DESC);",
+                ON history(created_at DESC);
+             -- Additive, so the schema version stays: an older build still
+             -- opens the file and simply ignores these tables.
+             CREATE TABLE IF NOT EXISTS subtitle_session (
+                history_id INTEGER PRIMARY KEY,
+                source TEXT NOT NULL,
+                source_language TEXT NOT NULL,
+                target_language TEXT NOT NULL
+             );
+             CREATE TABLE IF NOT EXISTS subtitle_line (
+                history_id INTEGER NOT NULL,
+                seq INTEGER NOT NULL,
+                start_ms INTEGER NOT NULL,
+                end_ms INTEGER NOT NULL,
+                original TEXT NOT NULL,
+                translated TEXT NOT NULL,
+                PRIMARY KEY (history_id, seq)
+             );",
         )?;
+        // An older build may have deleted history rows without knowing
+        // about their subtitle records.
+        Self::purge_subtitle_orphans(db)?;
         // Future schema changes go here, keyed on `version`.
         db.pragma_update(None, "user_version", Self::SCHEMA_VERSION)?;
         Ok(())
@@ -218,6 +263,7 @@ impl Storage {
     pub fn prune_older_than(&self, epoch_seconds: i64) -> Result<usize> {
         let db = self.db.lock();
         let n = db.execute("DELETE FROM history WHERE created_at < ?1", [epoch_seconds])?;
+        Self::purge_subtitle_orphans(&db)?;
         Ok(n)
     }
 
@@ -235,6 +281,7 @@ impl Storage {
              )",
             [max_entries as i64],
         )?;
+        Self::purge_subtitle_orphans(&db)?;
         Ok(n)
     }
 
@@ -254,14 +301,27 @@ impl Storage {
     pub fn delete(&self, id: i64) -> Result<usize> {
         let db = self.db.lock();
         let n = db.execute("DELETE FROM history WHERE id = ?1", [id])?;
+        Self::purge_subtitle_orphans(&db)?;
         Ok(n)
     }
 
     /// Put a deleted row back under its original id and timestamp (undo
     /// of [`Storage::delete`]). Returns 0 when the id is already present.
     pub fn restore(&self, entry: &HistoryEntry) -> Result<usize> {
-        let db = self.db.lock();
-        let n = db.execute(
+        self.restore_with_record(entry, None)
+    }
+
+    /// [`Storage::restore`] that also puts back the subtitle record of the
+    /// row (taken before the delete). Nothing is written for the record
+    /// when the id is already present.
+    pub fn restore_with_record(
+        &self,
+        entry: &HistoryEntry,
+        record: Option<&SubtitleRecord>,
+    ) -> Result<usize> {
+        let mut db = self.db.lock();
+        let tx = db.transaction()?;
+        let n = tx.execute(
             "INSERT OR IGNORE INTO history
               (id, created_at, kind, source_text, result_text, provider, via_cloud, image_path)
               VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
@@ -276,15 +336,282 @@ impl Storage {
                 entry.image_path
             ],
         )?;
+        if n > 0 {
+            if let Some(r) = record {
+                tx.execute(
+                    "INSERT OR REPLACE INTO subtitle_session
+                      (history_id, source, source_language, target_language)
+                      VALUES (?1, ?2, ?3, ?4)",
+                    rusqlite::params![entry.id, r.source, r.source_language, r.target_language],
+                )?;
+                write_lines(&tx, entry.id, &r.lines)?;
+            }
+        }
+        tx.commit()?;
         Ok(n)
+    }
+
+    /// The history row with this id.
+    pub fn entry(&self, id: i64) -> Result<Option<HistoryEntry>> {
+        let db = self.db.lock();
+        let found = db
+            .query_row(
+                "SELECT id, created_at, kind, source_text, result_text, provider, via_cloud, image_path
+                 FROM history WHERE id = ?1",
+                [id],
+                |row| {
+                    Ok(HistoryEntry {
+                        id: row.get(0)?,
+                        created_at: row.get(1)?,
+                        kind: row.get(2)?,
+                        source_text: row.get(3)?,
+                        result_text: row.get(4)?,
+                        provider: row.get(5)?,
+                        via_cloud: row.get::<_, i32>(6)? != 0,
+                        image_path: row.get(7)?,
+                    })
+                },
+            )
+            .optional()?;
+        Ok(found)
+    }
+
+    /// Start the record of a live-subtitle run: the history row (kind
+    /// `subtitle`, no text yet) and its session, in one transaction.
+    pub fn begin_subtitle_record(
+        &self,
+        source: &str,
+        source_language: &str,
+        target_language: &str,
+    ) -> Result<i64> {
+        let mut db = self.db.lock();
+        let tx = db.transaction()?;
+        tx.execute(
+            "INSERT INTO history
+              (created_at, kind, source_text, result_text, provider, via_cloud, image_path)
+              VALUES (?1, ?2, '', '', NULL, 0, NULL)",
+            rusqlite::params![now_seconds(), crate::pipeline::history_kind::SUBTITLE],
+        )?;
+        let id = tx.last_insert_rowid();
+        tx.execute(
+            "INSERT INTO subtitle_session (history_id, source, source_language, target_language)
+              VALUES (?1, ?2, ?3, ?4)",
+            rusqlite::params![id, source, source_language, target_language],
+        )?;
+        tx.commit()?;
+        Ok(id)
+    }
+
+    /// Append a line after the last one and extend the row's texts.
+    /// Returns the line with its assigned `seq`.
+    pub fn append_subtitle_line(
+        &self,
+        id: i64,
+        start_ms: i64,
+        end_ms: i64,
+        original: &str,
+        translated: &str,
+    ) -> Result<SubtitleLine> {
+        let mut db = self.db.lock();
+        let tx = db.transaction()?;
+        require_session(&tx, id)?;
+        let seq: i64 = tx.query_row(
+            "SELECT COALESCE(MAX(seq) + 1, 0) FROM subtitle_line WHERE history_id = ?1",
+            [id],
+            |r| r.get(0),
+        )?;
+        let line = SubtitleLine {
+            seq,
+            start_ms,
+            end_ms,
+            original: original.to_string(),
+            translated: translated.to_string(),
+        };
+        insert_line(&tx, id, &line)?;
+        rebuild_texts(&tx, id)?;
+        tx.commit()?;
+        Ok(line)
+    }
+
+    /// Replace the lines `first_seq..=last_seq` (consecutive) by one line
+    /// spanning from the first start to the last end, with the given
+    /// texts. Later lines keep their order; seqs are renumbered from 0.
+    pub fn merge_subtitle_lines(
+        &self,
+        id: i64,
+        first_seq: i64,
+        last_seq: i64,
+        original: &str,
+        translated: &str,
+    ) -> Result<()> {
+        let mut db = self.db.lock();
+        let tx = db.transaction()?;
+        require_session(&tx, id)?;
+        let lines = read_lines(&tx, id)?;
+        let (inside, outside): (Vec<_>, Vec<_>) = lines
+            .into_iter()
+            .partition(|l| (first_seq..=last_seq).contains(&l.seq));
+        let (Some(first), Some(last)) = (inside.first(), inside.last()) else {
+            anyhow::bail!("no subtitle lines in {first_seq}..={last_seq}");
+        };
+        let merged = SubtitleLine {
+            seq: first.seq,
+            start_ms: first.start_ms,
+            end_ms: last.end_ms,
+            original: original.to_string(),
+            translated: translated.to_string(),
+        };
+        let mut out = outside;
+        out.push(merged);
+        out.sort_by_key(|l| l.seq);
+        write_lines(&tx, id, &out)?;
+        rebuild_texts(&tx, id)?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Replace every line of the record, numbering them from 0 in the
+    /// given order, and rebuild the row's texts. Fails when the row has
+    /// no record.
+    pub fn replace_subtitle_lines(&self, id: i64, lines: &[SubtitleLine]) -> Result<()> {
+        let mut db = self.db.lock();
+        let tx = db.transaction()?;
+        require_session(&tx, id)?;
+        write_lines(&tx, id, lines)?;
+        rebuild_texts(&tx, id)?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// The subtitle record of a history row, `None` when it has none.
+    pub fn subtitle_record(&self, id: i64) -> Result<Option<SubtitleRecord>> {
+        let db = self.db.lock();
+        let session = db
+            .query_row(
+                "SELECT source, source_language, target_language
+                 FROM subtitle_session WHERE history_id = ?1",
+                [id],
+                |r| Ok((r.get::<_, String>(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .optional()?;
+        let Some((source, source_language, target_language)) = session else {
+            return Ok(None);
+        };
+        Ok(Some(SubtitleRecord {
+            history_id: id,
+            source,
+            source_language,
+            target_language,
+            lines: read_lines(&db, id)?,
+        }))
+    }
+
+    /// Remove session and line rows whose history row is gone. Every path
+    /// that deletes history rows calls this, so none leaves a record behind.
+    fn purge_subtitle_orphans(db: &Connection) -> Result<()> {
+        db.execute_batch(
+            "DELETE FROM subtitle_line WHERE history_id NOT IN (SELECT id FROM history);
+             DELETE FROM subtitle_session WHERE history_id NOT IN (SELECT id FROM history);",
+        )?;
+        Ok(())
     }
 
     /// Drop every history row. Returns the number of rows removed.
     pub fn clear_all(&self) -> Result<usize> {
         let db = self.db.lock();
         let n = db.execute("DELETE FROM history", [])?;
+        Self::purge_subtitle_orphans(&db)?;
         Ok(n)
     }
+}
+
+fn require_session(db: &Connection, id: i64) -> Result<()> {
+    let found: Option<i64> = db
+        .query_row(
+            "SELECT history_id FROM subtitle_session WHERE history_id = ?1",
+            [id],
+            |r| r.get(0),
+        )
+        .optional()?;
+    found
+        .map(|_| ())
+        .with_context(|| format!("history entry {id} has no subtitle record"))
+}
+
+fn read_lines(db: &Connection, id: i64) -> Result<Vec<SubtitleLine>> {
+    let mut stmt = db.prepare(
+        "SELECT seq, start_ms, end_ms, original, translated
+         FROM subtitle_line WHERE history_id = ?1 ORDER BY seq",
+    )?;
+    let rows = stmt.query_map([id], |r| {
+        Ok(SubtitleLine {
+            seq: r.get(0)?,
+            start_ms: r.get(1)?,
+            end_ms: r.get(2)?,
+            original: r.get(3)?,
+            translated: r.get(4)?,
+        })
+    })?;
+    rows.collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(Into::into)
+}
+
+fn insert_line(db: &Connection, id: i64, line: &SubtitleLine) -> Result<()> {
+    db.execute(
+        "INSERT INTO subtitle_line (history_id, seq, start_ms, end_ms, original, translated)
+          VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        rusqlite::params![
+            id,
+            line.seq,
+            line.start_ms,
+            line.end_ms,
+            line.original,
+            line.translated
+        ],
+    )?;
+    Ok(())
+}
+
+/// Replace all lines of `id`, numbering them from 0 in the given order.
+fn write_lines(db: &Connection, id: i64, lines: &[SubtitleLine]) -> Result<()> {
+    db.execute("DELETE FROM subtitle_line WHERE history_id = ?1", [id])?;
+    for (seq, line) in lines.iter().enumerate() {
+        insert_line(
+            db,
+            id,
+            &SubtitleLine {
+                seq: seq as i64,
+                ..line.clone()
+            },
+        )?;
+    }
+    Ok(())
+}
+
+/// The history row's texts: originals and non-empty translations, one
+/// per line, in line order.
+fn rebuild_texts(db: &Connection, id: i64) -> Result<()> {
+    let lines = read_lines(db, id)?;
+    let join = |texts: Vec<&str>| texts.join("\n");
+    let source = join(
+        lines
+            .iter()
+            .map(|l| l.original.as_str())
+            .filter(|t| !t.is_empty())
+            .collect(),
+    );
+    let result = join(
+        lines
+            .iter()
+            .map(|l| l.translated.as_str())
+            .filter(|t| !t.is_empty())
+            .collect(),
+    );
+    db.execute(
+        "UPDATE history SET source_text = ?2, result_text = ?3 WHERE id = ?1",
+        rusqlite::params![id, source, result],
+    )?;
+    Ok(())
 }
 
 fn now_seconds() -> i64 {
@@ -599,5 +926,247 @@ mod tests {
             .unwrap();
         let e = &s.recent(1).unwrap()[0];
         assert_eq!(e.source_text.as_ref().map(|s| s.len()), Some(big.len()));
+    }
+
+    fn line(
+        seq: i64,
+        start_ms: i64,
+        end_ms: i64,
+        original: &str,
+        translated: &str,
+    ) -> SubtitleLine {
+        SubtitleLine {
+            seq,
+            start_ms,
+            end_ms,
+            original: original.into(),
+            translated: translated.into(),
+        }
+    }
+
+    fn record_with_three_lines(s: &Storage) -> i64 {
+        let id = s.begin_subtitle_record("スピーカー", "auto", "ja").unwrap();
+        s.append_subtitle_line(id, 0, 1000, "one", "一").unwrap();
+        s.append_subtitle_line(id, 1000, 2500, "two", "").unwrap();
+        s.append_subtitle_line(id, 2500, 4000, "three", "三")
+            .unwrap();
+        id
+    }
+
+    fn table_count(s: &Storage, table: &str) -> i64 {
+        s.db.lock()
+            .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |r| r.get(0))
+            .unwrap()
+    }
+
+    #[test]
+    fn subtitle_record_round_trips_with_history_row() {
+        let s = Storage::open_in_memory().unwrap();
+        let id = record_with_three_lines(&s);
+        let row = s.entry(id).unwrap().unwrap();
+        assert_eq!(row.kind, "subtitle");
+        assert_eq!(row.source_text.as_deref(), Some("one\ntwo\nthree"));
+        // The empty translation is not joined.
+        assert_eq!(row.result_text.as_deref(), Some("一\n三"));
+        assert_eq!(s.recent(10).unwrap().len(), 1);
+        let rec = s.subtitle_record(id).unwrap().unwrap();
+        assert_eq!(rec.history_id, id);
+        assert_eq!(rec.source, "スピーカー");
+        assert_eq!(rec.source_language, "auto");
+        assert_eq!(rec.target_language, "ja");
+        assert_eq!(
+            rec.lines,
+            vec![
+                line(0, 0, 1000, "one", "一"),
+                line(1, 1000, 2500, "two", ""),
+                line(2, 2500, 4000, "three", "三"),
+            ]
+        );
+    }
+
+    #[test]
+    fn begun_record_is_empty_and_ordinary_rows_have_none() {
+        let s = Storage::open_in_memory().unwrap();
+        let id = s.begin_subtitle_record("mic", "en", "ja").unwrap();
+        assert!(s.subtitle_record(id).unwrap().unwrap().lines.is_empty());
+        let plain = s
+            .append("translate", Some("x"), None, None, false, None)
+            .unwrap();
+        assert!(s.subtitle_record(plain).unwrap().is_none());
+        assert!(s.subtitle_record(9_999).unwrap().is_none());
+    }
+
+    #[test]
+    fn append_to_a_missing_record_fails() {
+        let s = Storage::open_in_memory().unwrap();
+        let plain = s
+            .append("translate", Some("x"), None, None, false, None)
+            .unwrap();
+        assert!(s.append_subtitle_line(plain, 0, 1, "a", "b").is_err());
+        assert!(s.append_subtitle_line(404, 0, 1, "a", "b").is_err());
+    }
+
+    #[test]
+    fn merging_consecutive_lines_spans_them_and_keeps_order() {
+        let s = Storage::open_in_memory().unwrap();
+        let id = record_with_three_lines(&s);
+        s.merge_subtitle_lines(id, 0, 1, "one two", "一二").unwrap();
+        let rec = s.subtitle_record(id).unwrap().unwrap();
+        assert_eq!(
+            rec.lines,
+            vec![
+                line(0, 0, 2500, "one two", "一二"),
+                line(1, 2500, 4000, "three", "三"),
+            ]
+        );
+        let row = s.entry(id).unwrap().unwrap();
+        assert_eq!(row.source_text.as_deref(), Some("one two\nthree"));
+        assert_eq!(row.result_text.as_deref(), Some("一二\n三"));
+        // A later append continues after the renumbered lines.
+        let next = s
+            .append_subtitle_line(id, 4000, 5000, "four", "四")
+            .unwrap();
+        assert_eq!(next.seq, 2);
+    }
+
+    #[test]
+    fn merging_the_middle_or_a_missing_range() {
+        let s = Storage::open_in_memory().unwrap();
+        let id = record_with_three_lines(&s);
+        assert!(s.merge_subtitle_lines(id, 5, 6, "x", "y").is_err());
+        s.merge_subtitle_lines(id, 1, 1, "TWO", "二").unwrap();
+        let rec = s.subtitle_record(id).unwrap().unwrap();
+        assert_eq!(rec.lines[1], line(1, 1000, 2500, "TWO", "二"));
+        assert_eq!(rec.lines.len(), 3);
+    }
+
+    #[test]
+    fn replacing_lines_renumbers_and_rebuilds_texts() {
+        let s = Storage::open_in_memory().unwrap();
+        let id = record_with_three_lines(&s);
+        let new = vec![
+            line(7, 0, 500, "alpha", "ア"),
+            line(3, 500, 900, "beta", ""),
+        ];
+        s.replace_subtitle_lines(id, &new).unwrap();
+        let rec = s.subtitle_record(id).unwrap().unwrap();
+        assert_eq!(
+            rec.lines,
+            vec![
+                line(0, 0, 500, "alpha", "ア"),
+                line(1, 500, 900, "beta", "")
+            ]
+        );
+        let row = s.entry(id).unwrap().unwrap();
+        assert_eq!(row.source_text.as_deref(), Some("alpha\nbeta"));
+        assert_eq!(row.result_text.as_deref(), Some("ア"));
+        // Replacing with nothing empties the record but keeps it.
+        s.replace_subtitle_lines(id, &[]).unwrap();
+        assert!(s.subtitle_record(id).unwrap().unwrap().lines.is_empty());
+    }
+
+    #[test]
+    fn replacing_lines_without_a_record_fails_and_writes_nothing() {
+        let s = Storage::open_in_memory().unwrap();
+        let plain = s
+            .append("translate", Some("x"), Some("y"), None, false, None)
+            .unwrap();
+        assert!(s
+            .replace_subtitle_lines(plain, &[line(0, 0, 1, "a", "b")])
+            .is_err());
+        assert_eq!(table_count(&s, "subtitle_line"), 0);
+        let row = s.entry(plain).unwrap().unwrap();
+        assert_eq!(row.source_text.as_deref(), Some("x"));
+    }
+
+    #[test]
+    fn every_delete_path_removes_the_record() {
+        // delete
+        let s = Storage::open_in_memory().unwrap();
+        let keep = record_with_three_lines(&s);
+        let gone = record_with_three_lines(&s);
+        s.delete(gone).unwrap();
+        assert!(s.subtitle_record(gone).unwrap().is_none());
+        assert!(s.subtitle_record(keep).unwrap().is_some());
+        assert_eq!(table_count(&s, "subtitle_session"), 1);
+        assert_eq!(table_count(&s, "subtitle_line"), 3);
+
+        // prune_to_count
+        let s = Storage::open_in_memory().unwrap();
+        let old = record_with_three_lines(&s);
+        let new = record_with_three_lines(&s);
+        s.prune_to_count(1).unwrap();
+        assert!(s.subtitle_record(old).unwrap().is_none());
+        assert!(s.subtitle_record(new).unwrap().is_some());
+        assert_eq!(table_count(&s, "subtitle_line"), 3);
+
+        // prune_older_than
+        let s = Storage::open_in_memory().unwrap();
+        record_with_three_lines(&s);
+        s.prune_older_than(now_seconds() + 1).unwrap();
+        assert_eq!(table_count(&s, "subtitle_session"), 0);
+        assert_eq!(table_count(&s, "subtitle_line"), 0);
+
+        // clear_all
+        let s = Storage::open_in_memory().unwrap();
+        record_with_three_lines(&s);
+        record_with_three_lines(&s);
+        s.clear_all().unwrap();
+        assert_eq!(table_count(&s, "subtitle_session"), 0);
+        assert_eq!(table_count(&s, "subtitle_line"), 0);
+    }
+
+    #[test]
+    fn restore_with_record_puts_everything_back() {
+        let s = Storage::open_in_memory().unwrap();
+        let id = record_with_three_lines(&s);
+        let entry = s.entry(id).unwrap().unwrap();
+        let record = s.subtitle_record(id).unwrap().unwrap();
+        s.delete(id).unwrap();
+        assert_eq!(s.restore_with_record(&entry, Some(&record)).unwrap(), 1);
+        assert_eq!(s.entry(id).unwrap().unwrap(), entry);
+        assert_eq!(s.subtitle_record(id).unwrap().unwrap(), record);
+        // Already present: nothing is written again.
+        s.replace_subtitle_lines(id, &[]).unwrap();
+        assert_eq!(s.restore_with_record(&entry, Some(&record)).unwrap(), 0);
+        assert!(s.subtitle_record(id).unwrap().unwrap().lines.is_empty());
+    }
+
+    #[test]
+    fn restore_without_a_record_leaves_no_session() {
+        let s = Storage::open_in_memory().unwrap();
+        let id = record_with_three_lines(&s);
+        let entry = s.entry(id).unwrap().unwrap();
+        s.delete(id).unwrap();
+        assert_eq!(s.restore(&entry).unwrap(), 1);
+        assert!(s.subtitle_record(id).unwrap().is_none());
+    }
+
+    #[test]
+    fn opening_purges_records_of_rows_an_older_build_deleted() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("moonlens.db");
+        {
+            let s = Storage::open_at(&path, dir.path()).unwrap();
+            let id = record_with_three_lines(&s);
+            // What an older build does: delete the row only.
+            s.db.lock()
+                .execute("DELETE FROM history WHERE id = ?1", [id])
+                .unwrap();
+            assert_eq!(table_count(&s, "subtitle_line"), 3);
+        }
+        let s = Storage::open_at(&path, dir.path()).unwrap();
+        assert_eq!(table_count(&s, "subtitle_session"), 0);
+        assert_eq!(table_count(&s, "subtitle_line"), 0);
+    }
+
+    #[test]
+    fn subtitle_tables_do_not_change_the_schema_version() {
+        let s = Storage::open_in_memory().unwrap();
+        let v: i64 =
+            s.db.lock()
+                .query_row("PRAGMA user_version", [], |r| r.get(0))
+                .unwrap();
+        assert_eq!(v, 1);
     }
 }

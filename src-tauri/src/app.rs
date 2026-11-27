@@ -81,6 +81,9 @@ macro_rules! all_commands {
             ipc::list_history,
             ipc::delete_history_entry,
             ipc::restore_history_entry,
+            ipc::get_subtitle_record,
+            ipc::replace_subtitle_lines,
+            ipc::export_subtitle_record,
             ipc::clear_history,
             ipc::list_notices,
             ipc::dismiss_notice,
@@ -199,7 +202,11 @@ pub fn build() -> Result<()> {
                 let pipeline = pipeline.clone();
                 tauri::async_runtime::spawn(async move { pipeline.warm_up().await });
             }
-            let subtitle = Arc::new(SubtitleService::new(settings.clone(), pipeline.clone()));
+            let subtitle = Arc::new(SubtitleService::new(
+                settings.clone(),
+                pipeline.clone(),
+                storage.clone(),
+            ));
             let lenses: LensRegistryHandle = Arc::new(LensRegistry::new());
 
             // A hotkey another app already owns must not stop MoonLens
