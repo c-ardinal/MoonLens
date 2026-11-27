@@ -17,7 +17,7 @@
   --ml-shadow-lg: 0 16px 48px rgba(0, 0, 0, 0.18);
   --ml-border-width: 1px;
 
-  --ml-accent: #8b5cf6;
+  --ml-accent: #ffb547;
   --ml-accent-soft: color-mix(in oklch, var(--ml-accent) 24%, transparent);
 }
 

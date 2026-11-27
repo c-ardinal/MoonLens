@@ -455,7 +455,7 @@
     box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.04);
   }
   .block-box.pending {
-    background-image: linear-gradient(100deg, transparent 30%, rgba(139, 92, 246, 0.18) 50%, transparent 70%) !important;
+    background-image: linear-gradient(100deg, transparent 30%, color-mix(in srgb, var(--ml-accent) 18%, transparent) 50%, transparent 70%) !important;
     background-size: 250% 100%;
     animation: scan 1.1s linear infinite;
   }

@@ -331,7 +331,7 @@
   }
   .tb[aria-pressed='true'],
   .mi[aria-checked='true'] {
-    background: var(--la-pressed, rgba(139, 92, 246, 0.35));
+    background: var(--la-pressed, color-mix(in srgb, var(--ml-accent) 35%, transparent));
   }
   .tb:disabled,
   .mi:disabled {
