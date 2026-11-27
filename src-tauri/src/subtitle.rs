@@ -806,10 +806,16 @@ pub async fn run_loop(
         // without the pause the end of a sentence would sit in the
         // buffer until sound returns.
         let mut flush = closed;
+        // A conversation: the microphone's gate reported a pause (an
+        // empty frame). What follows it may be the other person, in the
+        // other language, so the audio before it is recognized alone,
+        // also when both were queued during a recognition.
+        let mut turn_ended = false;
         if !closed {
             tokio::select! {
                 _ = stop.notified() => break,
                 maybe = rx.recv() => match maybe {
+                    Some(frame) if frame.is_empty() => turn_ended = pair.is_some(),
                     Some(frame) => {
                         buffer.extend_from_slice(&frame);
                         heard_until = loop_started.elapsed();
@@ -835,10 +841,17 @@ pub async fn run_loop(
             }
         }
         // Collect whatever arrived during the previous recognition.
-        while let Ok(frame) = rx.try_recv() {
-            buffer.extend_from_slice(&frame);
-            heard_until = loop_started.elapsed();
+        while !turn_ended {
+            match rx.try_recv() {
+                Ok(frame) if frame.is_empty() => turn_ended = pair.is_some(),
+                Ok(frame) => {
+                    buffer.extend_from_slice(&frame);
+                    heard_until = loop_started.elapsed();
+                }
+                Err(_) => break,
+            }
         }
+        flush |= turn_ended;
         if !heard && !buffer.is_empty() {
             heard = true;
             tracing::info!("subtitle: first audio frames received");

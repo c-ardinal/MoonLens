@@ -157,6 +157,114 @@ impl Outcome {
     }
 }
 
+/// The loop running in `mode` over scripted recognition.
+struct Rig {
+    tx: mpsc::Sender<Vec<i16>>,
+    task: tokio::task::JoinHandle<bool>,
+    settings: Arc<SettingsStore>,
+    calls: Arc<AtomicUsize>,
+    events: Arc<Mutex<Vec<SubtitleEvent>>>,
+    requests: Arc<Mutex<Vec<Request>>>,
+    asked: Arc<Mutex<Vec<Asked>>>,
+    /// Audible audio of one chunk.
+    tone: Vec<i16>,
+    /// Holds the settings file.
+    _tmp: tempfile::TempDir,
+}
+
+impl Rig {
+    /// `queued` is in the audio queue before the loop first reads it.
+    fn start(
+        mode: Mode,
+        configure: impl FnOnce(&mut Settings),
+        script: Vec<Heard>,
+        queued: impl FnOnce(&[i16]) -> Vec<Vec<i16>>,
+    ) -> Self {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = SettingsStore::load_from(tmp.path().join("config.toml")).unwrap();
+        let mut s = Settings::default();
+        s.providers.asr.chain = vec!["asr".into()];
+        s.providers.translate.chain = vec!["tr".into()];
+        s.subtitle.target_language = "ja".into();
+        s.subtitle.conversation_language = "en".into();
+        s.subtitle.overlap_seconds = 0.0;
+        s.subtitle.block_stock_phrases = false;
+        s.subtitle.realtime_correction = false;
+        s.subtitle.batch_correction = false;
+        configure(&mut s);
+        let chunk_samples = (s.subtitle.chunk_seconds * 16_000.0) as usize;
+        store.save(s).unwrap();
+        let settings = Arc::new(store);
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let asked = Arc::new(Mutex::new(Vec::new()));
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let mut providers: HashMap<String, ProviderHandle> = HashMap::new();
+        providers.insert(
+            "asr".into(),
+            Arc::new(ScriptedAsr {
+                script,
+                calls: calls.clone(),
+                asked: asked.clone(),
+            }),
+        );
+        providers.insert(
+            "tr".into(),
+            Arc::new(RecordingTranslator {
+                requests: requests.clone(),
+            }),
+        );
+        let storage = Arc::new(Storage::open_in_memory().unwrap());
+        let pipeline = Arc::new(Pipeline::with_providers(
+            settings.clone(),
+            storage,
+            providers,
+        ));
+
+        let tone: Vec<i16> = (0..chunk_samples)
+            .map(|i| ((i as f32 * 0.05).sin() * 3000.0) as i16)
+            .collect();
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let (tx, rx) = mpsc::channel::<Vec<i16>>(8);
+        for frame in queued(&tone) {
+            tx.try_send(frame).unwrap();
+        }
+        let task = {
+            let (events, settings) = (events.clone(), settings.clone());
+            tokio::spawn(async move {
+                let emit = move |ev: SubtitleEvent| events.lock().unwrap().push(ev);
+                let stop = Arc::new(tokio::sync::Notify::new());
+                run_loop(&emit, settings, pipeline, rx, stop, mode).await
+            })
+        };
+        Self {
+            tx,
+            task,
+            settings,
+            calls,
+            events,
+            requests,
+            asked,
+            tone,
+            _tmp: tmp,
+        }
+    }
+
+    /// The audio ends: what the loop did with all of it.
+    async fn finish(self) -> Outcome {
+        drop(self.tx);
+        assert!(!self.task.await.unwrap());
+        let events = self.events.lock().unwrap().clone();
+        let requests = self.requests.lock().unwrap().clone();
+        let asked = self.asked.lock().unwrap().clone();
+        Outcome {
+            events,
+            requests,
+            asked,
+        }
+    }
+}
+
 /// Run the loop in `mode` over one audible chunk per script entry.
 /// `between` runs after each chunk is done.
 async fn talk(
@@ -165,68 +273,15 @@ async fn talk(
     script: Vec<Heard>,
     between: impl Fn(usize, &SettingsStore),
 ) -> Outcome {
-    let tmp = tempfile::tempdir().unwrap();
-    let store = SettingsStore::load_from(tmp.path().join("config.toml")).unwrap();
-    let mut s = Settings::default();
-    s.providers.asr.chain = vec!["asr".into()];
-    s.providers.translate.chain = vec!["tr".into()];
-    s.subtitle.target_language = "ja".into();
-    s.subtitle.conversation_language = "en".into();
-    s.subtitle.overlap_seconds = 0.0;
-    s.subtitle.block_stock_phrases = false;
-    s.subtitle.realtime_correction = false;
-    s.subtitle.batch_correction = false;
-    configure(&mut s);
-    let chunk_samples = (s.subtitle.chunk_seconds * 16_000.0) as usize;
-    store.save(s).unwrap();
-    let settings = Arc::new(store);
-
-    let calls = Arc::new(AtomicUsize::new(0));
-    let asked = Arc::new(Mutex::new(Vec::new()));
-    let requests = Arc::new(Mutex::new(Vec::new()));
     let chunks = script.len();
-    let mut providers: HashMap<String, ProviderHandle> = HashMap::new();
-    providers.insert(
-        "asr".into(),
-        Arc::new(ScriptedAsr {
-            script,
-            calls: calls.clone(),
-            asked: asked.clone(),
-        }),
-    );
-    providers.insert(
-        "tr".into(),
-        Arc::new(RecordingTranslator {
-            requests: requests.clone(),
-        }),
-    );
-    let storage = Arc::new(Storage::open_in_memory().unwrap());
-    let pipeline = Arc::new(Pipeline::with_providers(
-        settings.clone(),
-        storage,
-        providers,
-    ));
-
-    let events = Arc::new(Mutex::new(Vec::new()));
-    let (tx, rx) = mpsc::channel::<Vec<i16>>(8);
-    let task = {
-        let (events, settings) = (events.clone(), settings.clone());
-        tokio::spawn(async move {
-            let emit = move |ev: SubtitleEvent| events.lock().unwrap().push(ev);
-            let stop = Arc::new(tokio::sync::Notify::new());
-            run_loop(&emit, settings, pipeline, rx, stop, mode).await
-        })
-    };
-    let tone: Vec<i16> = (0..chunk_samples)
-        .map(|i| ((i as f32 * 0.05).sin() * 3000.0) as i16)
-        .collect();
+    let rig = Rig::start(mode, configure, script, |_| Vec::new());
     for n in 0..chunks {
-        tx.send(tone.clone()).await.unwrap();
+        rig.tx.send(rig.tone.clone()).await.unwrap();
         tokio::time::timeout(Duration::from_secs(10), async {
             loop {
-                let done = calls.load(Ordering::SeqCst) > n
+                let done = rig.calls.load(Ordering::SeqCst) > n
                     && matches!(
-                        events.lock().unwrap().last(),
+                        rig.events.lock().unwrap().last(),
                         Some(SubtitleEvent::Status {
                             phase: Phase::Waiting
                         })
@@ -239,18 +294,9 @@ async fn talk(
         })
         .await
         .expect("chunk processed");
-        between(n, &settings);
+        between(n, &rig.settings);
     }
-    drop(tx);
-    assert!(!task.await.unwrap());
-    let events = events.lock().unwrap().clone();
-    let requests = requests.lock().unwrap().clone();
-    let asked = asked.lock().unwrap().clone();
-    Outcome {
-        events,
-        requests,
-        asked,
-    }
+    rig.finish().await
 }
 
 fn request(text: &str, source: &str, target: &str) -> Request {
@@ -417,4 +463,60 @@ async fn a_new_partner_language_applies_from_the_next_utterance() {
     assert_eq!(out.requests[0].2, "en");
     assert_eq!(out.requests[1].2, "ko");
     assert_eq!(out.asked[1].candidates, ["ja", "ko"]);
+}
+
+/// Both people spoke while the loop was busy: their audio is queued
+/// back to back, and only the pause the microphone's gate reported (an
+/// empty frame) tells where one stopped. Each is recognized alone, in
+/// their own language; one recognition over both would choose a single
+/// language and translate both the same way.
+#[tokio::test(flavor = "multi_thread")]
+async fn queued_turns_are_recognized_one_by_one() {
+    let script = vec![
+        (Some("ja"), "駅はどこですか。"),
+        (Some("en"), "It is over there."),
+    ];
+    let rig = Rig::start(
+        Mode::Conversation,
+        |_| {},
+        script,
+        |tone| {
+            // Each shorter than a chunk: together they would fill one.
+            let half = tone[..tone.len() / 2].to_vec();
+            vec![half.clone(), Vec::new(), half, Vec::new()]
+        },
+    );
+    let out = rig.finish().await;
+    assert_eq!(
+        out.lines(),
+        [
+            (
+                Some(Speaker::Own),
+                "駅はどこですか。",
+                "[en] 駅はどこですか。"
+            ),
+            (
+                Some(Speaker::Partner),
+                "It is over there.",
+                "[ja] It is over there."
+            ),
+        ]
+    );
+}
+
+/// Live subtitles have no such pauses: an empty frame is no audio and
+/// cuts nothing.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_empty_frame_cuts_nothing_outside_a_conversation() {
+    let rig = Rig::start(
+        Mode::default(),
+        |s| s.subtitle.source_language = "en".into(),
+        vec![(None, "Hello there.")],
+        |tone| {
+            let half = tone[..tone.len() / 2].to_vec();
+            vec![half.clone(), Vec::new(), half]
+        },
+    );
+    let out = rig.finish().await;
+    assert_eq!(out.asked.len(), 1);
 }

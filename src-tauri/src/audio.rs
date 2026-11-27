@@ -281,8 +281,17 @@ pub mod gate {
     /// (200 ms): the quiet onset of the first word.
     const PREROLL_SAMPLES: usize = 3_200;
 
+    /// Closed this long after speech (400 ms past the hangover, 0.7 s
+    /// without a loud frame): a pause. The gate then passes on one empty
+    /// frame, so the pause survives a queue of frames that has no gaps.
+    const PAUSE_SAMPLES: usize = 6_400;
+
     #[derive(Default)]
     pub struct VoiceGate {
+        /// Speech was passed on and no pause was reported since.
+        spoke: bool,
+        /// Samples the gate has been closed for since that speech.
+        quiet: usize,
         /// `None` until the first frame.
         floor: Option<f64>,
         /// Samples the gate stays open for without another loud frame.
@@ -310,7 +319,8 @@ pub mod gate {
         }
 
         /// Takes the next captured frame and returns the frames to pass
-        /// on, oldest first: none while nobody speaks.
+        /// on, oldest first: none while nobody speaks. An empty frame
+        /// among them marks a pause after speech.
         pub fn push(&mut self, frame: Vec<i16>) -> Vec<Vec<i16>> {
             if frame.is_empty() {
                 return Vec::new();
@@ -339,6 +349,8 @@ pub mod gate {
             }
             if level >= self.threshold() {
                 self.open_for = HANGOVER_SAMPLES;
+                self.spoke = true;
+                self.quiet = 0;
                 let mut out: Vec<Vec<i16>> = self.preroll.drain(..).collect();
                 self.preroll_samples = 0;
                 out.push(frame);
@@ -348,12 +360,20 @@ pub mod gate {
                 self.open_for = self.open_for.saturating_sub(frame.len());
                 return vec![frame];
             }
-            self.preroll_samples += frame.len();
+            let frame_len = frame.len();
+            self.preroll_samples += frame_len;
             self.preroll.push_back(frame);
             while self.preroll_samples > PREROLL_SAMPLES {
                 match self.preroll.pop_front() {
                     Some(old) => self.preroll_samples -= old.len(),
                     None => break,
+                }
+            }
+            if self.spoke {
+                self.quiet += frame_len;
+                if self.quiet >= PAUSE_SAMPLES {
+                    self.spoke = false;
+                    return vec![Vec::new()];
                 }
             }
             Vec::new()
@@ -391,6 +411,31 @@ pub mod gate {
             // Speech opens the gate, with the 200 ms before it.
             assert_eq!(feed(&mut gate, 3000, 1), 160 + PREROLL_SAMPLES);
             assert_eq!(feed(&mut gate, 3000, 49), 49 * 160);
+        }
+
+        #[test]
+        fn a_pause_after_speech_is_marked_once_with_an_empty_frame() {
+            let mut gate = VoiceGate::default();
+            let marks = |gate: &mut VoiceGate, level: i16, count: usize| -> usize {
+                (0..count)
+                    .map(|_| {
+                        let out = gate.push(frame(level));
+                        out.iter().filter(|f| f.is_empty()).count()
+                    })
+                    .sum()
+            };
+            // Room noise alone is no pause: nobody spoke.
+            assert_eq!(marks(&mut gate, 60, 200), 0);
+            assert_eq!(marks(&mut gate, 3000, 50), 0);
+            // 0.69 s after the last word: not yet. At 0.7 s: once.
+            assert_eq!(marks(&mut gate, 60, 69), 0);
+            assert_eq!(marks(&mut gate, 60, 1), 1);
+            assert_eq!(marks(&mut gate, 60, 300), 0);
+            // A gap between words (0.5 s) is none.
+            assert_eq!(marks(&mut gate, 3000, 50), 0);
+            assert_eq!(marks(&mut gate, 60, 50), 0);
+            assert_eq!(marks(&mut gate, 3000, 50), 0);
+            assert_eq!(marks(&mut gate, 60, 70), 1);
         }
 
         #[test]
