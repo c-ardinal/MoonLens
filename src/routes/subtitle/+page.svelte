@@ -136,7 +136,7 @@
     border-radius: 8px;
     background: rgba(24, 24, 28, 0.82);
     /* ウィンドウ翻訳の範囲枠と同色 */
-    box-shadow: inset 0 0 0 1px rgba(139, 92, 246, 0.6);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ml-accent) 60%, transparent);
   }
   /* ウィンドウ翻訳のタイトルバーと同一寸法・配色 */
   .bar {
@@ -169,7 +169,7 @@
     background: rgba(255, 255, 255, 0.08);
   }
   .state.busy {
-    background: rgba(139, 92, 246, 0.45);
+    background: color-mix(in srgb, var(--ml-accent) 45%, transparent);
   }
   .state.error {
     color: #fca5a5;
@@ -259,7 +259,7 @@
     width: 14px;
     height: 14px;
     cursor: nwse-resize;
-    background: linear-gradient(135deg, transparent 50%, rgba(139, 92, 246, 0.85) 50%);
+    background: linear-gradient(135deg, transparent 50%, color-mix(in srgb, var(--ml-accent) 85%, transparent) 50%);
     border-bottom-right-radius: 8px;
   }
 </style>
