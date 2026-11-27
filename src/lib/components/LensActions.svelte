@@ -66,15 +66,11 @@
     operate?: boolean;
     /** 操作モード切替のショートカット表記（title へ併記）。 */
     operateKey?: string;
-<<<<<<< HEAD
-    /** 縦メニューの表示中（表示中はウィンドウ本体でのマウス操作の受付が必要）。 */
-=======
     /** 吸着先（他アプリのウィンドウ）の名称。空文字：吸着なし。 */
     attachedTo?: string;
     /** 吸着メニューの表示中。 */
     attachOpen?: boolean;
-    /** 縦メニューの表示中（表示中は窓本体でのマウス操作の受付が必要）。 */
->>>>>>> origin/claude/project-thread-mgic44
+    /** 縦メニューの表示中（表示中はウィンドウ本体でのマウス操作の受付が必要）。 */
     menuOpen?: boolean;
     /** 見出し（ウィンドウ追加ボタンの右隣）。 */
     lead?: Snippet;

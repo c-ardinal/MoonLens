@@ -10,7 +10,8 @@
     scale,
     pad = 2,
     grow = 0,
-    background = 'transparent'
+    background = 'transparent',
+    onlayout
   }: {
     block: LensBlock;
     text: string;
@@ -22,6 +23,8 @@
     grow?: number;
     /** Mask colour, painted behind text that runs past the box. */
     background?: string;
+    /** The lines as placed, on every new layout. */
+    onlayout?: (layout: FlowResult) => void;
   } = $props();
 
   let host = $state<HTMLElement | null>(null);
@@ -59,6 +62,7 @@
       grow,
       measure: (t) => ctx.measureText(t).width / 100
     });
+    onlayout?.(layout);
   });
 </script>
 

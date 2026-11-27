@@ -3658,6 +3658,7 @@ dependencies = [
  "llama-cpp-sys-2",
  "minijinja",
  "minijinja-contrib",
+ "moonlens-stream",
  "notify",
  "ocrs",
  "ort",
@@ -3698,6 +3699,15 @@ dependencies = [
  "x11rb",
  "xcap",
  "zip",
+]
+
+[[package]]
+name = "moonlens-stream"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "windows 0.62.2",
+ "windows-numerics 0.3.1",
 ]
 
 [[package]]

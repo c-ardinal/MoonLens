@@ -7,6 +7,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import type { AttachCandidate, AttachDock, Attachment } from './attach';
+import { NO_STREAM, type StreamItem, type StreamState } from './stream';
 
 export type Settings = Record<string, any>;
 
@@ -572,3 +573,13 @@ export const attachWindow = (label: string, target: number, dock: AttachDock) =>
 export const detachWindow = (label: string) => safeInvoke<void>('detach_window', { label });
 export const windowAttachment = (label: string) =>
   safeInvoke<Attachment>('window_attachment', { label }, { target: null, dock: null });
+
+// ---- 配信用ウィンドウ（stream.rs、型は `$lib/stream`） ----
+export const streamState = (label: string) =>
+  safeInvoke<StreamState>('stream_state', { label }, NO_STREAM);
+/** `label` の吸着先の配信用ウィンドウを生成（`on`）・終了。 */
+export const setStream = (label: string, on: boolean) =>
+  safeInvoke<StreamState>('set_stream', { label, on }, NO_STREAM);
+/** `label` が表示中の訳文（配置済み）を配信用ウィンドウへ送信。 */
+export const setStreamPaint = (label: string, items: StreamItem[]) =>
+  safeInvoke<void>('set_stream_paint', { label, items });

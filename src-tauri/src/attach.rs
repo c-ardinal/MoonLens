@@ -86,6 +86,19 @@ impl Attachments {
         }
     }
 
+    /// The windows attached to window `target`.
+    pub fn attached_to(&self, target: u64) -> Vec<String> {
+        let mut labels: Vec<String> = self
+            .entries
+            .lock()
+            .iter()
+            .filter(|(_, e)| e.target.id == target)
+            .map(|(label, _)| label.clone())
+            .collect();
+        labels.sort();
+        labels
+    }
+
     /// Whether `label` is hidden along with the window it follows.
     pub fn hidden(&self, label: &str) -> bool {
         self.entries.lock().get(label).is_some_and(|e| e.hidden)
@@ -109,6 +122,7 @@ fn emit(app: &AppHandle, registry: &Attachments, label: &str) {
         label: label.to_string(),
     };
     let _ = app.emit_to(target, EVENT, registry.attachment(label));
+    crate::stream::attachment_changed(app, label);
 }
 
 /// Attach window `label` to `target` at `dock`. The top `header_css`

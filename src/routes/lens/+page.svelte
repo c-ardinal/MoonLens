@@ -25,11 +25,16 @@
     setLensLanguage,
     setLensTextDock,
     windowAttachment,
+    setStream,
+    setStreamPaint,
+    streamState,
     type CaptureFlowResult,
     type LensBlock
   } from '$lib/ipc';
   import { joinedText, languageLabel, rgb } from '$lib/lens-overlay';
   import { liveBoxes, liveText, type LensLiveEvent } from '$lib/live';
+  import type { FlowResult } from '$lib/flow-layout';
+  import { NO_STREAM, STREAM_EVENT, streamItems, type StreamState } from '$lib/stream';
   import {
     TEXT_COMMAND_EVENT,
     TEXT_READY_EVENT,
@@ -272,6 +277,34 @@
     attachment = next;
   }
 
+  /** Composite window for stream capture of the window this one is
+   * attached to (see `stream.rs`). While it runs, what is painted here
+   * is sent along, laid out as it is shown. */
+  let stream = $state<StreamState>(NO_STREAM);
+  let bodyEl = $state<HTMLElement | null>(null);
+  /** Lines of each painted box as FlowText placed them, by box key. */
+  const layouts = new Map<string, FlowResult>();
+  let layoutsVersion = $state(0);
+  function placed(key: string, layout: FlowResult) {
+    layouts.set(key, layout);
+    layoutsVersion++;
+  }
+  $effect(() => {
+    if (!stream.active || !bodyEl) return;
+    void layoutsVersion;
+    const shown = showOriginal ? [] : boxes;
+    const keys = new Set(shown.map((b) => b.rect.key));
+    for (const key of layouts.keys()) if (!keys.has(key)) layouts.delete(key);
+    const items = streamItems(shown, layouts, dpr, bodyEl.offsetTop);
+    // After the boxes of this update were laid out (their layouts
+    // arrive in the same flush).
+    const timer = setTimeout(() => setStreamPaint(id, items).catch(() => {}), 0);
+    return () => clearTimeout(timer);
+  });
+  async function toggleStream(on: boolean) {
+    stream = await setStream(id, on);
+  }
+
   /** Operate mode: the body takes the mouse, so the translation can be
    * selected and copied. Off (default): clicks go to the app underneath.
    * The text panel and the open menus have controls of their own, so the
@@ -364,6 +397,10 @@
         await win.listen<Attachment>(ATTACH_EVENT, (e) => applyAttachment(e.payload))
       );
       windowAttachment(id).then(applyAttachment).catch(() => {});
+      unlisteners.push(await win.listen<StreamState>(STREAM_EVENT, (e) => (stream = e.payload)));
+      streamState(id)
+        .then((s) => (stream = s))
+        .catch(() => {});
       // Operate-mode hotkey (all windows at once).
       unlisteners.push(await win.listen<boolean>('moonlens://lens-operate', (e) => setOperate(e.payload)));
       // Outside text window: it asks for the content once it listens,
@@ -479,13 +516,15 @@
         label={id}
         {attachment}
         docks={ATTACH_DOCKS}
+        {stream}
+        onstream={toggleStream}
         onclose={() => (attachOpen = false)}
       />
     {/if}
   </header>
 
   <!-- The observed range. Transparent; the mouse passes through it. -->
-  <section class="body" class:operate class:working aria-label="訳文" aria-busy={working}>
+  <section bind:this={bodyEl} class="body" class:operate class:working aria-label="訳文" aria-busy={working}>
     {#if !showOriginal}
       {#each boxes as b (b.rect.key)}
         <div
@@ -501,6 +540,7 @@
               text={b.block.translation ?? ''}
               scale={dpr}
               grow={b.grow}
+              onlayout={(l) => placed(b.rect.key, l)}
               background={rgb(b.block.colors?.background, 'rgba(255,255,255,0.96)')}
             />
           {/if}

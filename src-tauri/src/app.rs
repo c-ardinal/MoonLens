@@ -78,6 +78,9 @@ macro_rules! all_commands {
             crate::attach::attach_window,
             crate::attach::detach_window,
             crate::attach::window_attachment,
+            crate::stream::stream_state,
+            crate::stream::set_stream,
+            crate::stream::set_stream_paint,
             ipc::set_lens_insets,
             ipc::set_lens_continuous,
             ipc::refresh_lens,
@@ -224,6 +227,7 @@ pub fn build() -> Result<()> {
             }
 
             app.manage(crate::attach::Handle::default());
+            app.manage(crate::stream::Handle::default());
             app.manage(AppState {
                 settings,
                 storage,
