@@ -129,6 +129,19 @@ pub fn attach(
         let _ = win.unmaximize();
     }
     let scale = win.scale_factor().unwrap_or(1.0);
+    let mut follow = Follow::new(dock, scale).with_header(header_px(header_css, scale));
+    // Docked, the window keeps its own size along the free axis: the
+    // one it had before a dock stretched it.
+    let own = registry
+        .entries
+        .lock()
+        .get(label)
+        .filter(|e| e.follow.stretches())
+        .map(|e| e.follow.size())
+        .or_else(|| win.inner_size().ok().map(|s| (s.width, s.height)));
+    if let Some((width, height)) = own {
+        follow = follow.with_size(width, height);
+    }
     let serial = registry.serial.fetch_add(1, Ordering::Relaxed) + 1;
     let was_hidden = registry
         .entries
@@ -143,7 +156,7 @@ pub fn attach(
                     title: target.title.clone(),
                     app: target.app.clone(),
                 },
-                follow: Follow::new(dock, scale).with_header(header_px(header_css, scale)),
+                follow,
                 header_css,
                 anchor: None,
                 hidden: false,
@@ -183,13 +196,18 @@ pub fn set_dock(app: &AppHandle, registry: &Handle, label: &str, dock: Dock) {
     emit(app, registry, label);
 }
 
-/// End the attachment of `label`; the window stays where it is.
+/// End the attachment of `label`; the window stays where it is. A
+/// dock stretched it along the target: it gets its own size back.
 pub fn detach(app: &AppHandle, registry: &Handle, label: &str) {
     let Some(old) = registry.entries.lock().remove(label) else {
         return;
     };
-    if old.hidden {
-        if let Some(win) = app.get_webview_window(label) {
+    if let Some(win) = app.get_webview_window(label) {
+        if old.follow.stretches() {
+            let (width, height) = old.follow.size();
+            let _ = win.set_size(tauri::PhysicalSize::new(width, height));
+        }
+        if old.hidden {
             follow::show_inactive(&win);
         }
     }
