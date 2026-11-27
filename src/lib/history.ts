@@ -90,3 +90,14 @@ export function nextSelection(visible: HistoryEntry[], selected: number | null):
   if (selected !== null && visible.some((e) => e.id === selected)) return selected;
   return visible[0]?.id ?? null;
 }
+
+/** 詳細の日時表示（例：2026/11/27 06:02）。`created` は UNIX 秒。 */
+export function dateLabel(created: number): string {
+  return new Date(created * 1000).toLocaleString('ja-JP', {
+    year: 'numeric',
+    month: 'numeric',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit'
+  });
+}

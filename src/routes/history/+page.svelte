@@ -10,6 +10,7 @@
 
 <script lang="ts">
   import PixelTitle from '$lib/components/PixelTitle.svelte';
+  import SubtitleRecordDetail from '$lib/components/SubtitleRecordDetail.svelte';
   import { onDestroy, onMount, untrack } from 'svelte';
   import { replay, type Effect } from '$lib/pixel/transition';
   import { Search, Trash2, RefreshCw, Cloud, Cpu, Copy } from 'lucide-svelte';
@@ -19,6 +20,7 @@
     HISTORY_FILTERS,
     applyFilter,
     countByFilter,
+    dateLabel,
     kindLabel,
     nextSelection,
     type HistoryFilter
@@ -29,7 +31,8 @@
     deleteHistoryEntry,
     restoreHistoryEntry,
     clearHistory,
-    type HistoryEntry
+    type HistoryEntry,
+    type SubtitleRecord
   } from '$lib/ipc';
 
   let q = $state('');
@@ -53,17 +56,6 @@
 
   /** 結果欄の名称（QR は翻訳なし）。 */
   const resultLabel = (e: HistoryEntry) => (e.kind === 'qr' ? '内容' : '訳文');
-
-  function dateLabel(created: number): string {
-    return new Date(created * 1000).toLocaleString('ja-JP', {
-      year: 'numeric',
-      month: 'numeric',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit'
-    });
-  }
-
 
   async function refresh(query = q) {
     loading = true;
@@ -102,7 +94,7 @@
    * 個別削除：即時に削除し、通知の「取消」で元の id・日時のまま復元。
    * 削除は実行済みのため、通知の表示中にアプリを終了しても削除結果は維持。
    */
-  async function remove(entry: HistoryEntry) {
+  async function remove(entry: HistoryEntry, record: SubtitleRecord | null = null) {
     // 選択は隣接項目へ移動（先頭への移動を回避）
     const i = visible.findIndex((e) => e.id === entry.id);
     const neighbour = visible[i + 1] ?? visible[i - 1] ?? null;
@@ -123,7 +115,7 @@
       text: '履歴 1 件：削除完了',
       failure: '復元失敗',
       undo: async () => {
-        await restoreHistoryEntry($state.snapshot(entry));
+        await restoreHistoryEntry($state.snapshot(entry), record);
         selectedId = entry.id;
         restores += 1;
       }
@@ -275,64 +267,72 @@
       </ul>
 
       {#if current}
+        {#snippet plain()}
+          {#if current.source_text}
+            <div>
+              <div class="mb-1 flex items-center justify-between">
+                <h2 class="text-xs font-medium text-ink-muted">原文</h2>
+                <button class="sbtn icon neutral" title="原文をコピー" aria-label="原文をコピー" onclick={() => copy('source')}>
+                  <Copy class="h-3.5 w-3.5" />
+                </button>
+              </div>
+              <p class="font-mono text-xs leading-relaxed break-words whitespace-pre-wrap text-ink-muted">{current.source_text}</p>
+            </div>
+          {/if}
+          {#if current.result_text}
+            <div>
+              <div class="mb-1 flex items-center justify-between">
+                <h2 class="text-xs font-medium text-ink-muted">{resultLabel(current)}</h2>
+                <button
+                  class="sbtn icon neutral"
+                  title="{resultLabel(current)}をコピー"
+                  aria-label="{resultLabel(current)}をコピー"
+                  onclick={() => copy('result')}
+                >
+                  <Copy class="h-3.5 w-3.5" />
+                </button>
+              </div>
+              <p class="text-sm leading-relaxed break-words whitespace-pre-wrap">{current.result_text}</p>
+            </div>
+          {/if}
+        {/snippet}
+
         <section
           class="flex min-h-0 min-w-0 flex-col rounded-ml border border-border bg-surface-elevated shadow-ml"
           aria-label="履歴詳細"
           use:replay={{ key: current.id, effect: 'open' }}
         >
-          <div class="flex flex-wrap items-center gap-2 border-b border-border px-4 py-3 text-xs text-ink-faint">
-            <span class="rounded-full bg-surface-muted px-2 py-0.5">{kindLabel(current.kind)}</span>
-            <time datetime={new Date(current.created_at * 1000).toISOString()}>{dateLabel(current.created_at)}</time>
-            {#if current.provider}
-              <span class="inline-flex items-center gap-1 font-mono">
-                {#if current.via_cloud}
-                  <Cloud class="h-3 w-3 text-accent" />
-                {:else}
-                  <Cpu class="h-3 w-3" />
-                {/if}
-                {current.provider}
-              </span>
-            {/if}
-          </div>
-          <div class="scrollbar-minimal flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4">
-            {#if current.source_text}
-              <div>
-                <div class="mb-1 flex items-center justify-between">
-                  <h2 class="text-xs font-medium text-ink-muted">原文</h2>
-                  <button class="sbtn icon neutral" title="原文をコピー" aria-label="原文をコピー" onclick={() => copy('source')}>
-                    <Copy class="h-3.5 w-3.5" />
-                  </button>
-                </div>
-                <p class="font-mono text-xs leading-relaxed break-words whitespace-pre-wrap text-ink-muted">{current.source_text}</p>
-              </div>
-            {/if}
-            {#if current.result_text}
-              <div>
-                <div class="mb-1 flex items-center justify-between">
-                  <h2 class="text-xs font-medium text-ink-muted">{resultLabel(current)}</h2>
-                  <button
-                    class="sbtn icon neutral"
-                    title="{resultLabel(current)}をコピー"
-                    aria-label="{resultLabel(current)}をコピー"
-                    onclick={() => copy('result')}
-                  >
-                    <Copy class="h-3.5 w-3.5" />
-                  </button>
-                </div>
-                <p class="text-sm leading-relaxed break-words whitespace-pre-wrap">{current.result_text}</p>
-              </div>
-            {/if}
-          </div>
-          <div class="flex justify-end border-t border-border px-4 py-2">
-            <button
-              class="sbtn icon"
-              title="この履歴を削除"
-              aria-label="この履歴を削除"
-              onclick={() => current && remove(current)}
-            >
-              <Trash2 class="h-3.5 w-3.5" />
-            </button>
-          </div>
+          {#if current.kind === 'subtitle'}
+            <SubtitleRecordDetail entry={current} {plain} onchanged={() => refresh()} onremove={(r) => remove(current!, r)} />
+          {:else}
+            <div class="flex flex-wrap items-center gap-2 border-b border-border px-4 py-3 text-xs text-ink-faint">
+              <span class="rounded-full bg-surface-muted px-2 py-0.5">{kindLabel(current.kind)}</span>
+              <time datetime={new Date(current.created_at * 1000).toISOString()}>{dateLabel(current.created_at)}</time>
+              {#if current.provider}
+                <span class="inline-flex items-center gap-1 font-mono">
+                  {#if current.via_cloud}
+                    <Cloud class="h-3 w-3 text-accent" />
+                  {:else}
+                    <Cpu class="h-3 w-3" />
+                  {/if}
+                  {current.provider}
+                </span>
+              {/if}
+            </div>
+            <div class="scrollbar-minimal flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4">
+              {@render plain()}
+            </div>
+            <div class="flex justify-end border-t border-border px-4 py-2">
+              <button
+                class="sbtn icon"
+                title="この履歴を削除"
+                aria-label="この履歴を削除"
+                onclick={() => current && remove(current)}
+              >
+                <Trash2 class="h-3.5 w-3.5" />
+              </button>
+            </div>
+          {/if}
         </section>
       {/if}
     </div>
