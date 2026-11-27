@@ -36,6 +36,7 @@ font_size_px = 14
 line_height = 1.5
 follow_source = true
 position = "near_source"
+show_in_screenshots = true
 
 [subtitle]
 source_language = "auto"

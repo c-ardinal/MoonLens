@@ -18,9 +18,11 @@
 //!
 //! The capture flow:
 //! 1. The watcher (or the frontend, on request) captures a given lens id.
-//! 2. The captured frame must not include the lens UI. Windows and macOS
-//!    exclude the window from screen capture (content protection); on
-//!    other platforms Rust hides the window for the moment of the grab.
+//! 2. The captured frame must not include the lens UI. Windows excludes
+//!    the windows from screen capture for the moment of the grab only
+//!    ([`lens_shield`]), so the user's screenshots still show them;
+//!    macOS excludes them for good (content protection); on other
+//!    platforms Rust hides the window for the moment of the grab.
 //! 3. Rust resolves the window's client bounds, shrinks them by the
 //!    header the renderer tells us about (CSS pixels, scaled to physical
 //!    pixels here), and feeds the resulting rect to
@@ -48,9 +50,10 @@ use crate::{
     capture::CaptureRect,
     lens_control::{self, Hold},
     lens_drag::{self, DragGate},
+    lens_shield,
     lens_text::{self, Follow},
     pipeline::Pipeline,
-    region_watcher::{Frame, Geometry, LiveEvent, Tick, TickEnv, Tracker},
+    region_watcher::{Frame, Geometry, LiveEvent, ReadMode, Tick, TickEnv, Tracker},
     settings::SettingsStore,
 };
 
@@ -406,6 +409,7 @@ pub struct LensDescriptor {
     pub continuous: bool,
     /// Language it translates into; `None` = the configured target.
     pub target_language: Option<String>,
+    pub read_mode: ReadMode,
 }
 
 struct LensEntry {
@@ -413,6 +417,7 @@ struct LensEntry {
     watch: Option<Watch>,
     /// Translate into this language; `None` = the configured target.
     target_language: Option<String>,
+    read_mode: ReadMode,
     /// The renderer shows controls over the body (text view): the body
     /// takes the mouse too.
     interactive: bool,
@@ -429,6 +434,7 @@ pub struct Placement {
     /// Monitor-relative physical pixels, like the selector's crops.
     pub rect: CaptureRect,
     pub target_language: Option<String>,
+    pub read_mode: ReadMode,
 }
 
 /// A running continuous reading of one lens.
@@ -469,15 +475,16 @@ impl LensRegistry {
                 insets: e.insets,
                 continuous: e.watch.is_some(),
                 target_language: e.target_language.clone(),
+                read_mode: e.read_mode,
             })
             .collect()
     }
 
     pub fn track(&self, id: String) {
-        self.track_with(id, None);
+        self.track_with(id, None, ReadMode::default());
     }
 
-    fn track_with(&self, id: String, target_language: Option<String>) {
+    fn track_with(&self, id: String, target_language: Option<String>, read_mode: ReadMode) {
         self.entries.lock().push((
             id,
             LensEntry {
@@ -490,6 +497,7 @@ impl LensRegistry {
                 },
                 watch: None,
                 target_language,
+                read_mode,
                 interactive: false,
                 operate: false,
                 text: None,
@@ -508,6 +516,21 @@ impl LensRegistry {
     pub fn set_target_language(&self, id: &str, lang: Option<String>) {
         if let Some((_, e)) = self.entries.lock().iter_mut().find(|(i, _)| i == id) {
             e.target_language = lang;
+        }
+    }
+
+    /// `None` for a lens that is gone.
+    pub fn read_mode(&self, id: &str) -> Option<ReadMode> {
+        self.entries
+            .lock()
+            .iter()
+            .find(|(i, _)| i == id)
+            .map(|(_, e)| e.read_mode)
+    }
+
+    pub fn set_read_mode(&self, id: &str, mode: ReadMode) {
+        if let Some((_, e)) = self.entries.lock().iter_mut().find(|(i, _)| i == id) {
+            e.read_mode = mode;
         }
     }
 
@@ -670,15 +693,22 @@ pub fn create(
         // instead does not work on Windows: `hide()` returns before DWM
         // has faded the window out, so the grab read the lens itself
         // (its own Japanese placeholder) and nothing got translated.
-        .content_protected(EXCLUDED_FROM_CAPTURE)
+        // Windows excludes the window per grab instead (see `grab`).
+        .content_protected(hidden_from_captures(app))
         .visible(false)
         .build()
         .context("create lens window")?;
     let source = beside.and_then(|b| app.get_webview_window(b));
-    let target_language = match &placement {
-        Some(p) => p.target_language.clone(),
-        // Opened from a window: the same language as that window.
-        None => beside.and_then(|b| registry.target_language(b)),
+    let (target_language, read_mode) = match &placement {
+        Some(p) => (p.target_language.clone(), p.read_mode),
+        // Opened from a window: the same language and reading mode as
+        // that window.
+        None => (
+            beside.and_then(|b| registry.target_language(b)),
+            beside
+                .and_then(|b| registry.read_mode(b))
+                .unwrap_or_default(),
+        ),
     };
     let placed = match (&placement, &source) {
         (Some(p), _) => place(&win, &p.rect),
@@ -690,7 +720,7 @@ pub fn create(
     }
     win.show().ok();
     let _ = win.set_always_on_top(true);
-    registry.track_with(id.clone(), target_language);
+    registry.track_with(id.clone(), target_language, read_mode);
     tauri::async_runtime::spawn(run_passthrough(app.clone(), registry.clone(), id.clone()));
     Ok(id)
 }
@@ -1006,6 +1036,66 @@ pub fn inner_rect(win: &WebviewWindow) -> Result<geometry::LensOuterRect> {
 /// `NSWindowSharingNone`). Elsewhere the window is hidden for the grab.
 pub const EXCLUDED_FROM_CAPTURE: bool = cfg!(any(target_os = "windows", target_os = "macos"));
 
+/// Whether the translation windows stay out of *every* screen capture,
+/// the user's screenshots and recordings included. macOS: always (no
+/// per-grab switch there). Windows: only with
+/// `overlay.show_in_screenshots` off; otherwise [`grab`] excludes them
+/// just for its own capture.
+pub fn hidden_from_captures(app: &AppHandle) -> bool {
+    if !cfg!(windows) {
+        return cfg!(target_os = "macos");
+    }
+    app.try_state::<crate::app::AppState>()
+        .is_some_and(|s| !s.settings.snapshot().overlay.show_in_screenshots)
+}
+
+#[cfg(windows)]
+fn handle(win: &WebviewWindow) -> Option<lens_shield::Handle> {
+    win.hwnd().ok().map(|h| h.0 as lens_shield::Handle)
+}
+
+#[cfg(not(windows))]
+fn handle(_win: &WebviewWindow) -> Option<lens_shield::Handle> {
+    None
+}
+
+/// Handles of the translation windows (text windows included) that a
+/// capture of `observed` by lens `id` would show: its own, and any
+/// other one lying over that rect. All of them with `observed` unset.
+fn shield(
+    app: &AppHandle,
+    registry: &LensRegistryHandle,
+    observed: Option<(&str, geometry::LensOuterRect)>,
+) -> Vec<lens_shield::Handle> {
+    let over = |win: &WebviewWindow| {
+        let Some((id, r)) = observed else { return true };
+        if win.label() == id || win.label() == lens_text::label(id) {
+            return true;
+        }
+        let (Ok(p), Ok(s)) = (win.outer_position(), win.outer_size()) else {
+            return true;
+        };
+        (p.x as i64) < r.x as i64 + r.w as i64
+            && (r.x as i64) < p.x as i64 + s.width as i64
+            && (p.y as i64) < r.y as i64 + r.h as i64
+            && (r.y as i64) < p.y as i64 + s.height as i64
+    };
+    registry
+        .list()
+        .iter()
+        .flat_map(|l| [l.id.clone(), lens_text::label(&l.id)])
+        .filter_map(|label| app.get_webview_window(&label))
+        .filter(over)
+        .filter_map(|win| handle(&win))
+        .collect()
+}
+
+/// Apply `overlay.show_in_screenshots` to the open translation windows
+/// (after a settings change).
+pub fn apply_capture_visibility(app: &AppHandle, registry: &LensRegistryHandle) {
+    lens_shield::persist(&shield(app, registry, None), hidden_from_captures(app));
+}
+
 /// Convert the renderer's CSS-pixel insets to physical pixels. The outer
 /// rect is physical, so at 150 % scaling unscaled insets left part of the
 /// header inside the captured region.
@@ -1049,7 +1139,10 @@ pub fn grab(
 
     let observed = observed(app, registry, id)?;
     if EXCLUDED_FROM_CAPTURE {
-        let image = capture::capture_global_rect(observed.x, observed.y, observed.w, observed.h)?;
+        let windows = shield(app, registry, Some((id, observed)));
+        let image = lens_shield::excluded(&windows, hidden_from_captures(app), || {
+            capture::capture_global_rect(observed.x, observed.y, observed.w, observed.h)
+        })?;
         return Ok((image, observed));
     }
     let win = app
@@ -1133,6 +1226,8 @@ async fn run_watch(
     // capture follows without another pause. Only once in a row, so a
     // region that never settles is not read back to back.
     let mut confirm_now = false;
+    // A reading on request that a screenshot tool held back.
+    let mut held = false;
     loop {
         // Paused: nothing is captured, read or translated. A kick wakes
         // the wait (resume, or a refresh that has to keep waiting).
@@ -1179,6 +1274,7 @@ async fn run_watch(
         let env = TickEnv {
             pipeline: &pipeline,
             target_language: &target_language,
+            mode: registry.read_mode(&id).unwrap_or_default(),
             history_kind: crate::pipeline::history_kind::LENS,
             emit: &emit,
             geometry_now: &geometry_now,
@@ -1202,7 +1298,14 @@ async fn run_watch(
             continue;
         }
         // Dropped: read the new spot at once, like a manual refresh.
-        manual |= was_moving;
+        manual |= was_moving | std::mem::take(&mut held);
+        // A screenshot tool shows a still of the screen, translations
+        // included: reading it would hide the translations and
+        // translate the still. Reading goes on once the tool is gone.
+        if lens_shield::capture_tool_active() {
+            held = manual;
+            continue;
+        }
 
         let (a, r, i) = (app.clone(), registry.clone(), id.clone());
         let started = std::time::Instant::now();
@@ -1381,8 +1484,16 @@ mod tests {
     #[test]
     fn per_lens_language_and_interaction() {
         let r = new_registry_for_test();
-        r.track_with("a".into(), Some("en".into()));
+        r.track_with("a".into(), Some("en".into()), ReadMode::Ui);
         r.track("b".into());
+        // Reading mode: per window, subtitles unless set otherwise.
+        assert_eq!(r.read_mode("a"), Some(ReadMode::Ui));
+        assert_eq!(r.read_mode("b"), Some(ReadMode::Subtitle));
+        r.set_read_mode("b", ReadMode::Ui);
+        r.set_read_mode("a", ReadMode::Subtitle);
+        let modes: Vec<ReadMode> = r.list().iter().map(|l| l.read_mode).collect();
+        assert_eq!(modes, [ReadMode::Subtitle, ReadMode::Ui]);
+        assert_eq!(r.read_mode("missing"), None);
         assert_eq!(r.target_language("a").as_deref(), Some("en"));
         assert_eq!(r.target_language("b"), None);
         r.set_target_language("b", Some("ko".into()));
