@@ -13,7 +13,7 @@ import {
 } from '$lib/ipc';
 
 class LlmModelStore {
-  data = $state<LlmModels>({ selected: '', assistant: '', dir: '', models: [] });
+  data = $state<LlmModels>({ selected: '', assistant: '', dir: '', models: [], accepted_licenses: [] });
   progress = $state<Record<string, LlmProgress>>({});
   busy = $state<Record<string, boolean>>({});
   private users = 0;
