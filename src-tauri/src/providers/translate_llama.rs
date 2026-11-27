@@ -251,7 +251,8 @@ pub fn build_job_with(
     }
 }
 
-/// PLaMo uses plain ISO codes; Chinese scripts are `zh` / `zh-tw`.
+/// PLaMo uses plain ISO codes; Chinese scripts are `zh` / `zh-tw`, and
+/// easy Japanese is `ja-easy` (the model's chat template names it).
 fn pfml3_lang(code: &str) -> String {
     let c = code.trim().to_ascii_lowercase().replace('_', "-");
     match c.as_str() {
@@ -1023,6 +1024,21 @@ mod tests {
     }
 
     #[test]
+    fn pfml3_easy_japanese_keeps_its_code_and_the_glossary() {
+        use crate::settings::schema::JaStyle;
+        let o = opts(JaStyle::Plain, &[("dashboard", "管理画面")]);
+        let job = build_job_with(
+            PromptStyle::Pfml3,
+            tr("Open the dashboard.", "auto", "ja-easy"),
+            &o,
+        );
+        let p = rendered(job.unwrap());
+        assert!(p.contains("<|plamo:index|>dashboard<|plamo:item|>管理画面"));
+        // No style attribute: the model writes easy Japanese politely.
+        assert!(p.ends_with("<|plamo:key|>lang<|plamo:val|>ja-easy<|plamo:msg|>"));
+    }
+
+    #[test]
     fn pfml3_carries_glossary_and_form() {
         use crate::settings::schema::JaStyle;
         let o = opts(JaStyle::Plain, &[("dashboard", "管理画面")]);
@@ -1298,6 +1314,46 @@ mod tests {
             for (_, want) in g {
                 assert!(s.to_lowercase().contains(&want.to_lowercase()), "{s}");
             }
+        }
+    }
+
+    /// Easy Japanese against a real PLaMo 3 Translate GGUF:
+    /// `MOONLENS_TEST_GGUF=… cargo test --lib local_model_writes_easy_japanese
+    ///  -- --ignored --nocapture`
+    #[cfg(feature = "local-llm")]
+    #[tokio::test]
+    #[ignore]
+    async fn local_model_writes_easy_japanese() {
+        let Ok(path) = std::env::var("MOONLENS_TEST_GGUF") else {
+            return;
+        };
+        let p = LlamaTranslator::new(
+            "llamacpp",
+            &serde_json::json!({"model_path": path, "prompt_style": "pfml3"}),
+            false,
+        );
+        // (source, a hard word the ordinary translation keeps)
+        for (text, hard) in [
+            (
+                "Residents near the coast are urged to evacuate to higher ground immediately.",
+                "高台",
+            ),
+            (
+                "恐れ入りますが、本日中に必要書類をご提出いただけますよう、何卒よろしくお願い申し上げます。",
+                "何卒",
+            ),
+        ] {
+            let mut out = Vec::new();
+            for tgt in ["ja", "ja-easy"] {
+                let TaskOutput::Text(s) = p.run(tr(text, "auto", tgt)).await.unwrap() else {
+                    panic!()
+                };
+                eprintln!("{tgt}: {text:?} -> {s:?}");
+                out.push(s);
+            }
+            assert!(out[0].contains(hard), "{}", out[0]);
+            assert!(!out[1].contains(hard), "{}", out[1]);
+            assert!(crate::lang::detect(&out[1]) == Some("ja"), "{}", out[1]);
         }
     }
 }
