@@ -43,6 +43,9 @@
   let content = $state<SubtitleExportContent>('translated');
   let ctl: AbortController | null = null;
 
+  /** 1 時間以上の記録は時刻欄を拡幅（H:MM:SS）。 */
+  const long = $derived((record?.lines.at(-1)?.end_ms ?? 0) >= 3_600_000);
+
   const CONTENT_LABELS: [SubtitleExportContent, string][] = [
     ['translated', '訳文'],
     ['original', '原文'],
@@ -56,8 +59,9 @@
   }
 
   // 項目の切替で、実行中の再翻訳を中止し記録を再取得
+  const entryId = $derived(entry.id);
   $effect(() => {
-    const id = entry.id;
+    const id = entryId;
     record = undefined;
     getSubtitleRecord(id)
       .then((r) => {
@@ -157,9 +161,9 @@
 </div>
 
 {#if record}
-  <ol class="scrollbar-minimal flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-4" aria-label="字幕の行">
+  <ol class="scrollbar-minimal flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-4" aria-label="字幕の行" style:--tc={long ? '7.5rem' : '5rem'}>
     {#each record.lines as l (l.seq)}
-      <li class="grid grid-cols-[3.5rem_minmax(0,1fr)] gap-2">
+      <li class="grid grid-cols-[var(--tc)_minmax(0,1fr)] gap-2">
         <time class="text-xs tabular-nums text-ink-faint">{timeLabel(l.start_ms)}</time>
         <div class="min-w-0">
           <p class="font-mono text-xs leading-relaxed break-words whitespace-pre-wrap text-ink-muted">{l.original}</p>
