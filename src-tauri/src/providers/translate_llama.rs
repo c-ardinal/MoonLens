@@ -504,6 +504,30 @@ pub fn unload(path: &Path) {
     let _ = path;
 }
 
+/// GPU memory kept free next to the weights: the context (KV cache and
+/// compute buffers at the default `n_ctx`) plus headroom for whatever
+/// else is drawing on the card.
+const GPU_RESERVE_BYTES: u64 = 1 << 30;
+
+/// Whether a model file of `model_bytes` fits a GPU with `free` bytes.
+#[cfg_attr(not(feature = "local-llm"), allow(dead_code))]
+fn fits_gpu(model_bytes: u64, free: u64) -> bool {
+    model_bytes.saturating_add(GPU_RESERVE_BYTES) <= free
+}
+
+/// Layers to offload when the whole model does not fit the GPU: as many
+/// as the free memory holds (the rest run on the CPU), instead of giving
+/// up on the GPU altogether. `n_layer` counts the transformer blocks;
+/// the output layer is one more. An explicit `requested` below the fit
+/// is kept.
+#[cfg_attr(not(feature = "local-llm"), allow(dead_code))]
+fn plan_gpu_layers(requested: u32, n_layer: u32, model_bytes: u64, free: u64) -> u32 {
+    let total = n_layer as u64 + 1;
+    let per_layer = (model_bytes / total).max(1);
+    let fit = free.saturating_sub(GPU_RESERVE_BYTES) / per_layer;
+    requested.min(fit.min(total) as u32)
+}
+
 #[cfg(feature = "local-llm")]
 mod engine {
     use std::num::NonZeroU32;
@@ -523,8 +547,8 @@ mod engine {
     use parking_lot::Mutex;
 
     use super::{
-        clean_output, pfml3_prompt_in_context, render_chat_template, take_utf8, ChunkSink,
-        GenParams, Job, STOP_STRINGS,
+        clean_output, fits_gpu, pfml3_prompt_in_context, plan_gpu_layers, render_chat_template,
+        take_utf8, ChunkSink, GenParams, Job, STOP_STRINGS,
     };
     use crate::providers::ProviderError;
 
@@ -644,12 +668,38 @@ mod engine {
             let mp = LlamaModelParams::default().with_n_gpu_layers(layers);
             LlamaModel::load_from_file(backend, path, &mp)
         };
-        let mut on_gpu = params.n_gpu_layers > 0 && !crate::gpu::offload_devices().is_empty();
-        let model = match load(params.n_gpu_layers) {
+        let gpu_free = (params.n_gpu_layers > 0)
+            .then(crate::gpu::offload_memory_free)
+            .flatten();
+        let model_bytes = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+        // The layer count is only needed when the weights do not fit;
+        // reading it costs a metadata-only load.
+        let n_layer = || {
+            let mp = LlamaModelParams::default().with_vocab_only(true);
+            LlamaModel::load_from_file(backend, path, &mp)
+                .map(|m| m.n_layer())
+                .unwrap_or(0)
+        };
+        let layers = match gpu_free {
+            Some(free) if !fits_gpu(model_bytes, free) => {
+                let total = n_layer();
+                let fit = plan_gpu_layers(params.n_gpu_layers, total, model_bytes, free);
+                tracing::info!(
+                    "{} does not fit the GPU ({:.1} GB free): {fit} of {} layers on the GPU",
+                    path.display(),
+                    free as f64 / 1e9,
+                    total + 1
+                );
+                fit
+            }
+            _ => params.n_gpu_layers,
+        };
+        let mut on_gpu = layers > 0 && !crate::gpu::offload_devices().is_empty();
+        let model = match load(layers) {
             Ok(m) => Ok(m),
-            // Not enough GPU memory, or a driver that cannot run the
-            // backend: the CPU still translates, just more slowly.
-            Err(e) if params.n_gpu_layers > 0 => {
+            // Not enough GPU memory after all, or a driver that cannot
+            // run the backend: the CPU still translates, just more slowly.
+            Err(e) if layers > 0 => {
                 tracing::warn!(
                     "loading {} on the GPU failed ({e}); using the CPU",
                     path.display()
@@ -1157,6 +1207,23 @@ mod tests {
         assert_eq!(p.n_ctx, 512);
         assert_eq!(p.temperature, 0.0);
         assert_eq!(GenParams::from_config(&cfg, true).n_gpu_layers, 20);
+    }
+
+    #[test]
+    fn a_model_larger_than_the_gpu_is_split_not_dropped() {
+        const GB: u64 = 1 << 30;
+        // 8B (5.3 GB, 32 blocks) on an 8 GB card with 6 GB free: fits.
+        assert!(fits_gpu(5_280_445_728, 7 * GB));
+        // 4 GB free: 3 GB after the reserve holds 20 of 33 layers.
+        assert!(!fits_gpu(5_280_445_728, 4 * GB));
+        assert_eq!(plan_gpu_layers(999, 32, 5_280_445_728, 4 * GB), 20);
+        // Nothing but the reserve free: CPU.
+        assert_eq!(plan_gpu_layers(999, 32, 5_280_445_728, GB), 0);
+        // An explicit lower setting wins; never more than the model has.
+        assert_eq!(plan_gpu_layers(4, 32, 5_280_445_728, 4 * GB), 4);
+        assert_eq!(plan_gpu_layers(999, 32, 5_280_445_728, 64 * GB), 33);
+        // Unreadable metadata (0 blocks, 0 bytes) must not divide by zero.
+        assert_eq!(plan_gpu_layers(999, 0, 0, 4 * GB), 1);
     }
 
     #[tokio::test]

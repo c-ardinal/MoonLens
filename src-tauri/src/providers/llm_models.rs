@@ -84,6 +84,22 @@ pub const CATALOG: &[CatalogModel] = &[
         style: PromptStyle::Pfml3,
         consent: Some(CONSENT_PLAMO),
     },
+    // Opt-in only, never recommended by the setup: on WMT22 and PFN's
+    // own benchmarks it is slightly ahead of 2B (names, titles, tone of
+    // dialogue) at about a third of the speed.
+    CatalogModel {
+        id: "plamo-3-translate-8b",
+        label: "PLaMo 3 Translate 8B",
+        note: "最高品質・低速。GPU メモリ 8 GB 以上の PC 用（翻訳専用）",
+        file: "plamo-3-translate-8b-Q4_K_M.gguf",
+        url: "https://huggingface.co/pfnet/plamo-3-translate-8b-GGUF/resolve/main/plamo-3-translate-8b-Q4_K_M.gguf",
+        size: 5_280_445_728,
+        sha256: "94e5d3f91b421f7c8900ddaac27b11a19f7441426c954bbb25a2fd60a1640187",
+        license: "PLaMo Community License",
+        license_url: "https://plamo.preferredai.jp/info/plamo-community-license-en",
+        style: PromptStyle::Pfml3,
+        consent: Some(CONSENT_PLAMO),
+    },
     CatalogModel {
         id: "gemma-4-e4b",
         label: "Gemma 4 E4B",
