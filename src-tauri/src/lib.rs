@@ -11,6 +11,7 @@ pub mod audio_apps;
 pub mod autostart;
 pub mod capture;
 pub mod clipboard;
+pub mod erase;
 pub mod follow;
 pub mod foreign_window;
 pub mod gpu;
