@@ -313,9 +313,10 @@ jobs:
       # Windows: the bare executable (it needs no installed files or
       # registry entries), zipped with the licence files. Unsigned:
       # SmartScreen warns on first start.
+      # Default shell (PowerShell) on purpose: Git Bash puts its own
+      # `link.exe` (GNU coreutils) ahead of the MSVC linker on PATH.
       - name: Build (windows)
         if: matrix.name == 'windows'
-        shell: bash
         run: npx tauri build --no-bundle --config src-tauri/tauri.release.conf.json
       - name: Portable zip (windows)
         if: matrix.name == 'windows'
