@@ -400,6 +400,19 @@ export const SECTIONS: Section[] = [
     ]
   },
   {
+    id: 'startup',
+    title: '起動',
+    description: 'OS ログイン時の動作。',
+    fields: [
+      {
+        kind: 'toggle',
+        path: 'startup.launch_at_login',
+        label: 'ログイン時の自動起動',
+        help: 'OS ログイン時、通知領域へ常駐状態で起動。実行ファイルの移動後は、次回の手動起動時に登録を更新。'
+      }
+    ]
+  },
+  {
     id: 'plugins',
     title: '拡張機能',
     description: '拡張機能の追加・有効化・権限確認。変更は即時反映。',
@@ -440,7 +453,7 @@ export const GROUPS: Group[] = [
   { id: 'output', title: '履歴・コピー', sections: ['history', 'clipboard'] },
   { id: 'hotkeys', title: 'ショートカット', sections: ['hotkeys'] },
   { id: 'plugins', title: '拡張', sections: ['plugins'] },
-  { id: 'system', title: 'システム', sections: ['appearance', 'performance', 'data', 'advanced'] }
+  { id: 'system', title: 'システム', sections: ['appearance', 'performance', 'startup', 'data', 'advanced'] }
 ];
 
 /** 小分類の所属する大分類。 */

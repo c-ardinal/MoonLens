@@ -27,6 +27,7 @@ pub struct Settings {
     pub privacy: PrivacySettings,
     pub storage: StorageSettings,
     pub performance: PerformanceSettings,
+    pub startup: StartupSettings,
     pub providers: Providers,
     pub plugins: PluginSettings,
     pub onboarding: OnboardingState,
@@ -423,6 +424,16 @@ impl Default for PerformanceSettings {
             use_gpu_if_available: true,
         }
     }
+}
+
+/* --------------------------------- startup ------------------------------- */
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(default, deny_unknown_fields)]
+pub struct StartupSettings {
+    /// Start MoonLens (to the tray) when the user logs in to the OS.
+    /// Mirrored to a per-user login item by `autostart.rs`.
+    pub launch_at_login: bool,
 }
 
 /* -------------------------------- providers ------------------------------ */

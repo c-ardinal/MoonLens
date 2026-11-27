@@ -97,6 +97,9 @@ scan_margin_px = 32
 max_concurrent_tasks = 4
 use_gpu_if_available = true
 
+[startup]
+launch_at_login = false
+
 # ---------------------------------------------------------------------------
 # Providers
 # Each task declares an ordered chain and fallback policy. Provider ids of the

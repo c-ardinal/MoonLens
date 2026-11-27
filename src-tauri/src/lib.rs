@@ -8,6 +8,7 @@ pub mod app_identity;
 pub mod attach;
 pub mod audio;
 pub mod audio_apps;
+pub mod autostart;
 pub mod capture;
 pub mod clipboard;
 pub mod follow;
