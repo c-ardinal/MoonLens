@@ -204,6 +204,18 @@ export const SECTIONS: Section[] = [
         step: 0.1,
         unit: '秒',
         slider: true
+      },
+      {
+        kind: 'toggle',
+        path: 'subtitle.realtime_correction',
+        label: 'リアルタイム補正',
+        help: '文の認識完了時、文脈を参照して文全体を再翻訳、訳文を更新。負荷増。'
+      },
+      {
+        kind: 'toggle',
+        path: 'subtitle.batch_correction',
+        label: '一括補正',
+        help: '無音時・終了時に未補正の文を一括で再翻訳。発話中の負荷なし。'
       }
     ]
   },

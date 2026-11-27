@@ -7,6 +7,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
+import type { AttachCandidate, AttachDock, Attachment } from './attach';
 
 export type Settings = Record<string, any>;
 
@@ -147,16 +148,38 @@ export const pickAndInstallPlugin = () =>
 export const installOcrModels = () => safeInvoke<string>('install_ocr_models');
 
 export interface OcrModelsStatus {
-  /** PP-OCRv5 (Japanese / Chinese / English), the default engine. */
+  /** PP-OCR (Japanese / Chinese / English), the default engine. */
   ppocr: boolean;
+  /** PP-OCR が現行世代（PP-OCRv6）。false：旧版で取得した PP-OCRv5 で動作中。 */
+  current: boolean;
   /** ocrs (Latin only), the fallback engine. */
   ocrs: boolean;
-  /** PP-OCRv5 の高速実行部品（ONNX Runtime）が取得済み、または当該環境で対象外。 */
+  /** PP-OCR の高速実行部品（ONNX Runtime）が取得済み、または当該環境で対象外。 */
   fast: boolean;
   dir: string;
 }
 export const ocrModelsStatus = () =>
-  safeInvoke<OcrModelsStatus>('ocr_models_status', undefined, { ppocr: false, ocrs: false, fast: false, dir: '' });
+  safeInvoke<OcrModelsStatus>('ocr_models_status', undefined, {
+    ppocr: false,
+    current: false,
+    ocrs: false,
+    fast: false,
+    dir: ''
+  });
+
+/** 標準モデルの対象外の文字体系（韓国語・キリル文字等）と、その認識モデルの取得状態。 */
+export interface OcrScript {
+  id: string;
+  /** 取得量（バイト）。 */
+  size: number;
+  installed: boolean;
+}
+export const ocrScriptsStatus = () => safeInvoke<OcrScript[]>('ocr_scripts_status', undefined, []);
+/** 進捗は onModelProgress（filename：ocrScriptFile(id)）で通知。 */
+export const installOcrScript = (id: string) => safeInvoke<void>('install_ocr_script', { id });
+export const deleteOcrScript = (id: string) => safeInvoke<void>('delete_ocr_script', { id });
+/** 文字体系の認識モデルのファイル名（進捗通知の filename）。 */
+export const ocrScriptFile = (id: string) => `ppocrv5-rec-${id}.onnx`;
 
 /** Fired after settings are saved, so every window can apply them at once. */
 export const onSettingsChanged = (handler: (s: Settings) => void): Promise<UnlistenFn> =>
@@ -335,7 +358,7 @@ export const onHotkey = (handler: (action: string) => void): Promise<UnlistenFn>
   listen<string>('moonlens://hotkey', (e) => handler(e.payload));
 
 /** 音声翻訳の処理段階：音声待機・音声認識・翻訳。 */
-export type SubtitlePhase = 'waiting' | 'recognizing' | 'translating';
+export type SubtitlePhase = 'waiting' | 'recognizing' | 'translating' | 'revising';
 
 /** 音声翻訳ウィンドウの音源：PC 全体、またはアプリ単位（プロセスツリー）。 */
 export type AudioSource = { kind: 'system' } | { kind: 'app'; pid: number };
@@ -365,7 +388,16 @@ export type SubtitleEvent =
   | { kind: 'started'; device: string; source: AudioSource }
   | { kind: 'stopped' }
   | { kind: 'status'; phase: SubtitlePhase }
-  | { kind: 'chunk'; original: string; translated: string }
+  | { kind: 'chunk'; id: number; original: string; translated: string }
+  | {
+      /** 文単位の再翻訳結果。`replaces` の各行を 1 行（＋次文の冒頭 `rest`）へ置換。 */
+      kind: 'revised';
+      replaces: number[];
+      id: number;
+      original: string;
+      translated: string;
+      rest: { id: number; original: string; translated: string } | null;
+    }
   | { kind: 'error'; message: string };
 
 /** `id`：イベントの対象ウィンドウ（ラベル）。 */
@@ -637,3 +669,14 @@ export const listOrphanLlmFiles = () =>
   safeInvoke<OrphanFile[]>('list_orphan_llm_files', undefined, []);
 export const deleteOrphanLlmFile = (name: string) =>
   safeInvoke<void>('delete_orphan_llm_file', { name });
+
+// ---- 他アプリのウィンドウへの吸着（attach.rs、型は `$lib/attach`） ----
+/** ウィンドウ `label` の吸着先候補（直下のウィンドウが先頭）。 */
+export const listAttachTargets = (label: string) =>
+  safeInvoke<AttachCandidate[]>('list_attach_targets', { label }, []);
+/** `label` を `target`（候補の `id`）へ吸着、または吸着中の配置を変更。 */
+export const attachWindow = (label: string, target: number, dock: AttachDock) =>
+  safeInvoke<void>('attach_window', { label, target, dock });
+export const detachWindow = (label: string) => safeInvoke<void>('detach_window', { label });
+export const windowAttachment = (label: string) =>
+  safeInvoke<Attachment>('window_attachment', { label }, { target: null, dock: null });

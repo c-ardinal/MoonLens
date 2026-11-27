@@ -23,6 +23,11 @@
 //!    captures, one per process, run their own subtitle loops, as two
 //!    subtitle windows do: each must recognize its own application only.
 //!
+//! 5. `sentence_cut_by_chunks_is_translated_again`: the recording is one
+//!    sentence spread over four chunks. Once it ends, the window must be
+//!    told to replace the chunk lines with the sentence translated as a
+//!    whole.
+//!
 //! `#[ignore]` because all need the downloaded models (about 2 GB):
 //!
 //! ```sh
@@ -143,15 +148,19 @@ async fn subtitles_notifying(
     let (settings, pipeline) = env;
     let events = Arc::new(Mutex::new(Vec::new()));
     let sink = events.clone();
+    let working = std::sync::atomic::AtomicBool::new(false);
     let emit = move |ev: SubtitleEvent| {
+        use std::sync::atomic::Ordering::Relaxed;
         println!("{ev:?}");
-        if matches!(
-            ev,
+        match ev {
             SubtitleEvent::Status {
-                phase: Phase::Waiting
-            }
-        ) {
-            idle.notify_one();
+                phase: Phase::Recognizing,
+            } => working.store(true, Relaxed),
+            // Once per chunk: correcting a sentence also ends in waiting.
+            SubtitleEvent::Status {
+                phase: Phase::Waiting | Phase::Revising,
+            } if working.swap(false, Relaxed) => idle.notify_one(),
+            _ => {}
         }
         sink.lock().push(ev);
     };
@@ -174,6 +183,7 @@ fn assert_subtitles(events: &[SubtitleEvent]) {
             SubtitleEvent::Chunk {
                 original: o,
                 translated: t,
+                ..
             } => {
                 original.push_str(&o.to_lowercase());
                 original.push(' ');
@@ -263,6 +273,7 @@ async fn english_after_a_japanese_aside_stays_english() {
             SubtitleEvent::Chunk {
                 original,
                 translated,
+                ..
             } => Some((original.as_str(), translated.as_str())),
             SubtitleEvent::Error { message } => panic!("error event: {message}"),
             _ => None,
@@ -302,6 +313,135 @@ async fn english_after_a_japanese_aside_stays_english() {
         has_japanese(&translated) && translated.contains('国'),
         "English after the Japanese not translated: {translated:?}"
     );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "needs the downloaded models"]
+async fn sentence_cut_by_chunks_is_translated_again() {
+    let env = setup().await;
+    let snap = env.0.snapshot();
+    assert!(snap.subtitle.realtime_correction && snap.subtitle.batch_correction);
+    let chunk = (snap.subtitle.chunk_seconds * 16_000.0) as usize;
+    let pcm = speech();
+    let (tx, rx) = mpsc::channel::<Vec<i16>>(4096);
+    let idle = Arc::new(Notify::new());
+    let fed = idle.clone();
+    // One chunk at a time, as in the test above.
+    tokio::spawn(async move {
+        for piece in pcm.chunks(chunk) {
+            for frame in piece.chunks(160) {
+                if tx.send(frame.to_vec()).await.is_err() {
+                    return;
+                }
+            }
+            if piece.len() == chunk {
+                let _ = tokio::time::timeout(Duration::from_secs(600), fed.notified()).await;
+            }
+        }
+    });
+    let events = subtitles_notifying(env, rx, idle).await;
+
+    // What the window shows: chunk lines, replaced as revisions arrive.
+    let mut lines: Vec<(u64, String, String)> = Vec::new();
+    let mut shown = std::collections::HashMap::new();
+    let mut chunks = 0;
+    let mut revisions = Vec::new();
+    for ev in &events {
+        match ev {
+            SubtitleEvent::Chunk {
+                id,
+                original,
+                translated,
+            } => {
+                chunks += 1;
+                shown.insert(*id, translated.clone());
+                lines.push((*id, original.clone(), translated.clone()));
+            }
+            SubtitleEvent::Revised(r) => {
+                let at = lines
+                    .iter()
+                    .position(|(id, ..)| r.replaces.contains(id))
+                    .expect("revision of lines never shown");
+                for id in &r.replaces {
+                    assert!(
+                        lines.iter().any(|(shown, ..)| shown == id),
+                        "line {id} replaced but not shown"
+                    );
+                }
+                // Not the fallback of a failed translation: the old
+                // fragments side by side.
+                let fragments: Vec<&str> = r
+                    .replaces
+                    .iter()
+                    .filter_map(|id| shown.get(id).map(String::as_str))
+                    .collect();
+                assert_ne!(
+                    r.translated,
+                    fragments.join(" "),
+                    "the sentence was not translated again"
+                );
+                lines.retain(|(id, ..)| !r.replaces.contains(id));
+                lines.insert(at, (r.id, r.original.clone(), r.translated.clone()));
+                if let Some(rest) = &r.rest {
+                    let line = (rest.id, rest.original.clone(), rest.translated.clone());
+                    lines.insert(at + 1, line);
+                }
+                revisions.push(r.clone());
+            }
+            SubtitleEvent::Error { message } => panic!("error event: {message}"),
+            _ => {}
+        }
+    }
+    println!("chunks: {chunks}\nlines after correction: {lines:#?}");
+    assert!(chunks >= 3, "the sentence was not cut: {chunks} chunk(s)");
+    assert!(!revisions.is_empty(), "no sentence was translated again");
+    let replaced: usize = revisions.iter().map(|r| r.replaces.len()).sum();
+    assert!(replaced >= chunks, "chunk lines left: {lines:?}");
+    assert!(
+        lines.len() < chunks,
+        "fragments were not joined into sentences: {lines:?}"
+    );
+    let original = lines
+        .iter()
+        .map(|(_, o, _)| o.to_lowercase())
+        .collect::<Vec<_>>()
+        .join(" ");
+    assert_eq!(
+        original.matches("country").count(),
+        2,
+        "words lost or doubled when joining the chunks: {original:?}"
+    );
+    // The first sentence, recognized in three chunks, is one line. (Its
+    // wording is the recognizer's: a chunk cut mid-phrase can be misheard,
+    // and translating again does not recognize again.)
+    assert!(
+        lines.iter().any(|(_, o, _)| {
+            let o = o.to_lowercase();
+            o.contains("fellow americans") && o.contains("can do for you")
+        }),
+        "first sentence not joined: {lines:?}"
+    );
+    for (_, o, t) in &lines {
+        assert!(has_japanese(t), "{o:?} not translated: {t:?}");
+    }
+    let translated: String = lines.iter().map(|(.., t)| t.as_str()).collect();
+    assert!(translated.contains('国'), "{translated:?}");
+    assert!(
+        events.iter().any(|e| matches!(
+            e,
+            SubtitleEvent::Status {
+                phase: Phase::Revising
+            }
+        )),
+        "no revising status"
+    );
+    // The loop ends idle, after the last correction.
+    assert!(matches!(
+        events.last(),
+        Some(SubtitleEvent::Status {
+            phase: Phase::Waiting
+        })
+    ));
 }
 
 #[cfg(all(windows, feature = "audio"))]

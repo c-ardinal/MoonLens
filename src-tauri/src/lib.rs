@@ -5,10 +5,13 @@
 
 pub mod app;
 pub mod app_identity;
+pub mod attach;
 pub mod audio;
 pub mod audio_apps;
 pub mod capture;
 pub mod clipboard;
+pub mod follow;
+pub mod foreign_window;
 pub mod gpu;
 pub mod hotkey;
 pub mod intent;
@@ -35,6 +38,7 @@ pub mod settings;
 pub mod setup;
 pub mod storage;
 pub mod subtitle;
+pub mod subtitle_revise;
 pub mod translate_plan;
 pub mod translation_cache;
 pub mod user_error;
