@@ -51,6 +51,11 @@ pub struct SubtitleRecord {
     pub source: String,
     pub source_language: String,
     pub target_language: String,
+    /// Counts the changes to the lines. A writer that replaces all lines
+    /// names the revision it read, so it cannot discard lines recorded
+    /// meanwhile.
+    #[serde(default)]
+    pub revision: i64,
     pub lines: Vec<SubtitleLine>,
 }
 
@@ -150,7 +155,8 @@ impl Storage {
                 history_id INTEGER PRIMARY KEY,
                 source TEXT NOT NULL,
                 source_language TEXT NOT NULL,
-                target_language TEXT NOT NULL
+                target_language TEXT NOT NULL,
+                revision INTEGER NOT NULL DEFAULT 0
              );
              CREATE TABLE IF NOT EXISTS subtitle_line (
                 history_id INTEGER NOT NULL,
@@ -340,9 +346,15 @@ impl Storage {
             if let Some(r) = record {
                 tx.execute(
                     "INSERT OR REPLACE INTO subtitle_session
-                      (history_id, source, source_language, target_language)
-                      VALUES (?1, ?2, ?3, ?4)",
-                    rusqlite::params![entry.id, r.source, r.source_language, r.target_language],
+                      (history_id, source, source_language, target_language, revision)
+                      VALUES (?1, ?2, ?3, ?4, ?5)",
+                    rusqlite::params![
+                        entry.id,
+                        r.source,
+                        r.source_language,
+                        r.target_language,
+                        r.revision
+                    ],
                 )?;
                 write_lines(&tx, entry.id, &r.lines)?;
             }
@@ -471,16 +483,28 @@ impl Storage {
     }
 
     /// Replace every line of the record, numbering them from 0 in the
-    /// given order, and rebuild the row's texts. Fails when the row has
-    /// no record.
-    pub fn replace_subtitle_lines(&self, id: i64, lines: &[SubtitleLine]) -> Result<()> {
+    /// given order, and rebuild the row's texts. `revision` is the one
+    /// the caller read the lines at: when the record changed since (a
+    /// run still recording appended a line), nothing is written and the
+    /// call fails, so no recorded line is lost. Returns the new
+    /// revision. Also fails when the row has no record.
+    pub fn replace_subtitle_lines(
+        &self,
+        id: i64,
+        revision: i64,
+        lines: &[SubtitleLine],
+    ) -> Result<i64> {
         let mut db = self.db.lock();
         let tx = db.transaction()?;
         require_session(&tx, id)?;
+        if revision_of(&tx, id)? != revision {
+            anyhow::bail!("字幕記録の更新を検出（記録中または他操作）。再読込後に再実行");
+        }
         write_lines(&tx, id, lines)?;
         rebuild_texts(&tx, id)?;
+        let next = revision_of(&tx, id)?;
         tx.commit()?;
-        Ok(())
+        Ok(next)
     }
 
     /// The subtitle record of a history row, `None` when it has none.
@@ -488,13 +512,13 @@ impl Storage {
         let db = self.db.lock();
         let session = db
             .query_row(
-                "SELECT source, source_language, target_language
+                "SELECT source, source_language, target_language, revision
                  FROM subtitle_session WHERE history_id = ?1",
                 [id],
-                |r| Ok((r.get::<_, String>(0)?, r.get(1)?, r.get(2)?)),
+                |r| Ok((r.get::<_, String>(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
             )
             .optional()?;
-        let Some((source, source_language, target_language)) = session else {
+        let Some((source, source_language, target_language, revision)) = session else {
             return Ok(None);
         };
         Ok(Some(SubtitleRecord {
@@ -502,6 +526,7 @@ impl Storage {
             source,
             source_language,
             target_language,
+            revision,
             lines: read_lines(&db, id)?,
         }))
     }
@@ -523,6 +548,14 @@ impl Storage {
         Self::purge_subtitle_orphans(&db)?;
         Ok(n)
     }
+}
+
+fn revision_of(db: &Connection, id: i64) -> Result<i64> {
+    Ok(db.query_row(
+        "SELECT revision FROM subtitle_session WHERE history_id = ?1",
+        [id],
+        |r| r.get(0),
+    )?)
 }
 
 fn require_session(db: &Connection, id: i64) -> Result<()> {
@@ -610,6 +643,11 @@ fn rebuild_texts(db: &Connection, id: i64) -> Result<()> {
     db.execute(
         "UPDATE history SET source_text = ?2, result_text = ?3 WHERE id = ?1",
         rusqlite::params![id, source, result],
+    )?;
+    // Every change to the lines ends here: count it.
+    db.execute(
+        "UPDATE subtitle_session SET revision = revision + 1 WHERE history_id = ?1",
+        [id],
     )?;
     Ok(())
 }
@@ -1048,8 +1086,10 @@ mod tests {
             line(7, 0, 500, "alpha", "ア"),
             line(3, 500, 900, "beta", ""),
         ];
-        s.replace_subtitle_lines(id, &new).unwrap();
+        let read = s.subtitle_record(id).unwrap().unwrap().revision;
+        let written = s.replace_subtitle_lines(id, read, &new).unwrap();
         let rec = s.subtitle_record(id).unwrap().unwrap();
+        assert_eq!(rec.revision, written);
         assert_eq!(
             rec.lines,
             vec![
@@ -1061,8 +1101,22 @@ mod tests {
         assert_eq!(row.source_text.as_deref(), Some("alpha\nbeta"));
         assert_eq!(row.result_text.as_deref(), Some("ア"));
         // Replacing with nothing empties the record but keeps it.
-        s.replace_subtitle_lines(id, &[]).unwrap();
+        s.replace_subtitle_lines(id, written, &[]).unwrap();
         assert!(s.subtitle_record(id).unwrap().unwrap().lines.is_empty());
+    }
+
+    #[test]
+    fn replacing_lines_read_before_a_new_line_was_recorded_changes_nothing() {
+        let s = Storage::open_in_memory().unwrap();
+        let id = record_with_three_lines(&s);
+        let read = s.subtitle_record(id).unwrap().unwrap();
+        // The run is still recording while the lines are re-translated.
+        s.append_subtitle_line(id, 4000, 5000, "four", "四")
+            .unwrap();
+        assert!(s
+            .replace_subtitle_lines(id, read.revision, &read.lines[..1])
+            .is_err());
+        assert_eq!(s.subtitle_record(id).unwrap().unwrap().lines.len(), 4);
     }
 
     #[test]
@@ -1072,7 +1126,7 @@ mod tests {
             .append("translate", Some("x"), Some("y"), None, false, None)
             .unwrap();
         assert!(s
-            .replace_subtitle_lines(plain, &[line(0, 0, 1, "a", "b")])
+            .replace_subtitle_lines(plain, 0, &[line(0, 0, 1, "a", "b")])
             .is_err());
         assert_eq!(table_count(&s, "subtitle_line"), 0);
         let row = s.entry(plain).unwrap().unwrap();
@@ -1127,7 +1181,8 @@ mod tests {
         assert_eq!(s.entry(id).unwrap().unwrap(), entry);
         assert_eq!(s.subtitle_record(id).unwrap().unwrap(), record);
         // Already present: nothing is written again.
-        s.replace_subtitle_lines(id, &[]).unwrap();
+        let read = s.subtitle_record(id).unwrap().unwrap().revision;
+        s.replace_subtitle_lines(id, read, &[]).unwrap();
         assert_eq!(s.restore_with_record(&entry, Some(&record)).unwrap(), 0);
         assert!(s.subtitle_record(id).unwrap().unwrap().lines.is_empty());
     }

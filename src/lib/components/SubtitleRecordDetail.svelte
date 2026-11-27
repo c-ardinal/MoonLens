@@ -100,15 +100,16 @@
         notifyError('再翻訳失敗：全件の翻訳不可（変更なし）');
         return;
       }
-      await replaceSubtitleLines(id, lines);
-      if (entry.id === id) record = { ...rec, lines };
+      // 再翻訳中に記録が変化（音声翻訳の実行中）した場合は失敗し、記録中の行を保護
+      const revision = await replaceSubtitleLines(id, rec.revision, lines);
+      if (entry.id === id) record = { ...rec, revision, lines };
       onchanged();
       undoable({
         text: failed > 0 ? `再翻訳完了（${failed} 件は旧訳を維持）` : '再翻訳完了',
         failure: '取消失敗',
         undo: async () => {
-          await replaceSubtitleLines(id, before);
-          if (entry.id === id) record = { ...rec, lines: before };
+          const restored = await replaceSubtitleLines(id, revision, before);
+          if (entry.id === id) record = { ...rec, revision: restored, lines: before };
           onchanged();
         }
       });

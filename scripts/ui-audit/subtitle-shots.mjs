@@ -12,7 +12,7 @@ const slow = `(() => { const o = window.__TAURI_INTERNALS__.invoke; let n = 0;
   window.__TAURI_INTERNALS__.invoke = async (cmd, a) => {
     if (cmd === 'run_translate') { await new Promise((r) => setTimeout(r, 700)); n++;
       return { task: 'translate', output: { Text: '再翻訳 ' + n + '：' + a.args.text.slice(0, 40) }, used_provider: 'PLaMo', via_cloud: false, latency_ms: 1, fallback_reasons: [] }; }
-    if (cmd === 'replace_subtitle_lines') return null;
+    if (cmd === 'replace_subtitle_lines') return a.revision + 1;
     return o(cmd, a);
   }; })();`;
 for (const [w, h] of [[1280, 800], [720, 480]]) {

@@ -42,8 +42,8 @@ pub enum SubtitleEvent {
     Chunk {
         original: String,
         translated: String,
-        /// Milliseconds from the start of the loop to the moment this
-        /// chunk's audio was cut from the buffer.
+        /// Milliseconds from the start of the loop to the end of this
+        /// chunk's audio (when its last sample was received).
         at_ms: u64,
         /// Length of the audio sent to recognition.
         duration_ms: u64,
@@ -347,6 +347,10 @@ pub async fn run_loop(
     let mut heard = false;
     let mut closed = false;
     let loop_started = std::time::Instant::now();
+    // When the newest sample in `buffer` was received. Subtitle times
+    // come from this, not from the moment a chunk is cut: a chunk cut
+    // after a pause would be dated late by the wait for that pause.
+    let mut heard_until = Duration::ZERO;
     loop {
         let snap = settings.snapshot();
         let chunk_samples = (snap.subtitle.chunk_seconds * 16_000.0) as usize;
@@ -364,7 +368,10 @@ pub async fn run_loop(
             tokio::select! {
                 _ = stop.notified() => break,
                 maybe = rx.recv() => match maybe {
-                    Some(frame) => buffer.extend_from_slice(&frame),
+                    Some(frame) => {
+                        buffer.extend_from_slice(&frame);
+                        heard_until = loop_started.elapsed();
+                    }
                     None => {
                         closed = true;
                         flush = true;
@@ -376,6 +383,7 @@ pub async fn run_loop(
         // Collect whatever arrived during the previous recognition.
         while let Ok(frame) = rx.try_recv() {
             buffer.extend_from_slice(&frame);
+            heard_until = loop_started.elapsed();
         }
         if !heard && !buffer.is_empty() {
             heard = true;
@@ -402,8 +410,10 @@ pub async fn run_loop(
         // Build a chunk that includes a small lookback for context.
         let mut to_send = overlap.clone();
         to_send.extend_from_slice(&buffer[..take]);
-        let at_ms = loop_started.elapsed().as_millis() as u64;
         let duration_ms = to_send.len() as u64 * 1000 / 16_000;
+        // What stays in the buffer was heard after this chunk.
+        let left_ms = (buffer.len() - take) as u64 * 1000 / 16_000;
+        let at_ms = (heard_until.as_millis() as u64).saturating_sub(left_ms);
         // Preserve the tail for the next iteration's overlap.
         if overlap_samples > 0 && take >= overlap_samples && !flush {
             overlap = buffer[take - overlap_samples..take].to_vec();

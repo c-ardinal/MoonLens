@@ -1030,16 +1030,18 @@ pub async fn get_subtitle_record(
     state.storage.subtitle_record(id).map_err(|e| e.to_string())
 }
 
-/// 記録の全行を置換（再翻訳とその取消）。
+/// 記録の全行を置換（再翻訳とその取消）。`revision` は行の取得時点の値：
+/// 取得後に記録が変化した場合は失敗（記録中の行を保護）。戻り値は新しい値。
 #[tauri::command]
 pub async fn replace_subtitle_lines(
     id: i64,
+    revision: i64,
     lines: Vec<crate::storage::SubtitleLine>,
     state: State<'_, AppState>,
-) -> Result<(), String> {
+) -> Result<i64, String> {
     state
         .storage
-        .replace_subtitle_lines(id, &lines)
+        .replace_subtitle_lines(id, revision, &lines)
         .map_err(|e| format!("{e:#}"))
 }
 

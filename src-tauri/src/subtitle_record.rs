@@ -61,8 +61,14 @@ impl Recorder {
     }
 
     fn record_chunk(&self, original: &str, translated: &str, at_ms: u64, duration_ms: u64) {
+        // Checked for every line, like every other history write:
+        // turning history off stops the run in progress from saving too.
+        let settings = self.settings.snapshot();
+        if !settings.storage.keep_history {
+            return;
+        }
         let mut st = self.state.lock();
-        let Some(id) = st.id.or_else(|| self.begin(&mut st)) else {
+        let Some(id) = st.id.or_else(|| self.begin(&mut st, &settings)) else {
             return;
         };
         let end = i64::try_from(at_ms).unwrap_or(i64::MAX);
@@ -79,13 +85,9 @@ impl Recorder {
         }
     }
 
-    /// Create the record unless the user turned history off, then apply
-    /// the retention settings like every other history write.
-    fn begin(&self, st: &mut State) -> Option<i64> {
-        let s = self.settings.snapshot();
-        if !s.storage.keep_history {
-            return None;
-        }
+    /// Create the record, then apply the retention settings like every
+    /// other history write.
+    fn begin(&self, st: &mut State, s: &crate::settings::Settings) -> Option<i64> {
         let id = match self.storage.begin_subtitle_record(
             &st.source,
             &s.subtitle.source_language,
@@ -351,6 +353,22 @@ mod tests {
         });
         f.recorder.observe(&chunk("a", "b", 1000, 1000));
         assert!(f.storage.recent(10).unwrap().is_empty());
+    }
+
+    #[test]
+    fn turning_history_off_stops_a_run_in_progress_from_saving() {
+        let f = fixture();
+        f.recorder.observe(&SubtitleEvent::Started {
+            device: "mic".into(),
+        });
+        f.recorder.observe(&chunk("kept", "保持", 1000, 1000));
+        let mut s = (*f.settings.snapshot()).clone();
+        s.storage.keep_history = false;
+        f.settings.save(s).unwrap();
+        f.recorder.observe(&chunk("private", "非保存", 2000, 1000));
+        let rec = only_record(&f.storage);
+        assert_eq!(rec.lines.len(), 1);
+        assert_eq!(rec.lines[0].original, "kept");
     }
 
     #[test]

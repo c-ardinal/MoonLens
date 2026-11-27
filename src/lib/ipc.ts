@@ -517,6 +517,8 @@ export interface SubtitleRecord {
   /** 実行時の設定値（auto の場合あり）。 */
   source_language: string;
   target_language: string;
+  /** 行の変更回数。全行の置換時に取得時点の値を指定（記録中の行の消失防止）。 */
+  revision: number;
   lines: SubtitleLine[];
 }
 
@@ -527,9 +529,12 @@ export type SubtitleExportContent = 'translated' | 'original' | 'both';
 export const getSubtitleRecord = (id: number) =>
   safeInvoke<SubtitleRecord | null>('get_subtitle_record', { id }, null);
 
-/** 記録の全行の置換（再翻訳とその取消）。履歴の原文・訳文も再構築。 */
-export const replaceSubtitleLines = (id: number, lines: SubtitleLine[]) =>
-  safeInvoke<void>('replace_subtitle_lines', { id, lines });
+/**
+ * 記録の全行の置換（再翻訳とその取消）。履歴の原文・訳文も再構築。
+ * `revision` は行の取得時点の値：取得後に記録が変化した場合は失敗。戻り値は新しい値。
+ */
+export const replaceSubtitleLines = (id: number, revision: number, lines: SubtitleLine[]) =>
+  safeInvoke<number>('replace_subtitle_lines', { id, revision, lines });
 
 /** 記録の書出し。戻り値は保存先、保存先の選択を取消した場合は null。 */
 export const exportSubtitleRecord = (
