@@ -67,6 +67,8 @@
   import { errorText } from '$lib/errors';
   import { parseView } from '$lib/layout-sets';
   import { displayAccelerator } from '$lib/hotkey';
+  import { unspoken, type Spoken } from '$lib/speech';
+  import { Speaker } from '$lib/speech.svelte';
 
   // Window translation, continuous. The window sits over the observed
   // range: the header above it can be dragged, the edges and the corner
@@ -117,6 +119,21 @@
   let vw = $state(typeof window !== 'undefined' ? window.innerWidth : 0);
   const boxes = $derived(liveBoxes(blocks, hidden, dpr, vw * dpr));
   const hasText = $derived(!!(source?.trim() || translation.trim()));
+  /** Read new translations aloud (voices of the OS; `speech/mod.rs`). */
+  let speakOn = $state(false);
+  const speaker = new Speaker();
+  /** Translations already read aloud. */
+  const spoken: Spoken = new Map();
+  function readAloud(shown: LensBlock[]) {
+    if (!speakOn || paused) return;
+    for (const text of unspoken(spoken, shown, Date.now())) speaker.say(text, targetLanguage);
+  }
+  function toggleSpeak() {
+    speakOn = !speakOn;
+    spoken.clear();
+    if (speakOn) readAloud(blocks.filter((_, i) => !hidden.has(i)));
+    else speaker.stop();
+  }
   let headerEl: HTMLElement;
   const unlisteners: (UnlistenFn | undefined)[] = [];
   let reportedHeaderHeight = 0;
@@ -154,6 +171,7 @@
     hidden = new Set();
     // QR code etc.: no boxes to place, so it is shown as text.
     if (!blocks.length && translation.trim()) showText = true;
+    readAloud(blocks);
   }
 
   /** Continuous reading (`moonlens://lens-live`). */
@@ -172,11 +190,15 @@
         provider = ev.provider;
         viaCloud = ev.via_cloud ?? false;
       }
+      readAloud(ev.blocks);
     } else if (ev.kind === 'reading') {
       reading = ev.on;
     } else if (ev.kind === 'stale') {
       hidden = new Set([...hidden, ...ev.indices]);
     } else if (ev.kind === 'clear') {
+      // The translations are gone from the screen: read again if they
+      // come back later.
+      readAloud([]);
       blocks = [];
       hidden = new Set();
       source = null;
@@ -208,6 +230,7 @@
   function setPaused(on: boolean) {
     if (on && !paused) pauseEpoch += 1;
     paused = on;
+    if (on) speaker.stop();
     // Resumed: the reader reads at once; what was shown before the pause
     // stays hidden until then.
     if (on) return;
@@ -259,6 +282,7 @@
   async function changeLanguage(code: string) {
     if (code === targetLanguage) return;
     targetLanguage = code;
+    speaker.stop();
     await setLensLanguage(id, code).catch(() => {});
     // One-off mode: nothing re-reads on its own.
     if (!continuous) refresh();
@@ -333,7 +357,7 @@
   // What a layout set saves of this window.
   $effect(() => {
     if (!viewReady) return;
-    setLensView(id, { continuous, text: showText, placement }).catch(() => {});
+    setLensView(id, { continuous, text: showText, placement, speak: speakOn }).catch(() => {});
   });
   $effect(() => {
     void textReady;
@@ -561,7 +585,8 @@
         const me = lenses.find((l) => l.id === id);
         targetLanguage = me?.target_language ?? s?.subtitle?.target_language ?? 'ja';
         readMode = me?.read_mode ?? 'subtitle';
-        const view = parseView(me?.view, { continuous, text: showText, placement });
+        const view = parseView(me?.view, { continuous, text: showText, placement, speak: speakOn });
+        speakOn = view.speak;
         continuous = view.continuous;
         showText = view.text;
         placement = view.placement;
@@ -607,6 +632,7 @@
         await win.listen<Attachment>(ATTACH_EVENT, (e) => applyAttachment(e.payload))
       );
       windowAttachment(id).then(applyAttachment).catch(() => {});
+      unlisteners.push(await speaker.listen());
       unlisteners.push(await win.listen<StreamState>(STREAM_EVENT, (e) => (stream = e.payload)));
       streamState(id)
         .then((s) => (stream = s))
@@ -690,7 +716,7 @@
   const pauseStatus = $derived(
     paused ? (pauseKey ? t('lens:paused_press_key_to_resume', { key: pauseKey }) : t('common:paused')) : null
   );
-  const status = $derived(pauseStatus ?? fitStatus ?? lastError ?? activity);
+  const status = $derived(pauseStatus ?? fitStatus ?? speaker.note ?? lastError ?? activity);
 </script>
 
 <main class="lens">
@@ -703,6 +729,8 @@
       {targetLanguage}
       {readMode}
       onreadmode={changeReadMode}
+      speak={speakOn}
+      onspeak={toggleSpeak}
       {hasText}
       busy={working}
       oncontinuous={() => (continuous = !continuous)}
@@ -805,7 +833,7 @@
     {/if}
 
     {#if status}
-      <div class="status" class:error={!pauseStatus && !fitStatus && !!lastError}>{status}</div>
+      <div class="status" class:error={!pauseStatus && !fitStatus && !!(speaker.note ?? lastError)}>{status}</div>
     {/if}
     {#key snapped}
       {#if snapped}<div class="snap" aria-hidden="true"></div>{/if}

@@ -165,6 +165,10 @@ windows = { version = "0.62", features = [
     "Globalization",
     "Graphics_Imaging",
     "Media_Ocr",
+    # Read-aloud with the installed voices (speech/windows.rs).
+    "Media_Core",
+    "Media_Playback",
+    "Media_SpeechSynthesis",
     "Storage_Streams",
     # Message box when the WebView2 runtime is missing (src/webview2.rs).
     "Win32_UI_WindowsAndMessaging",

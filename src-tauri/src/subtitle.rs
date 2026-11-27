@@ -237,6 +237,16 @@ impl SubtitleService {
         self.sessions.lock().values().any(|s| s.running.is_some())
     }
 
+    /// A window recognizes everything the PC plays or what the
+    /// microphone picks up, which would include speech of MoonLens' own
+    /// (see [`crate::speech`]).
+    pub fn hears_speech(&self) -> bool {
+        self.sessions
+            .lock()
+            .values()
+            .any(|s| s.running.is_some() && !matches!(s.source, AudioSource::App { .. }))
+    }
+
     /// At least one subtitle window is open (recognizing or showing why
     /// it stopped).
     pub fn has_windows(&self) -> bool {

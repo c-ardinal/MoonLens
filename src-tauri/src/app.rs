@@ -102,6 +102,9 @@ macro_rules! all_commands {
             crate::stream::stream_state,
             crate::stream::set_stream,
             crate::stream::set_stream_paint,
+            crate::speech::speak,
+            crate::speech::stop_speaking,
+            crate::speech::list_voices,
             ipc::set_lens_insets,
             ipc::set_lens_continuous,
             ipc::refresh_lens,
@@ -152,6 +155,7 @@ pub struct AppState {
     pub subtitle: Arc<SubtitleService>,
     pub file_subtitle: Arc<crate::file_subtitle::FileSubtitleService>,
     pub lenses: LensRegistryHandle,
+    pub speech: Arc<crate::speech::SpeechService>,
     /// Background watcher that re-reads `config.toml` when the user
     /// edits it outside of the app. Held here so its thread stays alive
     /// for the lifetime of the Tauri AppHandle.
@@ -301,6 +305,7 @@ pub fn build() -> Result<()> {
                 subtitle,
                 file_subtitle,
                 lenses,
+                speech: Arc::new(crate::speech::SpeechService::new(handle.clone())),
                 _settings_watcher: settings_watcher,
             });
             crate::layout_sets::watch(&handle, &layout_sets);
@@ -325,6 +330,12 @@ pub fn build() -> Result<()> {
                     if let Some(state) = window.app_handle().try_state::<AppState>() {
                         state.pipeline.preload_local_llm();
                     }
+                }
+            }
+            // A window that is gone must not go on speaking.
+            if let tauri::WindowEvent::Destroyed = event {
+                if let Some(state) = window.app_handle().try_state::<AppState>() {
+                    state.speech.cancel(window.label());
                 }
             }
             // A subtitle window closing by itself (Alt+F4; its × button

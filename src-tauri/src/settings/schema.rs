@@ -29,6 +29,7 @@ pub struct Settings {
     pub storage: StorageSettings,
     pub performance: PerformanceSettings,
     pub startup: StartupSettings,
+    pub speech: SpeechSettings,
     pub providers: Providers,
     pub plugins: PluginSettings,
     pub onboarding: OnboardingState,
@@ -488,6 +489,33 @@ pub struct StartupSettings {
     /// Start MoonLens (to the tray) when the user logs in to the OS.
     /// Mirrored to a per-user login item by `autostart.rs`.
     pub launch_at_login: bool,
+}
+
+/* ---------------------------------- speech -------------------------------- */
+
+/// Read-aloud of translations with the voices of the OS (`speech`).
+/// Which windows read aloud is chosen per window, not here.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(default, deny_unknown_fields)]
+pub struct SpeechSettings {
+    /// Id of the preferred voice, used for text in its language. Empty:
+    /// the first installed voice of the language.
+    pub voice: String,
+    /// Speed, 1.0 = the voice's own.
+    #[schemars(range(min = 0.5, max = 2.0))]
+    pub rate: f32,
+    #[schemars(range(min = 0, max = 100))]
+    pub volume_percent: u32,
+}
+
+impl Default for SpeechSettings {
+    fn default() -> Self {
+        Self {
+            voice: String::new(),
+            rate: 1.0,
+            volume_percent: 100,
+        }
+    }
 }
 
 /* -------------------------------- providers ------------------------------ */

@@ -471,6 +471,7 @@
                     value={getPath(draft, field.path)}
                     defaultValue={getPath(defaults, field.path) ?? null}
                     invalid={marked.includes(field.path)}
+                    language={getPath(draft, 'subtitle.target_language') ?? 'ja'}
                     onChange={(v) => update(field.path, v)}
                   />
                 {/if}

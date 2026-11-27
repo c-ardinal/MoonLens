@@ -45,6 +45,7 @@ pub mod scan_margin;
 pub mod scroll;
 pub mod settings;
 pub mod setup;
+pub mod speech;
 pub mod storage;
 pub mod stream;
 pub mod subtitle;
