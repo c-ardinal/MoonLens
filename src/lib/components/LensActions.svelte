@@ -1,6 +1,8 @@
 <script lang="ts">
   import { onMount, type Snippet } from 'svelte';
   import {
+    AppWindow,
+    Captions,
     ChevronDown,
     ClipboardCopy,
     EllipsisVertical,
@@ -14,11 +16,13 @@
     Plus,
     Radio,
     RefreshCw,
+    ScanText,
     TextSelect,
     X
   } from 'lucide-svelte';
   import { LANGUAGES, languageLabel } from '$lib/lens-overlay';
   import { fitCount } from '$lib/lens-bar';
+  import type { LensReadMode } from '$lib/ipc';
 
   /**
    * ウィンドウ翻訳のタイトルバー。左端：ウィンドウ追加・見出し（lead）、右端：最大化・閉じる（常時表示）。
@@ -30,20 +34,24 @@
     showOriginal,
     showText,
     targetLanguage,
+    readMode = 'subtitle',
     hasText = true,
     busy = false,
     maximized = false,
     operate = false,
     operateKey = '',
+    fit = 'idle',
     menuOpen = $bindable(false),
     lead,
     oncontinuous,
     onrefresh,
     onoriginal,
     onlanguage,
+    onreadmode,
     oncopy,
     ontext,
     onexplain,
+    onfit,
     onmaximize,
     onoperate,
     onadd,
@@ -53,6 +61,8 @@
     showOriginal: boolean;
     showText: boolean;
     targetLanguage: string;
+    /** 読取方式（字幕：逐次表示の完了後に前文脈付きで翻訳、UI：読取単位で翻訳し前文脈の継承なし）。 */
+    readMode?: LensReadMode;
     /** 翻訳対象の文字あり（原文切替・コピー・説明の可否）。 */
     hasText?: boolean;
     busy?: boolean;
@@ -62,6 +72,8 @@
     operate?: boolean;
     /** 操作モード切替のショートカット表記（title へ併記）。 */
     operateKey?: string;
+    /** 字幕領域への自動整形の状態（未実行・観測中・整形済）。 */
+    fit?: 'idle' | 'observing' | 'fitted';
     /** 縦メニューの表示中（表示中はウィンドウ本体でのマウス操作の受付が必要）。 */
     menuOpen?: boolean;
     /** 見出し（ウィンドウ追加ボタンの右隣）。 */
@@ -70,9 +82,11 @@
     onrefresh: () => void;
     onoriginal: () => void;
     onlanguage: (code: string) => void;
+    onreadmode?: (mode: LensReadMode) => void;
     oncopy: () => void;
     ontext: () => void;
     onexplain: () => void;
+    onfit: () => void;
     onmaximize: () => void;
     onoperate: () => void;
     onadd: () => void;
@@ -134,6 +148,16 @@
     },
     'language',
     {
+      key: 'readmode',
+      icon: readMode === 'ui' ? AppWindow : Captions,
+      label: readMode === 'ui' ? '読取方式：UI' : '読取方式：字幕',
+      title:
+        readMode === 'ui'
+          ? '読取方式：UI（読取単位で翻訳、前文脈の継承なし）。クリックで字幕方式へ'
+          : '読取方式：字幕（逐次表示の完了後、前文脈を継承して翻訳）。クリックでUI方式へ',
+      run: () => onreadmode?.(readMode === 'ui' ? 'subtitle' : 'ui')
+    },
+    {
       key: 'copy',
       icon: ClipboardCopy,
       label: 'コピー',
@@ -148,6 +172,19 @@
       title: 'テキスト表示',
       pressed: showText,
       run: ontext
+    },
+    {
+      key: 'fit',
+      icon: ScanText,
+      label: fit === 'observing' ? '観測中止' : fit === 'fitted' ? '整形前へ復元' : '字幕領域へ整形',
+      title:
+        fit === 'observing'
+          ? '字幕領域を観測中（クリックで中止）'
+          : fit === 'fitted'
+            ? '整形前の位置・サイズへ復元'
+            : '字幕領域へ整形：文字の出現範囲を観測し、ウィンドウを自動整形',
+      pressed: fit === 'observing',
+      run: onfit
     },
     {
       key: 'explain',

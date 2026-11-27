@@ -292,6 +292,11 @@ export const openLens = (rect: CaptureFlowRect | null = null, targetLanguage?: s
 export const openLensBeside = (id: string) => safeInvoke<string>('open_lens', { beside: id });
 export const setLensLanguage = (id: string, targetLanguage: string | null) =>
   safeInvoke<void>('set_lens_language', { id, targetLanguage });
+/** ウィンドウ翻訳の読取方式。字幕：逐次表示の完了後に前文脈付きで翻訳。UI：読取単位で翻訳し、前文脈の継承なし。 */
+export type LensReadMode = 'subtitle' | 'ui';
+/** 読取方式の変更（次回の読取から適用）。 */
+export const setLensReadMode = (id: string, mode: LensReadMode) =>
+  safeInvoke<void>('set_lens_read_mode', { id, mode });
 export const setLensOperate = (id: string, on: boolean) => safeInvoke<void>('set_lens_operate', { id, on });
 export const setLensInteractive = (id: string, on: boolean) =>
   safeInvoke<void>('set_lens_interactive', { id, on });
@@ -484,6 +489,7 @@ export interface LensDescriptor {
   continuous: boolean;
   /** Language it translates into; null = the configured target. */
   target_language: string | null;
+  read_mode: LensReadMode;
 }
 
 export const closeLensWindow = (id: string) => safeInvoke<void>('close_lens_window', { id });
@@ -491,6 +497,17 @@ export const listLensWindows = () =>
   safeInvoke<LensDescriptor[]>('list_lens_windows', undefined, []);
 export const captureLensNow = (id: string) =>
   safeInvoke<CaptureFlowResult>('capture_lens_now', { id });
+
+/** Where a lens window was before `fitLens` (physical screen pixels). */
+export interface LensBefore {
+  rect: { x: number; y: number; w: number; h: number };
+  maximized: boolean;
+}
+/** Shrink a lens window to `band` ([x, y, w, h] inside its observed range, physical px). */
+export const fitLens = (id: string, band: [number, number, number, number]) =>
+  safeInvoke<LensBefore>('fit_lens', { id, band });
+export const restoreLens = (id: string, before: LensBefore) =>
+  safeInvoke<void>('restore_lens', { id, before });
 
 export interface HistoryEntry {
   id: number;
