@@ -47,6 +47,7 @@ use tauri::{
     WebviewWindowBuilder,
 };
 
+use crate::tr;
 use crate::{
     attach,
     capture::CaptureRect,
@@ -478,7 +479,7 @@ impl LensRegistry {
             .iter()
             .map(|(id, e)| LensDescriptor {
                 id: id.clone(),
-                title: format!("ウィンドウ翻訳 {}", short(id)),
+                title: tr!("lens:window_translation_id", id = short(id)),
                 insets: e.insets,
                 continuous: e.watch.is_some(),
                 target_language: e.target_language.clone(),

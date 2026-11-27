@@ -118,13 +118,17 @@ fn title(target: &attach::Target) -> String {
     } else {
         target.title.trim()
     };
-    format!("MoonLens 配信 - {name}")
+    crate::tr!("stream:moonlens_stream_name", name = name)
 }
 
 /// Open the composite of the window `label` is attached to.
 fn start(app: &AppHandle, streams: &Handle, label: &str) -> Result<(), String> {
-    let target = target_of(app, label)
-        .ok_or_else(|| "stream_needs_attach|吸着先の指定が必要".to_string())?;
+    let target = target_of(app, label).ok_or_else(|| {
+        crate::user_error::coded(
+            "stream_needs_attach",
+            crate::tr!("stream:attach_to_a_window_first"),
+        )
+    })?;
     if streams.active(target.id) {
         return Ok(());
     }
@@ -134,15 +138,20 @@ fn start(app: &AppHandle, streams: &Handle, label: &str) -> Result<(), String> {
         ended(&app_end, &streams_end, id, serial);
     })
     .map_err(|e| match e {
-        moonlens_stream::Error::Unsupported => {
-            "stream_unsupported|配信用ウィンドウは当該環境で利用不可".to_string()
-        }
-        moonlens_stream::Error::TargetGone => {
-            "attach_target_gone|吸着先のウィンドウが存在しません".to_string()
-        }
+        moonlens_stream::Error::Unsupported => crate::user_error::coded(
+            "stream_unsupported",
+            crate::tr!("stream:the_streaming_window_is_not_available_in"),
+        ),
+        moonlens_stream::Error::TargetGone => crate::user_error::coded(
+            "attach_target_gone",
+            crate::tr!("common:the_target_window_no_longer_exists"),
+        ),
         moonlens_stream::Error::Os(e) => {
             tracing::warn!("stream composite of window {id}: {e}");
-            format!("stream_failed|配信用ウィンドウの生成に失敗：{e}")
+            crate::user_error::coded(
+                "stream_failed",
+                crate::tr!("stream:could_not_create_the_streaming_window_e", e = e),
+            )
         }
     })?;
     tracing::info!("stream composite of window {id} opened");

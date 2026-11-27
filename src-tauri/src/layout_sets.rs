@@ -197,7 +197,9 @@ pub fn owner(windows: &[WindowLayout]) -> Option<AppIdentity> {
 
 /// Name for a new set: the application's, numbered when taken.
 pub fn default_name(app: Option<&AppIdentity>, taken: &[String]) -> String {
-    let base = app.map_or("配置セット", |a| a.name.as_str());
+    let base = app.map_or(crate::i18n::text("layout-sets:default_name"), |a| {
+        a.name.as_str()
+    });
     if app.is_some() && !taken.iter().any(|t| t == base) {
         return base.to_string();
     }
@@ -367,8 +369,12 @@ impl LayoutStore {
             sets: sets.to_vec(),
         };
         let text = serde_json::to_string_pretty(&file).map_err(|e| e.to_string())?;
-        crate::settings::store::write_atomic(&self.path, &text)
-            .map_err(|e| format!("layout_save_failed|配置セットの保存に失敗：{e}"))
+        crate::settings::store::write_atomic(&self.path, &text).map_err(|e| {
+            crate::user_error::coded(
+                "layout_save_failed",
+                crate::tr!("layout-sets:save_error", e = e),
+            )
+        })
     }
 }
 
@@ -834,7 +840,10 @@ pub async fn save_layout_set(
     .map_err(|e| e.to_string())?;
     let open = rx.await.map_err(|e| e.to_string())?;
     if open.is_empty() {
-        return Err("layout_no_windows|保存対象のウィンドウ翻訳が未表示".into());
+        return Err(crate::user_error::coded(
+            "layout_no_windows",
+            crate::tr!("layout-sets:no_windows"),
+        ));
     }
     let windows: Vec<WindowLayout> = open.iter().map(|w| w.layout.clone()).collect();
     let owner = owner(&windows);
@@ -896,10 +905,9 @@ pub async fn update_layout_set(
     app: AppHandle,
     sets: State<'_, Handle>,
 ) -> Result<(), String> {
-    let mut set = sets
-        .store
-        .get(&id)
-        .ok_or("layout_missing|配置セットが存在しません")?;
+    let mut set = sets.store.get(&id).ok_or_else(|| {
+        crate::user_error::coded("layout_missing", crate::tr!("layout-sets:missing"))
+    })?;
     if let Some(name) = name.map(|n| n.trim().to_string()).filter(|n| !n.is_empty()) {
         set.name = name;
     }
@@ -953,10 +961,9 @@ pub async fn restore_layout_set(
     app: AppHandle,
     sets: State<'_, Handle>,
 ) -> Result<usize, String> {
-    let set = sets
-        .store
-        .get(&id)
-        .ok_or("layout_missing|配置セットが存在しません")?;
+    let set = sets.store.get(&id).ok_or_else(|| {
+        crate::user_error::coded("layout_missing", crate::tr!("layout-sets:missing"))
+    })?;
     let windows = tokio::task::spawn_blocking(|| app_windows(&mut HashMap::new()))
         .await
         .map_err(|e| e.to_string())?;
@@ -967,7 +974,10 @@ pub async fn restore_layout_set(
     })
     .map_err(|e| e.to_string())?;
     match rx.await.map_err(|e| e.to_string())? {
-        0 => Err("layout_restore_failed|ウィンドウの復元に失敗".into()),
+        0 => Err(crate::user_error::coded(
+            "layout_restore_failed",
+            crate::tr!("layout-sets:restore_error"),
+        )),
         opened => Ok(opened),
     }
 }

@@ -5,6 +5,8 @@
   import { afterNavigate, goto } from '$app/navigation';
   import { getOnboardingStatus, getSettings, onNavigate, onSettingsChanged } from '$lib/ipc';
   import { applyAppearance } from '$lib/appearance';
+  import { applyLocale } from '$lib/i18n';
+  import '$lib/i18n/reactive.svelte';
   import { applyPixelSkin } from '$lib/pixel/skin';
   import { motion, watchMotion } from '$lib/pixel/motion.svelte';
   import { pageWipe } from '$lib/pixel/transition';
@@ -43,8 +45,12 @@
 
   onMount(async () => {
     try {
-      applyAppearance(await getSettings());
-      unlisteners.push(await onSettingsChanged(applyAppearance));
+      const apply = (s: unknown) => {
+        applyAppearance(s);
+        applyLocale(s);
+      };
+      apply(await getSettings());
+      unlisteners.push(await onSettingsChanged(apply));
       // Tray menu, hotkeys and other windows open main-window pages.
       // Only the main window receives this event.
       unlisteners.push(await onNavigate((path) => goto(path)));

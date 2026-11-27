@@ -1,4 +1,5 @@
 <script lang="ts" module>
+
   export interface ChoiceRow {
     id: string;
     label: string;
@@ -15,6 +16,7 @@
 </script>
 
 <script lang="ts">
+  import { t } from '$lib/i18n';
   import { Trash2 } from 'lucide-svelte';
   import { formatBytes, replacementCandidates } from '$lib/model-setup';
   import LicenseConsent from './LicenseConsent.svelte';
@@ -79,7 +81,9 @@
 
   const loading = (m: ChoiceRow) => !!busy[m.id] || !!m.downloading || progress[m.id] !== undefined;
   const help = (m: ChoiceRow) =>
-    `${m.note}。${m.id === recommended ? '本 PC の構成を基準とした推奨モデル。' : ''}${m.installed ? '' : '未取得。'}`;
+    t('model-choice:note', { note: t(m.note) }) +
+    (m.id === recommended ? t('model-choice:recommended_for_this_pcs_hardware') : '') +
+    (m.installed ? '' : t('model-choice:not_downloaded_sentence'));
 
   /** 確認欄の表示時：一覧の枠内へ全体を表示。 */
   function reveal(node: HTMLElement) {
@@ -130,7 +134,7 @@
     reset();
     const other = usedElsewhere(m.id);
     if (other) {
-      blocked = { id: m.id, text: `${other}で使用中。${other}の選択変更後に削除可能` };
+      blocked = { id: m.id, text: t('model-choice:in_use_for_other_choose_another_other', { other }) };
       return;
     }
     if (m.id === selected) {
@@ -149,34 +153,34 @@
     });
 </script>
 
-<div role="radiogroup" aria-label="{feature}モデル">
+<div role="radiogroup" aria-label={t('model-choice:feature_model', { feature })}>
   {#each rows as m (m.id)}
     {@const p = progress[m.id]}
     {@const checked = m.id === selected}
     <SettingRow
       id="{key}:{m.id}"
       help={help(m)}
-      link={m.license_url ? { href: m.license_url, label: `ライセンス：${m.license}` } : null}
+      link={m.license_url ? { href: m.license_url, label: t('model-choice:license_license', { license: m.license ?? '' }) } : null}
     >
       <div class="srow">
         <button class="spick" role="radio" aria-checked={checked} onclick={() => choose(m)}>
           <span class="sradio" aria-hidden="true"></span>
           <span class="row-label">{m.label}</span>
-          {#if m.id === recommended}<span class="stag rec">推奨</span>{/if}
+          {#if m.id === recommended}<span class="stag rec">{t('common:recommended')}</span>{/if}
         </button>
         <span class="row-ctl">
           <span class="row-value">{p !== undefined ? `${Math.round(p * 100)}%` : formatBytes(m.size)}</span>
           {#if loading(m)}
-            {#if oncancel}<button class="sbtn" onclick={() => oncancel(m.id)}>中止</button>{/if}
+            {#if oncancel}<button class="sbtn" onclick={() => oncancel(m.id)}>{t('common:cancel')}</button>{/if}
           {:else if !m.installed}
-            <span class="stag off">未取得</span>
+            <span class="stag off">{t('model-choice:not_downloaded')}</span>
           {:else if removable && onremove}
             {#if confirmDelete === m.id}
               <button class="sbtn danger" onclick={() => remove(m.id, null)} onblur={() => (confirmDelete = null)}>
-                削除確定
+                {t('common:confirm_delete')}
               </button>
             {:else}
-              <button class="sbtn icon" title="削除" aria-label="{m.label} を削除" onclick={() => askDelete(m)}>
+              <button class="sbtn icon" title={t('common:delete')} aria-label={t('model-choice:delete_label', { label: m.label })} onclick={() => askDelete(m)}>
                 <Trash2 class="h-4 w-4" />
               </button>
             {/if}
@@ -185,22 +189,22 @@
       </div>
 
       {#if asking === m.id}
-        <div use:reveal class="sprompt" role="group" aria-label="{m.label} の取得確認">
-          <p>未取得。取得後に切替（{formatBytes(m.size - (m.partial_bytes ?? 0))}）</p>
-          <button class="sbtn on" onclick={() => install(m.id, true)}>取得・切替</button>
-          <button class="sbtn" onclick={() => (asking = null)}>中止</button>
+        <div use:reveal class="sprompt" role="group" aria-label={t('model-choice:confirm_download_of_label', { label: m.label })}>
+          <p>{t('model-choice:not_downloaded_switches_after_the_download', { size: formatBytes(m.size - (m.partial_bytes ?? 0)) })}</p>
+          <button class="sbtn on" onclick={() => install(m.id, true)}>{t('model-choice:download_and_switch')}</button>
+          <button class="sbtn" onclick={() => (asking = null)}>{t('common:cancel')}</button>
         </div>
       {:else if checked && !m.installed && !loading(m)}
         <div class="sprompt warn" role="alert">
-          <p>選択中モデル未取得。{feature}に必要</p>
+          <p>{t('model-choice:the_selected_model_is_not_downloaded_feature', { feature })}</p>
           <button class="sbtn on" onclick={() => install(m.id, false)}>
-            {(m.partial_bytes ?? 0) > 0 ? '取得再開' : '取得'}
+            {(m.partial_bytes ?? 0) > 0 ? t('model-choice:resume_download') : t('common:download')}
           </button>
         </div>
       {/if}
 
       {#if consenting?.at === m.id}
-        <div use:reveal class="sprompt col" role="group" aria-label="利用許諾の確認">
+        <div use:reveal class="sprompt col" role="group" aria-label={t('common:licence_agreement')}>
           <LicenseConsent
             license={consenting.license}
             onaccepted={agreed}
@@ -212,14 +216,14 @@
       {#if blocked?.id === m.id}
         <div class="sprompt warn" role="alert">
           <p>{blocked.text}</p>
-          <button class="sbtn" onclick={() => (blocked = null)}>閉じる</button>
+          <button class="sbtn" onclick={() => (blocked = null)}>{t('common:close')}</button>
         </div>
       {/if}
 
       {#if replacing === m.id}
-        <div use:reveal class="sprompt col" role="group" aria-label="代替モデルの選択">
-          <p>使用中モデル。削除前に代替モデル選択</p>
-          <div class="salts" role="radiogroup" aria-label="代替モデル">
+        <div use:reveal class="sprompt col" role="group" aria-label={t('model-choice:choose_a_replacement_model')}>
+          <p>{t('model-choice:this_model_is_in_use_choose_a')}</p>
+          <div class="salts" role="radiogroup" aria-label={t('model-choice:replacement_model')}>
             {#each replacementCandidates(rows, m.id, recommended) as alt (alt.id)}
               <button
                 class="spick alt"
@@ -229,16 +233,16 @@
               >
                 <span class="sradio" aria-hidden="true"></span>
                 <span>{alt.label}</span>
-                {#if alt.id === recommended}<span class="stag rec">推奨</span>{/if}
-                <span class="row-value">{alt.installed ? '取得済' : `${formatBytes(alt.size)} 取得`}</span>
+                {#if alt.id === recommended}<span class="stag rec">{t('common:recommended')}</span>{/if}
+                <span class="row-value">{alt.installed ? t('common:downloaded') : t('model-choice:download_size', { size: formatBytes(alt.size) })}</span>
               </button>
             {/each}
           </div>
           <div class="sacts">
             <button class="sbtn danger" disabled={!replacement} onclick={() => remove(m.id, replacement)}>
-              切替・削除
+              {t('model-choice:switch_and_delete')}
             </button>
-            <button class="sbtn" onclick={() => (replacing = null)}>中止</button>
+            <button class="sbtn" onclick={() => (replacing = null)}>{t('common:cancel')}</button>
           </div>
         </div>
       {/if}

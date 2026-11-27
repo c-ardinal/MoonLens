@@ -3,6 +3,7 @@
  * model in use and whether it is ready.
  */
 import type { AsrModels, LlmModels, OcrModelsStatus } from './ipc';
+import { t } from './i18n';
 
 export type EngineState = 'ready' | 'missing' | 'downloading' | 'unset';
 
@@ -13,11 +14,12 @@ export interface EngineRow {
   state: EngineState;
 }
 
+/** 状態名（文言のキー ID）。表示時は `t()` で取得。 */
 export const STATE_LABELS: Record<EngineState, string> = {
-  ready: '準備完了',
-  missing: '未導入',
-  downloading: 'ダウンロード中',
-  unset: '未設定'
+  ready: 'common:ready',
+  missing: 'common:missing',
+  downloading: 'engine-status:downloading',
+  unset: 'common:not_set'
 };
 
 function modelRow(
@@ -32,21 +34,21 @@ function modelRow(
   }[]
 ): EngineRow {
   const m = models.find((x) => x.id === selected);
-  if (!selected || !m) return { id, label, model: selected || '—', state: 'unset' };
+  if (!selected || !m) return { id, label: t(label), model: selected || '—', state: 'unset' };
   const state: EngineState = m.installed ? 'ready' : m.downloading ? 'downloading' : 'missing';
-  return { id, label, model: m.label, state };
+  return { id, label: t(label), model: m.label, state };
 }
 
 export function engineRows(llm: LlmModels, ocr: OcrModelsStatus, asr: AsrModels): EngineRow[] {
   return [
-    modelRow('translate', '翻訳', llm.selected, llm.models),
-    modelRow('assistant', '説明・要約', llm.assistant, llm.models),
+    modelRow('translate', 'engine-status:translate_engine', llm.selected, llm.models),
+    modelRow('assistant', 'engine-status:explain_engine', llm.assistant, llm.models),
     {
       id: 'ocr',
-      label: '文字認識',
-      model: ocr.ppocr ? (ocr.current ? 'PP-OCRv6' : 'PP-OCRv5') : ocr.ocrs ? 'ocrs（英語のみ）' : 'PP-OCRv6',
+      label: t('engine-status:ocr_engine'),
+      model: ocr.ppocr ? (ocr.current ? 'PP-OCRv6' : 'PP-OCRv5') : ocr.ocrs ? t('engine-status:ocrs_english_only') : 'PP-OCRv6',
       state: ocr.ppocr || ocr.ocrs ? 'ready' : 'missing'
     },
-    modelRow('asr', '音声認識', asr.selected, asr.models)
+    modelRow('asr', 'engine-status:speech_engine', asr.selected, asr.models)
   ];
 }

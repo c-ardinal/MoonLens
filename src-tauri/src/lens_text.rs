@@ -11,6 +11,7 @@ use tauri::{
 use crate::follow::{self, HEIGHT_CSS, WIDTH_CSS};
 pub use crate::follow::{Dock, Follow};
 use crate::lens::{self, LensRegistryHandle};
+use crate::tr;
 
 const MIN_WIDTH_CSS: f64 = 200.0;
 const MIN_HEIGHT_CSS: f64 = 90.0;
@@ -65,7 +66,7 @@ pub fn set_dock(
         if app.get_webview_window(&label).is_none() {
             let url = format!("/lens/text/?id={id}");
             WebviewWindowBuilder::new(app, &label, WebviewUrl::App(url.into()))
-                .title("MoonLens テキスト")
+                .title(tr!("lens-text:moonlens_text"))
                 .inner_size(WIDTH_CSS, HEIGHT_CSS)
                 .min_inner_size(MIN_WIDTH_CSS, MIN_HEIGHT_CSS)
                 .decorations(false)

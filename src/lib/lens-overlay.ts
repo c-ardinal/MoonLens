@@ -4,6 +4,7 @@
  */
 
 import type { LensBlock } from './ipc';
+import { sourceText, t } from './i18n';
 
 /** Rect in image pixels (e.g. the part of an image shown on screen). */
 export interface FrameRect {
@@ -279,26 +280,27 @@ export function applyStreaming(
 export const EASY_JAPANESE = 'ja-easy';
 
 /**
- * Target languages offered in the selector's toolbar. `targetOnly`
+ * Target languages offered in the selector's toolbar. label は文言のキー ID
+ * （表示時は `t()`／`languageLabel`）。 `targetOnly`
  * entries are ways of writing a language, not languages a source text
  * or a glossary entry can be in: see {@link SOURCE_LANGUAGES}.
  */
 export const LANGUAGES: { code: string; label: string; targetOnly?: boolean }[] = [
-  { code: 'ja', label: '日本語' },
-  { code: EASY_JAPANESE, label: 'やさしい日本語', targetOnly: true },
-  { code: 'en', label: '英語' },
-  { code: 'zh-Hans', label: '中国語（簡体）' },
-  { code: 'zh-Hant', label: '中国語（繁体）' },
-  { code: 'ko', label: '韓国語' },
-  { code: 'fr', label: 'フランス語' },
-  { code: 'de', label: 'ドイツ語' },
-  { code: 'es', label: 'スペイン語' },
-  { code: 'pt', label: 'ポルトガル語' },
-  { code: 'it', label: 'イタリア語' },
-  { code: 'ru', label: 'ロシア語' },
-  { code: 'vi', label: 'ベトナム語' },
-  { code: 'th', label: 'タイ語' },
-  { code: 'id', label: 'インドネシア語' }
+  { code: 'ja', label: 'language:japanese' },
+  { code: EASY_JAPANESE, label: 'language:easy_japanese', targetOnly: true },
+  { code: 'en', label: 'language:english' },
+  { code: 'zh-Hans', label: 'language:chinese_simplified' },
+  { code: 'zh-Hant', label: 'language:chinese_traditional' },
+  { code: 'ko', label: 'language:korean' },
+  { code: 'fr', label: 'language:french' },
+  { code: 'de', label: 'language:german' },
+  { code: 'es', label: 'language:spanish' },
+  { code: 'pt', label: 'language:portuguese' },
+  { code: 'it', label: 'language:italian' },
+  { code: 'ru', label: 'language:russian' },
+  { code: 'vi', label: 'language:vietnamese' },
+  { code: 'th', label: 'language:thai' },
+  { code: 'id', label: 'language:indonesian' }
 ];
 
 /** Languages a text can be written in (source pickers, glossary rows). */
@@ -313,14 +315,26 @@ export function writtenLanguage(code: string): string {
   return hit?.targetOnly ? code.split('-')[0] : code;
 }
 
-/** Display name for a language tag, falling back to the tag itself. */
-export function languageLabel(code: string | null | undefined): string {
+/** 言語名のキー ID。地域付きの指定（en-US 等）は主言語で解決、未知の言語は空文字。 */
+function languageKey(code: string | null | undefined): string {
   if (!code) return '';
   const exact = LANGUAGES.find((l) => l.code.toLowerCase() === code.toLowerCase());
   if (exact) return exact.label;
   const primary = code.split(/[-_]/)[0].toLowerCase();
-  if (primary === 'zh') return '中国語';
-  return LANGUAGES.find((l) => l.code === primary)?.label ?? code;
+  if (primary === 'zh') return 'language:chinese';
+  return LANGUAGES.find((l) => l.code === primary)?.label ?? '';
+}
+
+/** 言語名（表示言語）。未知の言語は指定値のまま。 */
+export function languageLabel(code: string | null | undefined): string {
+  const key = languageKey(code);
+  return key ? t(key) : (code ?? '');
+}
+
+/** 言語名（日本語、LLM プロンプト用）。未知の言語は空文字。 */
+export function languageName(code: string | null | undefined): string {
+  const key = languageKey(code);
+  return key ? sourceText(key) : '';
 }
 
 /** True when every block was already in the target language. */

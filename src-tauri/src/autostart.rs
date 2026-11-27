@@ -304,12 +304,18 @@ pub fn sync_on_change(wanted: bool) {
             crate::notices::clear(NOTICE_ID);
         }
         Err(e) => {
-            let what = if wanted { "登録" } else { "解除" };
-            crate::notices::push(
-                NOTICE_ID,
-                format!("自動起動の{what}失敗：{e:#}"),
-                Some("/settings/#section-startup"),
-            );
+            let message = if wanted {
+                crate::tr!(
+                    "autostart:could_not_register_launch_at_login_e",
+                    e = format!("{:#}", e)
+                )
+            } else {
+                crate::tr!(
+                    "autostart:could_not_remove_launch_at_login_e",
+                    e = format!("{:#}", e)
+                )
+            };
+            crate::notices::push(NOTICE_ID, message, Some("/settings/#section-startup"));
         }
     }
 }

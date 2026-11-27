@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { t } from '$lib/i18n';
   // 訳文キャッシュの使用量と消去（設定「訳文キャッシュ保存」の直下）。
   import { onMount } from 'svelte';
   import { Trash2 } from 'lucide-svelte';
@@ -32,8 +33,12 @@
     error = null;
     try {
       const count = await clearTranslationCache(scope);
-      const name = scope === undefined ? '訳文キャッシュ' : `訳文キャッシュ（${scopeLabel(scope)}）`;
-      notify(`${name} ${count.toLocaleString()} 件：消去完了`);
+      const n = count.toLocaleString();
+      notify(
+        scope === undefined
+          ? t('translation-cache-usage:translation_cache_n_entries_cleared', { n })
+          : t('translation-cache-usage:translation_cache_scope_n_entries_cleared', { scope: scopeLabel(scope), n })
+      );
     } catch (e) {
       error = errorText(e);
     }
@@ -43,24 +48,24 @@
 
 <SettingRow
   id="info:translation-cache"
-  help="保存済の訳文の件数と容量。消去後は次回の表示時に再翻訳。上限 20 万件、超過時は最長未使用分から自動削除。"
+  help={t('translation-cache-usage:number_and_size_of_saved_translations_after')}
 >
   <div class="srow">
-    <span class="row-label">訳文キャッシュ使用量</span>
+    <span class="row-label">{t('translation-cache-usage:translation_cache_usage')}</span>
     <span class="row-ctl">
       <span class="row-value">
         {#if usage}
-          {usage.entries.toLocaleString()} 件・{cacheSize(usage.bytes)}
+          {t('translation-cache-usage:n_entries_size', { n: usage.entries.toLocaleString(), size: cacheSize(usage.bytes) })}
         {:else if error}
-          取得不可
+          {t('common:unavailable')}
         {:else}
-          確認中…
+          {t('common:checking')}
         {/if}
       </span>
       <button
         class="sbtn icon"
-        title="全消去"
-        aria-label="訳文キャッシュを全消去"
+        title={t('common:clear_all')}
+        aria-label={t('translation-cache-usage:clear_all_translation_cache')}
         disabled={!usage || usage.entries === 0}
         onclick={() => clear()}
       >
@@ -72,16 +77,16 @@
 {#each scopes as s (s.scope)}
   <SettingRow
     id="info:translation-cache:{s.scope}"
-    help="{scopeLabel(s.scope)}の訳文キャッシュ。消去の対象は当該分のみ。"
+    help={t('translation-cache-usage:translation_cache_for_scope_clearing_affects', { scope: scopeLabel(s.scope) })}
   >
     <div class="srow">
-      <span class="row-label" title={scopeLabel(s.scope)}>内訳：{scopeLabel(s.scope)}</span>
+      <span class="row-label" title={scopeLabel(s.scope)}>{t('translation-cache-usage:breakdown_scope', { scope: scopeLabel(s.scope) })}</span>
       <span class="row-ctl">
-        <span class="row-value">{s.entries.toLocaleString()} 件・{cacheSize(s.bytes)}</span>
+        <span class="row-value">{t('translation-cache-usage:n_entries_size', { n: s.entries.toLocaleString(), size: cacheSize(s.bytes) })}</span>
         <button
           class="sbtn icon"
-          title="消去"
-          aria-label="{scopeLabel(s.scope)}の訳文キャッシュを消去"
+          title={t('common:clear')}
+          aria-label={t('translation-cache-usage:clear_translation_cache_for_scope', { scope: scopeLabel(s.scope) })}
           onclick={() => clear(s.scope)}
         >
           <Trash2 class="h-4 w-4" />

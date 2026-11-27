@@ -1,5 +1,7 @@
 /** 訳文キャッシュの表示用整形（設定画面）。 */
 
+import { t } from './i18n';
+
 /** 容量表記：1 MB 未満は KB、以上は MB。 */
 export function cacheSize(bytes: number): string {
   if (bytes <= 0) return '0 KB';
@@ -9,5 +11,5 @@ export function cacheSize(bytes: number): string {
 
 /** 内訳の名称。空文字：追従先アプリ未指定の共通分。 */
 export function scopeLabel(scope: string): string {
-  return scope ? `アプリ「${scope}」` : '共通（追従先アプリ未指定）';
+  return scope ? t('translation-cache:app_scope', { scope }) : t('translation-cache:shared_no_attached_app');
 }

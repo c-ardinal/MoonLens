@@ -454,7 +454,12 @@ pub async fn attach_window(
     })
     .await
     .map_err(|e| e.to_string())?
-    .ok_or_else(|| "attach_target_gone|吸着先のウィンドウが存在しません".to_string())?;
+    .ok_or_else(|| {
+        crate::user_error::coded(
+            "attach_target_gone",
+            crate::tr!("common:the_target_window_no_longer_exists"),
+        )
+    })?;
     let header = header_css(&app, &label);
     attach(&app, &registry, &label, &found, dock, header).map_err(|e| e.to_string())
 }

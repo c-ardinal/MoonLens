@@ -4,6 +4,8 @@
  * next to the message.
  */
 
+import { t } from './i18n';
+
 export type ErrorCode =
   | 'model_missing'
   | 'asr_unavailable'
@@ -42,7 +44,7 @@ export function parseError(e: unknown): UiError {
   const head = bar > 0 ? raw.slice(0, bar) : '';
   const code = (CODES as string[]).includes(head) ? (head as ErrorCode) : 'error';
   const message = code === head ? raw.slice(bar + 1) : raw;
-  const fix = code === 'model_missing' ? { label: 'モデル準備', route: MODELS_ROUTE } : null;
+  const fix = code === 'model_missing' ? { label: t('errors:set_up_models'), route: MODELS_ROUTE } : null;
   return { code, message, fix };
 }
 

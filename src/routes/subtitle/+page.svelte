@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { t } from '$lib/i18n';
   import { onDestroy, onMount, tick } from 'svelte';
   import { type UnlistenFn } from '@tauri-apps/api/event';
   import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
@@ -257,7 +258,7 @@
       await blockSubtitlePhrase(phrase);
       view = settle(view, phrase, true);
     } catch (e) {
-      view = { ...view, error: `遮断リストへの追加失敗：${e}` };
+      view = { ...view, error: t('subtitle:could_not_add_to_the_block_list', { error: String(e) }) };
     }
   }
 
@@ -330,15 +331,15 @@
 
 <main class="sub">
   <header class="bar" data-tauri-drag-region>
-    <button class="btn" title="音声翻訳ウィンドウ追加" aria-label="音声翻訳ウィンドウ追加" onclick={addWindow}>
+    <button class="btn" title={t('subtitle:add_audio_translation_window')} aria-label={t('subtitle:add_audio_translation_window')} onclick={addWindow}>
       <Plus class="h-4 w-4" />
     </button>
-    <span class="title" data-tauri-drag-region>音声翻訳</span>
+    <span class="title" data-tauri-drag-region>{t('common:audio_translation')}</span>
     <button
       class="source"
       class:open={menuOpen}
       bind:this={sourceButton}
-      title="音源選択：{source}"
+      title={t('subtitle:audio_source_source', { source })}
       aria-haspopup="menu"
       aria-expanded={menuOpen}
       onclick={toggleMenu}
@@ -359,9 +360,9 @@
       aria-haspopup="dialog"
       aria-expanded={attachOpen}
       title={attachment.target
-        ? `吸着中：${targetName(attachment.target)}`
-        : '他アプリのウィンドウへ吸着'}
-      aria-label="吸着"
+        ? t('common:attached_name', { name: targetName(attachment.target) })
+        : t('subtitle:attach_to_another_apps_window')}
+      aria-label={t('common:attach')}
       onclick={toggleAttach}
     >
       <Magnet class="h-4 w-4" />
@@ -372,7 +373,7 @@
       class:ok={waiting && input === 'ok'}
       class:low={waiting && input === 'low'}
       class:error={!!view.error}
-      title={view.device ? `音声取得：${view.device}` : undefined}
+      title={view.device ? t('subtitle:audio_source_device', { device: view.device }) : undefined}
       data-tauri-drag-region
     >
       {status}
@@ -383,32 +384,32 @@
         class:over={input === 'ok'}
         bind:this={meter}
         role="img"
-        aria-label="入力レベル"
-        title="入力レベル（縦線：認識閾値）"
+        aria-label={t('subtitle:input_level')}
+        title={t('subtitle:input_level_vertical_line_recognition')}
         data-grid-exempt
         data-tauri-drag-region
       ></span>
     {/if}
     <span class="fill" data-tauri-drag-region></span>
-    <span class="lang" title="翻訳先言語" data-tauri-drag-region>{languageLabel(targetLanguage)}</span>
+    <span class="lang" title={t('common:target_language')} data-tauri-drag-region>{languageLabel(targetLanguage)}</span>
     <button
       class="btn"
       class:on={showOriginal}
       aria-pressed={showOriginal}
-      title="原文表示"
+      title={t('common:show_source')}
       onclick={() => (showOriginal = !showOriginal)}
     >
       {#if showOriginal}<Eye class="h-4 w-4" />{:else}<EyeOff class="h-4 w-4" />{/if}
     </button>
-    <button class="btn" title="閉じる" onclick={close}><X class="h-4 w-4" /></button>
+    <button class="btn" title={t('common:close')} onclick={close}><X class="h-4 w-4" /></button>
   </header>
 
   <canvas class="wave" class:dim={view.lines.length > 0} bind:this={canvas} aria-hidden="true"
   ></canvas>
   {#if view.running}
-    <span class="gate" class:dim={view.lines.length > 0} aria-hidden="true">認識閾値</span>
+    <span class="gate" class:dim={view.lines.length > 0} aria-hidden="true">{t('subtitle:threshold')}</span>
   {/if}
-  <section class="body" bind:this={scroller} aria-live="polite" aria-label="字幕">
+  <section class="body" bind:this={scroller} aria-live="polite" aria-label={t('subtitle:subtitles')}>
     {#each view.lines as line (line.id)}
       <div class="line" class:revised={line.revised}>
         {#if showOriginal && line.translated}
@@ -420,10 +421,10 @@
       {#if !view.error}
         <p class="hint">
           {#if !view.running}
-            音声翻訳は停止中。
+            {t('subtitle:audio_translation_is_stopped')}
           {:else}
             {inputHint(input, view.source.kind === 'app' ? source : null)}
-            {#if view.source.kind === 'system' && view.device}<br />音声取得：{view.device}{/if}
+            {#if view.source.kind === 'system' && view.device}<br />{t('subtitle:audio_source_device', { device: view.device })}{/if}
           {/if}
         </p>
       {/if}
@@ -432,25 +433,25 @@
       <p class="err" role="alert">{errorText(view.error)}</p>
     {/if}
     {#if !view.running}
-      <button class="restart" onclick={restart}><RotateCw class="h-3.5 w-3.5" />再開</button>
+      <button class="restart" onclick={restart}><RotateCw class="h-3.5 w-3.5" />{t('subtitle:resume')}</button>
     {/if}
   </section>
   {#if candidate}
-    <aside class="cand" aria-label="遮断候補">
-      <span class="cand-label" title="同一文の反復を検出。誤認識の場合は遮断を選択">反復検出</span>
+    <aside class="cand" aria-label={t('subtitle:block_suggestion')}>
+      <span class="cand-label" title={t('subtitle:the_same_sentence_keeps_repeating_choose')}>{t('subtitle:repetition_detected')}</span>
       <span class="cand-text" title={candidate}>{candidate}</span>
-      <button class="cand-btn primary" title="以後、字幕から除外（設定 → 音声翻訳で解除可能）" onclick={() => block(candidate)}>
-        遮断
+      <button class="cand-btn primary" title={t('subtitle:exclude_from_subtitles_from_now_on_undo')} onclick={() => block(candidate)}>
+        {t('subtitle:block')}
       </button>
-      <button class="cand-btn" title="今回の音声翻訳中は再提示なし" onclick={() => (view = settle(view, candidate, false))}>
-        無視
+      <button class="cand-btn" title={t('subtitle:not_suggested_again_during_this_session')} onclick={() => (view = settle(view, candidate, false))}>
+        {t('subtitle:ignore')}
       </button>
     </aside>
   {/if}
 
   {#if menuOpen}
     <!-- 小寸法のウィンドウでも一覧可能とするため、字幕領域全面へ表示 -->
-    <div class="menu" role="menu" tabindex="-1" aria-label="音源選択" bind:this={menu} onkeydown={onMenuKey}>
+    <div class="menu" role="menu" tabindex="-1" aria-label={t('subtitle:audio_source')} bind:this={menu} onkeydown={onMenuKey}>
       {#each options as option (option.source.kind === 'app' ? option.source.pid : 'system')}
         {@const pending = !!switching && sameSource(switching, option.source)}
         <button
@@ -470,7 +471,7 @@
             <span class="option-name">{option.label}</span>
             {#if option.detail}<span class="option-detail">{option.detail}</span>{/if}
           </span>
-          <span class="bars" class:playing={option.playing} title={option.playing ? '再生中' : '無音'} aria-label={option.playing ? '再生中' : '無音'}>
+          <span class="bars" class:playing={option.playing} title={option.playing ? t('subtitle:playing') : t('subtitle:silent')} aria-label={option.playing ? t('subtitle:playing') : t('subtitle:silent')}>
             <i></i><i></i><i></i>
           </span>
           <span class="mark">
@@ -483,9 +484,9 @@
         </button>
       {/each}
       {#if !appsSupported}
-        <p class="note">アプリ単位の音声取得は Windows 限定。</p>
+        <p class="note">{t('subtitle:per_app_audio_capture_is_windows_only')}</p>
       {:else if appsLoaded && apps.length === 0}
-        <p class="note">音声出力中のアプリなし。再生開始後、自動で一覧へ追加。</p>
+        <p class="note">{t('subtitle:no_app_is_playing_audio_apps_appear')}</p>
       {/if}
       {#if menuError}
         <p class="note bad" role="alert">{menuError}</p>
@@ -503,7 +504,7 @@
       />
     </div>
   {/if}
-  <div class="grip" role="presentation" title="サイズ変更" onpointerdown={startResize}></div>
+  <div class="grip" role="presentation" title={t('common:resize')} onpointerdown={startResize}></div>
 </main>
 
 <style>

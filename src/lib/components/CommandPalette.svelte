@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { t } from '$lib/i18n';
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import {
@@ -60,13 +61,13 @@
   async function saveLayout() {
     const saved = await saveLayoutSet();
     open = false;
-    notify(`${saved.name}：ウィンドウ ${saved.windows.length} 個を保存`);
+    notify(t('common:layout_saved', { name: saved.name, n: saved.windows.length }));
   }
 
   async function restoreLayout(set: LayoutSet) {
     const count = await restoreLayoutSet(set.id);
     open = false;
-    notify(`${set.name}：ウィンドウ ${count} 個を復元`);
+    notify(t('common:layout_restored', { name: set.name, n: count }));
   }
 
   async function toggleSub() {
@@ -85,14 +86,14 @@
   const commands: Command[] = $derived([
     {
       id: 'capture',
-      label: 'ウィンドウ翻訳',
+      label: t('common:window_translation'),
       hint: hint('capture_region'),
       icon: Camera,
       run: openWindow
     },
     {
       id: 'window-pause',
-      label: 'ウィンドウ翻訳 一時停止／再開',
+      label: t('common:window_translation_pause_resume'),
       hint: hint('toggle_window_pause'),
       icon: Pause,
       run: async () => {
@@ -102,25 +103,25 @@
     },
     {
       id: 'subtitle',
-      label: subtitleRunning ? '音声翻訳 停止' : '音声翻訳 開始',
+      label: subtitleRunning ? t('command-palette:stop_audio_translation') : t('command-palette:start_audio_translation'),
       hint: hint('toggle_subtitle'),
       icon: subtitleRunning ? MicOff : Mic,
       run: toggleSub
     },
-    { id: 'layout-save', label: '配置セット 保存', icon: Save, run: saveLayout },
+    { id: 'layout-save', label: t('command-palette:save_layout_set'), icon: Save, run: saveLayout },
     ...layoutSets.map((set) => ({
       id: `layout-restore:${set.id}`,
-      label: `配置セット 復元：${set.name}`,
+      label: t('command-palette:restore_layout_set', { name: set.name }),
       icon: LayoutGrid,
       run: () => restoreLayout(set)
     })),
-    { id: 'home', label: 'ホーム', icon: Home, run: go('/') },
-    { id: 'image', label: '画像翻訳', icon: ImageIcon, run: go('/image/') },
-    { id: 'translate', label: 'テキスト翻訳', icon: Languages, run: go('/translate/') },
-    { id: 'settings', label: '設定', icon: SettingsIcon, run: go('/settings/') },
-    { id: 'history', label: '履歴', hint: hint('open_history'), icon: History, run: go('/history/') },
-    { id: 'plugins', label: '拡張機能管理', icon: Puzzle, run: go('/settings/#section-plugins') },
-    { id: 'quit', label: 'MoonLens 終了', icon: Power, run: () => quitApp() }
+    { id: 'home', label: t('common:home'), icon: Home, run: go('/') },
+    { id: 'image', label: t('common:image_translation'), icon: ImageIcon, run: go('/image/') },
+    { id: 'translate', label: t('common:text_translation'), icon: Languages, run: go('/translate/') },
+    { id: 'settings', label: t('common:settings'), icon: SettingsIcon, run: go('/settings/') },
+    { id: 'history', label: t('common:history'), hint: hint('open_history'), icon: History, run: go('/history/') },
+    { id: 'plugins', label: t('command-palette:manage_extensions'), icon: Puzzle, run: go('/settings/#section-plugins') },
+    { id: 'quit', label: t('command-palette:quit_moonlens'), icon: Power, run: () => quitApp() }
   ]);
 
   const filtered = $derived(
@@ -205,7 +206,7 @@
       <input
         autofocus
         bind:value={q}
-        placeholder="コマンド検索"
+        placeholder={t('command-palette:search_commands')}
         class="w-full rounded-t-ml border-b border-border bg-transparent px-4 py-3 text-sm focus:outline-none"
       />
       <ul class="scrollbar-minimal max-h-80 overflow-auto">
@@ -226,7 +227,7 @@
             </button>
           </li>
         {:else}
-          <li class="px-4 py-6 text-center text-sm text-ink-faint">該当なし</li>
+          <li class="px-4 py-6 text-center text-sm text-ink-faint">{t('common:no_results')}</li>
         {/each}
       </ul>
       {#if error}

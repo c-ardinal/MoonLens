@@ -1,6 +1,7 @@
 <script lang="ts">
   import { Plus, Trash2 } from 'lucide-svelte';
   import { addApp, setGlossary, type AppGlossary } from '$lib/app-glossary';
+  import { t } from '$lib/i18n';
   import GlossaryEditor from './GlossaryEditor.svelte';
 
   interface Props {
@@ -45,25 +46,25 @@
       <select
         class="{input} flex-[1_1_10rem] px-1"
         value={current.app}
-        aria-label="編集対象のアプリ"
+        aria-label={t('app-glossaries:target_app')}
         onchange={(ev) => (chosen = (ev.currentTarget as HTMLSelectElement).value)}
       >
         {#each apps as a (a.app)}
-          <option value={a.app}>{a.name || a.app}（{a.glossary.length} 件）</option>
+          <option value={a.app}>{t('app-glossaries:app_with_count', { name: a.name || a.app, n: a.glossary.length })}</option>
         {/each}
       </select>
       <button
         type="button"
         class="row-value rounded-ml-sm p-1 text-ink-faint transition hover:bg-surface-muted hover:text-ink"
-        title="アプリの用語集を削除"
-        aria-label="{current.name || current.app} の用語集を削除"
+        title={t('app-glossaries:delete_app_glossary')}
+        aria-label={t('app-glossaries:delete_glossary_of', { name: current.name || current.app })}
         onclick={() => onRemoveApp(current.app)}
       >
         <Trash2 class="h-3.5 w-3.5" />
       </button>
     {:else}
       <p class="row-value min-w-0 flex-[1_1_10rem] rounded-ml-sm border border-dashed border-border px-3 py-1 text-xs text-ink-faint">
-        登録なし
+        {t('common:no_entries')}
       </p>
     {/if}
     <form
@@ -77,8 +78,8 @@
         class="{input} w-0 flex-1 {rejected ? 'border-red-500' : ''}"
         bind:value={name}
         list="app-glossary-candidates"
-        placeholder="例：game.exe"
-        aria-label="追加対象の実行ファイル名"
+        placeholder={t('app-glossaries:exe_example')}
+        aria-label={t('app-glossaries:exe_name')}
         aria-invalid={rejected}
         oninput={() => (rejected = false)}
       />
@@ -91,7 +92,7 @@
         type="submit"
         class="inline-flex shrink-0 items-center gap-1 rounded-ml-sm border border-border bg-surface px-2.5 py-1 text-sm text-ink"
       >
-        <Plus class="h-3.5 w-3.5" />アプリ追加
+        <Plus class="h-3.5 w-3.5" />{t('app-glossaries:add_app')}
       </button>
     </form>
   </div>
@@ -99,7 +100,7 @@
   {#if current}
     {#key current.app}
       <GlossaryEditor
-        label="{current.name || current.app} 専用の用語"
+        label={t('app-glossaries:terms_for', { name: current.name || current.app })}
         value={current.glossary}
         {defaultLang}
         onChange={(v) => onChange(setGlossary(apps, current.app, v))}

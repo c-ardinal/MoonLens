@@ -4,6 +4,7 @@
 //! Every entry pins the exact file (URL + size + SHA-256); downloading
 //! and verification live in [`super::model_store`].
 
+use crate::i18n::Text;
 use std::path::{Path, PathBuf};
 
 use serde::Serialize;
@@ -28,8 +29,8 @@ pub struct CatalogModel {
     /// Stable id stored in `[providers.configs.llamacpp] model = "…"`.
     pub id: &'static str,
     pub label: &'static str,
-    /// One-line description shown in the model picker (Japanese UI).
-    pub note: &'static str,
+    /// One-line description shown in the model picker.
+    pub note: Text,
     pub file: &'static str,
     pub url: &'static str,
     pub size: u64,
@@ -61,7 +62,7 @@ pub const CATALOG: &[CatalogModel] = &[
     CatalogModel {
         id: "plamo-3-translate-2b",
         label: "PLaMo 3 Translate 2B",
-        note: "推奨。高品質・高速（翻訳専用）",
+        note: Text::new("models:recommended_high_quality_and_fast"),
         file: "plamo-3-translate-2b-Q4_K_M.gguf",
         url: "https://huggingface.co/pfnet/plamo-3-translate-2b-GGUF/resolve/main/plamo-3-translate-2b-Q4_K_M.gguf",
         size: 1_807_203_040,
@@ -74,7 +75,7 @@ pub const CATALOG: &[CatalogModel] = &[
     CatalogModel {
         id: "plamo-3-translate-0.8b",
         label: "PLaMo 3 Translate 0.8B",
-        note: "最速・省メモリ。低スペック PC 用（翻訳専用）",
+        note: Text::new("models:fastest_and_lightest_for_low_spec_pcs"),
         file: "plamo-3-translate-0.8b-Q4_K_M.gguf",
         url: "https://huggingface.co/pfnet/plamo-3-translate-0.8b-GGUF/resolve/main/plamo-3-translate-0.8b-Q4_K_M.gguf",
         size: 573_126_848,
@@ -90,7 +91,7 @@ pub const CATALOG: &[CatalogModel] = &[
     CatalogModel {
         id: "plamo-3-translate-8b",
         label: "PLaMo 3 Translate 8B",
-        note: "最高品質・低速。GPU メモリ 8 GB 以上の PC 用（翻訳専用）",
+        note: Text::new("models:highest_quality_slow_for_8gb_gpus"),
         file: "plamo-3-translate-8b-Q4_K_M.gguf",
         url: "https://huggingface.co/pfnet/plamo-3-translate-8b-GGUF/resolve/main/plamo-3-translate-8b-Q4_K_M.gguf",
         size: 5_280_445_728,
@@ -103,7 +104,7 @@ pub const CATALOG: &[CatalogModel] = &[
     CatalogModel {
         id: "gemma-4-e4b",
         label: "Gemma 4 E4B",
-        note: "説明・要約用の汎用モデル（翻訳にも対応）",
+        note: Text::new("models:general_model_for_explanations_and_summaries"),
         file: "gemma-4-E4B-it-Q4_K_M.gguf",
         url: "https://huggingface.co/unsloth/gemma-4-E4B-it-GGUF/resolve/main/gemma-4-E4B-it-Q4_K_M.gguf",
         size: 4_977_171_584,
@@ -116,7 +117,7 @@ pub const CATALOG: &[CatalogModel] = &[
     CatalogModel {
         id: "gemma-4-e2b",
         label: "Gemma 4 E2B",
-        note: "軽量汎用モデル。E4B 比で高速・低品質",
+        note: Text::new("models:lightweight_general_model_faster_than_e4b"),
         file: "gemma-4-E2B-it-Q4_K_M.gguf",
         url: "https://huggingface.co/unsloth/gemma-4-E2B-it-GGUF/resolve/main/gemma-4-E2B-it-Q4_K_M.gguf",
         size: 3_106_738_272,

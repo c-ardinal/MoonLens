@@ -3,6 +3,7 @@
  */
 
 import type { AttachDock } from './attach';
+import { t } from './i18n';
 import type { TextPlacement } from './lens-text';
 
 /** アプリの識別（再起動後も不変、`app_identity.rs`）。 */
@@ -52,17 +53,20 @@ export const LAYOUT_SETS_EVENT = 'moonlens://layout-sets';
 
 /** 一覧の副表示：個数と所属アプリ。 */
 export function setSummary(set: LayoutSet): string {
-  const count = `${set.windows.length} 個`;
-  return set.app ? `${count}・${set.app.name}` : `${count}・アプリ指定なし`;
+  const n = set.windows.length;
+  return set.app
+    ? t('layout-sets:summary_app', { n, name: set.app.name })
+    : t('layout-sets:summary_no_app', { n });
 }
 
 /** 説明欄の文面。 */
 export function setHelp(set: LayoutSet): string {
-  const state = set.active ? '表示中。' : '';
-  if (!set.app) return `${state}吸着先なしのため、復元は手動のみ。`;
-  return set.auto_restore
-    ? `${state}${set.app.name} の起動時に自動復元、終了時に自動終了。`
-    : `${state}${set.app.name} 用。自動復元は OFF。`;
+  const text = !set.app
+    ? t('layout-sets:help_no_app')
+    : set.auto_restore
+      ? t('layout-sets:help_auto', { name: set.app.name })
+      : t('layout-sets:help_manual', { name: set.app.name });
+  return set.active ? t('layout-sets:help_active', { text }) : text;
 }
 
 /**

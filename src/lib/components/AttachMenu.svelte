@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { t } from '$lib/i18n';
   import { onMount } from 'svelte';
   import { Cast, Check, Magnet, RefreshCw, Unlink } from 'lucide-svelte';
   import { attachWindow, detachWindow, listAttachTargets } from '$lib/ipc';
@@ -67,8 +68,8 @@
   const attach = (c: AttachCandidate) =>
     run(() => attachWindow(label, c.id, docks[0].value), true);
   const setDock = (dock: AttachDock) => {
-    const t = attachment.target;
-    if (t) run(() => attachWindow(label, t.id, dock), false);
+    const target = attachment.target;
+    if (target) run(() => attachWindow(label, target.id, dock), false);
   };
   const detach = () => run(() => detachWindow(label), true);
   const toggleStream = () => {
@@ -77,22 +78,22 @@
   };
 </script>
 
-<div class="am" role="dialog" aria-label="吸着">
+<div class="am" role="dialog" aria-label={t('common:attach')}>
   {#if attachment.target}
     <div class="cur">
       <Magnet class="h-4 w-4" />
       <span class="nm" title={attachment.target.title}>{targetName(attachment.target)}</span>
-      <button class="ib" onclick={detach} title="吸着解除（現在位置へ残留）">
+      <button class="ib" onclick={detach} title={t('attach-menu:detach_stays_at_the_current_position')}>
         <Unlink class="h-4 w-4" />
       </button>
     </div>
-    <div class="seg" role="radiogroup" aria-label="配置">
+    <div class="seg" role="radiogroup" aria-label={t('attach-menu:placement')}>
       {#each docks as d (d.value)}
         <button
           role="radio"
           aria-checked={attachment.dock === d.value}
           onclick={() => setDock(d.value)}
-          title={d.title}>{d.label}</button
+          title={t(d.title)}>{t(d.label)}</button
         >
       {/each}
     </div>
@@ -102,24 +103,24 @@
         role="switch"
         aria-checked={stream.active}
         onclick={toggleStream}
-        title="吸着先と訳文を合成した取込専用ウィンドウを生成（配信・録画ツールのウィンドウ取込用）"
+        title={t('attach-menu:creates_a_capture_only_window_that')}
       >
         <Cast class="h-4 w-4" />
-        <span class="nm">配信用ウィンドウ</span>
-        <span class="st">{stream.active ? '稼働中' : '停止中'}</span>
+        <span class="nm">{t('attach-menu:streaming_window')}</span>
+        <span class="st">{stream.active ? t('attach-menu:running') : t('common:stopped')}</span>
       </button>
       {#if stream.active && stream.title}
-        <p class="note nm" title={stream.title}>取込対象：{stream.title}</p>
-        <p class="note nm" title="OBS のウィンドウキャプチャでは、キャプチャ方法に「Windows 10 (1903 以降)」を指定">
-          OBS の方式：Windows 10 (1903 以降)
+        <p class="note nm" title={stream.title}>{t('attach-menu:capture_target_title', { title: stream.title })}</p>
+        <p class="note nm" title={t('attach-menu:in_obs_window_capture_set_capture_method')}>
+          {t('attach-menu:obs_method_windows_10_1903_and_up')}
         </p>
       {/if}
     {/if}
   {/if}
 
   <div class="hd">
-    <span>吸着先</span>
-    <button class="ib" onclick={load} disabled={loading} title="一覧更新">
+    <span>{t('attach-menu:target')}</span>
+    <button class="ib" onclick={load} disabled={loading} title={t('attach-menu:refresh_list')}>
       <RefreshCw class="h-4 w-4 {loading ? 'animate-spin' : ''}" />
     </button>
   </div>
@@ -134,14 +135,14 @@
           {#if current}
             <Check class="h-4 w-4" />
           {:else if isUnder(candidates, i)}
-            <span class="tag">直下</span>
+            <span class="tag">{t('attach-menu:under')}</span>
           {/if}
         </span>
         {#if lines.detail}<span class="dt">{lines.detail}</span>{/if}
       </button>
     {/each}
     {#if !loading && candidates.length === 0}
-      <p class="note">吸着可能なウィンドウなし</p>
+      <p class="note">{t('attach-menu:no_windows_to_attach_to')}</p>
     {/if}
   </div>
 </div>

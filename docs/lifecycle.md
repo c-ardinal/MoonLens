@@ -131,6 +131,7 @@ MoonLens の導入〜削除の各段階で発生するケースと、期待動�
 | C-16 | 自動起動 ON のまま実行ファイルを移動（ポータブル配布） | 次回の手動起動時、現在の実行ファイルの位置で登録を更新。AppImage はマウント先でなくイメージ本体を登録 | 新規 | `start_rewrites_an_active_entry_so_it_follows_a_moved_exe`、`an_appimage_registers_the_image_not_its_mount_point` |
 | C-17 | 自動起動 ON の状態で OS 側（タスクマネージャー、Linux は `Hidden=true` 等）から無効化・削除 | OS 側の選択を優先。次回起動時に設定を OFF へ同期（再登録なし） | 新規 | `start_does_not_re_register_what_the_os_switched_off` |
 | C-13 | チェーンに未登録・機能非対応のプロバイダー識別子 | 登録済みプロバイダーから動的に判定。候補を添えて警告し、除外または既定値復元を提案（以前は「文字なし」等に誤分類） | 修正 | `chains_are_checked_against_registered_providers`、Xvfb |
+| C-15 | 表示言語を変更（設定 → システム → 外観：自動／日本語／English） | 全ウィンドウ・トレイメニュー・通知・エラー文を即時切替（再起動不要、翻訳中のウィンドウも状態を維持）。自動は OS の言語へ追従（日本語環境は日本語、他は英語）。起動直後は前回の言語で表示（設定取得前の日本語表示を回避） | 新規 | `i18n.test.ts`、`i18n::tests`、`npm run audit:i18n`（英語表示の全ウィンドウ巡回） |
 | C-9 | `config.toml` から一部セクションを削除 | 削除部分は同梱の既定値（以前は空チェーン等となり OCR が動作停止） | 修正 | `missing_sections_and_keys_come_from_default_toml` |
 | C-10 | 保存中のクラッシュ・電源断 | 一時ファイル経由の置換で、不完全な `config.toml` の残存を防止 | 修正 | `write_atomic` |
 | C-11 | 使用中モデルを削除 | 削除前に代替モデルを選択（推奨・取得済みを優先表示）。代替へ切替（未取得なら取得後）してから削除。取得の中止・失敗時は削除なし。他用途（翻訳／説明・要約）で使用中のモデルは削除不可 | 変更 | `LocalModels.svelte.test.ts` |

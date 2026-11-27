@@ -18,6 +18,7 @@ use tauri::async_runtime::JoinHandle;
 use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 use tokio::sync::mpsc;
 
+use crate::tr;
 use crate::{
     app_identity::AppIdentity,
     audio::{
@@ -84,6 +85,11 @@ pub enum Phase {
 
 /// Label prefix of the subtitle windows (`subtitle-1`, `subtitle-2`, …).
 pub const WINDOW_PREFIX: &str = "subtitle-";
+
+/// Title of a subtitle window, in the display language.
+pub fn window_title() -> String {
+    tr!("subtitle:moonlens_audio_translation")
+}
 
 /// `label` is a subtitle window.
 pub fn is_window(label: &str) -> bool {
@@ -203,7 +209,7 @@ impl SubtitleService {
         if chain.is_empty() {
             return Err(crate::user_error::coded(
                 "asr_unavailable",
-                "音声認識プロバイダー未設定",
+                tr!("subtitle:no_speech_recognition_provider_is_set"),
             ));
         }
         let empty = serde_json::Value::Object(Default::default());
@@ -216,7 +222,10 @@ impl SubtitleService {
                 let p = LocalWhisperProvider::new(id, cfg, use_gpu);
                 if !crate::providers::translate_llama::cpu_supported() {
                     first_error.get_or_insert_with(|| {
-                        crate::user_error::coded("cpu_unsupported", "非対応 CPU（AVX2・FMA 必須）")
+                        crate::user_error::coded(
+                            "cpu_unsupported",
+                            crate::user_error::unsupported_cpu(),
+                        )
                     });
                     continue;
                 }
@@ -230,7 +239,10 @@ impl SubtitleService {
                 first_error.get_or_insert_with(|| {
                     crate::user_error::coded(
                         "model_missing",
-                        format!("音声認識モデル未導入：{}", p.model().label),
+                        tr!(
+                            "subtitle:speech_recognition_model_not_downloaded",
+                            model = p.model().label
+                        ),
                     )
                 });
             } else if id.starts_with("whisper_cpp.") {
@@ -257,7 +269,10 @@ impl SubtitleService {
         Err(first_error.unwrap_or_else(|| {
             crate::user_error::coded(
                 "asr_unavailable",
-                format!("音声認識サーバー未接続：{}", unreachable.join("、")),
+                tr!(
+                    "subtitle:speech_recognition_server_unreachable",
+                    servers = unreachable.join(crate::i18n::text("common:list_separator"))
+                ),
             )
         }))
     }
@@ -268,7 +283,13 @@ impl SubtitleService {
     pub async fn start(&self, app: &AppHandle) -> Result<(), String> {
         self.preflight().await?;
         let failed = |e: anyhow::Error| {
-            crate::user_error::coded("error", format!("音声取得の開始失敗：{e:#}"))
+            crate::user_error::coded(
+                "error",
+                tr!(
+                    "common:could_not_start_audio_capture_e",
+                    e = format!("{:#}", e)
+                ),
+            )
         };
         let stopped: Vec<(String, AudioSource)> = self
             .sessions
@@ -301,7 +322,7 @@ impl SubtitleService {
             self.next_window.fetch_add(1, Ordering::Relaxed)
         );
         let win = WebviewWindowBuilder::new(app, &label, WebviewUrl::App("/subtitle".into()))
-            .title("MoonLens 音声翻訳")
+            .title(window_title())
             .inner_size(900.0, 190.0)
             .min_inner_size(220.0, 96.0)
             .decorations(false)
@@ -335,7 +356,12 @@ impl SubtitleService {
     /// Open `source` and start a recognition loop for the window
     /// `label`, replacing its current one.
     fn run(&self, app: &AppHandle, label: &str, source: AudioSource, window: Window) -> Result<()> {
-        let missing = || anyhow::anyhow!("音声翻訳ウィンドウ未検出：{label}");
+        let missing = || {
+            anyhow::anyhow!(tr!(
+                "subtitle:audio_translation_window_not_found_label",
+                label = label
+            ))
+        };
         if window == Window::Open && !self.sessions.lock().contains_key(label) {
             return Err(missing());
         }
@@ -427,7 +453,7 @@ impl SubtitleService {
             }
             if lost {
                 emit(SubtitleEvent::Error {
-                    message: "音源アプリ終了、または音声取得失敗".into(),
+                    message: tr!("subtitle:the_source_app_exited_or_audio_capture"),
                 });
             }
             emit(SubtitleEvent::Stopped);
@@ -536,7 +562,11 @@ impl SubtitleService {
             };
             let (code, message) = failure.split_once('|').unwrap_or(("error", &failure));
             let route = (code == "model_missing").then_some("/settings/#section-model-asr");
-            crate::notices::push(NOTICE, format!("音声翻訳：{message}"), route);
+            crate::notices::push(
+                NOTICE,
+                tr!("common:audio_translation_message", message = message),
+                route,
+            );
             crate::app::route_main(&app, route.unwrap_or("/"));
         });
     }
@@ -877,9 +907,12 @@ pub async fn run_loop(
                 let detail = crate::user_error::provider(&e, Capability::Asr);
                 let detail = detail.split_once('|').map_or(detail.as_str(), |(_, m)| m);
                 let message = if gave_up {
-                    format!("音声認識の連続失敗により停止：{detail}")
+                    tr!(
+                        "subtitle:stopped_after_repeated_speech_recognition",
+                        detail = detail
+                    )
                 } else {
-                    format!("音声認識失敗：{detail}")
+                    tr!("subtitle:speech_recognition_failed_detail", detail = detail)
                 };
                 emit(SubtitleEvent::Error { message });
                 if gave_up {

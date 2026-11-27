@@ -10,7 +10,7 @@ export interface LicenseLink {
 }
 
 export interface LicenseInfo {
-  /** 契約名。 */
+  /** 契約名。本表の文言は文言のキー ID（表示時に `t()` で取得）。 */
   title: string;
   /** 同意が必要な旨と、要点が要約である旨の案内。 */
   lead: string;
@@ -24,19 +24,19 @@ export interface LicenseInfo {
 
 export const LICENSES: Record<string, LicenseInfo> = {
   'plamo-community': {
-    title: 'PLaMo コミュニティライセンス契約',
-    lead: 'PLaMo 3 Translate の取得・利用には PLaMo コミュニティライセンス契約への同意が必要。以下は要点。正式な条件は契約全文を参照。',
+    title: 'licenses:plamo_community_license_agreement',
+    lead: 'licenses:downloading_and_using_plamo_3_translate',
     points: [
-      '私的利用・非商用利用（学術用途を包含）：無償、登録不要',
-      '商用利用（組織内の業務利用を包含）：事前登録が必要。対象は直近事業年度の収入・売上 10 億円以下',
-      '収入・売上 10 億円超の商用利用：開発元との個別契約が必要',
-      '利用者は 18 歳以上（未満は親権者の同意が必要）',
-      '出力は無保証。重要事項の決定で唯一の根拠とする利用は禁止'
+      'licenses:personal_and_non_commercial_use_including',
+      'licenses:commercial_use_including_internal_business',
+      'licenses:commercial_use_with_revenue_above_1_billion',
+      'licenses:users_must_be_18_or_older_minors',
+      'licenses:output_comes_with_no_warranty_using_it'
     ],
-    fullText: { label: '契約全文', href: 'https://plamo.preferredai.jp/info/plamo-community-license-ja' },
+    fullText: { label: 'licenses:full_agreement', href: 'https://plamo.preferredai.jp/info/plamo-community-license-ja' },
     links: [
-      { label: '商用利用の登録フォーム', href: 'https://forms.gle/mTL8tBLrMYXKNZD56' },
-      { label: '個別契約の問合せ', href: 'https://translate.preferredai.jp/llm/contact/' }
+      { label: 'licenses:commercial_use_registration_form', href: 'https://forms.gle/mTL8tBLrMYXKNZD56' },
+      { label: 'licenses:enquiries_about_a_separate_agreement', href: 'https://translate.preferredai.jp/llm/contact/' }
     ]
   }
 };

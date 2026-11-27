@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { t } from '$lib/i18n';
   import { onDestroy, onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import PixelTitle from '$lib/components/PixelTitle.svelte';
@@ -38,11 +39,12 @@
   type Step = 'check' | 'select' | 'consent' | 'download';
   type ItemState = 'wait' | 'run' | 'done' | 'error' | 'cancel';
 
+  /** title は文言のキー ID（表示時に `t()` で取得）。 */
   const STEPS: { id: Step; title: string }[] = [
-    { id: 'check', title: '構成診断' },
-    { id: 'select', title: 'モデル選定' },
-    { id: 'consent', title: '許諾確認' },
-    { id: 'download', title: '一括取得' }
+    { id: 'check', title: 'setup:hardware_check' },
+    { id: 'select', title: 'setup:choose_models' },
+    { id: 'consent', title: 'setup:licence' },
+    { id: 'download', title: 'setup:download' }
   ];
 
   let step = $state<Step>('check');
@@ -88,7 +90,7 @@
     const set = (k: string, f: number) => (fractions = { ...fractions, [k]: f });
     unlisteners.push(await onLlmProgress((p) => set(`llm:${p.id}`, p.fraction)));
     unlisteners.push(await onAsrProgress((p) => set(`asr:${p.id}`, p.fraction)));
-    unlisteners.push(await onModelProgress((p) => set('ocr:ppocr', p.fraction ?? 0)));
+    unlisteners.push(await onModelProgress((p) => set('ocr:ppocr', p.fraction ?? 0))); // i18n-ignore（項目の識別子）
   });
   onDestroy(() => unlisteners.forEach((u) => u()));
 
@@ -177,28 +179,28 @@
   const stateText = (d: DownloadItem) => {
     const s = states[keyOf(d)];
     if (s === 'run') return `${Math.round((fractions[keyOf(d)] ?? 0) * 100)}%`;
-    return { wait: '待機', done: '完了', error: '失敗', cancel: '中止' }[s ?? 'wait'] ?? '';
+    return t({ wait: 'setup:waiting', done: 'setup:done', error: 'setup:failed', cancel: 'common:cancel' }[s ?? 'wait'] ?? '');
   };
 </script>
 
 <div class="setup">
   <header class="head">
-    <div class="page-title"><PixelTitle text="初期設定" tag="h1" height={40} fit /></div>
-    <ol class="steps" aria-label="手順">
+    <div class="page-title"><PixelTitle text={t('common:setup')} tag="h1" height={40} fit /></div>
+    <ol class="steps" aria-label={t('setup:steps')}>
       {#each STEPS as s, i (s.id)}
-        <li aria-current={step === s.id ? 'step' : undefined}>{i + 1} {s.title}</li>
+        <li aria-current={step === s.id ? 'step' : undefined}>{i + 1} {t(s.title)}</li>
       {/each}
     </ol>
   </header>
 
   <main class="body scrollbar-minimal">
     {#if loadError}
-      <p class="px-win error" role="alert">読込失敗：{loadError}</p>
+      <p class="px-win error" role="alert">{t('setup:could_not_load_loaderror', { loadError })}</p>
     {:else if step === 'check'}
       <section class="px-win panel" aria-labelledby="hw-title">
-        <span class="px-win-title px-chip" data-tone="amber" id="hw-title" use:slant>本 PC の構成</span>
+        <span class="px-win-title px-chip" data-tone="amber" id="hw-title" use:slant>{t('setup:this_pc')}</span>
         {#if !report}
-          <p class="muted">診断中…</p>
+          <p class="muted">{t('setup:checking')}</p>
         {:else}
           <dl class="hw">
             {#each lines as l (l.label)}
@@ -209,19 +211,19 @@
         {/if}
       </section>
       <p class="lead">
-        本 PC の構成から機能別の推奨モデルを選定。モデルは本 PC 内で動作し、診断結果・翻訳内容の外部送信は皆無。
+        {t('setup:recommends_a_model_for_each_feature_from')}
       </p>
     {:else if step === 'select'}
-      <p class="lead">各機能のモデルを選択。初期選択は本 PC の推奨モデル。</p>
+      <p class="lead">{t('setup:choose_a_model_for_each_feature_the')}</p>
       {#each features as f (f.feature)}
         <section class="px-win panel" aria-labelledby="f-{f.feature}">
-          <span class="px-win-title px-chip" data-tone="amber" id="f-{f.feature}" use:slant>{f.title}</span>
+          <span class="px-win-title px-chip" data-tone="amber" id="f-{f.feature}" use:slant>{t(f.title)}</span>
           <div class="fhead">
-            <p class="muted">{f.reason ? `推奨理由：${f.reason}` : ''}</p>
+            <p class="muted">{f.reason ? t('setup:why_recommended_reason', { reason: t(f.reason) }) : ''}</p>
             {#if !f.required}
               <label class="opt">
                 <input type="checkbox" bind:checked={f.enabled} />
-                今回取得
+                {t('setup:download_now')}
               </label>
             {/if}
           </div>
@@ -236,23 +238,23 @@
               >
                 <span class="sradio" aria-hidden="true"></span>
                 <span class="name">{c.label}</span>
-                {#if c.id === f.recommended}<span class="stag rec">推奨</span>{/if}
-                <span class="size">{c.installed ? '取得済' : formatBytes(c.size)}</span>
+                {#if c.id === f.recommended}<span class="stag rec">{t('common:recommended')}</span>{/if}
+                <span class="size">{c.installed ? t('common:downloaded') : formatBytes(c.size)}</span>
               </button>
             {/each}
           </div>
           {#if !f.enabled}
-            <p class="muted">後日、設定画面のモデル一覧から取得可能。</p>
+            <p class="muted">{t('setup:you_can_download_it_later_from_the')}</p>
           {/if}
         </section>
       {/each}
     {:else if step === 'consent'}
       {#each pending as id (id)}
         <section class="px-win panel" aria-labelledby="lc-{id}">
-          <span class="px-win-title px-chip" data-tone="amber" id="lc-{id}" use:slant>利用許諾の確認</span>
+          <span class="px-win-title px-chip" data-tone="amber" id="lc-{id}" use:slant>{t('common:licence_agreement')}</span>
           <LicenseConsent
             license={id}
-            cancelLabel="前画面"
+            cancelLabel={t('setup:back')}
             onaccepted={() => onAccepted(id)}
             oncancel={() => (step = 'select')}
           />
@@ -260,16 +262,16 @@
       {/each}
     {:else}
       <section class="px-win panel" aria-labelledby="dl-title">
-        <span class="px-win-title px-chip" data-tone="amber" id="dl-title" use:slant>一括取得</span>
+        <span class="px-win-title px-chip" data-tone="amber" id="dl-title" use:slant>{t('setup:download')}</span>
         {#if queue.length === 0}
-          <p>取得対象なし。選択モデルは全件取得済。</p>
+          <p>{t('setup:nothing_to_download_every_selected_model_is')}</p>
         {/if}
         <ul class="dl">
           {#each queue as d (keyOf(d))}
             {@const k = keyOf(d)}
             <li data-state={states[k]}>
               <span class="name">{d.label}</span>
-              <span class="muted">{d.features.map((x) => FEATURE_TITLES[x]).join('・')}</span>
+              <span class="muted">{d.features.map((x) => t(FEATURE_TITLES[x])).join(t('・'))}</span>
               <span class="size">{formatBytes(d.size)}</span>
               <span class="st">{stateText(d)}</span>
               {#if states[k] === 'run'}
@@ -282,35 +284,37 @@
         {#if errors.apply}<p class="err">{errors.apply}</p>{/if}
       </section>
       {#if !running && (finished || queue.length === 0)}
-        <p class="lead" role="status">準備完了。選択モデルで各機能が使用可能。</p>
+        <p class="lead" role="status">{t('setup:all_set_every_feature_is_ready_with')}</p>
       {/if}
     {/if}
   </main>
 
   <footer class="actions">
     {#if step === 'check'}
-      <button class="px-btn" onclick={finish}>スキップ</button>
-      <button class="px-btn primary" disabled={!report && !loadError} onclick={toSelect}>次へ</button>
+      <button class="px-btn" onclick={finish}>{t('setup:skip')}</button>
+      <button class="px-btn primary" disabled={!report && !loadError} onclick={toSelect}>{t('setup:next')}</button>
     {:else if step === 'select'}
       <p class="sum" class:warn={short}>
-        合計 {formatBytes(total)}{free != null ? `／残容量 ${formatBytes(free)}` : ''}{short ? '。残容量不足' : ''}
+        {free != null
+          ? t('setup:total_total_free_free', { total: formatBytes(total), free: formatBytes(free) })
+          : t('setup:total_total', { total: formatBytes(total) })}{short ? t('setup:not_enough_free_space') : ''}
       </p>
-      <button class="px-btn" onclick={() => (step = 'check')}>前画面</button>
+      <button class="px-btn" onclick={() => (step = 'check')}>{t('setup:back')}</button>
       <button class="px-btn primary" disabled={short} onclick={approve}>
-        {planned.length ? '承認・一括取得' : '適用'}
+        {planned.length ? t('setup:accept_and_download') : t('setup:apply')}
       </button>
     {:else if step === 'consent'}
-      <p class="sum">{pending.map((id) => LICENSES[id]?.title ?? id).join('、')}：同意後に一括取得を開始</p>
+      <p class="sum">{t('setup:names_the_download_starts_once_you_agree', { names: pending.map((id) => (LICENSES[id] ? t(LICENSES[id].title) : id)).join(t('common:list_separator')) })}</p>
     {:else if running}
-      <p class="sum">取得中：{current?.label ?? ''}</p>
-      <button class="px-btn" disabled={current?.kind === 'ocr'} onclick={cancel}>中止</button>
+      <p class="sum">{t('setup:downloading_label', { label: current?.label ?? '' })}</p>
+      <button class="px-btn" disabled={current?.kind === 'ocr'} onclick={cancel}>{t('common:cancel')}</button>
     {:else}
       {#if failed}
-        <p class="sum warn">一部未完了。再試行または後日設定画面から取得</p>
-        <button class="px-btn" onclick={finish}>後日取得</button>
-        <button class="px-btn primary" onclick={run}>再試行</button>
+        <p class="sum warn">{t('setup:some_downloads_did_not_finish_retry_or')}</p>
+        <button class="px-btn" onclick={finish}>{t('setup:download_later')}</button>
+        <button class="px-btn primary" onclick={run}>{t('common:retry')}</button>
       {:else}
-        <button class="px-btn primary" onclick={finish}>開始</button>
+        <button class="px-btn primary" onclick={finish}>{t('setup:start')}</button>
       {/if}
     {/if}
   </footer>

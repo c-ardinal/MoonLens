@@ -3,6 +3,7 @@
  * 代替規則。判定のみ担当し、表示は `ContextMenu.svelte` が担当。
  */
 import { invoke } from '@tauri-apps/api/core';
+import { t } from './i18n';
 
 export type EditAction = 'cut' | 'copy' | 'paste' | 'selectAll';
 
@@ -64,7 +65,7 @@ function fieldHasSelection(field: TextField): boolean {
 export function menuItemsFor(target: EventTarget | null, selectedText: string): MenuItem[] {
   const editable = editableOf(target);
   if (!editable) {
-    return selectedText.trim() ? [{ action: 'copy', label: 'コピー', enabled: true }] : [];
+    return selectedText.trim() ? [{ action: 'copy', label: t('common:copy'), enabled: true }] : [];
   }
   let hasSelection: boolean;
   let hasContent: boolean;
@@ -80,10 +81,10 @@ export function menuItemsFor(target: EventTarget | null, selectedText: string): 
     writable = true;
   }
   return [
-    { action: 'cut', label: '切取', enabled: writable && hasSelection },
-    { action: 'copy', label: 'コピー', enabled: hasSelection },
-    { action: 'paste', label: '貼付', enabled: writable },
-    { action: 'selectAll', label: '全選択', enabled: hasContent }
+    { action: 'cut', label: t('webview-guard:cut'), enabled: writable && hasSelection },
+    { action: 'copy', label: t('common:copy'), enabled: hasSelection },
+    { action: 'paste', label: t('webview-guard:paste'), enabled: writable },
+    { action: 'selectAll', label: t('webview-guard:select_all'), enabled: hasContent }
   ];
 }
 

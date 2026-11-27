@@ -5,6 +5,7 @@
  */
 
 import type { TaskOutput, TaskResult } from './ipc';
+import { t } from './i18n';
 
 /**
  * Render a `TaskOutput` as a single translation-like string for the
@@ -37,6 +38,6 @@ export function providerLabel(result: TaskResult): string {
  */
 export function summarizeFallback(reasons: string[]): string {
   if (reasons.length === 0) return '';
-  if (reasons.length === 1) return `フォールバック: ${reasons[0]}`;
-  return `フォールバック ${reasons.length} 段: ${reasons.join(' → ')}`;
+  if (reasons.length === 1) return t('result:fallback_reason', { reason: reasons[0] });
+  return t('result:n_fallbacks_reasons', { n: reasons.length, reasons: reasons.join(' → ') });
 }

@@ -9,6 +9,7 @@
   context-aware engine reads it in context instead of blind.
 -->
 <script lang="ts">
+  import { t } from '$lib/i18n';
   import { holdMotion } from '$lib/pixel/motion.svelte';
   import PixelTitle from '$lib/components/PixelTitle.svelte';
   import { onDestroy, onMount } from 'svelte';
@@ -20,7 +21,8 @@
   import { LANGUAGES, SOURCE_LANGUAGES, writtenLanguage } from '$lib/lens-overlay';
   import { translateLines, type LineHistory } from '$lib/translate-line';
 
-  const SOURCE_LANGS = [{ code: 'auto', label: '自動判定' }, ...SOURCE_LANGUAGES];
+  /** label は文言のキー ID（表示時に `t()` で取得）。 */
+  const SOURCE_LANGS = [{ code: 'auto', label: 'common:detect' }, ...SOURCE_LANGUAGES];
   const TARGET_LANGS = LANGUAGES;
 
   const MAX_CHARS = 5000;
@@ -159,7 +161,7 @@
             };
           },
           (done, total) => {
-            if (id === runId) progress = `${done} / ${total} 行`;
+            if (id === runId) progress = t('translate:done_total_lines', { done, total });
           }
         );
         output = res.output;
@@ -241,7 +243,7 @@
   }
 
   function copyResult(): void {
-    if (resultText) void copyText(resultText, '訳文');
+    if (resultText) void copyText(resultText, t('common:translated_text'));
   }
 
   function onKeyDown(e: KeyboardEvent): void {
@@ -267,11 +269,11 @@
 <main class="px-body mx-auto flex max-w-5xl flex-col gap-4 px-4 py-6 sm:px-6">
   <header class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
     <div class="min-w-0">
-      <div class="page-title"><PixelTitle text="テキスト翻訳" tag="h1" height={40} fit /></div>
-      <p class="text-sm text-ink-muted">複数行は行単位で翻訳（前行を文脈に参照）</p>
+      <div class="page-title"><PixelTitle text={t('common:text_translation')} tag="h1" height={40} fit /></div>
+      <p class="text-sm text-ink-muted">{t('translate:multiple_lines_are_translated_line_by_line')}</p>
     </div>
-    <label class="inline-flex shrink-0 cursor-pointer items-center gap-2 text-sm" title="入力停止 0.6 秒後に翻訳">
-      <span class="text-ink-muted">自動翻訳</span>
+    <label class="inline-flex shrink-0 cursor-pointer items-center gap-2 text-sm" title={t('translate:translates_0_6_s_after_typing_stops')}>
+      <span class="text-ink-muted">{t('translate:auto_translate')}</span>
       <span class="relative inline-flex items-center">
         <input
           type="checkbox"
@@ -290,35 +292,35 @@
 
   <div class="flex flex-wrap items-end gap-2">
     <label class="flex min-w-0 flex-1 flex-col gap-1 text-xs text-ink-muted">
-      翻訳元
+      {t('translate:from')}
       <select
         class="rounded-ml-sm border border-border bg-surface px-2 py-1.5 text-sm text-ink"
         bind:value={sourceLang}
         onchange={onLangChange}
       >
         {#each SOURCE_LANGS as l (l.code)}
-          <option value={l.code}>{l.label}</option>
+          <option value={l.code}>{t(l.label)}</option>
         {/each}
       </select>
     </label>
     <button
       type="button"
       class="inline-flex h-12 w-12 shrink-0 items-center justify-center rounded-ml-sm border border-border bg-surface text-ink-muted transition hover:border-accent/60 hover:text-ink"
-      title="言語入替"
-      aria-label="言語入替"
+      title={t('translate:swap_languages')}
+      aria-label={t('translate:swap_languages')}
       onclick={swap}
     >
       <ArrowLeftRight class="h-4 w-4" />
     </button>
     <label class="flex min-w-0 flex-1 flex-col gap-1 text-xs text-ink-muted">
-      翻訳先
+      {t('common:to')}
       <select
         class="rounded-ml-sm border border-border bg-surface px-2 py-1.5 text-sm text-ink"
         bind:value={targetLang}
         onchange={onLangChange}
       >
         {#each TARGET_LANGS as l (l.code)}
-          <option value={l.code}>{l.label}</option>
+          <option value={l.code}>{t(l.label)}</option>
         {/each}
       </select>
     </label>
@@ -328,8 +330,8 @@
     <section class="flex min-h-0 min-w-0 flex-col rounded-ml border border-border bg-surface-elevated shadow-ml">
       <textarea
         class="scrollbar-minimal min-h-0 w-full flex-1 resize-none rounded-t-ml bg-transparent p-3 text-sm leading-relaxed outline-none"
-        placeholder="翻訳対象の文章（Ctrl+Enter で翻訳）"
-        aria-label="翻訳元テキスト"
+        placeholder={t('translate:text_to_translate_ctrl_enter_to_translate')}
+        aria-label={t('translate:source_text')}
         spellcheck="false"
         bind:value={inputText}
         oninput={() => {
@@ -340,15 +342,15 @@
       ></textarea>
       <div class="flex items-center justify-between gap-2 h-14 border-t border-border px-3">
         <span class="text-xs tabular-nums {overLimit ? 'text-red-500' : 'text-ink-faint'}">
-          {charCount.toLocaleString()} / {MAX_CHARS.toLocaleString()}{overLimit ? '（文字数超過）' : ''}
+          {charCount.toLocaleString()} / {MAX_CHARS.toLocaleString()}{overLimit ? t('translate:over_the_limit') : ''}
         </span>
         <div class="flex items-center gap-2">
           {#if inputText}
             <button
               type="button"
               class="rounded-ml-sm p-1.5 text-ink-faint transition hover:bg-surface-muted hover:text-ink"
-              title="消去"
-              aria-label="消去"
+              title={t('common:clear')}
+              aria-label={t('common:clear')}
               onclick={clearAll}
             >
               <X class="h-4 w-4" />
@@ -362,10 +364,10 @@
           >
             {#if translating}
               <Loader2 class="h-4 w-4 animate-spin" />
-              {progress ?? '翻訳中'}
+              {progress ?? t('translate:translating')}
             {:else}
               <Languages class="h-4 w-4" />
-              翻訳
+              {t('common:translate_action')}
             {/if}
           </button>
         </div>
@@ -378,7 +380,7 @@
     >
       <!-- tabindex：キーボードでのスクロール用 -->
       <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
-      <div class="scrollbar-minimal min-h-0 flex-1 overflow-y-auto p-3 text-sm leading-relaxed" tabindex="0" role="region" aria-label="翻訳結果">
+      <div class="scrollbar-minimal min-h-0 flex-1 overflow-y-auto p-3 text-sm leading-relaxed" tabindex="0" role="region" aria-label={t('translate:translation')}>
         {#if error}
           <div class="rounded-ml-sm border border-red-500/50 bg-red-500/10 p-3 text-red-500" role="alert">
             <p class="break-words">{error.message}</p>
@@ -391,7 +393,7 @@
         {:else if resultText}
           <p class="whitespace-pre-wrap break-words" data-testid="translate-result">{resultText}</p>
         {:else}
-          <p class="text-ink-faint">{translating ? '翻訳中…' : '翻訳結果'}</p>
+          <p class="text-ink-faint">{translating ? t('common:translating') : t('translate:translation')}</p>
         {/if}
       </div>
       <div class="flex items-center justify-between gap-2 h-14 border-t border-border px-3">
@@ -409,8 +411,8 @@
         <button
           type="button"
           class="sbtn icon neutral"
-          title="訳文をコピー"
-          aria-label="訳文をコピー"
+          title={t('common:copy_translation')}
+          aria-label={t('common:copy_translation')}
           disabled={!resultText}
           onclick={copyResult}
         >

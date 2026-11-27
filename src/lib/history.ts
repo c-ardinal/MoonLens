@@ -9,37 +9,39 @@
  * `transcript` / `asr` rows share the audio tab.
  */
 import type { HistoryEntry } from './ipc';
+import { t } from './i18n';
 
 export type HistoryFilter = 'all' | 'window' | 'image' | 'text' | 'qr' | 'audio';
 
+/** 絞込みタブ。label は文言のキー ID（表示時は `t()` で取得）。 */
 export const HISTORY_FILTERS: { value: HistoryFilter; label: string }[] = [
-  { value: 'all', label: '全件' },
-  { value: 'window', label: 'ウィンドウ' },
-  { value: 'image', label: '画像' },
-  { value: 'text', label: 'テキスト' },
+  { value: 'all', label: 'history:all' },
+  { value: 'window', label: 'common:window' },
+  { value: 'image', label: 'common:image' },
+  { value: 'text', label: 'common:text' },
   { value: 'qr', label: 'QR' },
-  { value: 'audio', label: '音声' }
+  { value: 'audio', label: 'common:audio' }
 ];
 
 const KIND_LABELS: Record<string, string> = {
-  capture: 'ウィンドウ翻訳',
-  translate: 'ウィンドウ翻訳',
-  lens: 'ウィンドウ翻訳（常時）',
-  live: 'ウィンドウ翻訳（常時）',
-  image: '画像翻訳',
-  text: 'テキスト翻訳',
-  qr: 'QR コード',
-  ocr: '文字認識',
-  explain: '説明',
-  summarize: '要約',
-  subtitle: '音声翻訳',
-  transcript: '音声翻訳',
-  asr: '音声翻訳'
+  capture: 'common:window_translation',
+  translate: 'common:window_translation',
+  lens: 'history:window_continuous',
+  live: 'history:window_continuous',
+  image: 'common:image_translation',
+  text: 'common:text_translation',
+  qr: 'history:qr_code',
+  ocr: 'common:text_recognition',
+  explain: 'common:explain',
+  summarize: 'history:summary',
+  subtitle: 'common:audio_translation',
+  transcript: 'common:audio_translation',
+  asr: 'common:audio_translation'
 };
 
 /** Display label for a history row's kind (unknown kinds as is). */
 export function kindLabel(kind: string): string {
-  return KIND_LABELS[kind] ?? kind;
+  return kind in KIND_LABELS ? t(KIND_LABELS[kind]) : kind;
 }
 
 /** Filter a kind belongs to; `null` for kinds no tab covers. */

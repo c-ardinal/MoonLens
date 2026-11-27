@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { t } from '$lib/i18n';
   import { acceptLicense } from '$lib/ipc';
   import { errorText } from '$lib/errors';
   import { LICENSES } from '$lib/licenses';
@@ -12,7 +13,7 @@
     onaccepted: () => void | Promise<void>;
     oncancel: () => void;
   }
-  let { license, agreeLabel = '同意・取得', cancelLabel = '中止', onaccepted, oncancel }: Props = $props();
+  let { license, agreeLabel, cancelLabel, onaccepted, oncancel }: Props = $props();
 
   const info = $derived(LICENSES[license]);
   let checked = $state(false);
@@ -36,24 +37,24 @@
 
 {#if info}
   <div class="lc">
-    <p class="lead">{info.lead}</p>
-    <p class="cap">要点（要約）</p>
+    <p class="lead">{t(info.lead)}</p>
+    <p class="cap">{t('license-consent:key_points_summary')}</p>
     <ul>
-      {#each info.points as p (p)}<li>{p}</li>{/each}
+      {#each info.points as p (p)}<li>{t(p)}</li>{/each}
     </ul>
     <p class="links">
       {#each [info.fullText, ...info.links] as l (l.href)}
-        <a href={l.href} target="_blank" rel="noreferrer">{l.label}</a>
+        <a href={l.href} target="_blank" rel="noreferrer">{t(l.label)}</a>
       {/each}
     </p>
     {#if error}<p class="err" role="alert">{error}</p>{/if}
     <div class="acts">
       <label class="agree">
         <input type="checkbox" bind:checked />
-        {info.fullText.label}を確認、内容へ同意
+        {t('license-consent:i_have_read_the_label_and_agree', { label: t(info.fullText.label) })}
       </label>
-      <button class="sbtn on" disabled={!checked || busy} onclick={agree}>{agreeLabel}</button>
-      <button class="sbtn" disabled={busy} onclick={oncancel}>{cancelLabel}</button>
+      <button class="sbtn on" disabled={!checked || busy} onclick={agree}>{agreeLabel ?? t('license-consent:agree_and_download')}</button>
+      <button class="sbtn" disabled={busy} onclick={oncancel}>{cancelLabel ?? t('common:cancel')}</button>
     </div>
   </div>
 {/if}

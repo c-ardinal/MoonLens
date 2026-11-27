@@ -206,6 +206,7 @@ export const onSettingsChanged = (handler: (s: Settings) => void): Promise<Unlis
 export interface LlmModel {
   id: string;
   label: string;
+  /** 文言のキー ID（表示時に `t()` で取得）。 */
   note: string;
   file: string;
   url: string;
@@ -262,6 +263,7 @@ export const onLlmProgress = (handler: (p: LlmProgress) => void): Promise<Unlist
 export interface AsrModel {
   id: string;
   label: string;
+  /** 文言のキー ID（表示時に `t()` で取得）。 */
   note: string;
   file: string;
   url: string;
@@ -517,6 +519,7 @@ export interface SystemProfile {
 
 export interface ModelPick {
   model: string;
+  /** 文言のキー ID（表示時に `t()` で取得）。 */
   reason: string;
 }
 

@@ -11,6 +11,7 @@ import {
   totalBytes
 } from './model-setup';
 import type { AsrModels, LlmModels, Recommendation, SystemReport } from './ipc';
+import { t } from './i18n';
 
 const llmModel = (id: string, style: 'pfml3' | 'chat_template', size: number, installed = false) => ({
   id,
@@ -90,7 +91,7 @@ describe('ocrChoice', () => {
     const c = ocrChoice({ ppocr: true, current: true, ocrs: true, fast: false, dir: '' });
     expect(c.installed).toBe(false);
     expect(c.size).toBe(25_000_000);
-    expect(c.note).toContain('高速実行部品');
+    expect(t(c.note)).toContain('高速実行部品');
   });
 
   it('counts as installed once the faster runtime is there too', () => {
@@ -101,7 +102,7 @@ describe('ocrChoice', () => {
     const c = ocrChoice({ ppocr: true, current: false, ocrs: true, fast: true, dir: '' });
     expect(c.installed).toBe(false);
     expect(c.size).toBe(31_000_000);
-    expect(c.note).toContain('PP-OCRv5');
+    expect(t(c.note)).toContain('PP-OCRv5');
   });
 
   it('asks for everything when nothing is installed', () => {

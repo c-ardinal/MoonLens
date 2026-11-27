@@ -67,6 +67,31 @@ node scripts/ui-audit/overflow-audit.mjs build --sizes xlarge --shots out/   # �
 
 `data-overflow-exempt`：要素と子孫を対象外へ（収容不可の幅で非表示とする案内文、原文の位置へ追従する訳文の重畳）。
 
+英語表示の検査：`npm run audit:overflow:en`（文字サイズ 標準・最大）。`--langs ja,en` で言語を指定。
+
+## 表示言語の監査
+
+英語表示で全ウィンドウの全状態を巡回し、未翻訳の日本語文言（言語ファイル `locales/ja.json` の文言と一致する本文・
+`title`／`aria-label`／`placeholder`／`alt` 属性）と `<html lang>` の未更新を検出。CI が毎回実行。
+初回表示は日本語の控えから開始するため、表示中の言語切替（再描画）の検査を兼用。
+
+```sh
+npm run audit:i18n
+node scripts/ui-audit/i18n-audit.mjs build --shots out/   # 各状態の画面も保存
+node scripts/ui-audit/i18n-audit.mjs build --lang ja      # 言語の指定（既定：en）。全言語でキー ID の露出も検出
+```
+
+対象外：利用者・バックエンド由来の文字列（履歴の本文・訳文・モデルの説明）、Canvas 描画（`--shots` の画像で目視確認）。
+
+## 選択欄の可読性の監査
+
+`<select>` の選択肢の文字色と背景色のコントラスト比を、配色設定の明・暗の両方で実測（比 4.5 未満で失敗）。
+選択肢の一覧は OS・WebView が描画するため、文字色のみの指定は暗色設定で判読不可。
+
+```sh
+npm run audit:select
+```
+
 ## モック
 
 `mock.json` は IPC の応答表（設定・履歴・モデル一覧）。IPC の追加・変更で画面が空になる場合は更新。

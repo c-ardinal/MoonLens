@@ -10,6 +10,7 @@ import type {
   Recommendation,
   SystemReport
 } from '$lib/ipc';
+import { t } from './i18n';
 
 export type Feature = 'translate' | 'ocr' | 'assistant' | 'asr';
 
@@ -47,11 +48,12 @@ const OCR_MODEL_BYTES = 31_000_000;
 const OCRS_BYTES = 12_000_000;
 const OCR_FAST_BYTES = 25_000_000;
 
+/** 機能名（文言のキー ID）。表示時は `t()` で取得。 */
 export const FEATURE_TITLES: Record<Feature, string> = {
-  translate: '翻訳',
-  ocr: '文字認識',
-  assistant: '説明・要約',
-  asr: '音声認識'
+  translate: 'common:translation',
+  ocr: 'common:text_recognition',
+  assistant: 'common:explain_summarize',
+  asr: 'common:speech_recognition'
 };
 
 export function ocrChoice(ocr: OcrModelsStatus): Choice {
@@ -68,23 +70,23 @@ export function ocrChoice(ocr: OcrModelsStatus): Choice {
     installed: usable && ocr.current && ocr.fast,
     partial: 0,
     note: outdated
-      ? '旧世代モデル（PP-OCRv5）で動作中。新世代モデルが未取得（取得後は読取精度が向上、旧モデルは自動削除）'
+      ? 'models:running_on_the_previous_generation_model_pp'
       : fastOnly
-        ? '高速実行部品が未取得（取得後は読取を高速化、環境別の最適構成は自動選択）'
-        : '日本語・中国語・英語に対応（予備の英語専用 ocrs を同梱）',
+        ? 'models:fast_runtime_not_downloaded_speeds_up'
+        : 'models:reads_japanese_chinese_and_english_includes',
     consent: null
   };
 }
 
 /** 追加可能な文字体系の表示名と説明（id：バックエンドの ocr_scripts）。 */
 export const OCR_SCRIPTS: Record<string, { label: string; note: string }> = {
-  korean: { label: '韓国語', note: 'ハングルの認識モデル' },
-  cyrillic: { label: 'キリル文字', note: 'ロシア語・ウクライナ語・ブルガリア語・カザフ語等の認識モデル' },
-  arabic: { label: 'アラビア文字', note: 'アラビア語・ペルシア語・ウルドゥー語の認識モデル' },
-  thai: { label: 'タイ語', note: 'タイ文字の認識モデル' },
-  devanagari: { label: 'デーヴァナーガリー', note: 'ヒンディー語・マラーティー語・ネパール語の認識モデル' },
-  tamil: { label: 'タミル語', note: 'タミル文字の認識モデル' },
-  telugu: { label: 'テルグ語', note: 'テルグ文字の認識モデル' }
+  korean: { label: 'language:korean', note: 'models:recognition_model_for_hangul' },
+  cyrillic: { label: 'models:cyrillic', note: 'models:recognition_model_for_russian_ukrainian' },
+  arabic: { label: 'models:arabic_script', note: 'models:recognition_model_for_arabic_persian_and' },
+  thai: { label: 'language:thai', note: 'models:recognition_model_for_thai_script' },
+  devanagari: { label: 'models:devanagari', note: 'models:recognition_model_for_hindi_marathi_and' },
+  tamil: { label: 'models:tamil', note: 'models:recognition_model_for_tamil_script' },
+  telugu: { label: 'models:telugu', note: 'models:recognition_model_for_telugu_script' }
 };
 
 const pick = <
@@ -216,23 +218,31 @@ export interface HardwareLine {
 /** PC 構成の表示行（初回セットアップの診断欄）。 */
 export function hardwareLines(r: SystemReport): HardwareLine[] {
   const p = r.profile;
-  const cpu = p.cpu_name ? `${p.cpu_name}（${p.cpu_cores} スレッド）` : `${p.cpu_cores} スレッド`;
+  const cpu = p.cpu_name
+    ? t('models:name_n_threads', { name: p.cpu_name, n: p.cpu_cores })
+    : t('models:n_threads', { n: p.cpu_cores });
   const gpus = p.gpus.length
     ? p.gpus
-        .map((g) => `${g.name}（${formatBytes(g.memory_total)}・${g.backend}${g.integrated ? '・内蔵' : ''}）`)
-        .join('、')
-    : '非検出';
+        .map((g) =>
+          t(g.integrated ? 'models:name_memory_backend_integrated' : 'models:name_memory_backend', {
+            name: g.name,
+            memory: formatBytes(g.memory_total),
+            backend: g.backend
+          })
+        )
+        .join(t('common:list_separator'))
+    : t('models:none_found');
   let device: string;
-  if (r.accelerator) device = `GPU：${r.accelerator.name}`;
-  else if (!p.use_gpu && p.gpus.length) device = 'CPU（GPU 使用：無効）';
+  if (r.accelerator) device = t('models:gpu_name', { name: r.accelerator.name });
+  else if (!p.use_gpu && p.gpus.length) device = t('models:cpu_gpu_use_off');
   else device = 'CPU';
   const lines: HardwareLine[] = [
     { label: 'CPU', value: cpu },
-    { label: 'メモリ', value: formatBytes(p.ram_total) },
+    { label: t('models:memory'), value: formatBytes(p.ram_total) },
     { label: 'GPU', value: gpus },
-    { label: '推論処理', value: device }
+    { label: t('models:inference'), value: device }
   ];
-  if (p.disk_free != null) lines.push({ label: '残容量', value: formatBytes(p.disk_free) });
+  if (p.disk_free != null) lines.push({ label: t('models:free_space'), value: formatBytes(p.disk_free) });
   return lines;
 }
 
@@ -241,9 +251,11 @@ export function hardwareLines(r: SystemReport): HardwareLine[] {
  * GPU 全てを使用するため、全 GPU 名を列挙。`useGpu` は「GPU 使用」の現在値。
  */
 export function inferenceDevice(p: SystemProfile, useGpu: boolean): string {
-  if (!p.gpus.length) return 'CPU（対応 GPU：非検出）';
-  if (!useGpu) return 'CPU（GPU 使用：無効）';
-  return `GPU：${p.gpus.map((g) => `${g.name}（${g.backend}）`).join('、')}`;
+  if (!p.gpus.length) return t('models:cpu_no_supported_gpu_found');
+  if (!useGpu) return t('models:cpu_gpu_use_off');
+  return t('models:gpu_name', {
+    name: p.gpus.map((g) => t('models:name_backend', { name: g.name, backend: g.backend })).join(t('common:list_separator'))
+  });
 }
 
 /**

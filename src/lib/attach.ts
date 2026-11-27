@@ -2,6 +2,8 @@
  * 他アプリのウィンドウへの吸着：型・イベント名・表示用の整形（バックエンド：`attach.rs`）。
  */
 
+import { t } from './i18n';
+
 /** 吸着先のウィンドウ。 */
 export interface AttachTarget {
   /** ウィンドウシステムの識別子。 */
@@ -41,8 +43,8 @@ function appName(app: string): string {
 }
 
 /** 吸着先の短縮名（アプリ名、不明時はウィンドウ名）。 */
-export function targetName(t: AttachTarget): string {
-  return appName(t.app) || t.title.trim() || `ウィンドウ ${t.id}`;
+export function targetName(target: AttachTarget): string {
+  return appName(target.app) || target.title.trim() || t('attach:window_id', { id: target.id });
 }
 
 /** 一覧の表示内容：主（アプリ名）と副（ウィンドウ名、主と同一なら省略）。 */

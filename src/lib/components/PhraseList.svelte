@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { t } from '$lib/i18n';
   import { tick } from 'svelte';
   import { Plus, X } from 'lucide-svelte';
 
@@ -36,12 +37,12 @@
       class="mr-10 inline-flex shrink-0 items-center gap-1 rounded-ml-sm border border-border bg-surface px-2.5 py-1 text-sm text-ink"
       onclick={add}
     >
-      <Plus class="h-3.5 w-3.5" />追加
+      <Plus class="h-3.5 w-3.5" />{t('common:add')}
     </button>
   </div>
 
   {#if rows.length === 0}
-    <p class="rounded-ml-sm border border-dashed border-border px-3 py-2 text-xs text-ink-faint row-value">登録なし</p>
+    <p class="rounded-ml-sm border border-dashed border-border px-3 py-2 text-xs text-ink-faint row-value">{t('common:no_entries')}</p>
   {:else}
     <div bind:this={list} class="grid grid-cols-[minmax(0,1fr)_1.75rem] items-center gap-x-2 gap-y-1.5">
       {#each rows as phrase, i (i)}
@@ -55,8 +56,8 @@
         <button
           type="button"
           class="row-value rounded-ml-sm p-1 text-ink-faint transition hover:bg-surface-muted hover:text-ink"
-          title="削除"
-          aria-label="{label} {i + 1} を削除"
+          title={t('common:delete')}
+          aria-label={t('phrase-list:delete_label_n', { label, n: i + 1 })}
           onclick={() => onChange(rows.filter((_, j) => j !== i))}
         >
           <X class="h-3.5 w-3.5" />

@@ -13,6 +13,7 @@
   } from '$lib/ipc';
   import { setHelp, setSummary, type LayoutSet } from '$lib/layout-sets';
   import { errorText } from '$lib/errors';
+  import { t } from '$lib/i18n';
   import { notify, notifyError, undoable } from '$lib/toast.svelte';
   import SettingRow from './SettingRow.svelte';
 
@@ -27,7 +28,7 @@
     try {
       sets = await listLayoutSets();
     } catch (e) {
-      notifyError(`配置セットの読込失敗：${errorText(e)}`);
+      notifyError(t('layout-sets:load_failed', { detail: errorText(e) }));
     }
     loaded = true;
   }
@@ -45,7 +46,7 @@
     try {
       await action();
     } catch (e) {
-      notifyError(`${failure}：${errorText(e)}`);
+      notifyError(t('toast:label_detail', { label: t(failure), detail: errorText(e) }));
     } finally {
       busy = false;
       await refresh();
@@ -53,25 +54,25 @@
   }
 
   const save = (target?: LayoutSet) =>
-    run('保存失敗', async () => {
+    run('layout-sets:save_failed', async () => {
       const saved = await saveLayoutSet(target?.id);
-      notify(`${saved.name}：ウィンドウ ${saved.windows.length} 個を保存`);
+      notify(t('common:layout_saved', { name: saved.name, n: saved.windows.length }));
     });
 
   const restore = (set: LayoutSet) =>
-    run('復元失敗', async () => {
+    run('common:restore_failed', async () => {
       const count = await restoreLayoutSet(set.id);
-      notify(`${set.name}：ウィンドウ ${count} 個を復元`);
+      notify(t('common:layout_restored', { name: set.name, n: count }));
     });
 
   const remove = (set: LayoutSet) =>
-    run('削除失敗', async () => {
+    run('layout-sets:delete_failed', async () => {
       const removed = await deleteLayoutSet(set.id);
       if (!removed) return;
       const [index, old] = removed;
       undoable({
-        text: `${set.name}：削除完了`,
-        failure: '復元失敗',
+        text: t('common:name_deleted', { name: set.name }),
+        failure: t('common:restore_failed'),
         undo: async () => {
           await putLayoutSet(old, index);
           await refresh();
@@ -80,23 +81,23 @@
     });
 
   const setAuto = (set: LayoutSet, on: boolean) =>
-    run('変更失敗', () => updateLayoutSet(set.id, { autoRestore: on }));
+    run('layout-sets:change_failed', () => updateLayoutSet(set.id, { autoRestore: on }));
 
   function rename(set: LayoutSet, value: string) {
     const name = value.trim();
     if (!name || name === set.name) return;
-    run('名称変更失敗', () => updateLayoutSet(set.id, { name }));
+    run('layout-sets:rename_failed', () => updateLayoutSet(set.id, { name }));
   }
 </script>
 
 <SettingRow
   id="layout:new"
-  help="表示中のウィンドウ翻訳一式を保存。位置・寸法・吸着先を記録。"
+  help={t('layout-sets:new_help')}
 >
   <div class="srow">
-    <span class="row-label">表示中の配置</span>
+    <span class="row-label">{t('layout-sets:current_layout')}</span>
     <span class="row-ctl">
-      <button class="sbtn" disabled={busy} onclick={() => save()}>新規保存</button>
+      <button class="sbtn" disabled={busy} onclick={() => save()}>{t('layout-sets:save_new')}</button>
     </span>
   </div>
 </SettingRow>
@@ -107,7 +108,7 @@
         <input
           class="name-input"
           value={set.name}
-          aria-label="配置セット名"
+          aria-label={t('layout-sets:name')}
           maxlength="40"
           onchange={(e) => rename(set, (e.currentTarget as HTMLInputElement).value)}
           onkeydown={(e) => e.key === 'Enter' && (e.currentTarget as HTMLInputElement).blur()}
@@ -116,23 +117,23 @@
       </span>
       <span class="row-ctl">
         {#if set.app}
-          <label class="toggle-chips" title="{set.app.name} の起動時に自動復元">
+          <label class="toggle-chips" title={t('layout-sets:auto_restore_on_launch', { name: set.app.name })}>
             <input
               type="checkbox"
               class="sr-only"
-              aria-label="{set.name} の自動復元"
+              aria-label={t('layout-sets:auto_restore_of', { name: set.name })}
               checked={set.auto_restore}
               disabled={busy}
               onchange={(e) => setAuto(set, (e.currentTarget as HTMLInputElement).checked)}
             />
-            <span class="tc" class:on={set.auto_restore}>自動</span>
-            <span class="tc" class:on={!set.auto_restore}>手動</span>
+            <span class="tc" class:on={set.auto_restore}>{t('settings:auto')}</span>
+            <span class="tc" class:on={!set.auto_restore}>{t('layout-sets:manual')}</span>
           </label>
         {/if}
         <button
           class="sbtn icon neutral"
-          title="復元"
-          aria-label="{set.name} を復元"
+          title={t('layout-sets:restore')}
+          aria-label={t('layout-sets:restore_name', { name: set.name })}
           disabled={busy}
           onclick={() => restore(set)}
         >
@@ -140,8 +141,8 @@
         </button>
         <button
           class="sbtn icon neutral"
-          title="表示中の配置で上書"
-          aria-label="{set.name} を表示中の配置で上書"
+          title={t('layout-sets:overwrite')}
+          aria-label={t('layout-sets:overwrite_name', { name: set.name })}
           disabled={busy}
           onclick={() => save(set)}
         >
@@ -149,8 +150,8 @@
         </button>
         <button
           class="sbtn icon"
-          title="削除"
-          aria-label="{set.name} を削除"
+          title={t('common:delete')}
+          aria-label={t('layout-sets:delete_name', { name: set.name })}
           disabled={busy}
           onclick={() => remove(set)}
         >
@@ -161,7 +162,7 @@
   </SettingRow>
 {/each}
 {#if loaded && sets.length === 0}
-  <p class="srow"><span class="row-label row-value">登録なし</span></p>
+  <p class="srow"><span class="row-label row-value">{t('common:no_entries')}</span></p>
 {/if}
 
 <style>

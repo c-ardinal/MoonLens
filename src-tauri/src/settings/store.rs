@@ -27,21 +27,19 @@ use super::{
     schema::Settings,
     validate::{self, Path as KeyPath, Seg, Source},
 };
+use crate::tr;
 
 const DEFAULT_TOML: &str = include_str!("default.toml");
 
 /// First lines of the user file. Kept short; the reference file carries
 /// every key with its default.
-const USER_HEADER: &str = "\
-# MoonLens 設定（変更値のみ）。
-# 既定値の一覧：同一フォルダーの config.default.toml
-# 未記載の項目は既定値を使用。保存時に即時反映。
-";
+fn user_header() -> &'static str {
+    crate::i18n::text("config:moonlens_settings_changed_values_only_every")
+}
 
-const DEFAULTS_HEADER: &str = "\
-# MoonLens 既定値（参照用。起動時に再生成、編集は無効）。
-# 変更は config.toml に該当キーのみ記述。
-";
+fn defaults_header() -> &'static str {
+    crate::i18n::text("config:moonlens_defaults_for_reference_rewritten_at")
+}
 
 /// Notice id for problems found in config.toml.
 pub const NOTICE_CONFIG: &str = "config";
@@ -73,6 +71,26 @@ impl LoadOutcome {
 }
 
 impl SettingsStore {
+    /// `appearance.ui_language` straight from config.toml, before the full
+    /// load: the loader words its own notices (upgrades, syntax errors),
+    /// so the display language has to be known first.
+    pub fn peek_ui_language(app: &AppHandle) -> String {
+        app.path()
+            .app_config_dir()
+            .ok()
+            .and_then(|dir| std::fs::read_to_string(dir.join("config.toml")).ok())
+            .and_then(|raw| raw.parse::<toml::Table>().ok())
+            .and_then(|t| {
+                Some(
+                    t.get("appearance")?
+                        .get("ui_language")?
+                        .as_str()?
+                        .to_string(),
+                )
+            })
+            .unwrap_or_else(super::schema::default_ui_language)
+    }
+
     pub fn load_or_default(app: &AppHandle) -> Result<Self> {
         let config_dir = app.path().app_config_dir().context("no app config dir")?;
         std::fs::create_dir_all(&config_dir).ok();
@@ -119,7 +137,7 @@ impl SettingsStore {
                         );
                         user_file(&t)
                     }
-                    _ => overrides_toml(&s).map(|b| format!("{USER_HEADER}\n{b}")),
+                    _ => overrides_toml(&s).map(|b| format!("{}\n{b}", user_header())),
                 };
                 if let Ok(body) = body {
                     let _ = write_atomic(&config_path, &body);
@@ -130,7 +148,7 @@ impl SettingsStore {
             // A fresh install: nothing is overridden yet.
             let s = defaults();
             if let Ok(body) = overrides_toml(&s) {
-                let _ = write_atomic(&config_path, &format!("{USER_HEADER}\n{body}"));
+                let _ = write_atomic(&config_path, &format!("{}\n{body}", user_header()));
             }
             s
         };
@@ -208,7 +226,7 @@ impl SettingsStore {
     /// disk never leaves a half-written config behind.
     pub fn save(&self, new: Settings) -> Result<()> {
         let body = overrides_toml(&new)?;
-        write_atomic(&self.config_path, &format!("{USER_HEADER}\n{body}"))
+        write_atomic(&self.config_path, &format!("{}\n{body}", user_header()))
             .with_context(|| format!("writing {}", self.config_path.display()))?;
         if let Ok(t) = body.parse::<toml::Table>() {
             validate::publish(Source::File, validate::check_schema(&t, schema()));
@@ -241,7 +259,7 @@ fn defaults_table() -> toml::Table {
 }
 
 fn defaults_reference() -> String {
-    format!("{DEFAULTS_HEADER}\n{DEFAULT_TOML}")
+    format!("{}\n{DEFAULT_TOML}", defaults_header())
 }
 
 /// Build settings from a user file layered over the defaults, keeping
@@ -446,12 +464,11 @@ fn report(outcome: &LoadOutcome, backup: Option<&Path>) {
     }
     let saved = backup
         .and_then(|p| p.file_name())
-        .map(|n| format!("元ファイル：{}", n.to_string_lossy()))
+        .map(|n| tr!("config:original_file_file", file = n.to_string_lossy()))
         .unwrap_or_default();
-    let msg = format!("設定ファイルの構文エラー。既定値を使用。{saved}");
     crate::notices::push(
         NOTICE_CONFIG,
-        msg.trim_end_matches('。').to_string() + "。",
+        tr!("config:the_settings_file_has_a_syntax_error", saved = saved),
         None,
     );
 }
@@ -463,7 +480,7 @@ fn schema() -> &'static serde_json::Value {
 }
 
 fn user_file(t: &toml::Table) -> Result<String> {
-    Ok(format!("{USER_HEADER}\n{}", toml::to_string_pretty(t)?))
+    Ok(format!("{}\n{}", user_header(), toml::to_string_pretty(t)?))
 }
 
 /// Read the user file, apply the declarative upgrade rules (persisting
@@ -490,25 +507,27 @@ fn load_user_file(path: &Path) -> (Settings, LoadOutcome, Option<toml::Table>) {
                 // Provider id changes first: they decide whether
                 // translation works at all.
                 let mut ordered: Vec<&str> = done.iter().map(String::as_str).collect();
-                ordered.sort_by_key(|d| !d.starts_with("旧識別子"));
+                ordered.sort_by_key(|d| !d.starts_with(validate::alias_prefix()));
                 let shown: Vec<&str> = ordered.into_iter().take(2).collect();
                 let more = done.len().saturating_sub(shown.len());
                 let more = if more > 0 {
-                    format!("他 {more} 件")
+                    tr!("config:and_more_more", more = more)
                 } else {
                     String::new()
                 };
                 let saved = kept
                     .as_deref()
                     .and_then(|p| p.file_name())
-                    .map(|n| format!("元ファイル：{}。", n.to_string_lossy()))
+                    .map(|n| tr!("config:original_file_file", file = n.to_string_lossy()))
                     .unwrap_or_default();
                 crate::notices::push(
                     NOTICE_CONFIG_MIGRATED,
-                    format!(
-                        "旧形式の設定を自動更新（{} 件）：{}{more}。{saved}",
-                        done.len(),
-                        shown.join("、")
+                    tr!(
+                        "config:updated_settings_from_an_older_format_done",
+                        done = done.len(),
+                        items = shown.join(crate::i18n::text("common:list_separator")),
+                        more = more,
+                        saved = saved
                     ),
                     None,
                 );

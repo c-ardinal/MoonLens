@@ -396,7 +396,12 @@ pub mod backend {
             // Wait for the thread to confirm the source or fail fast.
             let device = ready_rx
                 .recv_timeout(std::time::Duration::from_millis(START_TIMEOUT_MS))
-                .map_err(|e| anyhow!("音声取得スレッドの応答なし：{e}"))??;
+                .map_err(|e| {
+                    anyhow!(crate::tr!(
+                        "audio:the_audio_capture_thread_did_not_respond",
+                        e = e
+                    ))
+                })??;
             Ok(Self {
                 stop,
                 lost,
@@ -428,7 +433,9 @@ pub mod backend {
     ) -> Result<()> {
         let host = cpal::default_host();
         let (device, config) = pick_loopback(&host)?;
-        let name = device.name().unwrap_or_else(|_| "不明".into());
+        let name = device
+            .name()
+            .unwrap_or_else(|_| crate::tr!("common:unknown"));
         tracing::info!(
             "audio: capturing \"{name}\" ({} Hz, {} ch, {:?})",
             config.sample_rate().0,
@@ -502,8 +509,12 @@ pub mod backend {
         const CHANNELS: u16 = 2;
         const BYTES_PER_SAMPLE: usize = 2;
 
-        let name = crate::audio_apps::process_name(pid)
-            .ok_or_else(|| anyhow!("対象アプリ未検出（PID {pid}）"))?;
+        let name = crate::audio_apps::process_name(pid).ok_or_else(|| {
+            anyhow!(crate::tr!(
+                "audio:the_target_app_was_not_found_pid",
+                pid = pid
+            ))
+        })?;
         // S_FALSE (already initialized on this thread) is fine as well.
         let _ = wasapi::initialize_mta();
         let format = WaveFormat::new(
@@ -514,24 +525,39 @@ pub mod backend {
             CHANNELS as usize,
             None,
         );
-        let mut client = AudioClient::new_application_loopback_client(pid, true)
-            .map_err(|e| anyhow!("アプリ単位の音声取得に非対応、または開始不可：{e}"))?;
+        let mut client = AudioClient::new_application_loopback_client(pid, true).map_err(|e| {
+            anyhow!(crate::tr!(
+                "audio:per_app_audio_capture_is_unsupported_or",
+                e = e
+            ))
+        })?;
         let mode = StreamMode::EventsShared {
             autoconvert: true,
             buffer_duration_hns: 0,
         };
         client
             .initialize_client(&format, Direction::Capture, mode, None)
-            .map_err(|e| anyhow!("アプリ単位の音声取得を初期化不可：{e}"))?;
-        let event = client
-            .set_get_eventhandle()
-            .map_err(|e| anyhow!("音声取得イベントを設定不可：{e}"))?;
-        let capture = client
-            .get_audiocaptureclient()
-            .map_err(|e| anyhow!("音声取得クライアントを取得不可：{e}"))?;
+            .map_err(|e| {
+                anyhow!(crate::tr!(
+                    "audio:could_not_initialize_per_app_audio_capture",
+                    e = e
+                ))
+            })?;
+        let event = client.set_get_eventhandle().map_err(|e| {
+            anyhow!(crate::tr!(
+                "audio:could_not_set_the_audio_capture_event",
+                e = e
+            ))
+        })?;
+        let capture = client.get_audiocaptureclient().map_err(|e| {
+            anyhow!(crate::tr!(
+                "audio:could_not_get_the_audio_capture_client",
+                e = e
+            ))
+        })?;
         client
             .start_stream()
-            .map_err(|e| anyhow!("音声取得を開始不可：{e}"))?;
+            .map_err(|e| anyhow!(crate::tr!("audio:could_not_start_audio_capture_e", e = e)))?;
         tracing::info!(
             "audio: capturing application \"{name}\" (PID {pid}, {RATE} Hz, {CHANNELS} ch)"
         );
@@ -548,13 +574,13 @@ pub mod backend {
         while !stop.load(Ordering::Relaxed) {
             while capture
                 .get_next_packet_size()
-                .map_err(|e| anyhow!("音声取得失敗：{e}"))?
+                .map_err(|e| anyhow!(crate::tr!("audio:audio_capture_failed_e", e = e)))?
                 .unwrap_or(0)
                 > 0
             {
                 capture
                     .read_from_device_to_deque(&mut bytes)
-                    .map_err(|e| anyhow!("音声取得失敗：{e}"))?;
+                    .map_err(|e| anyhow!(crate::tr!("audio:audio_capture_failed_e", e = e)))?;
             }
             let whole = bytes.len() - bytes.len() % frame_bytes;
             if whole > 0 {
@@ -574,7 +600,10 @@ pub mod backend {
                 checked = std::time::Instant::now();
                 if !crate::audio_apps::is_alive(pid) {
                     let _ = client.stop_stream();
-                    return Err(anyhow!("対象アプリ終了：{name}"));
+                    return Err(anyhow!(crate::tr!(
+                        "audio:the_target_app_has_exited_name",
+                        name = name
+                    )));
                 }
             }
         }
@@ -589,7 +618,9 @@ pub mod backend {
         _stop: Arc<AtomicBool>,
         _ready: std::sync::mpsc::Sender<Result<String>>,
     ) -> Result<()> {
-        Err(anyhow!("アプリ単位の音声取得は Windows 限定"))
+        Err(anyhow!(crate::tr!(
+            "audio:per_app_audio_capture_is_windows_only"
+        )))
     }
 
     /// Lightweight mono / linear-interpolation resampler. Good enough for
@@ -642,10 +673,12 @@ pub mod backend {
     /// microphone and the subtitles never heard the PC's own sound.
     #[cfg(windows)]
     fn pick_loopback(host: &cpal::Host) -> Result<(cpal::Device, cpal::SupportedStreamConfig)> {
-        let device = host.default_output_device().context("再生デバイス未検出")?;
-        let config = device
-            .default_output_config()
-            .context("再生デバイスの音声形式を取得不可")?;
+        let device = host
+            .default_output_device()
+            .context(crate::tr!("audio:no_playback_device_found"))?;
+        let config = device.default_output_config().context(crate::tr!(
+            "audio:could_not_read_the_playback_devices_audio"
+        ))?;
         Ok((device, config))
     }
 
@@ -653,10 +686,11 @@ pub mod backend {
     /// macOS: a virtual loopback driver (BlackHole, Loopback).
     #[cfg(not(windows))]
     fn pick_loopback(host: &cpal::Host) -> Result<(cpal::Device, cpal::SupportedStreamConfig)> {
-        let device = pick_loopback_device(host).context("音声取得デバイス未検出")?;
+        let device = pick_loopback_device(host)
+            .context(crate::tr!("audio:no_audio_capture_device_found"))?;
         let config = device
             .default_input_config()
-            .context("音声取得デバイスの音声形式を取得不可")?;
+            .context(crate::tr!("audio:could_not_read_the_capture_devices_audio"))?;
         Ok((device, config))
     }
 

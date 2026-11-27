@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { t } from '$lib/i18n';
   import { Copy, Sparkles, Languages, Radio, ExternalLink } from 'lucide-svelte';
   import type { Intent } from '$lib/ipc';
 
@@ -21,12 +22,13 @@
   type Action = { id: ActionId; label: string; icon: any };
 
   // Base catalogue keyed by id so intent-specific lists can reuse labels.
+  /** label は文言のキー ID（表示時に `t()` で取得）。 */
   const all: Record<ActionId, Action> = {
-    translate: { id: 'translate', label: '翻訳', icon: Languages },
-    copy: { id: 'copy', label: 'コピー', icon: Copy },
-    explain: { id: 'explain', label: '説明', icon: Sparkles },
-    pin: { id: 'pin', label: '常時', icon: Radio },
-    open_url: { id: 'open_url', label: 'URL を開く', icon: ExternalLink }
+    translate: { id: 'translate', label: 'common:translate_action', icon: Languages },
+    copy: { id: 'copy', label: 'common:copy', icon: Copy },
+    explain: { id: 'explain', label: 'common:explain', icon: Sparkles },
+    pin: { id: 'pin', label: 'action-ribbon:pin', icon: Radio },
+    open_url: { id: 'open_url', label: 'action-ribbon:open_url', icon: ExternalLink }
   };
 
   const order: ActionId[] = $derived.by(() => {
@@ -62,7 +64,7 @@
       data-action={a.id}
     >
       <a.icon class="h-3.5 w-3.5" />
-      <span>{a.label}</span>
+      <span>{t(a.label)}</span>
     </button>
   {/each}
 </nav>

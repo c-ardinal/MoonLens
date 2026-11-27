@@ -9,6 +9,7 @@ import {
   LANGUAGES,
   SOURCE_LANGUAGES,
   languageLabel,
+  languageName,
   blockPaint,
   maskClip,
   rgb,
@@ -164,6 +165,13 @@ describe('target language', () => {
     expect(languageLabel('zh')).toBe('中国語');
     expect(languageLabel('xx')).toBe('xx');
     expect(languageLabel(null)).toBe('');
+  });
+
+  it('resolves regional tags to the Japanese name used in prompts', () => {
+    expect(languageName('en-US')).toBe('英語');
+    expect(languageName('fr_FR')).toBe('フランス語');
+    expect(languageName('zh-CN')).toBe('中国語');
+    expect(languageName('xx')).toBe('');
   });
 
   it('keeps target-only variants out of the source languages', () => {

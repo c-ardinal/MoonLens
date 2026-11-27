@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { t } from '$lib/i18n';
   import { onDestroy, onMount } from 'svelte';
   import { AlertTriangle } from 'lucide-svelte';
   import { applyConfigFixes, listConfigIssues, onConfigIssues, type ConfigIssue } from '$lib/ipc';
@@ -45,18 +46,18 @@
   <section
     class="flex flex-col gap-2 rounded-ml border border-amber-500/50 bg-amber-500/10 p-3 text-sm"
     role="alert"
-    aria-label="設定の不正値"
+    aria-label={t('config-issues:invalid_settings')}
   >
     <div class="flex items-center gap-2">
       <AlertTriangle class="h-4 w-4 shrink-0 text-amber-600" />
-      <h2 class="min-w-0 flex-1 font-medium">設定の不正値 {issues.length} 件</h2>
+      <h2 class="min-w-0 flex-1 font-medium">{t('config-issues:length_invalid_settings', { length: issues.length })}</h2>
       {#if fixable.length > 1}
         <button
           class="shrink-0 rounded-ml-sm bg-accent px-2 py-1 text-xs text-white disabled:opacity-50"
           disabled={busy}
           onclick={() => fix([])}
         >
-          全件修正
+          {t('config-issues:fix_all')}
         </button>
       {/if}
     </div>
@@ -79,7 +80,7 @@
         </li>
       {/each}
     </ul>
-    <p class="text-xs text-ink-muted">修正前の設定は config.toml.bak-（時刻）として保存。</p>
+    <p class="text-xs text-ink-muted">{t('config-issues:the_previous_settings_are_kept_as_config')}</p>
     {#if error}
       <p class="text-xs text-red-600">{error}</p>
     {/if}

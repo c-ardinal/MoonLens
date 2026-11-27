@@ -6,6 +6,7 @@
 
 use std::path::{Path, PathBuf};
 
+use crate::tr;
 use anyhow::{Context, Result};
 use parking_lot::Mutex;
 use rusqlite::{Connection, OptionalExtension};
@@ -90,9 +91,9 @@ impl Storage {
                 }
                 crate::notices::push(
                     "history-db",
-                    format!(
-                        "履歴データベースを読込不可のため再作成。旧ファイル：{}",
-                        aside.file_name().unwrap_or_default().to_string_lossy()
+                    tr!(
+                        "storage:the_history_database_could_not_be_read",
+                        file = aside.file_name().unwrap_or_default().to_string_lossy()
                     ),
                     None,
                 );
@@ -533,7 +534,9 @@ impl Storage {
         let tx = db.transaction()?;
         require_session(&tx, id)?;
         if revision_of(&tx, id)? != revision {
-            anyhow::bail!("字幕記録の更新を検出（記録中または他操作）。再読込後に再実行");
+            anyhow::bail!(crate::tr!(
+                "storage:the_subtitle_record_changed_still_recording"
+            ));
         }
         write_lines(&tx, id, lines)?;
         rebuild_texts(&tx, id)?;

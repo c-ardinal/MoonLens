@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { t } from '$lib/i18n';
   import { onDestroy, onMount, tick, untrack } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
   import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
@@ -39,7 +40,7 @@
     type LensDescriptor,
     type LensReadMode
   } from '$lib/ipc';
-  import { blockPaint, joinedText, languageLabel } from '$lib/lens-overlay';
+  import { blockPaint, joinedText, languageLabel, languageName, maskClip, rgb } from '$lib/lens-overlay';
   import {
     addSample,
     observed,
@@ -277,8 +278,8 @@
     explanation = { status: 'pending' };
     try {
       const r = await runExplain(
-        // copy-lint-ignore（LLM プロンプト）
-        `次のテキストの内容を${languageLabel(targetLanguage) || '日本語'}で簡潔に説明してください:\n\n${src}`
+        // copy-lint-ignore i18n-ignore（LLM プロンプト。言語名は日本語固定）
+        `次のテキストの内容を${languageName(targetLanguage) || '日本語'}で簡潔に説明してください:\n\n${src}`
       );
       explanation = { status: 'done', text: extractText(r) };
     } catch (e) {
@@ -301,7 +302,7 @@
         if (fit.kind !== 'observing') return;
         stopObserving();
         fit = { kind: 'idle' };
-        noteFit('常時翻訳 OFF：観測中止');
+        noteFit(t('lens:continuous_off_observation_stopped'));
       });
     }
   });
@@ -350,8 +351,8 @@
   /** Bumped on a new attachment: the frame flashes once. */
   let snapped = $state(0);
   const ATTACH_DOCKS: { value: AttachDock; label: string; title: string }[] = [
-    { value: 'cover', label: '全体', title: '吸着先の全体へ重畳' },
-    { value: 'free', label: '相対', title: '現在の位置・サイズを吸着先との相対位置で保持' }
+    { value: 'cover', label: 'lens:cover', title: 'lens:cover_the_whole_target' },
+    { value: 'free', label: 'lens:relative', title: 'lens:keep_the_current_position_and_size_relative' }
   ];
   function applyAttachment(next: Attachment) {
     if (next.target && next.target.id !== attachment.target?.id) snapped++;
@@ -457,13 +458,13 @@
       h: Math.round((window.innerHeight - reportedHeaderHeight) * dpr)
     };
     const band = subtitleBand($state.snapshot(samples) as Sample[], area);
-    if (band.kind === 'none') return noteFit('文字未検出：整形中止');
-    if (band.kind === 'fits') return noteFit('整形不要：現在の範囲が適正');
+    if (band.kind === 'none') return noteFit(t('lens:no_text_found_fitting_cancelled'));
+    if (band.kind === 'fits') return noteFit(t('lens:no_fitting_needed_the_current_range_already'));
     try {
       fitMoveUntil = Date.now() + FIT_MOVE_MS;
       const before = await fitLens(id, band.rect);
       fit = { kind: 'fitted', before };
-      noteFit('字幕領域へ整形完了');
+      noteFit(t('lens:fitted_to_the_subtitle_area'));
     } catch (e) {
       fitMoveUntil = 0;
       lastError = errorText(e);
@@ -474,7 +475,7 @@
     if (fit.kind === 'observing') {
       stopObserving();
       fit = { kind: 'idle' };
-      noteFit('観測中止');
+      noteFit(t('lens:observation_stopped'));
     } else if (fit.kind === 'fitted') {
       const { before } = fit;
       fit = { kind: 'idle' };
@@ -491,7 +492,7 @@
     if (Date.now() < fitMoveUntil) return;
     if (fit.kind === 'observing') {
       stopObserving();
-      noteFit('移動・サイズ変更を検出：観測中止');
+      noteFit(t('lens:window_moved_or_resized_observation_stopped'));
     }
     fit = { kind: 'idle' };
   }
@@ -669,25 +670,25 @@
 
   const activity = $derived(
     busy || reading
-      ? '文字認識中…'
+      ? t('common:reading_text')
       : translating
-        ? '翻訳中…'
+        ? t('common:translating')
         : empty
-          ? '範囲内に文字なし'
+          ? t('lens:no_text_in_this_area')
           : !hasText
             ? continuous
-              ? '画面変化時に自動翻訳'
-              : '再取得で翻訳'
+              ? t('lens:translates_when_the_screen_changes')
+              : t('lens:recapture_to_translate')
             : null
   );
   /** Fitting is the user's own request just now: shown before the rest. */
   const fitStatus = $derived(
     fit.kind === 'observing'
-      ? `字幕領域を観測中… 残余 ${remainingSeconds(fit.elapsed, fit.samples.length)} 秒`
+      ? t('lens:observing_the_subtitle_area_n_s_left', { n: remainingSeconds(fit.elapsed, fit.samples.length) })
       : fitNote
   );
   const pauseStatus = $derived(
-    paused ? (pauseKey ? `一時停止中（${pauseKey} で再開）` : '一時停止中') : null
+    paused ? (pauseKey ? t('lens:paused_press_key_to_resume', { key: pauseKey }) : t('common:paused')) : null
   );
   const status = $derived(pauseStatus ?? fitStatus ?? lastError ?? activity);
 </script>
@@ -727,7 +728,7 @@
       {#snippet lead()}
         <div class="lead pointer-events-none flex items-center gap-2" data-tauri-drag-region>
           <span class="title"
-            >{attachment.target ? `吸着中：${targetName(attachment.target)}` : 'ウィンドウ翻訳'}</span
+            >{attachment.target ? t('common:attached_name', { name: targetName(attachment.target) }) : t('common:window_translation')}</span
           >
           {#if hasText}
             <PrivacyBadge {viaCloud} {provider} />
@@ -754,7 +755,7 @@
     class:operate
     class:working={working && !paused}
     class:peek
-    aria-label="訳文"
+    aria-label={t('common:translated_text')}
     aria-busy={working && !paused}
   >
     {#if !showOriginal && !peek && !paused}
@@ -794,7 +795,7 @@
     {/if}
 
     {#if textInside}
-      <aside class="panel" aria-label="テキスト">
+      <aside class="panel" aria-label={t('common:text')}>
         <LensText
           view={textView}
           onplacement={setPlacement}
@@ -811,7 +812,7 @@
     {/key}
     <!-- Resize grip (also clickable while the body lets the mouse through). -->
     {#if !maximized}
-      <div class="grip" role="presentation" title="サイズ変更" onpointerdown={startResize}></div>
+      <div class="grip" role="presentation" title={t('common:resize')} onpointerdown={startResize}></div>
     {/if}
   </section>
 </main>
