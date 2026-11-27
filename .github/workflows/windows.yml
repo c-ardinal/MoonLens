@@ -9,6 +9,9 @@ name: windows
 # manual trigger (the "Run workflow" button only appears for workflows
 # on the default branch `main`, which holds no code). Everything else
 # stays Linux-only to keep Windows' x2 billing minutes rare.
+#
+# The `lens-e2e` job (30+ minutes) runs only on PRs into `main` /
+# `release`, on PRs labelled `lens-e2e`, and on manual runs.
 
 on:
   pull_request:
@@ -141,8 +144,19 @@ jobs:
   # OCR'd by each engine and translated by the built-in model; then the
   # release-mode app itself is started to check that it writes its log.
   # Captures, report and log are uploaded as the `lens-e2e` artifact.
+  #
+  # Too heavy for every PR: it runs on PRs into `main` / `release`
+  # (develop → main, release PRs), on a PR labelled `lens-e2e` (work on
+  # capture, OCR or subtitles that needs the real-desktop check before
+  # merge; the label counts from the next push) and on manual runs. Elsewhere the job is skipped, which a
+  # required check counts as passed.
   lens-e2e:
     name: lens e2e (windows)
+    if: >-
+      github.event_name == 'workflow_dispatch'
+      || github.base_ref == 'main'
+      || github.base_ref == 'release'
+      || contains(github.event.pull_request.labels.*.name, 'lens-e2e')
     runs-on: windows-latest
     timeout-minutes: 120
     env:

@@ -94,6 +94,14 @@ llama.cpp or the Rust dependency graph (`Cargo.toml` / `Cargo.lock`,
 `build.rs`, `src-tauri/.cargo/**`, the local LLM provider files) run a
 Windows clippy + test job automatically. Other PRs stay Linux-only.
 
+The real-desktop `lens e2e (windows)` job (screen → OCR → translation,
+speech → subtitles, release app start; 30+ minutes) is too heavy for
+every PR. It runs only on PRs into `main` / `release`, on PRs carrying
+the `lens-e2e` label and on manual runs; elsewhere it is skipped (a
+skipped job satisfies a required check). Add the label to a `develop`
+PR that changes capture, OCR or subtitle code and needs the check
+before merge; the label counts from the next push.
+
 ### Concurrency
 
 `cancel-in-progress: true` on every ref **except** `main` / `release`.
