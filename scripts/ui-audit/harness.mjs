@@ -53,6 +53,22 @@ export const init = (label, mock, extra = '{}') => `(() => {
 
 /** 文字サイズを差替えた設定モック。 */
 export const mockWithTextSize = (ts) => MOCK.replace(/"text_size":\s*"medium"/g, `"text_size": "${ts}"`);
+/** 翻訳モデル（PLaMo 2B）を未取得とした設定モック（初期設定の許諾確認の到達用）。 */
+const mockPlamoMissing = (ts) => {
+  const m = JSON.parse(mockWithTextSize(ts));
+  for (const x of m.list_llm_models.models) if (x.id === 'plamo-3-translate-2b') x.installed = false;
+  m.get_system_profile = {
+    profile: { os: 'windows', cpu_name: 'Ryzen 7 7840U', cpu_cores: 16, ram_total: 32 * 2 ** 30, gpus: [], disk_free: 400 * 2 ** 30, use_gpu: true },
+    accelerator: null,
+    recommended: {
+      translate: { model: 'plamo-3-translate-2b', reason: '本 PC の構成に適合' },
+      assistant: { model: 'gemma-4-e4b', reason: '本 PC の構成に適合' },
+      ocr: { model: 'ppocr', reason: '' },
+      asr: { model: 'whisper-small', reason: '' }
+    }
+  };
+  return JSON.stringify(m);
+};
 
 export const launch = () => chromium.launch();
 export const wait = (pg, ms) => pg.waitForTimeout(ms);
@@ -122,10 +138,10 @@ const imageFile = async (pg) => ({
 /**
  * メインウィンドウの全状態を巡回し、各状態で visit(page, 状態名) を実行。
  * 状態：ホーム・パレット・テキスト翻訳（結果・通知・右クリックメニュー）・画像翻訳（空・結果）・
- * 履歴（音声翻訳の記録・通知・確認）・初期設定・設定の全分類。
+ * 履歴（音声翻訳の記録・通知・確認）・初期設定（許諾確認を含む）・設定の全分類（許諾確認を含む）。
  */
-export async function walkMain(browser, url, { textSize = 'medium', width = 1280, height = 800 } = {}, visit) {
-  const ctx = await browser.newContext({ viewport: { width, height }, deviceScaleFactor: 1, reducedMotion: 'reduce' });
+export async function walkMain(browser, url, { textSize = 'medium', width = 1280, height = 800, scale = 1 } = {}, visit) {
+  const ctx = await browser.newContext({ viewport: { width, height }, deviceScaleFactor: scale, reducedMotion: 'reduce' });
   await ctx.addInitScript(init('main', mockWithTextSize(textSize), JSON.stringify({ ...TRANSLATED, ...IMAGE_RESULT })));
   const open = async (route) => { const pg = await ctx.newPage(); await pg.goto(url(route)); await wait(pg, 1200); return pg; };
   let pg = await open('/'); await visit(pg, 'home');
@@ -145,6 +161,14 @@ export async function walkMain(browser, url, { textSize = 'medium', width = 1280
   await reach('history-confirm', async () => { await pg.getByText('全消去').click({ timeout: 2000 }); await pg.getByRole('dialog').waitFor({ timeout: 2000 }); }); await visit(pg, 'history-confirm');
   await pg.close();
   pg = await open('/setup/'); await visit(pg, 'setup'); await pg.close();
+  // 初期設定：許諾確認（取得対象に同意が必要なモデルを含む場合のみ表示される手順）
+  const ctx2 = await browser.newContext({ viewport: { width, height }, deviceScaleFactor: scale, reducedMotion: 'reduce' });
+  await ctx2.addInitScript(init('main', mockPlamoMissing(textSize)));
+  pg = await ctx2.newPage(); await pg.goto(url('/setup/')); await wait(pg, 1200);
+  await reach('setup-select', async () => { await pg.getByRole('button', { name: '次へ' }).click({ timeout: 3000 }); await pg.getByRole('radiogroup').first().waitFor({ timeout: 3000 }); }); await visit(pg, 'setup-select');
+  await reach('setup-consent', async () => { await pg.getByRole('button', { name: '承認・一括取得' }).click({ timeout: 3000 }); await pg.getByRole('checkbox').waitFor({ timeout: 3000 }); }); await visit(pg, 'setup-consent');
+  await pg.getByRole('checkbox').check(); await wait(pg, 200); await visit(pg, 'setup-consent-checked');
+  await ctx2.close();
   pg = await open('/settings/');
   const tabs = await pg.locator('.tab').count();
   for (let i = 0; i < tabs; i++) {
@@ -155,5 +179,12 @@ export async function walkMain(browser, url, { textSize = 'medium', width = 1280
       await wait(pg, 350); await visit(pg, `settings-${i}-${j}`);
     }
   }
+  // 設定のモデル一覧：未取得モデルの取得前に表示する許諾確認
+  pg = await open('/settings/#section-models');
+  await reach('settings-consent', async () => {
+    await pg.getByRole('radio', { name: /^PLaMo 3 Translate 0\.8B/ }).first().click({ timeout: 3000 });
+    await pg.getByRole('button', { name: '取得・切替' }).click({ timeout: 3000 });
+    await pg.getByRole('checkbox').waitFor({ timeout: 3000 });
+  }); await visit(pg, 'settings-consent'); await pg.close();
   await ctx.close();
 }

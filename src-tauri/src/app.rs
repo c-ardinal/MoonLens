@@ -49,6 +49,7 @@ macro_rules! all_commands {
             ipc::delete_ocr_script,
             ipc::list_llm_models,
             ipc::install_llm_model,
+            ipc::accept_license,
             ipc::cancel_llm_download,
             ipc::delete_llm_model,
             ipc::select_llm_model,

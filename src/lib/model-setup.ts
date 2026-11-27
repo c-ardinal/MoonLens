@@ -23,6 +23,8 @@ export interface Choice {
   /** 中断した取得の既存分（再開時は残りのみ取得）。 */
   partial: number;
   note: string;
+  /** 取得前に同意が必要なライセンス id（不要なら null）。 */
+  consent: string | null;
 }
 
 export interface FeaturePlan {
@@ -69,7 +71,8 @@ export function ocrChoice(ocr: OcrModelsStatus): Choice {
       ? '旧世代モデル（PP-OCRv5）で動作中。新世代モデルが未取得（取得後は読取精度が向上、旧モデルは自動削除）'
       : fastOnly
         ? '高速実行部品が未取得（取得後は読取を高速化、環境別の最適構成は自動選択）'
-        : '日本語・中国語・英語に対応（予備の英語専用 ocrs を同梱）'
+        : '日本語・中国語・英語に対応（予備の英語専用 ocrs を同梱）',
+    consent: null
   };
 }
 
@@ -85,7 +88,15 @@ export const OCR_SCRIPTS: Record<string, { label: string; note: string }> = {
 };
 
 const pick = <
-  T extends { id: string; label: string; size: number; installed: boolean; partial_bytes: number; note: string }
+  T extends {
+    id: string;
+    label: string;
+    size: number;
+    installed: boolean;
+    partial_bytes: number;
+    note: string;
+    consent?: string | null;
+  }
 >(
   m: T
 ): Choice => ({
@@ -94,7 +105,8 @@ const pick = <
   size: m.size,
   installed: m.installed,
   partial: m.partial_bytes,
-  note: m.note
+  note: m.note,
+  consent: m.consent ?? null
 });
 
 /** 推奨が候補外（カタログ変更等）の場合は先頭候補へ退避。 */
@@ -149,6 +161,8 @@ export interface DownloadItem {
   /** 今回の取得量（中断分の再開時は残りのみ）。 */
   size: number;
   kind: 'llm' | 'asr' | 'ocr';
+  /** 取得前に同意が必要なライセンス id（不要なら null）。 */
+  consent: string | null;
 }
 
 const kindOf = (f: Feature): DownloadItem['kind'] =>
@@ -170,8 +184,18 @@ export function downloadQueue(features: FeaturePlan[]): DownloadItem[] {
         id: c.id,
         label: c.label,
         size: Math.max(0, c.size - c.partial),
-        kind
+        kind,
+        consent: c.consent
       });
+  }
+  return out;
+}
+
+/** 取得前に同意が未了のライセンス id（取得順、重複なし）。 */
+export function pendingConsents(items: DownloadItem[], accepted: string[]): string[] {
+  const out: string[] = [];
+  for (const d of items) {
+    if (d.consent && !accepted.includes(d.consent) && !out.includes(d.consent)) out.push(d.consent);
   }
   return out;
 }

@@ -45,6 +45,10 @@ pub struct OnboardingState {
     /// Whether the first-run setup (hardware check, recommended models,
     /// bulk download) was finished or skipped.
     pub setup_completed: bool,
+    /// Ids of model licences the user explicitly accepted before a
+    /// download (see `providers::llm_models::require_consent`). No
+    /// duplicates; ids are never removed.
+    pub accepted_licenses: Vec<String>,
 }
 
 /* ------------------------------- appearance ------------------------------ */
