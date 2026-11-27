@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onDestroy, onMount, tick } from 'svelte';
+  import { onDestroy, onMount, tick, untrack } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
   import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
   import { emitTo, type UnlistenFn } from '@tauri-apps/api/event';
@@ -287,7 +287,9 @@
   let layoutsVersion = $state(0);
   function placed(key: string, layout: FlowResult) {
     layouts.set(key, layout);
-    layoutsVersion++;
+    // Called from the box's own layout effect, which must not come to
+    // depend on the counter.
+    untrack(() => layoutsVersion++);
   }
   $effect(() => {
     if (!stream.active || !bodyEl) return;

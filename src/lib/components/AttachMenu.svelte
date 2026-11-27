@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { Check, Magnet, Radio, RefreshCw, Unlink } from 'lucide-svelte';
+  import { Cast, Check, Magnet, RefreshCw, Unlink } from 'lucide-svelte';
   import { attachWindow, detachWindow, listAttachTargets } from '$lib/ipc';
   import {
     isUnder,
@@ -104,12 +104,12 @@
         onclick={toggleStream}
         title="吸着先と訳文を合成した取込専用ウィンドウを生成（配信・録画ツールのウィンドウ取込用）"
       >
-        <Radio class="h-4 w-4" />
+        <Cast class="h-4 w-4" />
         <span class="nm">配信用ウィンドウ</span>
         <span class="st">{stream.active ? '稼働中' : '停止中'}</span>
       </button>
       {#if stream.active && stream.title}
-        <p class="note">取込対象：「{stream.title}」</p>
+        <p class="note nm" title={stream.title}>取込対象：{stream.title}</p>
       {/if}
     {/if}
   {/if}

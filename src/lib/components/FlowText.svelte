@@ -53,7 +53,7 @@
     if (!ctx) return;
     // Measure at 100 px and scale: widths are linear in the font size.
     ctx.font = `${weight} 100px ${cs.fontFamily}`;
-    layout = flowLayout(text, {
+    const placed = flowLayout(text, {
       width,
       height,
       rows: rowsOf(block),
@@ -62,7 +62,8 @@
       grow,
       measure: (t) => ctx.measureText(t).width / 100
     });
-    onlayout?.(layout);
+    layout = placed;
+    onlayout?.(placed);
   });
 </script>
 
