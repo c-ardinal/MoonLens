@@ -294,7 +294,7 @@ pub fn set_dock(
                 .skip_taskbar(true)
                 .resizable(true)
                 // Like the lens: no window reads its own translations back.
-                .content_protected(lens::EXCLUDED_FROM_CAPTURE)
+                .content_protected(lens::hidden_from_captures(app))
                 .visible(false)
                 .build()
                 .context("create lens text window")?;
