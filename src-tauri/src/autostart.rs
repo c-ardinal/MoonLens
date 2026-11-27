@@ -115,24 +115,28 @@ pub fn command_path(path: &str) -> String {
     }
 }
 
-/// Quote one argument for the `Exec` key of a desktop entry
-/// (Desktop Entry Specification, "The Exec key").
+/// One argument as it is written after `Exec=` in a desktop entry. Two
+/// layers of the Desktop Entry Specification apply: the argument is
+/// quoted for the command line ("The Exec key"), and the result is then
+/// a string value of the file, where a backslash is itself an escape
+/// character ("Possible value types"). So `$` is stored as `\\$` and a
+/// literal backslash as four.
 pub fn desktop_exec_quote(arg: &str) -> String {
-    let mut out = String::with_capacity(arg.len() + 2);
-    out.push('"');
+    let mut quoted = String::with_capacity(arg.len() + 2);
+    quoted.push('"');
     for c in arg.chars() {
         match c {
             '"' | '`' | '$' | '\\' => {
-                out.push('\\');
-                out.push(c);
+                quoted.push('\\');
+                quoted.push(c);
             }
             // Field codes (%f, %u, ...) are expanded even inside quotes.
-            '%' => out.push_str("%%"),
-            _ => out.push(c),
+            '%' => quoted.push_str("%%"),
+            _ => quoted.push(c),
         }
     }
-    out.push('"');
-    out
+    quoted.push('"');
+    quoted.replace('\\', "\\\\")
 }
 
 /// The real login item of this OS, pointing at the running executable.
@@ -395,14 +399,48 @@ mod tests {
         assert_eq!(launch_path(exe, Some(OsStr::new(""))), exe);
     }
 
+    /// What a desktop session does with the text after `Exec=`: undo the
+    /// string-value escapes, then the command-line quoting.
+    fn desktop_exec_read(value: &str) -> String {
+        fn unescape(text: &str, keep: impl Fn(char) -> bool) -> String {
+            let mut out = String::new();
+            let mut chars = text.chars();
+            while let Some(c) = chars.next() {
+                match (c, chars.clone().next()) {
+                    ('\\', Some(next)) if keep(next) => {
+                        out.push(next);
+                        chars.next();
+                    }
+                    _ => out.push(c),
+                }
+            }
+            out
+        }
+        let stored = unescape(value, |c| c == '\\');
+        let inner = stored
+            .strip_prefix('"')
+            .and_then(|s| s.strip_suffix('"'))
+            .expect("quoted argument");
+        unescape(inner, |c| matches!(c, '"' | '`' | '$' | '\\')).replace("%%", "%")
+    }
+
     #[test]
     fn desktop_exec_paths_survive_spaces_and_reserved_characters() {
         assert_eq!(
             desktop_exec_quote("/home/a b/Moon Lens/moonlens"),
             "\"/home/a b/Moon Lens/moonlens\""
         );
-        assert_eq!(desktop_exec_quote("/x/$HOME/`a`"), "\"/x/\\$HOME/\\`a\\`\"");
-        assert_eq!(desktop_exec_quote("/x/100%/m"), "\"/x/100%%/m\"");
+        // Quoting backslashes are doubled once more for the file format.
+        assert_eq!(desktop_exec_quote("/x/$HOME"), r#""/x/\\$HOME""#);
+        assert_eq!(desktop_exec_quote(r"/x/a\b"), r#""/x/a\\\\b""#);
+        for path in [
+            "/home/a b/Moon Lens/moonlens",
+            "/x/$HOME/`a`/\"q\"/m",
+            r"/x/back\slash/m",
+            "/x/100%/m",
+        ] {
+            assert_eq!(desktop_exec_read(&desktop_exec_quote(path)), path);
+        }
     }
 
     // Unix paths: `/data/cfg` is not absolute on Windows.
