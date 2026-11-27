@@ -1,5 +1,5 @@
 /**
- * 同一要素の内容差替え時の切替演出（設定の分類切替・説明窓・履歴の詳細等）。
+ * 同一要素の内容差替え時の切替演出（設定の分類切替・説明欄・履歴の詳細等）。
  * 新規挿入の要素は CSS（design/pixel-motion.css）で処理。本モジュールは
  * 要素を再生成せずに内容のみ変わる箇所向け（モデル管理等の状態保持が必要な領域）。
  * Web Animations API で transform・opacity・clip-path を段階変化。推論中・動き削減時は無処理。
@@ -16,9 +16,9 @@ export const EFFECTS: Record<Effect, { frames: Keyframe[]; ms: number; steps: nu
   // 枠内の項目入替：並び順に応じた左右の小移動（枠・タブは固定）
   'slide-left': { frames: [{ transform: 'translateX(16px)', opacity: 0.2 }, { transform: 'none', opacity: 1 }], ms: 100, steps: 4 },
   'slide-right': { frames: [{ transform: 'translateX(-16px)', opacity: 0.2 }, { transform: 'none', opacity: 1 }], ms: 100, steps: 4 },
-  // 説明窓：左から右への文字送り（会話窓の表示処理）
+  // 説明欄：左から右への文字送り（会話ウィンドウの表示処理）
   type: { frames: [{ clipPath: 'inset(0 100% 0 0)' }, { clipPath: 'inset(0 0 0 0)' }], ms: 120, steps: 6 },
-  // 詳細窓：中央の横線から上下へ展開
+  // 詳細欄：中央の横線から上下へ展開
   open: { frames: [{ clipPath: 'inset(50% 0 50% 0)' }, { clipPath: 'inset(0 0 0 0)' }], ms: 120, steps: 4 }
 };
 

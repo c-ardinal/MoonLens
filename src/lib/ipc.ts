@@ -6,6 +6,7 @@
 
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
+import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 
 export type Settings = Record<string, any>;
 
@@ -275,7 +276,7 @@ export const setLensLanguage = (id: string, targetLanguage: string | null) =>
 export const setLensOperate = (id: string, on: boolean) => safeInvoke<void>('set_lens_operate', { id, on });
 export const setLensInteractive = (id: string, on: boolean) =>
   safeInvoke<void>('set_lens_interactive', { id, on });
-/** テキスト表示を窓外へ配置（`null`：窓外表示を終了）。 */
+/** テキスト表示をウィンドウ外へ配置（`null`：ウィンドウ外表示を終了）。 */
 export const setLensTextDock = (
   id: string,
   dock: 'top' | 'bottom' | 'left' | 'right' | 'free' | null
@@ -381,6 +382,18 @@ export const listAudioApps = () =>
 /** 全ウィンドウ分のイベントを受信（`id` で対象を判別）。 */
 export const onSubtitle = (handler: (event: SubtitleMessage) => void): Promise<UnlistenFn> =>
   listen<SubtitleMessage>('moonlens://subtitle', (e) => handler(e.payload));
+
+/**
+ * 音声翻訳の入力レベル（波形表示用、50 ms 間隔）。送出先は対象ウィンドウ限定のため、
+ * 呼出元ウィンドウ宛のイベントのみ受信。
+ */
+export const onSubtitleLevel = (
+  handler: (event: import('./subtitle-level').LevelEvent) => void
+): Promise<UnlistenFn> =>
+  getCurrentWebviewWindow().listen<import('./subtitle-level').LevelEvent>(
+    'moonlens://subtitle-level',
+    (e) => handler(e.payload)
+  );
 
 export type PermissionStatus = 'granted' | 'denied' | 'unknown';
 

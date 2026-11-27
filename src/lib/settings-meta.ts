@@ -121,19 +121,19 @@ export const SECTIONS: Section[] = [
         kind: 'hotkey',
         path: 'hotkeys.capture_region',
         label: 'ウィンドウ翻訳',
-        help: 'マウス位置へウィンドウ翻訳の窓を追加。'
+        help: 'マウス位置へウィンドウ翻訳を追加。'
       },
       {
         kind: 'hotkey',
         path: 'hotkeys.toggle_pin_overlay',
         label: 'ウィンドウ翻訳 表示／全終了',
-        help: '窓なし：窓を表示。窓あり：全窓を終了。'
+        help: 'ウィンドウなし：1 件表示。ウィンドウあり：全件終了。'
       },
       {
         kind: 'hotkey',
         path: 'hotkeys.toggle_window_operate',
         label: 'ウィンドウ翻訳 透過／操作',
-        help: '全窓の切替。透過：窓上のクリックは背面へ。操作：訳文の選択・コピー可。'
+        help: '全ウィンドウの切替。透過：ウィンドウ上のクリックは背面へ。操作：訳文の選択・コピー可。'
       },
       { kind: 'hotkey', path: 'hotkeys.toggle_subtitle', label: '音声翻訳 開始／停止' },
       { kind: 'hotkey', path: 'hotkeys.open_command_palette', label: 'コマンドパレット' },

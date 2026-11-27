@@ -117,7 +117,7 @@ pub fn recommend(p: &SystemProfile) -> Recommendation {
     } else {
         Pick {
             model: "plamo-3-translate-0.8b",
-            reason: "メモリ容量に合わせて省メモリ版を選定",
+            reason: "メモリ容量を基準に省メモリ版を選定",
         }
     };
 
@@ -130,7 +130,7 @@ pub fn recommend(p: &SystemProfile) -> Recommendation {
     } else {
         Pick {
             model: "gemma-4-e2b",
-            reason: "メモリ容量に合わせて軽量版を選定",
+            reason: "メモリ容量を基準に軽量版を選定",
         }
     };
 
@@ -141,12 +141,12 @@ pub fn recommend(p: &SystemProfile) -> Recommendation {
     {
         Pick {
             model: whisper_models::DEFAULT_MODEL_ID,
-            reason: "日英とも高精度。本 PC で実時間処理可能",
+            reason: "日英双方で高精度。本 PC で実時間処理可能",
         }
     } else {
         Pick {
             model: "whisper-small",
-            reason: "CPU 性能に合わせて高速版を選定",
+            reason: "CPU 性能を基準に高速版を選定",
         }
     };
 

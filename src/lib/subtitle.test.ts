@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   MAX_LINES,
   initialView,
+  inputHint,
   reduce,
   restore,
   sourceLabel,
@@ -20,9 +21,11 @@ describe('音声翻訳ウィンドウの表示状態', () => {
     expect(statusLabel(v)).toBe('停止中');
     v = reduce(v, { kind: 'started', device: 'スピーカー', source: { kind: 'system' } });
     expect(v.device).toBe('スピーカー');
-    expect(statusLabel(v)).toBe('音声待機中');
+    expect(statusLabel(v)).toBe('入力未検出');
+    expect(statusLabel(v, 'low')).toBe('閾値未満');
+    expect(statusLabel(v, 'ok')).toBe('音声検出');
     v = reduce(v, { kind: 'status', phase: 'recognizing' });
-    expect(statusLabel(v)).toBe('認識中…');
+    expect(statusLabel(v, 'ok')).toBe('認識中…');
     v = reduce(v, { kind: 'status', phase: 'translating' });
     expect(statusLabel(v)).toBe('翻訳中…');
     v = reduce(v, { kind: 'chunk', original: 'Hello.', translated: 'こんにちは。' });
@@ -48,7 +51,7 @@ describe('音声翻訳ウィンドウの表示状態', () => {
       { kind: 'error', message: '音声認識失敗：x' }
     ]);
     expect(v.error).toBe('音声認識失敗：x');
-    expect(statusLabel(v)).toBe('音声待機中');
+    expect(statusLabel(v)).toBe('入力未検出');
     v = reduce(v, { kind: 'chunk', original: 'a', translated: 'b' });
     expect(v.error).toBeNull();
   });
@@ -64,6 +67,12 @@ describe('音声翻訳ウィンドウの表示状態', () => {
     expect(v.error).toContain('停止');
     expect(v.lines).toHaveLength(1);
     expect(statusLabel(v)).toBe('エラー停止');
+  });
+
+  it('案内文は入力状態単位で相違、停止中は入力状態を不問', () => {
+    expect(new Set((['none', 'low', 'ok'] as const).map((i) => inputHint(i))).size).toBe(3);
+    expect(inputHint('none', 'vlc')).toContain('vlc');
+    expect(statusLabel(initialView(), 'ok')).toBe('停止中');
   });
 
   it('音源変更・再開：字幕は保持、エラーは消去', () => {

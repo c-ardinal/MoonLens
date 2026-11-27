@@ -1,0 +1,1 @@
+- Window translation: operate mode is now marked by a dashed frame instead of a fixed amber one, so it stays distinguishable with any accent colour.
