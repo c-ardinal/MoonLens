@@ -63,6 +63,11 @@ export interface LensBlock {
   bold?: boolean;
   /** Source text rows `[x, y, w, h]` (captured-image px), top to bottom. */
   lines?: [number, number, number, number][];
+  /**
+   * Right edge (captured-image px) the text of each row may reach, set
+   * when a picture stands beside some rows of the block.
+   */
+  row_limits?: number[];
 }
 
 /** Sent before each translation request of a capture (`moonlens://image-progress`). */
