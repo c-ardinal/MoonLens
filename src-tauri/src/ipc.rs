@@ -601,6 +601,8 @@ pub struct LlmModels {
     pub assistant: String,
     pub dir: String,
     pub models: Vec<llm_models::ModelStatus>,
+    /// Licence ids the user already accepted (see `CatalogModel::consent`).
+    pub accepted_licenses: Vec<String>,
 }
 
 fn llm_dir() -> Result<PathBuf, String> {
@@ -630,7 +632,19 @@ pub async fn list_llm_models(state: State<'_, AppState>) -> Result<LlmModels, St
         assistant: selected_llm(&s, LOCAL_ASSIST_ID),
         dir: dir.display().to_string(),
         models: llm_models::status(&dir),
+        accepted_licenses: s.onboarding.accepted_licenses.clone(),
     })
+}
+
+/// Record that the user accepted licence `id` (a `CatalogModel::consent`
+/// id). Idempotent; persisted so the prompt never repeats.
+#[tauri::command]
+pub async fn accept_license(id: String, state: State<'_, AppState>) -> Result<(), String> {
+    let mut s = (*state.settings.snapshot()).clone();
+    if llm_models::accept_license(&mut s.onboarding.accepted_licenses, &id)? {
+        state.settings.save(s).map_err(|e| e.to_string())?;
+    }
+    Ok(())
 }
 
 #[derive(serde::Serialize, Clone)]
@@ -650,6 +664,20 @@ pub async fn install_llm_model(
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<String, String> {
+    if let Some(m) = llm_models::find(&id) {
+        let accepted = state
+            .settings
+            .snapshot()
+            .onboarding
+            .accepted_licenses
+            .clone();
+        if llm_models::require_consent(m, &accepted).is_err() {
+            return Err(user_error::coded(
+                "license_consent",
+                "利用許諾への同意が必要",
+            ));
+        }
+    }
     let dir = llm_dir()?;
     let app_for_cb = app.clone();
     let cb: Box<llm_models::ProgressCb> = Box::new(move |id, downloaded, total| {
