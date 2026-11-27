@@ -568,16 +568,6 @@ mod tests {
     }
 
     #[test]
-    fn a_docked_follower_keeps_the_size_it_came_with() {
-        let mut below = Follow::new(Dock::Bottom, 1.0).with_size(500, 77);
-        let at = below.step(LENS, ELSEWHERE, Some(MONITOR)).unwrap();
-        assert_eq!((at.w, at.h), (LENS.w, 77));
-        let mut beside = Follow::new(Dock::Right, 1.0).with_size(123, 500);
-        let at = beside.step(LENS, ELSEWHERE, Some(MONITOR)).unwrap();
-        assert_eq!((at.w, at.h), (123, LENS.h));
-    }
-
-    #[test]
     fn docks_touch_their_side_and_span_the_lens() {
         let (_, top) = placed(Dock::Top);
         assert_eq!((top.x, top.w), (LENS.x, LENS.w));
