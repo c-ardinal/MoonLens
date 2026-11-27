@@ -356,11 +356,16 @@ impl Tracker {
                     Some(step) => self.read_scrolled(&frame.image, step, env).await,
                     None => self.read_all(&frame.image, env).await,
                 }
-                .map_err(|e| e.to_string())?;
+                .map_err(|e| {
+                    self.last_thumb = None;
+                    e.to_string()
+                })?;
                 match analyzed {
                     Ok(bundle) => (bundle, waiting.map(|p| p.key)),
                     Err(e) => {
-                        // Still unread: the next tick tries again.
+                        // Still unread: the next tick tries again, also
+                        // when the picture holds still from here on.
+                        self.last_thumb = None;
                         self.pending = waiting;
                         return Err(user_error::provider(&e, Capability::Ocr));
                     }

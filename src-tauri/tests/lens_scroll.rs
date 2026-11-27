@@ -406,6 +406,17 @@ async fn rows_that_could_not_be_read_are_read_with_the_whole_region_next() {
 }
 
 #[tokio::test]
+async fn rows_that_could_not_be_read_are_read_again_once_the_scroll_stops() {
+    let mut run = Run::shown_at_the_top().await;
+    *run.fail_next.lock() = true;
+    assert!(run.tick(60).await.is_err());
+    // The picture holds still from here on: the reading is not given up.
+    assert_eq!(run.tick(60).await, Ok(Tick::Settling));
+    assert_eq!(run.heights.lock().last(), Some(&H));
+    assert!(matches!(run.tick(60).await, Ok(Tick::Translated { .. })));
+}
+
+#[tokio::test]
 async fn other_text_in_the_region_is_read_in_full_as_before() {
     let mut run = Run::shown_at_the_top().await;
     // A jump to another part of the page: no row is where a scroll of
