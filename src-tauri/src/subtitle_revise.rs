@@ -502,7 +502,7 @@ impl Reviser {
             translated,
             rest,
         } = done;
-        self.last_rest = None;
+        let shown_rest = self.last_rest.take();
         // The lines are replaced even when the translation failed, then
         // with what they showed: later sentences refer to the new line
         // ids (`rest`), so the window has to follow every step.
@@ -511,7 +511,14 @@ impl Reviser {
                 self.remember(sentence.text.clone(), translated.clone());
                 translated
             }
-            None => sentence.fragments,
+            // A replaced rest line shows the translation made for it
+            // here, which the assembler never saw.
+            None => match shown_rest {
+                Some((id, _, rest)) if sentence.replaces.first() == Some(&id) => {
+                    format!("{rest} {}", sentence.fragments).trim().to_string()
+                }
+                _ => sentence.fragments,
+            },
         };
         let rest = sentence.rest.map(|(id, original)| {
             let translated = rest.map(|t| t.trim().to_string()).unwrap_or_default();
@@ -836,9 +843,18 @@ mod tests {
             (&[1, 2][..], 3, "<FAIL here.>")
         );
         assert_eq!(failed.rest.unwrap().id, 4);
-        r.push(sentence(&[4, 5], 6, "and fine.", None), en_ja(), true);
+        r.push(
+            sentence(&[4, 5], 6, "and fine.", Some((7, "then"))),
+            en_ja(),
+            true,
+        );
         assert_eq!(r.next().await.unwrap().translated, "AND FINE.");
         assert!(r.history.iter().all(|(s, _)| !s.contains("FAIL")));
+        // A failure after a translated rest keeps that translation too.
+        let mut next = sentence(&[7, 8], 9, "then FAIL.", None);
+        next.fragments = "<FAIL.>".into();
+        r.push(next, en_ja(), true);
+        assert_eq!(r.next().await.unwrap().translated, "THEN <FAIL.>");
     }
 
     #[tokio::test]
