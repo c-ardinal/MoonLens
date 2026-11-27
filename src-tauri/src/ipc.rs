@@ -17,6 +17,7 @@ use crate::{
         asr_local::LOCAL_ASR_ID, llm_models, model_store, ocr_ocrs, whisper_models, Capability,
         TaskInput,
     },
+    region_watcher::ReadMode,
     settings::schema::Settings,
     user_error,
 };
@@ -1293,11 +1294,13 @@ fn platform_label(os: &str) -> &'static str {
 /// physical pixels) its body covers that range; without, it opens
 /// under the mouse pointer. `target_language` defaults to the
 /// configured target. `beside` (a window id, without `rect`): next to
-/// that window, with its size and language.
+/// that window, with its size, language and reading mode. `read_mode`
+/// applies with `rect` (default: subtitles).
 #[tauri::command]
 pub async fn open_lens(
     rect: Option<RegionArgs>,
     target_language: Option<String>,
+    read_mode: Option<ReadMode>,
     beside: Option<String>,
     app: AppHandle,
     state: State<'_, AppState>,
@@ -1311,6 +1314,7 @@ pub async fn open_lens(
             h: r.h,
         },
         target_language: clean_language(target_language.clone()),
+        read_mode: read_mode.unwrap_or_default(),
     });
     // Window creation must not run on the IPC worker on Windows (it
     // deadlocks with the event loop); hand it to the main thread.
@@ -1343,6 +1347,18 @@ pub async fn set_lens_language(
         .lenses
         .set_target_language(&id, clean_language(target_language));
     state.lenses.kick(&id);
+    Ok(())
+}
+
+/// Change how a lens window reads its range (see [`ReadMode`]). Applies
+/// from the next reading; what is shown stays.
+#[tauri::command]
+pub async fn set_lens_read_mode(
+    id: String,
+    mode: ReadMode,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    state.lenses.set_read_mode(&id, mode);
     Ok(())
 }
 
