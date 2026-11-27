@@ -35,6 +35,8 @@
   let targetLang = $state('ja');
   let inputText = $state('');
   let resultText = $state('');
+  /** 表示中の訳文の言語（選択欄の変更後も訳文の言語を保持）。 */
+  let resultLang = 'ja';
   let translating = $state(false);
   // 推論中はメインウィンドウの演出を停止
   $effect(() => (translating ? holdMotion() : undefined));
@@ -50,7 +52,7 @@
   let stopListening: (() => void) | undefined;
   function toggleSpeak(): void {
     if (speaker.speaking) speaker.stop();
-    else speaker.say(resultText, targetLang);
+    else speaker.say(resultText, resultLang);
   }
 
   let debounceTimer: ReturnType<typeof setTimeout> | undefined;
@@ -156,6 +158,7 @@
     if (overLimit) return;
 
     const id = ++runId;
+    const target = targetLang;
     translating = true;
     progress = null;
     error = null;
@@ -192,6 +195,7 @@
       }
       if (id !== runId) return;
       resultText = output;
+      resultLang = target;
       provider = usedProvider;
       viaCloud = cloud;
       latencyMs = Math.round(performance.now() - started);
@@ -244,6 +248,7 @@
     }
     if (resultText) {
       [inputText, resultText] = [resultText, inputText];
+      resultLang = targetLang;
       provider = null;
       latencyMs = null;
     }
