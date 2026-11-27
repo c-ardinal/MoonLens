@@ -96,6 +96,26 @@ describe('settings-meta', () => {
     expect(changedPaths(saved, next)).toEqual(['translation.glossary', 'appearance.theme']);
   });
 
+  it('drops blank rows of application glossaries and keeps the applications', () => {
+    const term = { source: 'Ether', target: 'エーテル', lang: '' };
+    const draft: any = {
+      translation: {
+        glossary: [],
+        app_glossaries: [
+          { app: 'game', name: 'Game', glossary: [{ source: '', target: '', lang: 'ja' }, term] },
+          { app: 'novel', name: 'Novel', glossary: [] }
+        ]
+      }
+    };
+    expect(savable({}, draft).translation.app_glossaries).toEqual([
+      { app: 'game', name: 'Game', glossary: [term] },
+      { app: 'novel', name: 'Novel', glossary: [] }
+    ]);
+    // Settings written before the list existed stay as they are.
+    expect('app_glossaries' in savable<any>({}, { translation: { glossary: [] } }).translation).toBe(false);
+    expect(saveDelay('translation.app_glossaries')).toBeGreaterThan(0);
+  });
+
   it('holds back a change that would clash with a restored shortcut', () => {
     const saved = { hotkeys: { capture_region: 'Alt+A', toggle_subtitle: 'Alt+B', open_history: 'Alt+C' } };
     // B -> Alt+C (clash with C), then A -> Alt+B (clash with the restored B).

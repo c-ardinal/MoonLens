@@ -119,11 +119,24 @@ pub struct TranslateContext {
     /// Surrounding text for reference only.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reference: Option<String>,
+    /// Key of the application the text comes from (see
+    /// [`crate::app_identity`]), when it is known: selects that
+    /// application's glossary.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub app: Option<String>,
 }
 
 impl TranslateContext {
     pub fn is_empty(&self) -> bool {
-        self.history.is_empty() && self.reference.is_none()
+        self.history.is_empty() && self.reference.is_none() && self.app.is_none()
+    }
+
+    /// A context that only says which application the text comes from.
+    pub fn of_app(app: Option<&str>) -> Self {
+        Self {
+            app: app.map(str::to_string),
+            ..Default::default()
+        }
     }
 }
 

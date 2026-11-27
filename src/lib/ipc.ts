@@ -774,6 +774,9 @@ export const deleteOrphanLlmFile = (name: string) =>
 /** ウィンドウ `label` の吸着先候補（直下のウィンドウが先頭）。 */
 export const listAttachTargets = (label: string) =>
   safeInvoke<AttachCandidate[]>('list_attach_targets', { label }, []);
+/** ウィンドウを表示中のアプリ（識別キー順）。アプリ別用語集の追加候補。 */
+export const listWindowApps = () =>
+  safeInvoke<{ key: string; name: string }[]>('list_window_apps', undefined, []);
 /** `label` を `target`（候補の `id`）へ吸着、または吸着中の配置を変更。 */
 export const attachWindow = (label: string, target: number, dock: AttachDock) =>
   safeInvoke<void>('attach_window', { label, target, dock });
