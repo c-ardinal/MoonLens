@@ -380,6 +380,11 @@ pub struct PerformanceSettings {
     pub streaming_debounce_ms: u32,
     #[schemars(range(min = 100, max = 2000))]
     pub region_watcher_poll_ms: u32,
+    /// Width (CSS pixels) a translation window reads beyond its frame
+    /// on every side, so text the frame cuts is read whole. Translations
+    /// stay inside the window. 0: read the window only.
+    #[schemars(range(min = 0, max = 128))]
+    pub scan_margin_px: u32,
     #[schemars(range(min = 1, max = 8))]
     pub max_concurrent_tasks: u32,
     #[schemars(range(min = 0, max = 604800))]
@@ -392,6 +397,7 @@ impl Default for PerformanceSettings {
         Self {
             streaming_debounce_ms: 50,
             region_watcher_poll_ms: 250,
+            scan_margin_px: 32,
             max_concurrent_tasks: 4,
             cache_ttl_seconds: 3600,
             use_gpu_if_available: true,

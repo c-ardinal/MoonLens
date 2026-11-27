@@ -10,13 +10,14 @@ use crate::{
     capture::{self, CaptureRect},
     clipboard, hotkey, intent,
     lens::{self, geometry::LensInsets, LensDescriptor},
-    lens_text, overlay,
+    lens_fit, lens_text, overlay,
     pipeline::{CaptureFlowResult, TaskResult, LOCAL_ASSIST_ID, LOCAL_LLM_ID},
     plugins::PluginDescriptor,
     providers::{
         asr_local::LOCAL_ASR_ID, llm_models, model_store, ocr_ocrs, whisper_models, Capability,
         TaskInput,
     },
+    region_watcher::ReadMode,
     settings::schema::Settings,
     user_error,
 };
@@ -1224,11 +1225,13 @@ fn platform_label(os: &str) -> &'static str {
 /// physical pixels) its body covers that range; without, it opens
 /// under the mouse pointer. `target_language` defaults to the
 /// configured target. `beside` (a window id, without `rect`): next to
-/// that window, with its size and language.
+/// that window, with its size, language and reading mode. `read_mode`
+/// applies with `rect` (default: subtitles).
 #[tauri::command]
 pub async fn open_lens(
     rect: Option<RegionArgs>,
     target_language: Option<String>,
+    read_mode: Option<ReadMode>,
     beside: Option<String>,
     app: AppHandle,
     state: State<'_, AppState>,
@@ -1242,6 +1245,7 @@ pub async fn open_lens(
             h: r.h,
         },
         target_language: clean_language(target_language.clone()),
+        read_mode: read_mode.unwrap_or_default(),
     });
     // Window creation must not run on the IPC worker on Windows (it
     // deadlocks with the event loop); hand it to the main thread.
@@ -1274,6 +1278,18 @@ pub async fn set_lens_language(
         .lenses
         .set_target_language(&id, clean_language(target_language));
     state.lenses.kick(&id);
+    Ok(())
+}
+
+/// Change how a lens window reads its range (see [`ReadMode`]). Applies
+/// from the next reading; what is shown stays.
+#[tauri::command]
+pub async fn set_lens_read_mode(
+    id: String,
+    mode: ReadMode,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    state.lenses.set_read_mode(&id, mode);
     Ok(())
 }
 
@@ -1391,6 +1407,29 @@ pub async fn refresh_lens(id: String, state: State<'_, AppState>) -> Result<bool
     Ok(state.lenses.kick(&id))
 }
 
+/// Shrink a lens window to `band`, a rect inside the range it observes
+/// (`[x, y, w, h]`, physical pixels from the range's top-left corner).
+/// Returns where the window was, for `restore_lens`.
+#[tauri::command]
+pub async fn fit_lens(
+    id: String,
+    band: [i32; 4],
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<lens_fit::Before, String> {
+    lens_fit::fit(&app, &state.lenses, &id, band).map_err(|e| e.to_string())
+}
+
+/// Put a lens window back where it was before `fit_lens`.
+#[tauri::command]
+pub async fn restore_lens(
+    id: String,
+    before: lens_fit::Before,
+    app: AppHandle,
+) -> Result<(), String> {
+    lens_fit::restore(&app, &id, before).map_err(|e| e.to_string())
+}
+
 /// Capture the observed rect of a lens window and run the full pipeline.
 /// Emits overlay events to the regular overlay window so the result can
 /// be displayed either inside the lens body (via the lens page) or over
@@ -1405,13 +1444,15 @@ pub async fn capture_lens_now(
     let pipeline = state.pipeline.clone();
     let app_clone = app.clone();
     let id_clone = id.clone();
-    let png =
-        tokio::task::spawn_blocking(move || lens::capture_lens(&app_clone, &lenses, &id_clone))
-            .await
-            .map_err(|e| e.to_string())?
-            .map_err(|e| e.to_string())?;
+    let margin = state.settings.snapshot().performance.scan_margin_px;
+    let (png, visible) = tokio::task::spawn_blocking(move || {
+        lens::capture_lens(&app_clone, &lenses, &id_clone, margin)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())?;
     let mut bundle = pipeline
-        .analyze_capture(png)
+        .analyze_capture_in(png, Some(visible))
         .await
         .map_err(|e| user_error::provider(&e, Capability::Ocr))?;
     if bundle.needs_translation() {
