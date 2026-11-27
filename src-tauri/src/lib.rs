@@ -6,6 +6,7 @@
 pub mod app;
 pub mod app_identity;
 pub mod audio;
+pub mod audio_apps;
 pub mod capture;
 pub mod clipboard;
 pub mod gpu;
@@ -28,6 +29,7 @@ mod pipeline_tests;
 pub mod plugins;
 pub mod providers;
 pub mod region_watcher;
+pub mod scan_margin;
 pub mod settings;
 pub mod setup;
 pub mod storage;
@@ -35,6 +37,8 @@ pub mod subtitle;
 pub mod translate_plan;
 pub mod translation_cache;
 pub mod user_error;
+#[cfg(windows)]
+mod webview2;
 
 use std::sync::OnceLock;
 
@@ -72,6 +76,12 @@ pub fn run() {
         tracing::error!("panic: {info}");
         default_hook(info);
     }));
+    #[cfg(windows)]
+    if let Err(e) = tauri::webview_version() {
+        tracing::error!("WebView2 runtime not found: {e}");
+        webview2::explain_missing();
+        return;
+    }
     app::build().expect("failed to build Tauri app");
 }
 

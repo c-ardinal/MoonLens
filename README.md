@@ -8,7 +8,7 @@ PC 常駐型の Google Lens 風ツール。単一のグローバルホットキ�
   処理中は斜光の走査で表示、ウィンドウの「追加」ボタンでウィンドウを増設。
   「字幕領域へ整形」で文字の出現範囲を観測し、ウィンドウを字幕帯へ自動整形
 - QR コード認識
-- 音声翻訳：外国語動画のループバック音声から字幕表示
+- 音声翻訳：外国語動画のループバック音声から字幕表示。音源は PC 全体・アプリ単位（Windows）から選択、ウィンドウは複数配置可能
 - ローカル LLM による要約・説明・対話
 
 を統合。OCR・翻訳・要約・説明はアプリ内蔵エンジンにより端末内で完結し
@@ -22,7 +22,7 @@ PC 常駐型の Google Lens 風ツール。単一のグローバルホットキ�
 
 | OS | ファイル | 備考 |
 | --- | --- | --- |
-| Windows 10/11 (x64) | `MoonLens_<版>_x64-setup.exe` または `.msi` | 未署名のため SmartScreen を表示。「詳細情報 → 実行」で起動 |
+| Windows 10/11 (x64) | `MoonLens_<版>_x64-portable.zip` | インストール不要。任意の場所へ展開し `MoonLens.exe` を実行。未署名のため SmartScreen を表示（「詳細情報 → 実行」で起動）。WebView2 ランタイムが必要（Windows 11 は標準搭載、未導入時は起動時に案内） |
 | Linux (x64) | `.AppImage` / `.deb` / `.rpm` | AppImage は `chmod +x` 後に実行。Wayland ではポータル経由で画面取得 |
 | macOS 11 以降（Apple シリコン） | `MoonLens_<版>_aarch64.dmg` | 未署名。初回は「システム設定 → プライバシーとセキュリティ → このまま開く」。画面収録・マイクの許可が必要 |
 
@@ -46,11 +46,16 @@ PC 常駐型の Google Lens 風ツール。単一のグローバルホットキ�
 | コマンドパレット | `Ctrl+K` |
 | 音声翻訳 | `Ctrl+Shift+S`（初回は設定で音声認識モデルを導入） |
 
-### アンインストール
+### 更新
 
-OS の標準手順で削除。Windows のインストーラー（setup.exe）で「アプリデータ削除」を選択すると
-設定・履歴・モデルも一括削除。その他（.msi、deb／rpm／AppImage）は次のフォルダーが残存するため、
-不要なら手動で削除。実パスと使用容量は設定画面の「データ」に表示
+Windows：アプリ終了後、展開済みフォルダーを新版と置換。設定・履歴・モデルは本体と別の場所に
+保存するため継続利用可能。旧版のインストーラー（setup.exe／.msi）で導入済みの場合は、
+アンインストール後に zip 版へ移行（「アプリデータ削除」は非選択）。
+
+### 削除
+
+Windows：アプリ終了後、展開済みフォルダーを削除（レジストリは不使用）。Linux／macOS：OS の標準手順で削除。
+全 OS で次のフォルダーが残存するため、不要なら手動で削除。実パスと使用容量は設定画面の「データ」に表示
 （詳細は [docs/lifecycle.md](docs/lifecycle.md)）。
 
 - Linux: `~/.config/io.moonlens.app/`、`~/.local/share/io.moonlens.app/`
@@ -193,7 +198,7 @@ Visual Studio ジェネレーターではカスタムコマンドが並列実行
 
 `.github/workflows/build.yml` が PR 単位で Linux 上の svelte-check / vitest / vite build と
 `cargo fmt` / `clippy` / `cargo test` を実行。ネイティブコード変更を含む PR は `windows.yml` で
-Windows でも検証。インストーラーはタグ push 時に `release.yml` が生成。
+Windows でも検証。配布物（Windows はポータブル zip）はタグ push 時に `release.yml` が生成。
 方針は [docs/ci-and-release-policy.md](docs/ci-and-release-policy.md)、
 リリース手順は [docs/RELEASING.md](docs/RELEASING.md)。
 
@@ -207,7 +212,7 @@ Windows でも検証。インストーラーはタグ push 時に `release.yml` 
 MoonLens 本体は [MIT License](LICENSE)。
 
 同梱ライブラリ（Rust crate、npm パッケージ、llama.cpp）のライセンス全文は、リリース単位で
-`THIRD_PARTY_LICENSES.html` としてインストーラーに同梱し、Releases にも添付
+`THIRD_PARTY_LICENSES.html` として配布物に同梱し、Releases にも添付
 （生成: `node scripts/third-party-licenses.mjs`、`cargo install cargo-about` が必要）。
 
 同梱書体 DotGothic16 は SIL Open Font License 1.1（全文：`static/fonts/DotGothic16-OFL.txt`）。

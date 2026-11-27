@@ -100,6 +100,14 @@ llama.cpp or the Rust dependency graph (`Cargo.toml` / `Cargo.lock`,
 `build.rs`, `src-tauri/.cargo/**`, the local LLM provider files) run a
 Windows clippy + test job automatically. Other PRs stay Linux-only.
 
+The real-desktop `lens e2e (windows)` job (screen → OCR → translation,
+speech → subtitles, release app start; 30+ minutes) is too heavy for
+every PR. It runs only on PRs into `main` / `release`, on PRs carrying
+the `lens-e2e` label and on manual runs; elsewhere it is skipped (a
+skipped job satisfies a required check). Add the label to a `develop`
+PR that changes capture, OCR or subtitle code and needs the check
+before merge; the label counts from the next push.
+
 ### Concurrency
 
 `cancel-in-progress: true` on every ref **except** `main` / `release`.
@@ -141,9 +149,9 @@ out **the tag**, not the branch the run was started from.
 **Trigger**: any `v*` tag push, e.g. `v0.1.0-rc.1`.
 
 **What runs**: `guard` (tag-branch hygiene warning + version preflight)
-and a `build` matrix of Linux (`.deb` / `.AppImage` / `.rpm`) and
-Windows (`.msi` / NSIS `setup.exe`) via `tauri-apps/tauri-action@v0`.
-Both attach to the same **draft** release. No tests, no clippy — this
+and a `build` matrix of Linux (`.deb` / `.AppImage` / `.rpm`, via
+`tauri-apps/tauri-action@v0`) and Windows (portable zip, see below).
+Both attach to the **draft** release the `guard` job created. No tests, no clippy — this
 workflow exists to **bundle**, not to verify. Verification happens
 earlier in `build.yml` / `windows.yml` on the same commit.
 
@@ -152,7 +160,23 @@ minutes. One Windows bundle is ~70 billing minutes cold and ~40 with
 a warm cache (see the measurements below), a few percent of the monthly free tier per tag,
 and nothing at all once the repository is public (Actions minutes on
 public repositories are free). Building in CI also means the shipped
-installer comes from a clean, reproducible environment.
+package comes from a clean, reproducible environment.
+
+### Windows: portable zip, no installer
+
+Windows ships as `MoonLens_<version>_x64-portable.zip` only: unpack
+anywhere, start `MoonLens.exe`. There is no `.msi` / NSIS `setup.exe`.
+The executable needs no installed files or registry entries; settings,
+history and models stay in the per-user app folders
+(`%APPDATA%` / `%LOCALAPPDATA%\io.moonlens.app`), so replacing the
+folder with a newer version keeps them.
+
+- Build: `tauri build --no-bundle`, then `scripts/portable-zip.mjs`
+  (executable renamed to `MoonLens.exe`, `LICENSE`,
+  `THIRD_PARTY_LICENSES.html`, `README.txt`).
+- No installer means nothing installs the WebView2 runtime. Windows 11
+  includes it; where it is missing, the app says so at start-up and
+  offers Microsoft's download page (`src-tauri/src/webview2.rs`).
 
 ### Windows build speed
 
@@ -184,12 +208,13 @@ the warm run hit 92.9 % (C/C++ 99.7 %). The remaining ~14 min is what
 no cache covers: bin / proc-macro / cdylib crates and build scripts,
 our own crate, the fat-LTO link and Vulkan shader generation.
 
-### Installer builds on PRs
+### Package builds on PRs
 
-Label a PR `installer:windows` and/or `installer:macos` to build those
-installers from its head (no release, nothing published). They are
-kept as run artifacts for 7 days (`moonlens-windows-installers`,
-`moonlens-macos-installers` on the run's summary page). Use it for test
+Label a PR `installer:windows` (portable zip) and/or `installer:macos`
+(dmg) to build those packages from its head (no release, nothing
+published). They are kept as run artifacts for 7 days
+(`moonlens-windows-portable`, holding the unpacked `MoonLens/` folder,
+and `moonlens-macos-installers` on the run's summary page). Use it for test
 builds of unreleased work and to dry-run changes to `release.yml`.
 Each new push to a labelled PR rebuilds; without a label every job
 is skipped and no runner is taken.
@@ -240,11 +265,11 @@ vs. what CI gates:
 | `npm test` (vitest)                         |      ✓      |     ✓      |
 | `npm run build` (vite production build)     |      ✓      |     ✓      |
 | `npm run tauri:dev` smoke test              |      ✓      |            |
-| `.msi` / `setup.exe`                        |             | ✓ (tag)    |
+| Windows portable zip                        |             | ✓ (tag)    |
 | `.deb` / `.AppImage` / `.rpm`               |             | ✓ (tag)    |
 | `.dmg`                                      |             | ✓ (tag)    |
 
-CI is the authoritative Linux gate and builds the Windows installers;
+CI is the authoritative Linux gate and builds the Windows package;
 the dev machine is the authoritative Windows smoke test. macOS is
 built on tags only, with no test gate.
 

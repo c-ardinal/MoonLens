@@ -39,17 +39,27 @@ export function savePlacement(p: TextPlacement) {
   }
 }
 
+/** 内容説明の状態。 */
+export type Explanation =
+  | { status: 'pending' }
+  | { status: 'done'; text: string }
+  | { status: 'failed'; message: string };
+
 /** テキスト表示の内容。 */
 export interface TextView {
   blocks: LensBlock[];
   translation: string;
   source: string | null;
-  explanation: string | null;
+  explanation: Explanation | null;
   placement: TextPlacement;
 }
 
 /** ウィンドウ外表示から本体への操作。 */
-export type TextCommand = { kind: 'placement'; value: TextPlacement } | { kind: 'close' };
+export type TextCommand =
+  | { kind: 'placement'; value: TextPlacement }
+  | { kind: 'close' }
+  /** 内容説明の再試行。 */
+  | { kind: 'explain' };
 
 /** 本体 → ウィンドウ外表示：表示内容（{@link TextView}）。 */
 export const TEXT_VIEW_EVENT = 'moonlens://lens-text';

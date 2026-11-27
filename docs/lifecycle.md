@@ -11,23 +11,24 @@ MoonLens の導入〜削除の各段階で発生するケースと、期待動�
 
 ## 保存場所
 
-| 種類 | 場所（Linux／macOS／Windows） | アンインストーラーでの扱い |
+| 種類 | 場所（Linux／macOS／Windows） | 本体削除時の扱い |
 | --- | --- | --- |
-| 設定 `config.toml`（変更値のみ）・`config.default.toml`（既定値の参照用） | `~/.config/io.moonlens.app`／`~/Library/Application Support/io.moonlens.app`／`%APPDATA%\io.moonlens.app` | Windows（NSIS）：「アプリデータ削除」選択時に削除。deb／rpm／AppImage／dmg：残存 |
+| 設定 `config.toml`（変更値のみ）・`config.default.toml`（既定値の参照用） | `~/.config/io.moonlens.app`／`~/Library/Application Support/io.moonlens.app`／`%APPDATA%\io.moonlens.app` | 全 OS で残存（手動削除） |
 | 履歴 DB・プラグイン | `~/.local/share/io.moonlens.app`／同上／`%APPDATA%\io.moonlens.app` | 同上 |
 | モデル（GGUF・OCR・音声認識） | `~/.local/share/io.moonlens.app/models`／`~/Library/Application Support/io.moonlens.app/models`／`%LOCALAPPDATA%\io.moonlens.app\models` | 同上 |
 
 設定画面「データ」に実パス・使用容量を表示。
 
-## 1. インストール
+## 1. 導入
 
 | # | ケース | 期待動作 | 状態 | 確認 |
 | --- | --- | --- | --- | --- |
-| I-1 | 初回インストール後の起動 | メインウィンドウを表示（常駐のみの非表示状態を回避） | 修正 | Xvfb で起動しウィンドウ表示を確認。`--hidden` 指定時のみトレイ常駐で起動 |
+| I-1 | 初回導入後の起動 | メインウィンドウを表示（常駐のみの非表示状態を回避） | 修正 | Xvfb で起動しウィンドウ表示を確認。`--hidden` 指定時のみトレイ常駐で起動 |
 | I-2 | トレイ非対応のデスクトップ（GNOME 標準構成等） | 起動は継続。メインウィンドウ・ショートカットで全機能を利用可能 | 修正 | トレイ生成失敗をログ警告に変更（以前は起動失敗） |
 | I-3 | AVX2／FMA 非対応 CPU | 翻訳時に「非対応 CPU（AVX2・FMA 必須）」と表示。クラッシュなし | OK | `user_error` テスト、`cpu_supported()` |
 | I-4 | 起動中に再度起動 | 新プロセスは即終了し、既存のメインウィンドウを前面表示。トレイアイコン・ショートカットの二重登録なし | 修正 | 同一セッションバスで 2 回起動：2 回目は 0 秒で終了、登録失敗なし |
-| I-5 | 旧版（設定の全項目を保存する版）からの上書きインストール | 旧設定を継承し、旧既定値の一括更新（下記 U-*）を適用 | 修正 | `settings::store::tests::full_legacy_file_still_loads`、`migrate` テスト |
+| I-5 | 旧版（設定の全項目を保存する版）からの更新 | 旧設定を継承し、旧既定値の一括更新（下記 U-*）を適用 | 修正 | `settings::store::tests::full_legacy_file_still_loads`、`migrate` テスト |
+| I-6 | Windows で WebView2 ランタイム未導入（ポータブル zip は同ランタイムを導入しない） | 起動時にメッセージで理由を表示し、［OK］で Microsoft の配布ページを表示。無言終了なし | 修正・要実機 | `src-tauri/src/webview2.rs`。未導入環境での実機確認は未実施 |
 
 ## 2. 初回セットアップ
 
@@ -59,6 +60,7 @@ MoonLens の導入〜削除の各段階で発生するケースと、期待動�
 | D-3 | ショートカット・トレイ・パレットからウィンドウ翻訳 | マウス位置へウィンドウを追加（画面端ではモニター内へ補正） | 修正 | `lens::tests::a_new_window_opens_under_the_pointer_inside_the_monitor` |
 | D-4 | 範囲内に文字なし | 「テキスト未検出。範囲を再選択。」 | OK | 既存 |
 | D-5 | 既に翻訳先言語の文 | 翻訳せず「翻訳不要」表示 | OK | 既存テスト |
+| D-24 | 翻訳先「やさしい日本語」で日本語の画面を読取 | 通常の日本語・漢字のみの短いラベルも翻訳対象（平易な表現へ書換）。数字・記号のみの行は従来通り対象外 | 追加 | `lang::tests::easy_japanese_rewrites_japanese`、実モデル確認は `docs/translation-models.md` |
 | D-6 | QR コードの URL を「開く」 | その URL を既定ブラウザで表示（http／https のみ） | 修正 | **以前は Google の画像検索 URL に QR の URL を付与して起動**（前提違反かつ機能不全）。`open_external_url` に置換 |
 | D-7 | 翻訳が制限時間を超過 | 「制限時間（15 秒）超過。範囲を縮小して再試行」 | 修正 | `user_error` |
 | D-23 | 文字の多い範囲を翻訳（長文記事・設定画面など） | 先頭の数ブロックの訳が約 0.5 秒で表示され、残りは順に表示。全体が 15 秒を超えても各リクエストは制限時間内 | 修正 | 以前は全文を読み終えるまで何も出ず、長文は制限時間超過で失敗した。`translate_plan` テスト、`docs/translation-latency.md` の計測 |
@@ -84,6 +86,7 @@ MoonLens の導入〜削除の各段階で発生するケースと、期待動�
 | D-24 | テキスト翻訳（メニュー「翻訳」） | 複数行は行単位で翻訳。空行・ログ行・記号のみの行は原文維持、行頭インデント維持。各行は翻訳済みの前行を文脈として参照（内蔵 PLaMo のみ）。成功時に履歴へ保存（履歴保存オフ時は保存なし） | 新規 | `translate-line.test.ts`、`ipc::tests`。Xvfb＋PLaMo 3 Translate 2B 実推論で確認（例：「とても気に入っているそうだ。」単独 → "They say they like it"、前行「田中さんは…車を買った。」付き → "I hear he likes it"） |
 | D-25 | 履歴の種別絞込・詳細表示 | 種別タブ（全件・ウィンドウ・画像・テキスト・QR、件数付き、0 件の種別は非表示）で絞込。一覧の選択項目を右側に詳細表示（原文・訳文の全文、各コピー、削除）。個別削除は即時実行、直後の通知の「取消」で元の id・日時のまま復元可能（通知の終了後は復元不可）。旧形式の `translate`・旧 Lens・固定範囲の行は「ウィンドウ」扱い | 新規 | `history.test.ts`、`toast.svelte.test.ts`、`storage::tests::restore_puts_a_deleted_row_back_unchanged`、`capture_flow_blocks::history_rows_record_where_the_translation_came_from`。Xvfb 実アプリで確認 |
 | D-27 | ウィンドウ翻訳ウィンドウ：常時翻訳（既定 ON） | 範囲を常時監視（`region_watcher_poll_ms` 間隔）。画素変化時のみ OCR、新規文章のみ翻訳（既訳はキャッシュ流用）。変化部分の訳文は即時非表示、2 回同一の読取で確定後に再翻訳（読取が監視間隔以上を要した場合、確定用の取得は待機なしで実施）。長文は分割翻訳の各部分を完了順に表示。画面取得はウィンドウの範囲のみ。移動・サイズ変更中は取得を停止し、静止後に再読取（同一文章なら翻訳なしで再配置）。ヘッダー「常時」で OFF（手動の再キャプチャのみ）。自動コピーは新規文章の翻訳時のみ | 修正 | 従来は 1.5／3／10 秒間隔の定期再キャプチャ（毎回 OCR・変化なしでも再処理）。`region_watcher::Tracker` を使用（旧固定範囲ライブ翻訳は本ウィンドウへ統合し廃止）。`lens_continuous_live`（変化画像列で実 OCR・実翻訳）。Linux はキャプチャ時の一時非表示のため最短 1 秒間隔 |
+| D-49 | ウィンドウ翻訳：枠が文字を分断する配置 | 読取範囲を枠の外側へ拡張（設定「読取余白」、既定 32 px、0 で無効）。枠で分断された行は全文を認識・翻訳。行の太さの半分以上がウィンドウ内に存在しない行は翻訳対象外。訳文の表示位置はウィンドウ内に限定。余白がモニター端を超過する場合は端で打切 | 新規 | 従来は枠内の画素のみを認識し、分断された文字の誤認識が訳文へ波及。`scan_margin` テスト、`capture_flow_blocks::a_wider_capture_is_shown_inside_the_window_only`。モニター端を超過するウィンドウの訳文位置のずれも解消 |
 | D-28 | 機能の統合（ウィンドウ翻訳） | 範囲翻訳・全画面翻訳・固定範囲ライブ翻訳はウィンドウ翻訳のウィンドウへ一本化。範囲＝ウィンドウの位置・サイズ、全画面＝ウィンドウの最大化（最大化ボタン）。ウィンドウは複数同時に配置可能、各ウィンドウが背面を常時翻訳。範囲選択画面は廃止 | 新規 | Playwright（最大化・IPC 呼出）、Xvfb 実アプリ |
 | D-29 | ウィンドウ翻訳ウィンドウの操作 | 本体はクリック透過（背面の画面を操作可能）。ヘッダーで移動、右下グリップでサイズ変更、テキスト表示中のみ本体も操作可能。操作列は選択画面と共通 | 新規 | `lens::geometry::hits_controls` テスト。Linux はポインター位置を X サーバーから取得（tao の値は更新遅延あり）。Xvfb＋openbox で透過・移動後の再翻訳を確認 |
 | D-30 | 「ウィンドウ翻訳 表示／全終了」ショートカット | ウィンドウなし：マウス位置へウィンドウを表示。ウィンドウあり：全ウィンドウを終了 | 修正 | `lens::toggle` |
@@ -100,6 +103,7 @@ MoonLens の導入〜削除の各段階で発生するケースと、期待動�
 | D-40 | 文字認識（PP-OCR）の実行構成 | 環境別に最速の構成を自動選択。候補：DirectML（Windows の GPU、`performance.use_gpu_if_available` 有効時）、ONNX Runtime の CPU 実行（Windows・Linux・macOS）。モデル読込時に同一の小規模処理で各候補を実測し、最短の構成を採用（結果はログ `ocr backend: …`）。ONNX Runtime 未取得・読込失敗・非対応環境（Intel 版 macOS 等）は従来の rten で動作。認識結果は全構成で同一（行画像の幅は全構成共通で 64 画素単位へ右余白を付加）。`[providers.configs.ppocr] backend`（`auto`／`directml`／`onnx-cpu`／`rten`）で固定可 | 新規 | `backends_read_the_same_lines`（実画像 13 件で rten と照合、Windows CI では DirectML も照合）。DirectML の実機 GPU での速度は要実機 |
 | D-41 | ウィンドウ翻訳の読取方式（ウィンドウ単位） | タイトルバーのボタンで「字幕」（既定）／「UI」を切替。字幕：逐次表示中の行は伸長が継続する限り確定を待機（上限 60 回の読取）、直前の読取分（原文・訳文、約 800 単位）を文脈として翻訳。途中で確定した行は完成行で置換。UI：読取単位で翻訳し前文脈の継承なし、変化が継続する文字は従来通り 6 回の読取で確定。文脈は移動・サイズ変更・方式切替で破棄。「追加」ボタンの新規ウィンドウは方式も継承 | 新規 | 従来は方式の区別なし（6 回の読取で確定するため、長い逐次表示は途中で翻訳）。`lens_read_mode`（確定待機・文脈の受渡・破棄）、同 `real_model_translations_per_mode`（PLaMo 2B：字幕方式で主語の補完を確認）。Playwright（切替の IPC 呼出） |
 | D-45 | 追加の文字体系（韓国語・キリル文字・アラビア文字・タイ語・デーヴァナーガリー・タミル語・テルグ語） | 設定のモデル欄で文字体系別の認識モデル（各 8〜13 MB、SHA-256 固定）を任意取得・削除。取得・削除は次回読取から反映（再起動不要）。標準モデルの読取が不確実な行（信頼度 0.85 未満、または行長に対し文字数が過少）のみ追加モデルで再認識し、当該文字体系が画面内に存在する間は新規行を全て再認識。追加モデルの採用条件：信頼度 0.8 以上、当該文字体系の文字が過半、かつ標準側が不確実または文字数 85% 未満。日中英の行は標準モデルの結果を維持。アラビア文字は記述順へ並替。標準モデル未取得時は取得不可 | 新規 | `ocr_scripts::tests`、`other_scripts_are_read`（文字体系別の実画像、Windows CI）、`OcrScripts.svelte.test.ts` |
+| D-44 | ウィンドウ翻訳の「内容説明」（説明用モデル未読込の初回を含む） | 説明文を表示。ローカルの制限時間は 180 秒＋入力 1 文字 40 ms（モデル読込と文章生成の所要時間）。失敗時は理由と「再試行」ボタンを表示（ウィンドウ外のテキスト表示も同様） | 修正 | 以前は固定 10 秒で、約 5 GB のモデル読込中に制限時間超過となり、再試行手段も未提供。`explain_live`（実モデル）、`LensText.svelte.test.ts`、`pipeline_tests`、`user_error` |
 
 ## 4. カスタマイズ
 
@@ -137,13 +141,13 @@ MoonLens の導入〜削除の各段階で発生するケースと、期待動�
 | U-10 | 旧版の項目名・廃止項目・旧プロバイダー識別子（`paddle`、`embedded.llm` 等） | 宣言的規則（`settings/rules.rs`）で起動時に自動更新、退避と通知 | 修正 | `pre_release_file_is_upgraded_by_the_rules` |
 | U-9 | アプリ本体の更新確認 | 自動更新・更新確認なし（通信しない方針）。GitHub Releases から手動更新 | 既知 | 方針。必要なら任意設定として別途検討 |
 
-## 6. アンインストール
+## 6. 削除
 
 | # | ケース | 期待動作 | 状態 | 確認 |
 | --- | --- | --- | --- | --- |
-| R-1 | Windows（NSIS）で「アプリデータ削除」を選択 | 設定・履歴・モデルを全削除 | 修正・要実機 | モデルを Tauri のアプリ用フォルダー（`%LOCALAPPDATA%\io.moonlens.app`）配下へ移動。以前は削除対象外の `%APPDATA%\moonlens\models` に数 GB 残存。Windows 実機での削除確認は未実施 |
+| R-1 | Windows（ポータブル zip）：展開済みフォルダーを削除 | 本体のみ削除。ユーザーデータは残存し、設定画面「データ」と同梱 `README.txt` に削除対象フォルダーを表示。レジストリは不使用 | 修正 | モデルの保存先は `%LOCALAPPDATA%\io.moonlens.app`（以前は `%APPDATA%\moonlens\models`）。インストーラー（NSIS／msi）は廃止 |
 | R-2 | deb／rpm／AppImage／dmg | ユーザーデータは OS の慣習に従い残存。設定画面「データ」に削除対象フォルダーと容量を表示 | 修正 | `DataLocations.svelte` |
-| R-3 | 実行中にアンインストール | Windows インストーラーが終了を要求 | 要実機 | NSIS 既定動作 |
+| R-3 | 実行中に本体フォルダーを削除 | Windows は実行中の exe を削除不可（OS がエラー表示）。終了後に削除 | 既知 | OS 既定動作 |
 
 ## 既知の課題（本表作成時点）
 
