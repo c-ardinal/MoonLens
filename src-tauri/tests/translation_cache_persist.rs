@@ -28,8 +28,8 @@ use moonlens_lib::{
 };
 use parking_lot::Mutex;
 
-/// Two paragraphs: "Iron Sword" and "Save Game".
-struct StubOcr;
+/// Reads the lines of [`Run::screen`], one paragraph each.
+struct StubOcr(Arc<Mutex<Vec<&'static str>>>);
 
 #[async_trait]
 impl Provider for StubOcr {
@@ -44,11 +44,14 @@ impl Provider for StubOcr {
     }
     async fn run(&self, _input: TaskInput) -> Result<TaskOutput, ProviderError> {
         Ok(TaskOutput::Ocr {
-            lines: [("Iron Sword", 10.0), ("Save Game", 80.0)]
+            lines: self
+                .0
+                .lock()
                 .iter()
-                .map(|&(text, y)| OcrLine {
-                    text: text.into(),
-                    bbox: [10.0, y, 200.0, 16.0],
+                .enumerate()
+                .map(|(i, text)| OcrLine {
+                    text: text.to_string(),
+                    bbox: [10.0, 10.0 + 70.0 * i as f32, 200.0, 16.0],
                     confidence: 1.0,
                 })
                 .collect(),
@@ -102,6 +105,8 @@ impl Provider for StubTranslator {
 struct Run {
     pipe: Pipeline,
     store: Arc<SettingsStore>,
+    /// What the screen says: "Iron Sword" and "Save Game" at first.
+    screen: Arc<Mutex<Vec<&'static str>>>,
     /// Paragraph batches the main translator was asked for.
     requests: Arc<Mutex<Vec<String>>>,
     main_down: Arc<AtomicBool>,
@@ -131,7 +136,8 @@ fn start(dir: &Path) -> Run {
     let main_down = Arc::new(AtomicBool::new(false));
     let main_garbles = Arc::new(AtomicBool::new(false));
     let mut providers: HashMap<String, ProviderHandle> = HashMap::new();
-    providers.insert("stub_ocr".into(), Arc::new(StubOcr));
+    let screen = Arc::new(Mutex::new(vec!["Iron Sword", "Save Game"]));
+    providers.insert("stub_ocr".into(), Arc::new(StubOcr(screen.clone())));
     providers.insert(
         "main".into(),
         Arc::new(StubTranslator {
@@ -163,6 +169,7 @@ fn start(dir: &Path) -> Run {
     Run {
         pipe,
         store,
+        screen,
         requests,
         main_down,
         main_garbles,
@@ -228,6 +235,34 @@ async fn text_seen_before_a_restart_needs_no_request() {
     assert!(r.blocks.iter().all(|b| b.from_cache));
     assert!(again.requests().is_empty(), "served from disk");
     assert_eq!(r.result.used_provider, "main");
+}
+
+#[tokio::test]
+async fn text_already_in_the_target_language_is_neither_requested_nor_kept() {
+    let dir = tempfile::tempdir().unwrap();
+    let first = start(dir.path());
+    *first.screen.lock() = vec!["Iron Sword", "設定を保存しました", "Save Game"];
+    let r = first.translate(Some("game")).await;
+    assert_eq!(
+        texts(&r),
+        ["訳:Iron Sword", "設定を保存しました", "訳:Save Game"]
+    );
+    assert_eq!(first.requests(), ["Iron Sword\n\nSave Game"]);
+    // Only what the model translated is on disk.
+    let usage = first.pipe.translation_cache_usage().unwrap();
+    assert_eq!(usage.entries, 2);
+    assert_eq!(usage.scopes[0].scope, "game");
+    drop(first);
+
+    let again = start(dir.path());
+    *again.screen.lock() = vec!["Iron Sword", "設定を保存しました", "Save Game"];
+    let r = again.translate(Some("game")).await;
+    assert_eq!(
+        texts(&r),
+        ["訳:Iron Sword", "設定を保存しました", "訳:Save Game"]
+    );
+    assert!(r.blocks.iter().all(|b| b.from_cache || b.same_language));
+    assert!(again.requests().is_empty(), "served from disk");
 }
 
 #[tokio::test]
