@@ -180,7 +180,10 @@ fn screen(
         let texts: Vec<&str> = sentence.iter().map(|(_, _, text)| text.as_str()).collect();
         let screened = stock.screen(settings, &texts, Instant::now());
         let text = screened.text.trim();
-        if screened.blocked.is_empty() {
+        // Unchanged but for its spacing: nothing was removed (symbols go
+        // without being listed as blocked).
+        let bare = |t: &str| t.split_whitespace().collect::<String>();
+        if bare(text) == bare(&texts.concat()) {
             out.extend(sentence.iter().filter(|s| !s.2.trim().is_empty()).cloned());
         } else if !text.is_empty() {
             out.push((sentence[0].0, sentence[len - 1].1, text.to_string()));
@@ -830,6 +833,11 @@ mod tests {
             seg(1500, 3000, "the kids yesterday."),
         ];
         assert_eq!(screened(speech.clone()), speech);
+        // Symbols alone are no subtitle.
+        assert_eq!(
+            screened(vec![seg(0, 1000, "♪♪"), seg(2000, 3000, "...")]),
+            vec![]
+        );
         // A stock phrase goes, in one piece or two; its neighbours stay
         // where they were.
         assert_eq!(
