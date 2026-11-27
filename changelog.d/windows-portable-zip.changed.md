@@ -1,0 +1,2 @@
+- Windows is distributed as a portable zip only (`MoonLens_<version>_x64-portable.zip`): unpack anywhere and start `MoonLens.exe`. The `setup.exe` and `.msi` installers are gone. Settings, history and models stay where they were, so replacing the folder with a newer version keeps them. If you installed an earlier version with an installer, uninstall it first (leave "delete app data" unticked).
+- Windows: when the WebView2 runtime is missing, MoonLens says so at start-up and offers Microsoft's download page instead of exiting without a message.
