@@ -383,3 +383,43 @@ async fn history_rows_record_where_the_translation_came_from() {
     // Newest first.
     assert_eq!(kinds, vec!["lens", "live", "capture"]);
 }
+
+/// A translation window reads wider than its frame (`scan_margin`):
+/// rows the frame cuts keep their whole text, rows next to the window
+/// are not translated, and nothing is placed outside the window.
+#[tokio::test]
+async fn a_wider_capture_is_shown_inside_the_window_only() {
+    use moonlens_lib::scan_margin::Visible;
+
+    let calls = Arc::new(AtomicUsize::new(0));
+    let pipe = pipeline(false, calls.clone());
+    // The window covers x 30..130, y 24..84 of the 300x140 capture.
+    // The stub's rows span x 10..210: "Hello" (y 10..26) and "Second"
+    // (y 80..96) only graze the frame, "world." (y 28..44) is inside
+    // and cut on both sides, "paragraph." (y 98..114) is outside.
+    let visible = Visible {
+        x: 30,
+        y: 24,
+        w: 100,
+        h: 60,
+    };
+    let mut r = pipe
+        .analyze_capture_in(white_png(300, 140), Some(visible))
+        .await
+        .unwrap();
+    assert_eq!(r.image_size, Some([100, 60]));
+    assert_eq!(r.source_text.as_deref(), Some("world."));
+    assert_eq!(r.blocks.len(), 1);
+    assert_eq!(r.blocks[0].source, "world.");
+    assert_eq!(r.blocks[0].bbox, [0.0, 4.0, 100.0, 16.0]);
+    assert_eq!(r.blocks[0].lines, [[0.0, 4.0, 100.0, 16.0]]);
+
+    pipe.translate_capture(&mut r).await.unwrap();
+    assert_eq!(r.blocks[0].translation.as_deref(), Some("[world.]"));
+    assert_eq!(calls.load(Ordering::Relaxed), 1);
+
+    // The same capture without a window: everything is read.
+    let all = pipe.analyze_capture(white_png(300, 140)).await.unwrap();
+    assert_eq!(all.blocks.len(), 2);
+    assert_eq!(all.image_size, Some([300, 140]));
+}

@@ -1390,13 +1390,15 @@ pub async fn capture_lens_now(
     let pipeline = state.pipeline.clone();
     let app_clone = app.clone();
     let id_clone = id.clone();
-    let png =
-        tokio::task::spawn_blocking(move || lens::capture_lens(&app_clone, &lenses, &id_clone))
-            .await
-            .map_err(|e| e.to_string())?
-            .map_err(|e| e.to_string())?;
+    let margin = state.settings.snapshot().performance.scan_margin_px;
+    let (png, visible) = tokio::task::spawn_blocking(move || {
+        lens::capture_lens(&app_clone, &lenses, &id_clone, margin)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())?;
     let mut bundle = pipeline
-        .analyze_capture(png)
+        .analyze_capture_in(png, Some(visible))
         .await
         .map_err(|e| user_error::provider(&e, Capability::Ocr))?;
     if bundle.needs_translation() {

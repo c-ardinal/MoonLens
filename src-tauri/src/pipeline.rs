@@ -23,6 +23,7 @@ use crate::{
         translate_llama::LlamaTranslator, translate_ollama::OllamaTranslator, Capability, Intent,
         OcrLine, ProviderError, ProviderHandle, TaskInput, TaskOutput, TranslateContext,
     },
+    scan_margin::Visible,
     settings::{
         schema::{FallbackCondition, TaskChain},
         SettingsStore,
@@ -445,6 +446,18 @@ impl Pipeline {
         &self,
         image_png: Vec<u8>,
     ) -> Result<CaptureFlowResult, ProviderError> {
+        self.analyze_capture_in(image_png, None).await
+    }
+
+    /// [`Self::analyze_capture`] of a capture taken wider than the
+    /// translation window that shows it (see [`crate::scan_margin`]):
+    /// only rows the window shows are kept, and blocks come back in
+    /// window pixels, cut to the window.
+    pub async fn analyze_capture_in(
+        &self,
+        image_png: Vec<u8>,
+        visible: Option<Visible>,
+    ) -> Result<CaptureFlowResult, ProviderError> {
         // Cheap heuristic classifier. A plugin-provided classifier can
         // override through the `intent_classifier` chain in future work.
         let img =
@@ -533,9 +546,13 @@ impl Pipeline {
                 return Err(e);
             }
         };
+        let lines = match visible {
+            Some(v) => v.keep_lines(lines),
+            None => lines,
+        };
         let text_blocks = layout::group_lines(&lines);
         let ocr_text = layout::join_blocks(&text_blocks);
-        let image_size = Some([img.width(), img.height()]);
+        let image_size = Some(visible.map_or([img.width(), img.height()], |v| [v.w, v.h]));
 
         if ocr_text.trim().is_empty() {
             // Nothing text-like detected. Return the intent so the UI can
@@ -560,7 +577,7 @@ impl Pipeline {
         }
 
         let rgba = img.to_rgba8();
-        let blocks: Vec<LensBlock> = text_blocks
+        let mut blocks: Vec<LensBlock> = text_blocks
             .iter()
             .map(|b| {
                 let colors = (b.bbox[2] > 0.0).then(|| layout::estimate_colors(&rgba, b.bbox));
@@ -584,6 +601,9 @@ impl Pipeline {
                 }
             })
             .collect();
+        if let Some(v) = visible {
+            v.to_window(&mut blocks);
+        }
 
         let mut bundle = CaptureFlowResult {
             intent: Intent::Text,
