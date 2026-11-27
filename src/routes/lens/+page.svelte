@@ -9,7 +9,7 @@
   import LensText from '$lib/components/LensText.svelte';
   import {
     getSettings,
-    lensPaused,
+    lensControls,
     listLensWindows,
     openLensBeside,
     runExplain,
@@ -171,7 +171,10 @@
     paused = on;
     // Resumed: the reader reads at once; what was shown before the pause
     // stays hidden until then.
-    if (!on) hidden = new Set(blocks.map((_, i) => i));
+    if (on) return;
+    hidden = new Set(blocks.map((_, i) => i));
+    // Without continuous reading nothing reads on its own.
+    if (!continuous) refresh();
   }
 
   async function refresh() {
@@ -340,11 +343,14 @@
         await win.listen<CaptureFlowResult>('moonlens://lens-result', (e) => apply(e.payload))
       );
       // Pause and show-original hotkeys (all windows at once). A window
-      // opened during a pause starts paused.
+      // opened during a pause or a hold starts in that state.
       unlisteners.push(await win.listen<boolean>('moonlens://lens-pause', (e) => setPaused(e.payload)));
       unlisteners.push(await win.listen<boolean>('moonlens://lens-peek', (e) => (peek = e.payload)));
-      lensPaused()
-        .then((on) => on && setPaused(true))
+      lensControls()
+        .then((c) => {
+          if (c?.paused) setPaused(true);
+          if (c?.original) peek = true;
+        })
         .catch(() => {});
       // Operate-mode hotkey (all windows at once).
       unlisteners.push(await win.listen<boolean>('moonlens://lens-operate', (e) => setOperate(e.payload)));

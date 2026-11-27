@@ -463,7 +463,12 @@ export const listLensWindows = () =>
   safeInvoke<LensDescriptor[]>('list_lens_windows', undefined, []);
 /** Pause every lens window, or resume. Resolves to the new state. */
 export const toggleLensPause = () => safeInvoke<boolean>('toggle_lens_pause', undefined, false);
-export const lensPaused = () => safeInvoke<boolean>('lens_paused', undefined, false);
+/** All-window controls as they are now (for a window that just opened). */
+export const lensControls = () =>
+  safeInvoke<{ paused: boolean; original: boolean }>('lens_controls', undefined, {
+    paused: false,
+    original: false
+  });
 export const captureLensNow = (id: string) =>
   safeInvoke<CaptureFlowResult>('capture_lens_now', { id });
 

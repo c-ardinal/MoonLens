@@ -20,6 +20,11 @@ impl Hold {
         !std::mem::replace(&mut self.shown, true)
     }
 
+    /// The original is shown (key down, or released within the grace).
+    pub fn shown(&self) -> bool {
+        self.shown
+    }
+
     /// Key up. Returns the ticket for [`Hold::settle`].
     pub fn release(&mut self) -> u64 {
         self.seq += 1;
@@ -41,8 +46,10 @@ mod tests {
     fn press_shows_and_settled_release_hides() {
         let mut h = Hold::default();
         assert!(h.press());
+        assert!(h.shown());
         let t = h.release();
         assert!(h.settle(t));
+        assert!(!h.shown());
     }
 
     #[test]

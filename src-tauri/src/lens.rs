@@ -568,6 +568,11 @@ impl LensRegistry {
         self.paused.load(Ordering::Relaxed)
     }
 
+    /// The show-original hotkey is held.
+    pub fn original_held(&self) -> bool {
+        self.hold.lock().shown()
+    }
+
     /// Pause every window, or let them read again. Returns the new
     /// state; `None` without a window (nothing to pause).
     pub fn toggle_paused(&self) -> Option<bool> {

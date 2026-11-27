@@ -1375,10 +1375,20 @@ pub async fn toggle_lens_pause(app: AppHandle, state: State<'_, AppState>) -> Re
     Ok(lens::toggle_pause(&app, &state.lenses))
 }
 
-/// Whether the lens windows are paused (asked by a window as it opens).
+/// State of the all-window controls, asked by a window as it opens.
+#[derive(Debug, Serialize)]
+pub struct LensControls {
+    pub paused: bool,
+    /// The show-original hotkey is held.
+    pub original: bool,
+}
+
 #[tauri::command]
-pub async fn lens_paused(state: State<'_, AppState>) -> Result<bool, String> {
-    Ok(state.lenses.paused())
+pub async fn lens_controls(state: State<'_, AppState>) -> Result<LensControls, String> {
+    Ok(LensControls {
+        paused: state.lenses.paused(),
+        original: state.lenses.original_held(),
+    })
 }
 
 /// Read a continuously reading lens now, even when nothing changed.

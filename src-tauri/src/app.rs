@@ -78,7 +78,7 @@ macro_rules! all_commands {
             ipc::set_lens_continuous,
             ipc::refresh_lens,
             ipc::toggle_lens_pause,
-            ipc::lens_paused,
+            ipc::lens_controls,
             ipc::capture_lens_now,
             ipc::list_history,
             ipc::delete_history_entry,
