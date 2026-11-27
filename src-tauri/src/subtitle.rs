@@ -804,8 +804,10 @@ pub async fn run_loop(
                 // not the last recognized text.
                 if correcting {
                     pause(&mut lines, &mut reviser, &languages);
-                    set_phase(idle(&reviser));
                 }
+                // Recognition is over, failed or not: without this the
+                // window says "recognizing" until the next chunk.
+                set_phase(idle(&reviser));
             }
         }
     }
