@@ -968,6 +968,10 @@ async fn run_passthrough(app: AppHandle, registry: LensRegistryHandle, id: Strin
     // its attachment to another app's window.
     lens_text::close(&app, &id);
     app.state::<attach::Handle>().forget(&id);
+    if let Some(streams) = app.try_state::<crate::stream::Handle>() {
+        streams.forget(&id);
+    }
+    crate::stream::attachment_changed(&app, &id);
 }
 
 fn pointer_on_controls(

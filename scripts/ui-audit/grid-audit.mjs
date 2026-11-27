@@ -25,6 +25,8 @@ const LENS = JSON.stringify({
   get_settings: { subtitle: { target_language: 'ja', show_original: true, font_size_px: 22 }, hotkeys: { toggle_window_operate: 'Ctrl+Shift+O', toggle_window_pause: 'Ctrl+Shift+X' } },
   list_lens_windows: [{ id: 'lens-1', target_language: 'ja' }], refresh_lens: true, subtitle_state: false,
   window_attachment: { target: null, dock: null },
+  stream_state: { supported: true, active: false, title: null },
+  set_stream: { supported: true, active: true, title: 'MoonLens 配信 - Chapter 1 — The Lighthouse' },
   list_attach_targets: [
     { id: 11, pid: 100, app: 'Game.exe', title: 'Chapter 1 — The Lighthouse', rect: { x: 0, y: 0, w: 800, h: 600 }, overlap: 0.8 },
     { id: 12, pid: 101, app: 'firefox', title: 'MoonLens docs — Mozilla Firefox', rect: { x: 0, y: 0, w: 800, h: 600 }, overlap: 0 }
@@ -60,6 +62,9 @@ async function lensWindow() {
     await attachMenu(`lens-${w}-attach`);
     await pg.evaluate((a) => window.__emit('moonlens://attach', a), ATTACHED);
     await wait(pg, 200); await attachMenu(`lens-${w}-attached`);
+    // 配信用ウィンドウ：稼働中（切替行・取込対象の表示）
+    await reach(`lens-${w}-stream`, async () => { await pg.click('.am .sw', { timeout: 2000 }); await pg.locator('.am .sw[aria-checked="true"]').waitFor({ timeout: 2000 }); });
+    await measure(pg, `lens-${w}-stream`);
     await pg.context().close();
   }
   for (const placement of ['outside', 'free']) {

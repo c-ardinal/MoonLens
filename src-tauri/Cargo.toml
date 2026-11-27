@@ -83,6 +83,9 @@ rqrr = "0.7"
 # audio
 cpal = { version = "0.15", optional = true }
 
+# Composite window for stream capture (Windows; a stub elsewhere).
+moonlens-stream = { path = "crates/stream" }
+
 # storage
 rusqlite = { version = "0.43", features = ["bundled"] }
 

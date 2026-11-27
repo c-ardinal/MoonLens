@@ -37,6 +37,7 @@ pub mod scan_margin;
 pub mod settings;
 pub mod setup;
 pub mod storage;
+pub mod stream;
 pub mod subtitle;
 pub mod subtitle_filter;
 pub mod subtitle_record;

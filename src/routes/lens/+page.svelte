@@ -29,6 +29,9 @@
     setLensReadMode,
     setLensTextDock,
     windowAttachment,
+    setStream,
+    setStreamPaint,
+    streamState,
     type CaptureFlowResult,
     type LensBefore,
     type LensBlock,
@@ -44,6 +47,8 @@
     type Sample
   } from '$lib/lens-fit';
   import { liveBoxes, liveText, type LensLiveEvent } from '$lib/live';
+  import type { FlowResult } from '$lib/flow-layout';
+  import { NO_STREAM, STREAM_EVENT, streamItems, type StreamState } from '$lib/stream';
   import {
     TEXT_COMMAND_EVENT,
     TEXT_READY_EVENT,
@@ -340,6 +345,38 @@
     attachment = next;
   }
 
+  /** Composite window for stream capture of the window this one is
+   * attached to (see `stream.rs`). While it runs, what is painted here
+   * is sent along, laid out as it is shown. */
+  let stream = $state<StreamState>(NO_STREAM);
+  let bodyEl = $state<HTMLElement | null>(null);
+  /** Lines of each painted box as FlowText placed them, by box key. */
+  const layouts = new Map<string, FlowResult>();
+  let layoutsVersion = $state(0);
+  function placed(key: string, layout: FlowResult) {
+    layouts.set(key, layout);
+    // Called from the box's own layout effect, which must not come to
+    // depend on the counter.
+    untrack(() => layoutsVersion++);
+  }
+  $effect(() => {
+    void layoutsVersion;
+    // Dropped on every update, streaming or not: the keys carry the
+    // source text, so a long reading would keep every past layout.
+    const keys = new Set(boxes.map((b) => b.rect.key));
+    for (const key of layouts.keys()) if (!keys.has(key)) layouts.delete(key);
+    if (!stream.active || !bodyEl) return;
+    const shown = showOriginal || peek || paused ? [] : boxes;
+    const items = streamItems(shown, layouts, dpr, bodyEl.offsetTop);
+    // After the boxes of this update were laid out (their layouts
+    // arrive in the same flush).
+    const timer = setTimeout(() => setStreamPaint(id, items).catch(() => {}), 0);
+    return () => clearTimeout(timer);
+  });
+  async function toggleStream(on: boolean) {
+    stream = await setStream(id, on);
+  }
+
   /** Operate mode: the body takes the mouse, so the translation can be
    * selected and copied. Off (default): clicks go to the app underneath.
    * The text panel and the open menus have controls of their own, so the
@@ -549,6 +586,10 @@
         await win.listen<Attachment>(ATTACH_EVENT, (e) => applyAttachment(e.payload))
       );
       windowAttachment(id).then(applyAttachment).catch(() => {});
+      unlisteners.push(await win.listen<StreamState>(STREAM_EVENT, (e) => (stream = e.payload)));
+      streamState(id)
+        .then((s) => (stream = s))
+        .catch(() => {});
       // Operate-mode hotkey (all windows at once).
       unlisteners.push(await win.listen<boolean>('moonlens://lens-operate', (e) => setOperate(e.payload)));
       // Outside text window: it asks for the content once it listens,
@@ -679,6 +720,8 @@
         label={id}
         {attachment}
         docks={ATTACH_DOCKS}
+        {stream}
+        onstream={toggleStream}
         onclose={() => (attachOpen = false)}
       />
     {/if}
@@ -686,6 +729,7 @@
 
   <!-- The observed range. Transparent; the mouse passes through it. -->
   <section
+    bind:this={bodyEl}
     class="body"
     class:operate
     class:working={working && !paused}
@@ -709,6 +753,7 @@
               text={b.block.translation ?? ''}
               scale={dpr}
               grow={b.grow}
+              onlayout={(l) => placed(b.rect.key, l)}
               background={rgb(b.block.colors?.background, 'rgba(255,255,255,0.96)')}
             />
           {/if}

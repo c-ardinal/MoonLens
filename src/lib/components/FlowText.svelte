@@ -10,7 +10,8 @@
     scale,
     pad = 2,
     grow = 0,
-    background = 'transparent'
+    background = 'transparent',
+    onlayout
   }: {
     block: LensBlock;
     text: string;
@@ -22,6 +23,8 @@
     grow?: number;
     /** Mask colour, painted behind text that runs past the box. */
     background?: string;
+    /** The lines as placed, on every new layout. */
+    onlayout?: (layout: FlowResult) => void;
   } = $props();
 
   let host = $state<HTMLElement | null>(null);
@@ -54,7 +57,7 @@
     if (!ctx) return;
     // Measure at 100 px and scale: widths are linear in the font size.
     ctx.font = `${weight} 100px ${cs.fontFamily}`;
-    layout = flowLayout(text, {
+    const placed = flowLayout(text, {
       width,
       height,
       rows: rowsOf(block),
@@ -63,6 +66,8 @@
       grow,
       measure: (t) => ctx.measureText(t).width / 100
     });
+    layout = placed;
+    onlayout?.(placed);
   });
 </script>
 
