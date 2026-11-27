@@ -1427,13 +1427,15 @@ fn engine_fingerprint(
                 .map(|cfg| cfg.to_string())
                 .unwrap_or_default();
             // Chain ids of plugin engines are `plugin.<id>.<capability>`.
+            // Plugin ids may hold dots, a capability does not: the id is
+            // everything before the last one.
+            let owner = id
+                .strip_prefix("plugin.")
+                .and_then(|rest| rest.rsplit_once('.'))
+                .map(|(plugin, _)| plugin);
             let version = plugins
                 .iter()
-                .find(|(plugin, _)| {
-                    id.strip_prefix("plugin.")
-                        .and_then(|rest| rest.strip_prefix(plugin.as_str()))
-                        .is_some_and(|rest| rest.starts_with('.'))
-                })
+                .find(|(plugin, _)| owner == Some(plugin.as_str()))
                 .map(|(_, version)| version.clone())
                 .unwrap_or_default();
             [id.clone(), config, version]
@@ -1569,5 +1571,22 @@ mod cache_stamp_tests {
             ],
         );
         assert_eq!(other, at("1.0.0"));
+    }
+
+    #[test]
+    fn a_plugin_whose_id_starts_with_another_id_has_its_own_version() {
+        let mut s = crate::settings::schema::Settings::default();
+        s.providers.translate.chain = vec!["plugin.com.acme.tool.extra.translate".into()];
+        let at = |tool: &str, extra: &str| {
+            engine_fingerprint(
+                &s,
+                &[
+                    ("com.acme.tool".into(), tool.into()),
+                    ("com.acme.tool.extra".into(), extra.into()),
+                ],
+            )
+        };
+        assert_ne!(at("1", "1"), at("1", "2"));
+        assert_eq!(at("1", "1"), at("2", "1"));
     }
 }
