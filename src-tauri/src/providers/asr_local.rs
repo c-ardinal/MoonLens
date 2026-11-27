@@ -112,6 +112,7 @@ impl Provider for LocalWhisperProvider {
         let TaskInput::Asr {
             audio_pcm16_mono_16k,
             language_hint,
+            language_candidates,
         } = input
         else {
             return Err(ProviderError::Other("expected Asr input".into()));
@@ -140,23 +141,17 @@ impl Provider for LocalWhisperProvider {
             let path = self.path.clone();
             let params = self.params;
             let samples = pcm16_bytes_to_f32(&audio_pcm16_mono_16k);
-            let segments = tokio::task::spawn_blocking(move || {
-                engine::transcribe(
-                    &path,
-                    params,
-                    &samples,
-                    language_hint.as_deref(),
-                    None,
-                    &cancel,
-                )
+            let language = language_request(language_hint.as_deref(), &language_candidates);
+            let (segments, language) = tokio::task::spawn_blocking(move || {
+                engine::transcribe(&path, params, &samples, language.as_deref(), None, &cancel)
             })
             .await
             .map_err(|e| ProviderError::Other(e.to_string()))??;
-            Ok(TaskOutput::Transcript { segments })
+            Ok(TaskOutput::Transcript { segments, language })
         }
         #[cfg(not(feature = "local-asr"))]
         {
-            let _ = (audio_pcm16_mono_16k, language_hint);
+            let _ = (audio_pcm16_mono_16k, language_hint, language_candidates);
             Err(ProviderError::Other(
                 "this build has no built-in speech recognition".into(),
             ))
@@ -168,6 +163,23 @@ impl Provider for LocalWhisperProvider {
         // model); do it when subtitles start, not at app launch.
         Ok(())
     }
+}
+
+/// The language whisper.cpp is asked for: the hint, or a detection
+/// limited to `candidates` (`auto:ja,en`, see
+/// `vendor/whisper.cpp/README.md`), or `None` for a free detection.
+/// Candidates are reduced to what a language code can hold, so that
+/// nothing else reaches the C side.
+pub fn language_request(hint: Option<&str>, candidates: &[String]) -> Option<String> {
+    if let Some(hint) = hint {
+        return Some(hint.to_string());
+    }
+    let codes: Vec<&str> = candidates
+        .iter()
+        .map(|c| c.trim())
+        .filter(|c| !c.is_empty() && c.chars().all(|ch| ch.is_ascii_alphabetic()))
+        .collect();
+    (!codes.is_empty()).then(|| format!("auto:{}", codes.join(",")))
 }
 
 /// Recognize `samples` (16 kHz mono) on the calling thread, with an
@@ -190,6 +202,7 @@ pub fn transcribe_with_prompt(
         prompt,
         &AtomicBool::new(false),
     )
+    .map(|(segments, _)| segments)
 }
 
 /// Load the model in the background, e.g. right before the subtitle
@@ -360,9 +373,9 @@ mod engine {
         language: Option<&str>,
         prompt: Option<&str>,
         cancel: &AtomicBool,
-    ) -> Result<Vec<TranscriptSegment>, ProviderError> {
+    ) -> Result<(Vec<TranscriptSegment>, Option<String>), ProviderError> {
         if samples.is_empty() {
-            return Ok(Vec::new());
+            return Ok((Vec::new(), None));
         }
         let mut slot = engine().lock();
         let loaded = ensure(&mut slot, path, params.use_gpu)?;
@@ -402,14 +415,13 @@ mod engine {
         if rc != 0 {
             return Err(ProviderError::Other(format!("whisper.cpp failed ({rc})")));
         }
-        if language.is_none() {
-            let p = unsafe { whisper_lang_str(whisper_full_lang_id(loaded.ctx)) };
-            if !p.is_null() {
-                tracing::debug!(
-                    "whisper: detected language {}",
-                    unsafe { CStr::from_ptr(p) }.to_string_lossy()
-                );
-            }
+        // The language of this chunk: the one asked for, or detected.
+        let decoded = unsafe {
+            let p = whisper_lang_str(whisper_full_lang_id(loaded.ctx));
+            (!p.is_null()).then(|| CStr::from_ptr(p).to_string_lossy().into_owned())
+        };
+        if let Some(decoded) = decoded.as_deref().filter(|d| language != Some(d)) {
+            tracing::debug!("whisper: detected language {decoded}");
         }
 
         let n = unsafe { whisper_full_n_segments(loaded.ctx) };
@@ -441,7 +453,7 @@ mod engine {
                 text,
             });
         }
-        Ok(out)
+        Ok((out, decoded))
     }
 }
 
@@ -480,6 +492,17 @@ mod tests {
         assert_eq!(p.no_speech_thold, 1.0);
     }
 
+    #[test]
+    fn a_hint_wins_and_candidates_limit_the_detection() {
+        let pair = ["ja".to_string(), "en".to_string()];
+        assert_eq!(language_request(None, &[]), None);
+        assert_eq!(language_request(Some("fr"), &pair).as_deref(), Some("fr"));
+        assert_eq!(language_request(None, &pair).as_deref(), Some("auto:ja,en"));
+        // Only language codes reach whisper.cpp.
+        let odd = ["zh-Hans".to_string(), " ko ".to_string(), "".to_string()];
+        assert_eq!(language_request(None, &odd).as_deref(), Some("auto:ko"));
+    }
+
     #[tokio::test]
     async fn missing_model_reports_not_installed() {
         let p = LocalWhisperProvider::new(
@@ -494,6 +517,7 @@ mod tests {
             .run(TaskInput::Asr {
                 audio_pcm16_mono_16k: vec![0; 3200],
                 language_hint: None,
+                language_candidates: Vec::new(),
             })
             .await
             .unwrap_err();

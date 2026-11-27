@@ -1,13 +1,14 @@
 //! Speech recognition smoke test / benchmark against real audio.
 //!
 //! ```sh
-//! cargo run --release --example asr_bench -- [--model whisper-small] [--lang ja] a.wav b.wav …
+//! cargo run --release --example asr_bench -- [--model whisper-small] [--lang ja | --among ja,en] a.wav b.wav …
 //! ```
 //!
 //! Runs the built-in whisper.cpp provider exactly as live subtitles do
 //! (model from the default data dir: download it from the app's
 //! settings first) and prints one line per file: name, audio seconds,
-//! recognition seconds, text. WAV files must be 16 kHz mono, PCM16 or
+//! recognition seconds, decoded language, text. `--among`: the languages
+//! a face-to-face conversation chooses between. WAV files must be 16 kHz mono, PCM16 or
 //! float32.
 
 #[cfg(feature = "local-asr")]
@@ -19,6 +20,7 @@ fn main() -> anyhow::Result<()> {
 
     let mut model = "whisper-large-v3-turbo".to_string();
     let mut lang: Option<String> = None;
+    let mut among: Vec<String> = Vec::new();
     let mut gpu = true;
     let mut files = Vec::new();
     let mut args = std::env::args().skip(1);
@@ -26,13 +28,21 @@ fn main() -> anyhow::Result<()> {
         match a.as_str() {
             "--model" => model = args.next().expect("--model <id>"),
             "--lang" => lang = args.next(),
+            "--among" => {
+                among = args
+                    .next()
+                    .expect("--among <xx,yy>")
+                    .split(',')
+                    .map(str::to_string)
+                    .collect()
+            }
             "--cpu" => gpu = false,
             _ => files.push(a),
         }
     }
     assert!(
         !files.is_empty(),
-        "usage: asr_bench [--model id] [--lang xx] [--cpu] <wav>…"
+        "usage: asr_bench [--model id] [--lang xx | --among xx,yy] [--cpu] <wav>…"
     );
 
     let rt = tokio::runtime::Runtime::new()?;
@@ -52,15 +62,19 @@ fn main() -> anyhow::Result<()> {
         let out = rt.block_on(provider.run(TaskInput::Asr {
             audio_pcm16_mono_16k: pcm,
             language_hint: lang.clone(),
+            language_candidates: among.clone(),
         }))?;
         let el = t.elapsed().as_secs_f32();
-        let text = match out {
-            TaskOutput::Transcript { segments } => segments
-                .iter()
-                .map(|s| s.text.as_str())
-                .collect::<Vec<_>>()
-                .join(" "),
-            _ => String::new(),
+        let (text, decoded) = match out {
+            TaskOutput::Transcript { segments, language } => (
+                segments
+                    .iter()
+                    .map(|s| s.text.as_str())
+                    .collect::<Vec<_>>()
+                    .join(" "),
+                language.unwrap_or_default(),
+            ),
+            _ => Default::default(),
         };
         // The first file includes the model load.
         if f != &files[0] || files.len() == 1 {
@@ -71,7 +85,7 @@ fn main() -> anyhow::Result<()> {
             .file_name()
             .unwrap()
             .to_string_lossy();
-        println!("{name}\t{secs:.2}\t{el:.2}\t{text}");
+        println!("{name}\t{secs:.2}\t{el:.2}\t{decoded}\t{text}");
     }
     if audio > 0.0 {
         eprintln!(
