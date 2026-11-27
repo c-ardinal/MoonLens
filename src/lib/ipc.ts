@@ -6,6 +6,7 @@
 
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
+import type { Bilingual } from './i18n';
 
 export type Settings = Record<string, any>;
 
@@ -165,7 +166,7 @@ export const onSettingsChanged = (handler: (s: Settings) => void): Promise<Unlis
 export interface LlmModel {
   id: string;
   label: string;
-  note: string;
+  note: Bilingual;
   file: string;
   url: string;
   size: number;
@@ -214,7 +215,7 @@ export const onLlmProgress = (handler: (p: LlmProgress) => void): Promise<Unlist
 export interface AsrModel {
   id: string;
   label: string;
-  note: string;
+  note: Bilingual;
   file: string;
   url: string;
   size: number;
@@ -409,7 +410,7 @@ export interface SystemProfile {
 
 export interface ModelPick {
   model: string;
-  reason: string;
+  reason: Bilingual;
 }
 
 /** 機能別の推奨モデル（ocr は PP-OCRv5 固定で 'ppocr'）。 */

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { t } from '$lib/i18n';
+  import { t, textOf } from '$lib/i18n';
   import { onDestroy, onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import PixelTitle from '$lib/components/PixelTitle.svelte';
@@ -199,7 +199,7 @@
         <section class="px-win panel" aria-labelledby="f-{f.feature}">
           <span class="px-win-title px-chip" data-tone="amber" id="f-{f.feature}" use:slant>{t(f.title)}</span>
           <div class="fhead">
-            <p class="muted">{f.reason ? t('推奨理由：{reason}', { reason: f.reason }) : ''}</p>
+            <p class="muted">{f.reason ? t('推奨理由：{reason}', { reason: textOf(f.reason) }) : ''}</p>
             {#if !f.required}
               <label class="opt">
                 <input type="checkbox" bind:checked={f.enabled} />

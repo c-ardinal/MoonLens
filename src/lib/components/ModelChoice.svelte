@@ -1,9 +1,11 @@
 <script lang="ts" module>
+  import type { Bilingual } from '$lib/i18n';
+
   export interface ChoiceRow {
     id: string;
     label: string;
     size: number;
-    note: string;
+    note: Bilingual | string;
     installed: boolean;
     downloading?: boolean;
     partial_bytes?: number;
@@ -13,7 +15,7 @@
 </script>
 
 <script lang="ts">
-  import { t } from '$lib/i18n';
+  import { t, textOf } from '$lib/i18n';
   import { Trash2 } from 'lucide-svelte';
   import { formatBytes, replacementCandidates } from '$lib/model-setup';
   import SettingRow from './SettingRow.svelte';
@@ -69,7 +71,7 @@
 
   const loading = (m: ChoiceRow) => !!busy[m.id] || !!m.downloading || progress[m.id] !== undefined;
   const help = (m: ChoiceRow) =>
-    t('{note}。', { note: m.note }) +
+    t('{note}。', { note: textOf(m.note) }) +
     (m.id === recommended ? t('本 PC の構成を基準とした推奨モデル。') : '') +
     (m.installed ? '' : t('未取得。'));
 

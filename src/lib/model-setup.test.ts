@@ -14,7 +14,7 @@ import type { AsrModels, LlmModels, Recommendation, SystemReport } from './ipc';
 const llmModel = (id: string, style: 'pfml3' | 'chat_template', size: number, installed = false) => ({
   id,
   label: id,
-  note: '',
+  note: { ja: '', en: '' },
   file: '',
   url: '',
   size,
@@ -49,10 +49,10 @@ const asr: AsrModels = {
 };
 
 const rec: Recommendation = {
-  translate: { model: 'plamo-3-translate-2b', reason: '' },
-  assistant: { model: 'gemma-4-e2b', reason: '' },
-  ocr: { model: 'ppocr', reason: '' },
-  asr: { model: 'whisper-small', reason: '' }
+  translate: { model: 'plamo-3-translate-2b', reason: { ja: '', en: '' } },
+  assistant: { model: 'gemma-4-e2b', reason: { ja: '', en: '' } },
+  ocr: { model: 'ppocr', reason: { ja: '', en: '' } },
+  asr: { model: 'whisper-small', reason: { ja: '', en: '' } }
 };
 
 const noOcr = { ppocr: false, ocrs: false, fast: false, dir: '' };
@@ -75,7 +75,7 @@ describe('buildFeatures', () => {
   });
 
   it('falls back to the current model when the recommendation is unknown', () => {
-    const bad = { ...rec, translate: { model: 'gone', reason: '' } };
+    const bad = { ...rec, translate: { model: 'gone', reason: { ja: '', en: '' } } };
     const f = buildFeatures(llm(), asr, noOcr, bad);
     expect(f[0].selected).toBe('plamo-3-translate-2b');
     expect(buildFeatures(llm(), asr, noOcr, null)[2].selected).toBe('gemma-4-e4b');

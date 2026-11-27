@@ -96,6 +96,16 @@ export function t(ja: string, vars?: Vars): string {
   return fill(current === 'en' ? (DICT[ja] ?? plain(ja)) : plain(ja), vars);
 }
 
+/** バックエンドの二言語併記の文言（モデルの説明・推奨理由等）。 */
+export type Bilingual = { ja: string; en: string };
+
+/** 二言語併記の文言は表示言語で選択、文字列は `t()` で翻訳。 */
+export function textOf(x: Bilingual | string): string {
+  if (typeof x === 'string') return t(x);
+  track();
+  return current === 'en' ? x.en : x.ja;
+}
+
 /**
  * 文脈指定の除去。同一の原文を表示箇所で訳し分ける場合、原文へ `#文脈` を付記
  * （例：`t('翻訳#engine')`。日本語表示は「翻訳」、英語表示は辞書の `翻訳#engine`）。

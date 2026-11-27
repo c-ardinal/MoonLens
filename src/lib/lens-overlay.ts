@@ -223,23 +223,20 @@ export const LANGUAGES: { code: string; label: string }[] = [
   { code: 'id', label: 'インドネシア語' }
 ];
 
-/** 言語名（日本語の原文、LLM プロンプト用）。未知の言語は空文字。 */
+/** 言語名（日本語の原文、LLM プロンプト用）。地域付きの指定（en-US 等）は主言語で解決、未知の言語は空文字。 */
 export function languageName(code: string | null | undefined): string {
   if (!code) return '';
   const exact = LANGUAGES.find((l) => l.code.toLowerCase() === code.toLowerCase());
-  // i18n-ignore
-  return exact?.label ?? (code.split(/[-_]/)[0].toLowerCase() === 'zh' ? '中国語' : '');
+  if (exact) return exact.label;
+  const primary = code.split(/[-_]/)[0].toLowerCase();
+  if (primary === 'zh') return '中国語';
+  return LANGUAGES.find((l) => l.code === primary)?.label ?? '';
 }
 
-/** Display name for a language tag, falling back to the tag itself. */
+/** 言語名（表示言語）。未知の言語は指定値のまま。 */
 export function languageLabel(code: string | null | undefined): string {
-  if (!code) return '';
-  const exact = LANGUAGES.find((l) => l.code.toLowerCase() === code.toLowerCase());
-  if (exact) return t(exact.label);
-  const primary = code.split(/[-_]/)[0].toLowerCase();
-  if (primary === 'zh') return t('中国語');
-  const base = LANGUAGES.find((l) => l.code === primary);
-  return base ? t(base.label) : code;
+  const name = languageName(code);
+  return name ? t(name) : (code ?? '');
 }
 
 /** True when every block was already in the target language. */

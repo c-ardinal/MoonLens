@@ -10,7 +10,7 @@ import type {
   Recommendation,
   SystemReport
 } from '$lib/ipc';
-import { t } from './i18n';
+import { t, type Bilingual } from './i18n';
 
 export type Feature = 'translate' | 'ocr' | 'assistant' | 'asr';
 
@@ -23,7 +23,7 @@ export interface Choice {
   installed: boolean;
   /** 中断した取得の既存分（再開時は残りのみ取得）。 */
   partial: number;
-  note: string;
+  note: Bilingual | string;
 }
 
 export interface FeaturePlan {
@@ -35,7 +35,7 @@ export interface FeaturePlan {
   /** ラジオの選択値（常に 1 件）。 */
   selected: string;
   recommended: string;
-  reason: string;
+  reason: Bilingual | string;
   /** 今回の一括取得の対象。 */
   enabled: boolean;
 }
@@ -64,13 +64,13 @@ export function ocrChoice(ocr: OcrModelsStatus): Choice {
     installed: ocr.ppocr && ocr.ocrs && ocr.fast,
     partial: 0,
     note: fastOnly
-      ? t('高速実行部品が未取得（取得後は読取を高速化、環境別の最適構成は自動選択）')
-      : t('日本語・中国語・英語に対応（予備の英語専用 ocrs を同梱）')
+      ? '高速実行部品が未取得（取得後は読取を高速化、環境別の最適構成は自動選択）'
+      : '日本語・中国語・英語に対応（予備の英語専用 ocrs を同梱）'
   };
 }
 
 const pick = <
-  T extends { id: string; label: string; size: number; installed: boolean; partial_bytes: number; note: string }
+  T extends { id: string; label: string; size: number; installed: boolean; partial_bytes: number; note: Bilingual }
 >(
   m: T
 ): Choice => ({

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { locale, onLocaleChange, resolveLocale, setLocale, t, textEm } from './index';
+import { locale, onLocaleChange, resolveLocale, setLocale, t, textEm, textOf } from './index';
 
 afterEach(() => setLocale('ja'));
 
@@ -60,5 +60,15 @@ describe('textEm', () => {
   it('全角 1、半角 0.6', () => {
     expect(textEm('日本語')).toBe(3);
     expect(textEm('Japanese')).toBe(4.8);
+  });
+});
+
+describe('textOf', () => {
+  it('picks the display language of backend texts at render time', () => {
+    const note = { ja: '推奨', en: 'Recommended' };
+    expect(textOf(note)).toBe('推奨');
+    setLocale('en');
+    expect(textOf(note)).toBe('Recommended');
+    expect(textOf('保存')).toBe(t('保存'));
   });
 });

@@ -75,8 +75,9 @@ pub fn pick<'a>(ja: &'a str, en: &'a str) -> &'a str {
 }
 
 /// A ready-made text in both languages (catalog notes, recommendation
-/// reasons). Serializes as the text in the display language.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// reasons). Serializes as `{ ja, en }`: the frontend picks the language
+/// when it renders, so cached catalogs follow a later language switch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 pub struct Text {
     pub ja: &'static str,
     pub en: &'static str,
@@ -89,12 +90,6 @@ impl Text {
 
     pub fn get(&self) -> &'static str {
         pick(self.ja, self.en)
-    }
-}
-
-impl serde::Serialize for Text {
-    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
-        s.serialize_str(self.get())
     }
 }
 
@@ -123,6 +118,12 @@ mod tests {
         // "jam" is not Japanese: only the primary subtag counts.
         assert_eq!(resolve(UiLanguage::Auto, Some("jam")), Locale::En);
         assert_eq!(resolve(UiLanguage::Auto, None), Locale::En);
+    }
+
+    #[test]
+    fn text_serializes_both_languages() {
+        let v = serde_json::to_value(Text::new("翻訳", "translation")).unwrap();
+        assert_eq!(v, serde_json::json!({ "ja": "翻訳", "en": "translation" }));
     }
 
     #[test]
