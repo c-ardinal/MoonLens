@@ -22,7 +22,7 @@
     type LensBefore,
     type LensBlock
   } from '$lib/ipc';
-  import { joinedText, languageLabel, rgb } from '$lib/lens-overlay';
+  import { joinedText, languageLabel, maskClip, rgb } from '$lib/lens-overlay';
   import {
     addSample,
     observed,
@@ -552,7 +552,8 @@
           class:pending={b.pending}
           style="left: {b.rect.left}px; top: {b.rect.top}px; width: {b.rect.width}px; height: {b.rect.height}px;
                  background: {rgb(b.block.colors?.background, 'rgba(255,255,255,0.96)')};
-                 color: {rgb(b.block.colors?.foreground, '#111')};"
+                 color: {rgb(b.block.colors?.foreground, '#111')};
+                 clip-path: {maskClip(b.block, dpr) || 'none'};"
         >
           {#if !b.pending}
             <FlowText

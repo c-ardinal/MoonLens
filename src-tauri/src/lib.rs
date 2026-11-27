@@ -4,6 +4,7 @@
 //! library makes it easier to embed in tests or alternate frontends.
 
 pub mod app;
+pub mod app_identity;
 pub mod audio;
 pub mod capture;
 pub mod clipboard;
@@ -16,6 +17,7 @@ pub mod layout;
 pub mod lens;
 pub mod lens_drag;
 pub mod lens_fit;
+pub mod lens_shield;
 pub mod lens_text;
 pub mod macos_permissions;
 pub mod notices;
