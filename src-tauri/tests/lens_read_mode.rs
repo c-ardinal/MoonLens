@@ -297,6 +297,20 @@ async fn a_subtitle_is_translated_with_the_lines_before_it() {
 }
 
 #[tokio::test]
+async fn lines_of_one_app_are_not_context_in_another() {
+    let mut run = Run::new(ReadMode::Subtitle);
+    run.show(&["Who goes there?"]).await;
+    run.requests();
+
+    // The window follows another application now (or none any more).
+    run.app = Some("game");
+    run.show(&["It is only the wind."]).await;
+    let requests = run.requests();
+    assert_eq!(requests.len(), 1, "{requests:?}");
+    assert!(requests[0].1.history.is_empty(), "{requests:?}");
+}
+
+#[tokio::test]
 async fn a_line_that_comes_back_after_other_lines_is_translated_again() {
     let mut run = Run::new(ReadMode::Subtitle);
     run.show(&["Who goes there?"]).await;

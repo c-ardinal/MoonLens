@@ -205,8 +205,9 @@ pub struct Tracker {
     unsettled: u32,
     /// Ticks the pending reading has been growing ([`ReadMode::Subtitle`]).
     growing: u32,
-    /// Mode and target language of the last tick: a change drops
-    /// `carried` (its translations are in the old language).
+    /// Mode and [`shown_for`] of the last tick: a change drops
+    /// `carried` (its translations are in the old language, or its
+    /// lines were said in another application).
     carried_for: (ReadMode, String),
     /// Source and translation of earlier readings, oldest first: the
     /// context of the next subtitle. Empty in [`ReadMode::Ui`].
@@ -275,8 +276,9 @@ impl Tracker {
             return Ok(Tick::Moved);
         }
         self.last_geometry = Some(frame.geometry);
-        if self.carried_for.0 != env.mode || self.carried_for.1 != env.target_language {
-            self.carried_for = (env.mode, env.target_language.to_string());
+        let shown_for = shown_for(env);
+        if self.carried_for.0 != env.mode || self.carried_for.1 != shown_for {
+            self.carried_for = (env.mode, shown_for.clone());
             self.carried.clear();
         }
         let thumb = Thumb::of(&frame.image);
@@ -288,7 +290,6 @@ impl Tracker {
         // Nothing changed since the last tick and nothing waits to settle.
         // The target language changed in settings, or the region now
         // follows another application: read and translate again.
-        let shown_for = shown_for(env);
         let language_changed = self
             .shown
             .text
