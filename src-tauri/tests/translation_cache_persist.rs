@@ -56,11 +56,13 @@ impl Provider for StubOcr {
     }
 }
 
-/// Wraps each paragraph in `tag`; fails while `down`.
+/// Wraps each paragraph in `tag`; fails while `down`. While `garbles`,
+/// a batch of paragraphs comes back as one and a single paragraph fails.
 struct StubTranslator {
     id: &'static str,
     tag: &'static str,
     down: Arc<AtomicBool>,
+    garbles: Arc<AtomicBool>,
     requests: Arc<Mutex<Vec<String>>>,
 }
 
@@ -82,6 +84,13 @@ impl Provider for StubTranslator {
         let TaskInput::Translate { text, .. } = input else {
             unreachable!()
         };
+        if self.garbles.load(Ordering::Relaxed) {
+            return if text.contains("\n\n") {
+                Ok(TaskOutput::Text(text.replace("\n\n", " ")))
+            } else {
+                Err(ProviderError::Other("garbled".into()))
+            };
+        }
         self.requests.lock().push(text.clone());
         let tag = self.tag;
         let out: Vec<String> = text.split("\n\n").map(|p| format!("{tag}{p}")).collect();
@@ -96,6 +105,7 @@ struct Run {
     /// Paragraph batches the main translator was asked for.
     requests: Arc<Mutex<Vec<String>>>,
     main_down: Arc<AtomicBool>,
+    main_garbles: Arc<AtomicBool>,
 }
 
 fn start(dir: &Path) -> Run {
@@ -119,6 +129,7 @@ fn start(dir: &Path) -> Run {
     }
     let requests: Arc<Mutex<Vec<String>>> = Arc::default();
     let main_down = Arc::new(AtomicBool::new(false));
+    let main_garbles = Arc::new(AtomicBool::new(false));
     let mut providers: HashMap<String, ProviderHandle> = HashMap::new();
     providers.insert("stub_ocr".into(), Arc::new(StubOcr));
     providers.insert(
@@ -127,6 +138,7 @@ fn start(dir: &Path) -> Run {
             id: "main",
             tag: "訳:",
             down: main_down.clone(),
+            garbles: main_garbles.clone(),
             requests: requests.clone(),
         }),
     );
@@ -136,6 +148,7 @@ fn start(dir: &Path) -> Run {
             id: "spare",
             tag: "代:",
             down: Arc::default(),
+            garbles: Arc::default(),
             requests: Arc::default(),
         }),
     );
@@ -152,6 +165,7 @@ fn start(dir: &Path) -> Run {
         store,
         requests,
         main_down,
+        main_garbles,
     }
 }
 
@@ -317,6 +331,23 @@ async fn a_stand_in_engines_answer_is_not_kept_past_the_session() {
     drop(run);
 
     // … after a restart the chosen engine translates the text.
+    let run = start(dir.path());
+    let r = run.translate(None).await;
+    assert_eq!(texts(&r), ["訳:Iron Sword", "訳:Save Game"]);
+}
+
+#[tokio::test]
+async fn a_stand_in_engine_that_retried_single_paragraphs_is_not_kept_either() {
+    let dir = tempfile::tempdir().unwrap();
+    let run = start(dir.path());
+    // The chosen engine answers the batch, but unusably; each paragraph
+    // is retried alone and the stand-in engine serves those retries.
+    run.main_garbles.store(true, Ordering::Relaxed);
+    let r = run.translate(None).await;
+    assert_eq!(texts(&r), ["代:Iron Sword", "代:Save Game"]);
+    assert_eq!(run.pipe.translation_cache_usage().unwrap().entries, 0);
+    drop(run);
+
     let run = start(dir.path());
     let r = run.translate(None).await;
     assert_eq!(texts(&r), ["訳:Iron Sword", "訳:Save Game"]);

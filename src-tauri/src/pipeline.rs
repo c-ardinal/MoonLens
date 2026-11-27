@@ -240,8 +240,17 @@ impl Pipeline {
                     .flat_map(|(source, translation)| [source.as_str(), translation.as_str()]),
             )
         };
+        // A translation plugin that was updated answers differently
+        // under the same id and config.
+        let plugins: Vec<(String, String)> = self
+            .plugins
+            .iter()
+            .flat_map(|p| p.list())
+            .filter(|p| p.enabled)
+            .map(|p| (p.id, p.version))
+            .collect();
         CacheStamp {
-            engine: engine_fingerprint(&s),
+            engine: engine_fingerprint(&s, &plugins),
             options: TranslateOptions::from_settings(&s.translation),
             context,
             persist: s.storage.keep_translation_cache,
@@ -895,9 +904,21 @@ impl Pipeline {
                 TaskOutput::Text(t) => t.clone(),
                 _ => String::new(),
             };
-            let (translations, joined): (Vec<Option<String>>, String) =
+            let (translations, joined): (Vec<Option<Answer>>, String) =
                 match layout::split_translation(&whole, idx.len()) {
-                    Some(parts) => (parts.into_iter().map(Some).collect(), whole.clone()),
+                    Some(parts) => (
+                        parts
+                            .into_iter()
+                            .map(|text| {
+                                Some(Answer {
+                                    text,
+                                    provider: translate.used_provider.clone(),
+                                    via_cloud: translate.via_cloud,
+                                })
+                            })
+                            .collect(),
+                        whole.clone(),
+                    ),
                     None if in_parts => {
                         // The translator merged or split paragraphs, so
                         // the per-block mapping is ambiguous. Translate
@@ -917,15 +938,15 @@ impl Pipeline {
                                 })
                                 .await;
                             if let Some(t) = &t {
-                                ctx.history.push((src.clone(), t.clone()));
-                                bundle.blocks[bi].translation = Some(t.clone());
+                                ctx.history.push((src.clone(), t.text.clone()));
+                                bundle.blocks[bi].translation = Some(t.text.clone());
                             }
                             out.push(t);
                         }
                         let joined = out
                             .iter()
                             .flatten()
-                            .cloned()
+                            .map(|t| t.text.clone())
                             .collect::<Vec<_>>()
                             .join(layout::BLOCK_SEPARATOR);
                         (out, joined)
@@ -943,7 +964,7 @@ impl Pipeline {
                                 context: TranslateContext::default(),
                             })
                             .collect();
-                        let out: Vec<Option<String>> = futures::stream::iter(inputs)
+                        let out: Vec<Option<Answer>> = futures::stream::iter(inputs)
                             .map(|input| self.translate_one(input))
                             .buffered(max)
                             .collect()
@@ -952,7 +973,7 @@ impl Pipeline {
                     }
                 };
             for (&i, t) in idx.iter().zip(translations) {
-                if let Some(text) = &t {
+                if let Some(answer) = &t {
                     let source = &bundle.blocks[i].source;
                     let fingerprint = stamp.fingerprint(source, &target_language);
                     self.cache.put(
@@ -965,17 +986,19 @@ impl Pipeline {
                             persist: stamp.persist,
                         },
                         CachedTranslation {
-                            text: text.clone(),
-                            provider: translate.used_provider.clone(),
-                            via_cloud: translate.via_cloud,
+                            text: answer.text.clone(),
+                            provider: answer.provider.clone(),
+                            via_cloud: answer.via_cloud,
                         },
                         // A stand-in engine's answer is not kept past
                         // the session: the chosen engine translates the
-                        // text once it works again.
-                        chosen.as_deref() == Some(translate.used_provider.as_str()),
+                        // text once it works again. Judged per paragraph:
+                        // a retry of one block can be served by another
+                        // engine than the batch was.
+                        chosen.as_deref() == Some(answer.provider.as_str()),
                     );
                 }
-                bundle.blocks[i].translation = t;
+                bundle.blocks[i].translation = t.map(|a| a.text);
             }
             if !joined.trim().is_empty() {
                 outputs.push(joined.clone());
@@ -1055,12 +1078,18 @@ impl Pipeline {
         false
     }
 
-    async fn translate_one(&self, input: TaskInput) -> Option<String> {
+    async fn translate_one(&self, input: TaskInput) -> Option<Answer> {
         match self.run(Capability::Translate, input).await {
             Ok(TaskResult {
                 output: TaskOutput::Text(t),
+                used_provider,
+                via_cloud,
                 ..
-            }) => Some(t.trim().to_string()),
+            }) => Some(Answer {
+                text: t.trim().to_string(),
+                provider: used_provider,
+                via_cloud,
+            }),
             _ => None,
         }
     }
@@ -1311,6 +1340,13 @@ fn upgrade_llm_chain(mut chain: TaskChain, local_id: &str) -> TaskChain {
     chain
 }
 
+/// One paragraph's translation and the engine that made it.
+struct Answer {
+    text: String,
+    provider: String,
+    via_cloud: bool,
+}
+
 /// Everything that shapes a translation under one settings snapshot. A
 /// cached translation is used only while its fingerprint is unchanged,
 /// so a new model, prompt or glossary term is never masked by old
@@ -1339,23 +1375,37 @@ impl CacheStamp {
 
 /// Digest of the translation engine setup: this build (prompts and
 /// default models change between versions) and the translate chain with
-/// the config of every engine in it.
-fn engine_fingerprint(s: &crate::settings::schema::Settings) -> String {
+/// the config of every engine in it. `plugins`: id and version of the
+/// enabled plugins, for the engines that come from one.
+fn engine_fingerprint(
+    s: &crate::settings::schema::Settings,
+    plugins: &[(String, String)],
+) -> String {
     let chain = pick_chain(s, Capability::Translate).chain;
-    let configs: Vec<String> = chain
+    let engines: Vec<String> = chain
         .iter()
-        .map(|id| {
-            s.providers
+        .flat_map(|id| {
+            let config = s
+                .providers
                 .configs
                 .get(id)
                 .map(|cfg| cfg.to_string())
-                .unwrap_or_default()
+                .unwrap_or_default();
+            // Chain ids of plugin engines are `plugin.<id>.<capability>`.
+            let version = plugins
+                .iter()
+                .find(|(plugin, _)| {
+                    id.strip_prefix("plugin.")
+                        .and_then(|rest| rest.strip_prefix(plugin.as_str()))
+                        .is_some_and(|rest| rest.starts_with('.'))
+                })
+                .map(|(_, version)| version.clone())
+                .unwrap_or_default();
+            [id.clone(), config, version]
         })
         .collect();
     translation_cache::fingerprint(
-        std::iter::once(env!("CARGO_PKG_VERSION"))
-            .chain(chain.iter().map(String::as_str))
-            .chain(configs.iter().map(String::as_str)),
+        std::iter::once(env!("CARGO_PKG_VERSION")).chain(engines.iter().map(String::as_str)),
     )
 }
 
@@ -1462,4 +1512,27 @@ fn apply_stickiness(
         }
     }
     chain.to_vec()
+}
+
+#[cfg(test)]
+mod cache_stamp_tests {
+    use super::*;
+
+    #[test]
+    fn a_plugin_update_changes_the_engine_fingerprint() {
+        let mut s = crate::settings::schema::Settings::default();
+        s.providers.translate.chain = vec!["plugin.acme.translate".into()];
+        let at = |version: &str| engine_fingerprint(&s, &[("acme".into(), version.into())]);
+        assert_ne!(at("1.0.0"), at("1.0.1"));
+        assert_eq!(at("1.0.0"), at("1.0.0"));
+        // A plugin that is not in the chain does not matter.
+        let other = engine_fingerprint(
+            &s,
+            &[
+                ("acme".into(), "1.0.0".into()),
+                ("acme2".into(), "9".into()),
+            ],
+        );
+        assert_eq!(other, at("1.0.0"));
+    }
 }
