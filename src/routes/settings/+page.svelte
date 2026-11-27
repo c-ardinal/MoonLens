@@ -307,7 +307,8 @@
     <p class="status" class:done={status === 'saved'} role="status">
       {status === 'saving' ? '保存中…' : status === 'saved' ? '保存完了' : '変更は即時保存'}
     </p>
-    <p class="hint" data-grid-glyph>↑↓項目 ←→タブ PgUp/Dn分類</p>
+    <!-- 操作案内：全文を収容不可の幅では非表示（途中切れを防止） -->
+    <p class="hint" data-grid-glyph data-overflow-exempt><span>↑↓項目 ←→タブ PgUp/Dn分類</span></p>
     <div class="search">
       <Search class="icon" />
       <input id="settings-search" bind:value={query} type="search" placeholder="設定を検索" aria-label="設定を検索" />
@@ -436,6 +437,8 @@
   .cfg {
     position: relative;
     display: grid;
+    /* 列幅は画面幅で確定（見出し行の内容幅による列の拡張＝横スクロールを防止） */
+    grid-template-columns: minmax(0, 1fr);
     grid-template-rows: auto minmax(0, 1fr);
     gap: var(--ml-flow);
     padding: var(--ml-page-y) var(--ml-page-x);
@@ -586,11 +589,21 @@
     color: var(--ml-px-amber);
   }
   .hint {
+    display: flex;
+    flex: 1 1 0;
+    flex-wrap: wrap;
+    justify-content: flex-end;
     min-width: 0;
-    margin: 0 0 0 auto;
+    height: var(--ml-sp-9);
+    margin: 0;
     overflow: hidden;
     color: var(--ml-px-faint);
     white-space: nowrap;
+  }
+  /* 幅 0 の先頭項目：案内文が 1 行目へ収容不可の場合に 2 行目（表示範囲外）へ折返し */
+  .hint::before {
+    content: '';
+    height: 100%;
   }
   .savebar {
     position: fixed;

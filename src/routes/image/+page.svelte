@@ -16,6 +16,7 @@
   } from '$lib/ipc';
   import { LANGUAGES, applyStreaming, blockCssRect, growRoom, joinedText, rgb } from '$lib/lens-overlay';
   import FlowText from '$lib/components/FlowText.svelte';
+  import { scanlineHole } from '$lib/pixel/scanline';
   import { parseError, type UiError } from '$lib/errors';
   import { extractText } from '$lib/result';
   import { copyText } from '$lib/toast.svelte';
@@ -23,6 +24,7 @@
     IMAGE_ACCEPT,
     MAX_IMAGE_BYTES,
     baseName,
+    containSize,
     firstImageFile,
     firstImagePath
   } from '$lib/image-translate';
@@ -31,6 +33,11 @@
 
   let fileInput = $state<HTMLInputElement | null>(null);
   let imgEl = $state<HTMLImageElement | null>(null);
+  /** 画像枠の内寸（CSS px）と画像の原寸。表示寸法は枠へ収まる最大の等比。 */
+  let room = $state({ w: 0, h: 0, zoom: 1 });
+  let natural = $state({ w: 0, h: 0 });
+  // 拡大の上限：表示上の原寸（本文画面の拡縮を相殺）
+  const shown = $derived(containSize(natural, room, 1 / room.zoom));
   let imageUrl = $state<string | null>(null);
   let imageName = $state('');
   let imageBytes: Uint8Array | null = null;
@@ -135,7 +142,19 @@
   }
 
   function measure() {
-    if (imgEl && imgEl.clientWidth > 0) scale = imgEl.naturalWidth / imgEl.clientWidth;
+    if (!imgEl) return;
+    natural = { w: imgEl.naturalWidth, h: imgEl.naturalHeight };
+  }
+  $effect(() => {
+    if (shown.w > 0) scale = natural.w / shown.w;
+  });
+  /** 画像枠の内寸を追跡（ウィンドウ寸法・文字サイズ・見出し行の折返しで変化）。 */
+  function trackRoom(node: HTMLElement) {
+    const ro = new ResizeObserver(
+      () => (room = { w: node.clientWidth, h: node.clientHeight, zoom: (node as any).currentCSSZoom ?? 1 })
+    );
+    ro.observe(node);
+    return { destroy: () => ro.disconnect() };
   }
 
   async function copyAll() {
@@ -161,9 +180,7 @@
       .then((s: any) => loadTarget(s?.subtitle?.target_language))
       .catch(() => {});
     window.addEventListener('paste', onPaste);
-    window.addEventListener('resize', measure);
     unlisteners.push(() => window.removeEventListener('paste', onPaste));
-    unlisteners.push(() => window.removeEventListener('resize', measure));
     try {
       unlisteners.push(
         await onImageAnalysis((e) => {
@@ -214,25 +231,22 @@
     unlisteners.forEach((u) => u());
     if (imageUrl) URL.revokeObjectURL(imageUrl);
   });
-
-  $effect(() => {
-    if (!imgEl) return;
-    const ro = new ResizeObserver(measure);
-    ro.observe(imgEl);
-    return () => ro.disconnect();
-  });
 </script>
 
-<main class="px-body mx-auto flex max-w-6xl flex-col gap-4 px-4 py-6 sm:px-6">
+<!-- 画像表示中は 1 画面へ収容（画像枠・認識結果の高さを残余の領域で確定、画面の縦スクロールなし） -->
+<main class="px-body mx-auto flex max-w-6xl flex-col gap-4 px-4 py-6 sm:px-6" class:fit={!!imageUrl} data-fit-viewport={imageUrl ? '' : undefined}>
   <header class="flex flex-wrap items-end justify-between gap-3">
     <div class="min-w-0">
       <div class="page-title"><PixelTitle text="画像翻訳" tag="h1" height={40} fit /></div>
-      <p class="truncate text-sm text-ink-muted">
-        {imageName || '画像ファイルの文字を認識・翻訳。全処理ローカル実行。'}
-      </p>
+      {#if !imageUrl}
+        <p class="truncate text-sm text-ink-muted">画像ファイルの文字を認識・翻訳。全処理ローカル実行。</p>
+      {/if}
     </div>
-    <!-- 操作部：折返し時も右寄せ（他画面の見出し行と統一） -->
-    <div class="ml-auto flex flex-wrap items-center justify-end gap-2">
+    <!-- 操作部：折返し時も右寄せ（他画面の見出し行と統一）。画像表示中は左端へファイル名（残余の幅、超過分は省略） -->
+    <div class="ml-auto flex min-w-0 flex-wrap items-center justify-end gap-2" class:grow={!!imageUrl}>
+      {#if imageUrl}
+        <p class="name truncate text-sm text-ink-muted" title={imageName}>{imageName}</p>
+      {/if}
       <label class="flex items-center gap-1.5 text-sm text-ink-muted">
         訳文
         <select
@@ -308,47 +322,48 @@
       <span class="text-sm text-ink-muted">PNG・JPEG・WebP（40 MB まで）。クリックでファイル選択。</span>
     </button>
   {:else}
-    <div class="grid items-start gap-4 md:grid-cols-[minmax(0,1fr)_18rem]">
+    <div class="work">
       <section
-        class="relative flex justify-center overflow-hidden rounded-ml border bg-surface-muted p-2 {dragging
-          ? 'border-accent'
-          : 'border-border'}"
+        class="relative overflow-hidden rounded-ml border bg-surface-muted p-2 {dragging ? 'border-accent' : 'border-border'}"
         aria-label="画像"
       >
-        <div class="relative">
-          <img
-            bind:this={imgEl}
-            src={imageUrl}
-            alt={imageName}
-            class="block max-h-[calc(100vh-12rem)] max-w-full select-none"
-            onload={measure}
-            draggable="false"
-          />
-          {#if crop && !showOriginal}
-            {#each blocks as b, i (i)}
-              {#if b.bbox[2] > 0 && !b.same_language}
-                {@const r = blockCssRect(b, crop, scale)}
-                <div
-                  class="block-box absolute"
-                  class:pending={b.translation == null}
-                  style="left: {r.left}px; top: {r.top}px; width: {r.width}px; height: {r.height}px;
-                         background: {rgb(b.colors?.background, 'rgba(255,255,255,0.96)')};
-                         color: {rgb(b.colors?.foreground, '#111')};"
-                  title={b.source}
-                >
-                  {#if b.translation != null}
-                    <FlowText
-                      block={b}
-                      text={b.translation}
-                      {scale}
-                      grow={growRoom(blocks, i, crop.w) / scale}
-                      background={rgb(b.colors?.background, 'rgba(255,255,255,0.96)')}
-                    />
-                  {/if}
-                </div>
-              {/if}
-            {/each}
-          {/if}
+        <div class="room" use:trackRoom>
+          <!-- 画像と訳文の重畳：原文準拠の表示（ドット絵外観の走査線・書体・拡大補間の対象外） -->
+          <div class="shot" style="width: {shown.w}px; height: {shown.h}px" use:scanlineHole data-grid-exempt data-overflow-exempt>
+            <img
+              bind:this={imgEl}
+              src={imageUrl}
+              alt={imageName}
+              class="block h-full w-full select-none"
+              onload={measure}
+              draggable="false"
+            />
+            {#if crop && !showOriginal && shown.w > 0}
+              {#each blocks as b, i (i)}
+                {#if b.bbox[2] > 0 && !b.same_language}
+                  {@const r = blockCssRect(b, crop, scale)}
+                  <div
+                    class="block-box absolute"
+                    class:pending={b.translation == null}
+                    style="left: {r.left}px; top: {r.top}px; width: {r.width}px; height: {r.height}px;
+                           background: {rgb(b.colors?.background, 'rgba(255,255,255,0.96)')};
+                           color: {rgb(b.colors?.foreground, '#111')};"
+                    title={b.source}
+                  >
+                    {#if b.translation != null}
+                      <FlowText
+                        block={b}
+                        text={b.translation}
+                        {scale}
+                        grow={growRoom(blocks, i, crop.w) / scale}
+                        background={rgb(b.colors?.background, 'rgba(255,255,255,0.96)')}
+                      />
+                    {/if}
+                  </div>
+                {/if}
+              {/each}
+            {/if}
+          </div>
         </div>
         {#if busy}
           <div
@@ -361,8 +376,8 @@
         {/if}
       </section>
 
-      <aside class="flex max-h-[calc(100vh-12rem)] flex-col rounded-ml border border-border bg-surface-elevated shadow-ml">
-        <div class="flex items-center justify-between border-b border-border px-4 py-2.5 text-sm">
+      <aside class="flex min-h-0 flex-col rounded-ml border border-border bg-surface-elevated shadow-ml">
+        <div class="flex items-center justify-between gap-4 border-b border-border px-4 py-2.5 text-sm whitespace-nowrap">
           <span class="font-medium">認識結果</span>
           <span class="text-xs text-ink-faint">{blocks.length} ブロック</span>
         </div>
@@ -397,6 +412,42 @@
 </main>
 
 <style>
+  /* 1 画面収容：見出し行の残余を作業領域（画像枠・認識結果）へ配分 */
+  main.fit {
+    overflow-y: hidden;
+  }
+  .work {
+    display: grid;
+    flex: 1 1 0;
+    grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+    grid-template-rows: minmax(0, 1fr);
+    gap: var(--ml-sp-4);
+    min-height: 0;
+  }
+  header .grow {
+    flex: 1 1 0;
+  }
+  /* 下限 6 字分：未満の幅では操作部を折返し（判読不可の断片表示を回避） */
+  .name {
+    flex: 1 0 192px;
+    min-width: 0;
+    margin: 0;
+  }
+  .room {
+    display: grid;
+    place-items: center;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+  }
+  .shot {
+    position: relative;
+    flex-shrink: 0;
+    font-family: var(--ml-font-plain);
+    font-synthesis: weight style;
+    -webkit-font-smoothing: auto;
+    image-rendering: auto;
+  }
   .block-box {
     border-radius: 3px;
     user-select: text;

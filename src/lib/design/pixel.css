@@ -100,7 +100,8 @@
   }
 }
 
-/* 走査線：2px 周期（1 ドット行単位）の静止オーバーレイ */
+/* 走査線：2px 周期（1 ドット行単位）の静止オーバーレイ。
+ * --ml-hole-*（scanline.ts が設定）の矩形は除外：画像翻訳の画像は原文準拠で表示。 */
 [data-skin='pixel'] body::after {
   content: '';
   position: fixed;
@@ -108,6 +109,10 @@
   z-index: 100;
   pointer-events: none;
   background: repeating-linear-gradient(0deg, rgba(0, 0, 0, 0.16) 0 1px, transparent 1px 2px);
+  mask:
+    linear-gradient(#000 0 0) var(--ml-hole-x, 0) var(--ml-hole-y, 0) / var(--ml-hole-w, 0) var(--ml-hole-h, 0) no-repeat,
+    linear-gradient(#000 0 0);
+  mask-composite: exclude;
 }
 /* 明色：走査線を減光（紙面の濁り防止） */
 [data-skin='pixel'][data-scheme='light'] body::after {
@@ -330,7 +335,8 @@
 /* ── 本文画面の拡縮（外観設定「文字サイズ」） ──
  * 部品寸法は 32px 文字前提で設計。本文画面（履歴・設定・翻訳・拡張機能）と
  * 対話窓は zoom で一括縮小し、文字・余白・操作部の比率を維持。
- * ホーム・ナビゲーション・各画面の見出し帯は対象外（等倍）。
+ * ホームは配置を固定し、Canvas の文字のみ同率で拡縮（Pix.textScale）。
+ * ナビゲーション・各画面の見出し帯は対象外（等倍）。
  * zoom 内の vh は拡縮対象のため、画面高は vh でなく縦 flex で確定。 */
 [data-skin='pixel'] .app-root {
   display: flex;
@@ -425,10 +431,6 @@
   line-height: var(--ml-sp-11);
 }
 
-/* 本文画面内：vh は zoom で縮小されるため拡縮率で補正（Chromium の標準 zoom 準拠） */
-[data-skin='pixel'] .px-body .max-h-\[calc\(100vh-12rem\)\] {
-  max-height: calc((100vh - var(--ml-nav-h)) / var(--ml-body-zoom, 0.75) - 128px);
-}
 [data-skin='pixel'] input.sm\:w-72 {
   width: 380px;
 }

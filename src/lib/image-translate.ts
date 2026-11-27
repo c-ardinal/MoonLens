@@ -34,3 +34,17 @@ export function firstImageFile(files: ArrayLike<File> | null | undefined): File 
 export function baseName(path: string): string {
   return path.split(/[\\/]/).pop() || path;
 }
+
+/**
+ * 枠（room）へ収まる最大の等比寸法。拡大は原寸の limit 倍まで（既定は原寸）。
+ * 原寸・枠の寸法が未確定（0）の間は 0。
+ */
+export function containSize(
+  natural: { w: number; h: number },
+  room: { w: number; h: number },
+  limit = 1
+): { w: number; h: number } {
+  if (natural.w <= 0 || natural.h <= 0 || room.w <= 0 || room.h <= 0) return { w: 0, h: 0 };
+  const k = Math.min(room.w / natural.w, room.h / natural.h, limit);
+  return { w: Math.floor(natural.w * k), h: Math.floor(natural.h * k) };
+}

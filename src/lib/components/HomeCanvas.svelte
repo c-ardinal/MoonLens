@@ -13,6 +13,7 @@
   } from '$lib/pixel/home';
   import { motion } from '$lib/pixel/motion.svelte';
   import { palette } from '$lib/pixel/palette.svelte';
+  import { textScale } from '$lib/pixel/text-scale.svelte';
 
   /**
    * ホーム画面の描画層。Canvas を重ねる構成。
@@ -43,7 +44,9 @@
   let host: HTMLDivElement;
   let top: Pix | null = null;
   let low: Pix | null = null;
-  let dot = 2;
+  let dot = $state(2);
+  /** 静止層の内部解像度の倍率。文字の拡縮時は端末画素と等倍（輪郭書体を高精細で描画）。 */
+  let ss = $state(1);
   let hover = $state<number | null>(null);
   let hot = $state<HomeRegion | null>(null);
   let size = $state({ w: 0, h: 0 });
@@ -61,21 +64,29 @@
 
   function measure() {
     const r = host.getBoundingClientRect();
-    dot = homeDot(r.width, r.height, window.devicePixelRatio || 1);
+    const dpr = window.devicePixelRatio || 1;
+    dot = homeDot(r.width, r.height, dpr);
+    ss = textScale.zoom === 1 ? 1 : Math.max(1, Math.round(dot * dpr));
     size = { w: Math.floor(r.width / dot), h: Math.floor(r.height / dot) };
   }
 
   function ensure() {
     const { w, h } = size;
-    if (!top || top.w !== w || top.h !== h || low?.w !== w) {
-      top = new Pix(canvas, w, h);
+    if (!top || top.w !== w || top.h !== h || top.ss !== ss || low?.w !== w) {
+      top = new Pix(canvas, w, h, ss);
       low = new Pix(under, w, h);
       for (const c of [canvas, under]) {
         c.style.width = `${w * dot}px`;
         c.style.height = `${h * dot}px`;
       }
     }
+    top.textScale = textScale.zoom;
   }
+  // 文字サイズ設定の変更：静止層の内部解像度を再計算
+  $effect(() => {
+    void textScale.zoom;
+    if (host) untrack(measure);
+  });
   const ok = () => canvas && under && fontsReady && size.w >= 200 && size.h >= 200;
 
   // 選択の変化を検知し、最短方向の回転演出を開始
@@ -101,6 +112,8 @@
   $effect(() => {
     const state = { ...view, selected, hover, hot, turn, slide, leave };
     void size;
+    void ss;
+    void textScale.zoom;
     void palette.version; // 配色変更時に再描画
     if (!ok()) return;
     ensure();

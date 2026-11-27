@@ -275,7 +275,7 @@ export const SECTIONS: Section[] = [
         kind: 'select',
         path: 'appearance.text_size',
         label: '文字サイズ',
-        help: '履歴・設定・テキスト翻訳など本文画面の文字寸法。操作部も同率で拡縮。ホーム・見出しは対象外。',
+        help: '履歴・設定・翻訳画面の文字寸法。操作部も同率で拡縮。ホームは文字のみ拡縮。ナビゲーション・見出しは対象外。',
         options: [
           { value: 'xsmall', label: '最小（16px）' },
           { value: 'small', label: '小（20px）' },

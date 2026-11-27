@@ -117,7 +117,7 @@
         <input
           {id}
           type="number"
-          class="w-28 rounded-ml-sm border border-border bg-surface px-2 py-1 text-right text-sm tabular-nums"
+          class="w-36 rounded-ml-sm border border-border bg-surface px-2 py-1 text-right text-sm tabular-nums"
           min={field.min}
           max={field.max}
           step={field.step}
@@ -161,7 +161,8 @@
     align-items: center;
     justify-content: flex-end;
     gap: var(--ml-sp-2);
-    width: clamp(290px, 45%, 440px);
+    /* 下限：最長のショートカット表記（Ctrl+Shift+Space）＋初期化ボタンを収容 */
+    width: clamp(320px, 45%, 440px);
     min-width: 0;
   }
   .ctl select,

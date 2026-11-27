@@ -1,0 +1,3 @@
+- Settings no longer scroll sideways at the larger text sizes (the header row widened the page beyond the window).
+- Image translation now fits the window at every text size: the image and the result list share the remaining height, the result list is wider, and its header no longer wraps.
+- History limit field shows all five digits; shortcut buttons fit the longest key combination.
