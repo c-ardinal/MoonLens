@@ -17,8 +17,6 @@ on:
 
 permissions:
   contents: read
-  # Reads the results artifacts of earlier runs (SEED_RUN_IDS).
-  actions: read
 
 concurrency:
   group: asr-bias-${{ github.ref }}
@@ -30,10 +28,6 @@ env:
   # Release speed for whisper.cpp without the shipping profile's LTO link.
   CARGO_PROFILE_RELEASE_LTO: 'false'
   CARGO_PROFILE_RELEASE_CODEGEN_UNITS: '16'
-  # Runs of this workflow whose recognitions are reused where their jobs
-  # (recording, condition, prompt) are the same as this run's, so a
-  # change to the scoring does not cost two hours again. Empty = none.
-  SEED_RUN_IDS: '45950404118 45973250850 45979418529'
 
 jobs:
   bench:
@@ -103,32 +97,6 @@ jobs:
 
       - name: Prepare recordings and jobs
         run: python3 bench/asr-bias/prepare.py asr-bias-work ${{ matrix.run.prepare }}
-
-      # Recognitions are reused only when the sentences and prompts are
-      # exactly the same. A run that was cancelled half-way still uploads
-      # what it finished, so several runs can add up.
-      - name: Reuse earlier results
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          for run in $SEED_RUN_IDS; do
-            gh run download "$run" --repo "$GITHUB_REPOSITORY" \
-              --name "asr-bias-${{ matrix.run.name }}" --dir "asr-bias-seed/$run" || true
-          done
-          for dir in asr-bias-work/*/; do
-            name=$(basename "$dir")
-            [ -f "$dir/manifest.json" ] || continue
-            for run in $SEED_RUN_IDS; do
-              # One language per artifact: its files sit at the root.
-              seed="asr-bias-seed/$run/$name"
-              [ -d "$seed" ] || seed="asr-bias-seed/$run"
-              if [ -f "$seed/results.jsonl" ] && cmp -s "$seed/manifest.json" "$dir/manifest.json"; then
-                cat "$seed/results.jsonl" >> "$dir/results.jsonl"
-                echo >> "$dir/results.jsonl"
-                echo "$name: reusing run $run ($(wc -l < "$seed/results.jsonl") lines)"
-              fi
-            done
-          done
 
       - name: Recognize
         working-directory: src-tauri

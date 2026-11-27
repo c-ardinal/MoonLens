@@ -35,7 +35,15 @@ def normalize(lang: str, text: str) -> list[str]:
     t = "".join(c for c in unicodedata.normalize("NFD", t) if unicodedata.category(c) != "Mn")
     t = re.sub(r"(?<=\d),(?=\d)", "", t)
     t = re.sub(r"[.'’]", "", t)
-    return re.sub(r"[^a-z0-9]+", " ", t).split()
+    # Text in another script stays in, one unit per character, so that
+    # Japanese inserted into an English sentence counts as errors.
+    units = []
+    for word in re.sub(r"[\W_]+", " ", t).split():
+        if word.isascii():
+            units.append(word)
+        else:
+            units.extend(re.findall(r"[a-z0-9]+|[^a-z0-9]", word))
+    return units
 
 
 def edits(ref: list[str], hyp: list[str]) -> int:
@@ -91,7 +99,9 @@ def pct(v: float) -> str:
 
 def report_nonspeech(directory: Path, results_name: str, manifest: dict) -> dict:
     """Sounds without speech: any text is wrong, prompt terms in it doubly so."""
-    by_cond: dict[str, list[dict]] = {}
+    # One result per sound and condition, as for speech: a resumed run
+    # may hold a line twice.
+    seen: dict[str, dict[str, dict]] = {}
     for line in (directory / results_name).read_text("utf-8").splitlines():
         try:
             r = json.loads(line)
@@ -102,9 +112,10 @@ def report_nonspeech(directory: Path, results_name: str, manifest: dict) -> dict
         echoed = any(
             contains(units, normalize("ja", t)) for t in item["distractors"]
         )
-        by_cond.setdefault(r["condition"], []).append(
-            {"id": item["id"], "text": r["text"], "spoke": len(units) >= 2, "echoed": echoed}
-        )
+        seen.setdefault(r["condition"], {})[item["id"]] = {
+            "id": item["id"], "text": r["text"], "spoke": len(units) >= 2, "echoed": echoed
+        }
+    by_cond = {cond: list(rows.values()) for cond, rows in seen.items()}
     print(f"\n### 非音声（{results_name}）\n")
     print("| 条件 | 音数 | 文字出力 % | プロンプト用語の出力 % |")
     print("|---|---:|---:|---:|")
