@@ -27,6 +27,7 @@ const ipc = vi.hoisted(() => ({
   onLlmProgress: vi.fn(async () => () => {}),
   listOrphanLlmFiles: vi.fn(async () => [] as { name: string; size: number }[]),
   deleteOrphanLlmFile: vi.fn(),
+  acceptLicense: vi.fn(),
   getSystemProfile: vi.fn(async () => ({
     profile: {},
     accelerator: null,
@@ -211,5 +212,89 @@ describe('<LocalModels> housekeeping', () => {
     const r = render(LocalModels);
     await fireEvent.click(await r.findByRole('button', { name: '取得' }));
     await waitFor(() => expect(r.getByText('残容量不足：必要 2.3 GB／残容量 1.0 GB')).toBeInTheDocument());
+  });
+});
+
+describe('<LocalModels> licence consent', () => {
+  const gated = (accepted: string[]) => ({
+    selected: 'a',
+    assistant: 'y',
+    dir: '',
+    accepted_licenses: accepted,
+    models: [
+      model('a', { installed: true, style: 'pfml3', consent: 'plamo-community' }),
+      model('b', { style: 'pfml3', consent: 'plamo-community' })
+    ]
+  });
+
+  it('shows the consent block first and installs only after agreeing', async () => {
+    ipc.listLlmModels.mockResolvedValue(gated([]));
+    ipc.installLlmModel.mockResolvedValue('/d/b.gguf');
+    ipc.selectLlmModel.mockResolvedValue(undefined);
+    ipc.acceptLicense.mockResolvedValue(undefined);
+    ipc.installLlmModel.mockClear();
+    ipc.acceptLicense.mockClear();
+    const r = render(LocalModels);
+    await fireEvent.click(await radio(r, 'b'));
+    await fireEvent.click(await r.findByText('取得・切替'));
+    expect(await r.findByText('要点（要約）')).toBeInTheDocument();
+    expect(ipc.installLlmModel).not.toHaveBeenCalled();
+    const agree = r.getByRole('button', { name: '同意・取得' });
+    expect(agree).toBeDisabled();
+    await fireEvent.click(r.getByRole('checkbox'));
+    await fireEvent.click(agree);
+    await waitFor(() => expect(ipc.installLlmModel).toHaveBeenCalledWith('b'));
+    expect(ipc.acceptLicense).toHaveBeenCalledWith('plamo-community');
+    await waitFor(() => expect(ipc.selectLlmModel).toHaveBeenCalledWith('b', 'translate'));
+  });
+
+  it('installs nothing when the consent is cancelled', async () => {
+    ipc.listLlmModels.mockResolvedValue(gated([]));
+    ipc.installLlmModel.mockClear();
+    const r = render(LocalModels);
+    await fireEvent.click(await radio(r, 'b'));
+    await fireEvent.click(await r.findByText('取得・切替'));
+    await fireEvent.click(await r.findByRole('button', { name: '中止' }));
+    expect(r.queryByText('要点（要約）')).not.toBeInTheDocument();
+    expect(ipc.installLlmModel).not.toHaveBeenCalled();
+  });
+
+  it('does not ask again once the licence is accepted', async () => {
+    ipc.listLlmModels.mockResolvedValue(gated(['plamo-community']));
+    ipc.installLlmModel.mockResolvedValue('/d/b.gguf');
+    ipc.selectLlmModel.mockResolvedValue(undefined);
+    ipc.installLlmModel.mockClear();
+    const r = render(LocalModels);
+    await fireEvent.click(await radio(r, 'b'));
+    await fireEvent.click(await r.findByText('取得・切替'));
+    await waitFor(() => expect(ipc.installLlmModel).toHaveBeenCalledWith('b'));
+    expect(r.queryByText('要点（要約）')).not.toBeInTheDocument();
+  });
+
+  it('asks before the replacement download of a delete', async () => {
+    ipc.listLlmModels.mockResolvedValue(gated([]));
+    ipc.installLlmModel.mockClear();
+    ipc.deleteLlmModel.mockClear();
+    const r = render(LocalModels);
+    await fireEvent.click(await r.findByLabelText('Model a を削除'));
+    await fireEvent.click(await r.findByText('切替・削除'));
+    expect(await r.findByText('要点（要約）')).toBeInTheDocument();
+    expect(ipc.installLlmModel).not.toHaveBeenCalled();
+    expect(ipc.deleteLlmModel).not.toHaveBeenCalled();
+  });
+
+  it('asks before resuming the selected model that is missing', async () => {
+    ipc.listLlmModels.mockResolvedValue({
+      selected: 'x',
+      assistant: 'y',
+      dir: '',
+      accepted_licenses: [],
+      models: [model('x', { style: 'pfml3', consent: 'plamo-community', partial_bytes: 10 })]
+    });
+    ipc.installLlmModel.mockClear();
+    const r = render(LocalModels);
+    await fireEvent.click(await r.findByRole('button', { name: '取得再開' }));
+    expect(await r.findByText('要点（要約）')).toBeInTheDocument();
+    expect(ipc.installLlmModel).not.toHaveBeenCalled();
   });
 });

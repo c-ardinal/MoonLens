@@ -11,6 +11,8 @@
     partial_bytes?: number;
     license?: string;
     license_url?: string;
+    /** 取得前に同意が必要なライセンス id。 */
+    consent?: string | null;
   }
 </script>
 
@@ -18,6 +20,7 @@
   import { t, textOf } from '$lib/i18n';
   import { Trash2 } from 'lucide-svelte';
   import { formatBytes, replacementCandidates } from '$lib/model-setup';
+  import LicenseConsent from './LicenseConsent.svelte';
   import SettingRow from './SettingRow.svelte';
 
   interface Props {
@@ -42,6 +45,10 @@
     oncancel?: (id: string) => void;
     /** 削除。replacement：先に切替える代替モデル（未取得なら取得後に切替）。 */
     onremove?: (id: string, replacement: string | null) => Promise<void>;
+    /** 同意済みのライセンス id。 */
+    accepted?: string[];
+    /** ライセンスへの同意の保存後（一覧の再取得用）。 */
+    onaccepted?: (license: string) => void | Promise<void>;
   }
   let {
     key,
@@ -56,7 +63,9 @@
     onselect,
     oninstall,
     oncancel,
-    onremove
+    onremove,
+    accepted = [],
+    onaccepted
   }: Props = $props();
 
   /** 未取得モデルの選択：取得確認中のモデル。 */
@@ -66,6 +75,8 @@
   /** 使用中モデルの削除：代替モデル選択中。 */
   let replacing = $state<string | null>(null);
   let replacement = $state('');
+  /** 取得前の許諾確認中：表示する行・ライセンス・同意後に続行する元の操作。 */
+  let consenting = $state<{ at: string; license: string; proceed: () => Promise<void> } | null>(null);
   /** 削除不可の理由（他機能で使用中）。 */
   let blocked = $state<{ id: string; text: string } | null>(null);
 
@@ -85,6 +96,26 @@
     confirmDelete = null;
     replacing = null;
     blocked = null;
+    consenting = null;
+  }
+
+  /**
+   * 取得を伴う操作の実行。未同意のライセンスが有れば `at` 行へ許諾確認を表示し、
+   * 同意の保存後に元の操作を続行。
+   */
+  async function gate(at: string, target: ChoiceRow | undefined, proceed: () => Promise<void>) {
+    const license = target && !target.installed ? target.consent : null;
+    if (license && !accepted.includes(license)) {
+      reset();
+      consenting = { at, license, proceed };
+    } else await proceed();
+  }
+
+  async function agreed() {
+    const c = consenting;
+    if (!c) return;
+    await onaccepted?.(c.license);
+    await c.proceed();
   }
 
   async function choose(m: ChoiceRow) {
@@ -94,10 +125,11 @@
     else if (!loading(m)) asking = m.id;
   }
 
-  async function install(id: string, select: boolean) {
-    reset();
-    await oninstall(id, select);
-  }
+  const install = (id: string, select: boolean) =>
+    gate(id, rows.find((r) => r.id === id), async () => {
+      reset();
+      await oninstall(id, select);
+    });
 
   function askDelete(m: ChoiceRow) {
     reset();
@@ -114,10 +146,12 @@
     }
   }
 
-  async function remove(id: string, repl: string | null) {
-    reset();
-    await onremove?.(id, repl);
-  }
+  /** 削除。代替モデルの取得を伴う場合は、そのライセンスの同意を先に確認。 */
+  const remove = (id: string, repl: string | null) =>
+    gate(id, rows.find((r) => r.id === repl), async () => {
+      reset();
+      await onremove?.(id, repl);
+    });
 </script>
 
 <div role="radiogroup" aria-label={t('{feature}モデル', { feature })}>
@@ -167,6 +201,16 @@
           <button class="sbtn on" onclick={() => install(m.id, false)}>
             {(m.partial_bytes ?? 0) > 0 ? t('取得再開') : t('取得')}
           </button>
+        </div>
+      {/if}
+
+      {#if consenting?.at === m.id}
+        <div use:reveal class="sprompt col" role="group" aria-label={t('利用許諾の確認')}>
+          <LicenseConsent
+            license={consenting.license}
+            onaccepted={agreed}
+            oncancel={() => (consenting = null)}
+          />
         </div>
       {/if}
 

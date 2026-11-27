@@ -6,6 +6,7 @@ import {
   formatBytes,
   hardwareLines,
   inferenceDevice,
+  pendingConsents,
   replacementCandidates,
   totalBytes
 } from './model-setup';
@@ -22,6 +23,7 @@ const llmModel = (id: string, style: 'pfml3' | 'chat_template', size: number, in
   license: '',
   license_url: '',
   style,
+  consent: null as string | null,
   installed,
   partial_bytes: 0,
   downloading: false
@@ -31,6 +33,7 @@ const llm = (installed: string[] = []): LlmModels => ({
   selected: 'plamo-3-translate-2b',
   assistant: 'gemma-4-e4b',
   dir: '',
+  accepted_licenses: [] as string[],
   models: [
     llmModel('plamo-3-translate-2b', 'pfml3', 1_800_000_000),
     llmModel('plamo-3-translate-0.8b', 'pfml3', 570_000_000),
@@ -218,5 +221,29 @@ describe('inferenceDevice', () => {
 
   it('reports a PC without a usable GPU', () => {
     expect(inferenceDevice(profile([]), true)).toBe('CPU（対応 GPU：非検出）');
+  });
+});
+
+describe('pendingConsents', () => {
+  const withConsent = (l: LlmModels): LlmModels => ({
+    ...l,
+    models: l.models.map((m) => (m.style === 'pfml3' ? { ...m, consent: 'plamo-community' } : m))
+  });
+
+  it('lists a licence once for every queued model that needs it', () => {
+    const f = buildFeatures(withConsent(llm()), asr, noOcr, rec);
+    const q = downloadQueue(f);
+    expect(pendingConsents(q, [])).toEqual(['plamo-community']);
+  });
+
+  it('is empty once accepted, or when the queue holds no such model', () => {
+    const q = downloadQueue(buildFeatures(withConsent(llm()), asr, noOcr, rec));
+    expect(pendingConsents(q, ['plamo-community'])).toEqual([]);
+    expect(pendingConsents(downloadQueue(buildFeatures(llm(), asr, noOcr, rec)), [])).toEqual([]);
+  });
+
+  it('ignores models that are already installed', () => {
+    const f = buildFeatures(withConsent(llm(['plamo-3-translate-2b'])), asr, noOcr, rec);
+    expect(pendingConsents(downloadQueue(f), [])).toEqual([]);
   });
 });

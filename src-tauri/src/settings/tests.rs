@@ -133,3 +133,16 @@ fn integer_overflow_in_u32_field_is_rejected() {
     "#;
     assert!(toml::from_str::<Settings>(bad).is_err());
 }
+
+#[test]
+fn accepted_licenses_round_trip_and_old_configs_still_load() {
+    // A config written before the field existed must keep loading.
+    let old: Settings = toml::from_str("[onboarding]\nsetup_completed = true\n").unwrap();
+    assert!(old.onboarding.accepted_licenses.is_empty());
+
+    let new: Settings =
+        toml::from_str("[onboarding]\naccepted_licenses = [\"plamo-community\"]\n").unwrap();
+    assert_eq!(new.onboarding.accepted_licenses, ["plamo-community"]);
+    let again: Settings = toml::from_str(&toml::to_string(&new).unwrap()).unwrap();
+    assert_eq!(again.onboarding.accepted_licenses, ["plamo-community"]);
+}

@@ -13,6 +13,7 @@ const llmModel = (id: string, label: string, installed: boolean, downloading = f
   license: '',
   license_url: '',
   style: 'pfml3' as const,
+  consent: null,
   installed,
   partial_bytes: 0,
   downloading
@@ -22,6 +23,7 @@ const llm = (installed: boolean, downloading = false): LlmModels => ({
   selected: 'plamo-2b',
   assistant: 'gemma',
   dir: '',
+  accepted_licenses: [],
   models: [
     llmModel('plamo-2b', 'PLaMo 3 Translate 2B', installed, downloading),
     llmModel('gemma', 'Gemma 4 E4B', false)

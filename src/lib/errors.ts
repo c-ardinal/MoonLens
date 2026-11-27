@@ -14,6 +14,7 @@ export type ErrorCode =
   | 'network'
   | 'disk_full'
   | 'integrity'
+  | 'license_consent'
   | 'error';
 
 export interface UiError {
@@ -31,6 +32,7 @@ const CODES: ErrorCode[] = [
   'network',
   'disk_full',
   'integrity',
+  'license_consent',
   'error'
 ];
 

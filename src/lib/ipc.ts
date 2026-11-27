@@ -199,6 +199,8 @@ export interface LlmModel {
   license: string;
   license_url: string;
   style: 'chat_template' | 'pfml3';
+  /** Licence id the user must accept before download (see `LICENSES`); null when none. */
+  consent: string | null;
   installed: boolean;
   partial_bytes: number;
   downloading: boolean;
@@ -213,6 +215,8 @@ export interface LlmModels {
   assistant: string;
   dir: string;
   models: LlmModel[];
+  /** Licence ids the user already accepted. */
+  accepted_licenses: string[];
 }
 
 export interface LlmProgress {
@@ -227,9 +231,12 @@ export const listLlmModels = () =>
     selected: '',
     assistant: '',
     dir: '',
-    models: []
+    models: [],
+    accepted_licenses: []
   });
 export const installLlmModel = (id: string) => safeInvoke<string>('install_llm_model', { id });
+/** Record acceptance of a model licence (idempotent). */
+export const acceptLicense = (id: string) => safeInvoke<void>('accept_license', { id });
 export const cancelLlmDownload = (id: string) => safeInvoke<boolean>('cancel_llm_download', { id });
 export const deleteLlmModel = (id: string) => safeInvoke<void>('delete_llm_model', { id });
 export const selectLlmModel = (id: string, role: LlmRole = 'translate') =>
