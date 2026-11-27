@@ -207,7 +207,46 @@ async fn english_speech_becomes_japanese_subtitles() {
             }
         }
     });
-    assert_subtitles(&subtitles(env, rx).await);
+    let settings = env.0.clone();
+    let events = subtitles(env, rx).await;
+    assert_subtitles(&events);
+    assert_recorded(&events, settings);
+}
+
+/// The run must be saved to history as one record whose SRT export
+/// carries the translation on a rising timeline.
+fn assert_recorded(events: &[SubtitleEvent], settings: Arc<SettingsStore>) {
+    use moonlens_lib::subtitle_record::{render, ExportContent, ExportFormat, Recorder};
+    let storage = Arc::new(Storage::open_in_memory().unwrap());
+    let recorder = Recorder::new(storage.clone(), settings);
+    recorder.observe(&SubtitleEvent::Started {
+        device: "test".into(),
+    });
+    for ev in events {
+        recorder.observe(ev);
+    }
+    let rows = storage.recent(10).unwrap();
+    assert_eq!(rows.len(), 1, "one history row per run");
+    assert_eq!(rows[0].kind, "subtitle");
+    let record = storage.subtitle_record(rows[0].id).unwrap().unwrap();
+    let chunks = events
+        .iter()
+        .filter(|e| matches!(e, SubtitleEvent::Chunk { .. }))
+        .count();
+    assert_eq!(record.lines.len(), chunks);
+    let mut end = 0;
+    for line in &record.lines {
+        assert!(
+            line.start_ms >= end && line.end_ms > line.start_ms,
+            "timeline not rising: {:?}",
+            record.lines
+        );
+        end = line.end_ms;
+    }
+    let srt = render(&record, ExportFormat::Srt, ExportContent::Translated);
+    println!("{srt}");
+    assert!(srt.starts_with("1\n00:00:"), "not SRT: {srt:?}");
+    assert!(srt.contains('国'), "translation missing from SRT: {srt:?}");
 }
 
 #[tokio::test(flavor = "multi_thread")]
