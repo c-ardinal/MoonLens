@@ -71,6 +71,21 @@ export interface LensBlock {
    * when a picture stands beside some rows of the block.
    */
   row_limits?: number[];
+  /**
+   * Set when the text stands on a picture or gradient: the text pixels
+   * repainted from their surroundings, drawn instead of the box.
+   */
+  erase?: ErasePatch | null;
+}
+
+/** Text-only erase picture of a block. */
+export interface ErasePatch {
+  /** [x, y, w, h] of the picture in the pixels the block is placed in (x / y negative beyond a window frame). */
+  rect: [number, number, number, number];
+  /** PNG data URL: text pixels opaque, the rest transparent. */
+  image: string;
+  /** The background varies: the translation needs an outline. */
+  outline: boolean;
 }
 
 /** Sent before each translation request of a capture (`moonlens://image-progress`). */

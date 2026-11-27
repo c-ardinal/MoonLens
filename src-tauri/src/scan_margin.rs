@@ -117,6 +117,12 @@ impl Visible {
                 return false;
             };
             b.bbox = bbox;
+            // The erase picture keeps its size: what lies beyond the
+            // frame is not drawn by the window.
+            if let Some(e) = &mut b.erase {
+                e.rect[0] -= self.x;
+                e.rect[1] -= self.y;
+            }
             // `row_limits` runs parallel to `lines`: a row that takes no
             // place in the window takes its limit along.
             let limited = b.row_limits.len() == b.lines.len();
@@ -164,7 +170,23 @@ mod tests {
             bold: false,
             lines,
             row_limits: vec![],
+            erase: None,
         }
+    }
+
+    #[test]
+    fn the_erase_picture_moves_to_window_pixels_with_its_block() {
+        let mut b = block([20.0, 40.0, 100.0, 20.0], vec![]);
+        b.erase = Some(crate::erase::ErasePatch {
+            rect: [18, 38, 104, 24],
+            image: String::new(),
+            outline: false,
+            foreground: [0, 0, 0],
+        });
+        let mut blocks = vec![b];
+        window().to_window(&mut blocks);
+        // Starts 12 px left of the frame; the size stays.
+        assert_eq!(blocks[0].erase.as_ref().unwrap().rect, [-12, 8, 104, 24]);
     }
 
     /// A 200x100 window read with a 30 px margin.
