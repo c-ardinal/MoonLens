@@ -7,6 +7,14 @@
   import FlowText from '$lib/components/FlowText.svelte';
   import LensActions from '$lib/components/LensActions.svelte';
   import LensText from '$lib/components/LensText.svelte';
+  import AttachMenu from '$lib/components/AttachMenu.svelte';
+  import {
+    ATTACH_EVENT,
+    DETACHED,
+    targetName,
+    type AttachDock,
+    type Attachment
+  } from '$lib/attach';
   import {
     getSettings,
     listLensWindows,
@@ -16,6 +24,7 @@
     setLensOperate,
     setLensLanguage,
     setLensTextDock,
+    windowAttachment,
     type CaptureFlowResult,
     type LensBlock
   } from '$lib/ipc';
@@ -248,14 +257,29 @@
   /** The overflow menu of the header is open (it hangs into the body). */
   let menuOpen = $state(false);
 
+  /** The window of another app this one is attached to: it stays on
+   * that window as the app moves and resizes it (see `attach.rs`). */
+  let attachment = $state<Attachment>(DETACHED);
+  let attachOpen = $state(false);
+  /** Bumped on a new attachment: the frame flashes once. */
+  let snapped = $state(0);
+  const ATTACH_DOCKS: { value: AttachDock; label: string; title: string }[] = [
+    { value: 'cover', label: '全体', title: '吸着先の全体へ重畳' },
+    { value: 'free', label: '相対', title: '現在の位置・サイズを吸着先との相対位置で保持' }
+  ];
+  function applyAttachment(next: Attachment) {
+    if (next.target && next.target.id !== attachment.target?.id) snapped++;
+    attachment = next;
+  }
+
   /** Operate mode: the body takes the mouse, so the translation can be
    * selected and copied. Off (default): clicks go to the app underneath.
-   * The text panel and the open menu have controls of their own, so the
+   * The text panel and the open menus have controls of their own, so the
    * body takes the mouse for them too. */
   let operate = $state(false);
   let operateKey = $state('');
   $effect(() => {
-    setLensInteractive(id, operate || textInside || menuOpen).catch(() => {});
+    setLensInteractive(id, operate || textInside || menuOpen || attachOpen).catch(() => {});
   });
   function setOperate(on: boolean) {
     operate = on;
@@ -296,11 +320,30 @@
     unlisteners.push(() => window.removeEventListener('resize', onResize));
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
-      if (menuOpen) menuOpen = false;
+      if (attachOpen) attachOpen = false;
+      else if (menuOpen) menuOpen = false;
       else close();
     };
     window.addEventListener('keydown', onKey);
     unlisteners.push(() => window.removeEventListener('keydown', onKey));
+    // The attach menu closes on a press anywhere else, like the overflow
+    // menu, and when the window loses the keyboard. Not on Linux: there
+    // the window is hidden for every capture, which also takes the
+    // keyboard away, about once a second.
+    const hiddenForCapture = /Linux/.test(navigator.userAgent);
+    const onPress = (e: PointerEvent) => {
+      const el = e.target as Element | null;
+      if (attachOpen && !el?.closest?.('.am, [data-action="attach"]')) attachOpen = false;
+    };
+    const onBlur = () => {
+      if (!hiddenForCapture) attachOpen = false;
+    };
+    window.addEventListener('pointerdown', onPress);
+    window.addEventListener('blur', onBlur);
+    unlisteners.push(() => {
+      window.removeEventListener('pointerdown', onPress);
+      window.removeEventListener('blur', onBlur);
+    });
     // Language: the one this lens was opened with, else the configured one.
     Promise.all([listLensWindows(), getSettings()])
       .then(([lenses, s]: [{ id: string; target_language: string | null }[], any]) => {
@@ -317,6 +360,10 @@
       unlisteners.push(
         await win.listen<CaptureFlowResult>('moonlens://lens-result', (e) => apply(e.payload))
       );
+      unlisteners.push(
+        await win.listen<Attachment>(ATTACH_EVENT, (e) => applyAttachment(e.payload))
+      );
+      windowAttachment(id).then(applyAttachment).catch(() => {});
       // Operate-mode hotkey (all windows at once).
       unlisteners.push(await win.listen<boolean>('moonlens://lens-operate', (e) => setOperate(e.payload)));
       // Outside text window: it asks for the content once it listens,
@@ -402,6 +449,9 @@
       {operate}
       {operateKey}
       onoperate={() => setOperate(!operate)}
+      attachedTo={attachment.target ? targetName(attachment.target) : ''}
+      {attachOpen}
+      onattach={() => (attachOpen = !attachOpen)}
       onrefresh={refresh}
       onoriginal={() => (showOriginal = !showOriginal)}
       onlanguage={changeLanguage}
@@ -415,13 +465,23 @@
     >
       {#snippet lead()}
         <div class="lead pointer-events-none flex items-center gap-2" data-tauri-drag-region>
-          <span class="title">ウィンドウ翻訳</span>
+          <span class="title"
+            >{attachment.target ? `吸着中：${targetName(attachment.target)}` : 'ウィンドウ翻訳'}</span
+          >
           {#if hasText}
             <PrivacyBadge {viaCloud} {provider} />
           {/if}
         </div>
       {/snippet}
     </LensActions>
+    {#if attachOpen}
+      <AttachMenu
+        label={id}
+        {attachment}
+        docks={ATTACH_DOCKS}
+        onclose={() => (attachOpen = false)}
+      />
+    {/if}
   </header>
 
   <!-- The observed range. Transparent; the mouse passes through it. -->
@@ -457,6 +517,9 @@
     {#if status}
       <div class="status" class:error={!!lastError}>{status}</div>
     {/if}
+    {#key snapped}
+      {#if snapped}<div class="snap" aria-hidden="true"></div>{/if}
+    {/key}
     <!-- Resize grip (also clickable while the body lets the mouse through). -->
     {#if !maximized}
       <div class="grip" role="presentation" title="サイズ変更" onpointerdown={startResize}></div>
@@ -515,9 +578,35 @@
     }
   }
   .title {
+    display: block;
+    max-width: 180px;
+    overflow: hidden;
+    text-overflow: ellipsis;
     font-size: 11px;
     opacity: 0.75;
     white-space: nowrap;
+  }
+  /* 吸着の成立時：枠を 1 回点滅（段階的、不透明度のみの演出） */
+  .snap {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    box-shadow: inset 0 0 0 4px var(--ml-accent, rgb(139, 92, 246));
+    opacity: 0;
+    animation: snap 360ms steps(3, jump-none);
+  }
+  @keyframes snap {
+    from {
+      opacity: 1;
+    }
+    to {
+      opacity: 0;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .snap {
+      animation: none;
+    }
   }
   .body {
     position: relative;

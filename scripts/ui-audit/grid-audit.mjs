@@ -23,8 +23,14 @@ const BLOCKS = [
 ];
 const LENS = JSON.stringify({
   get_settings: { subtitle: { target_language: 'ja', show_original: true, font_size_px: 22 }, hotkeys: { toggle_window_operate: 'Ctrl+Shift+O' } },
-  list_lens_windows: [{ id: 'lens-1', target_language: 'ja' }], refresh_lens: true, subtitle_state: false
+  list_lens_windows: [{ id: 'lens-1', target_language: 'ja' }], refresh_lens: true, subtitle_state: false,
+  window_attachment: { target: null, dock: null },
+  list_attach_targets: [
+    { id: 11, pid: 100, app: 'Game.exe', title: 'Chapter 1 — The Lighthouse', rect: { x: 0, y: 0, w: 800, h: 600 }, overlap: 0.8 },
+    { id: 12, pid: 101, app: 'firefox', title: 'MoonLens docs — Mozilla Firefox', rect: { x: 0, y: 0, w: 800, h: 600 }, overlap: 0 }
+  ]
 });
+const ATTACHED = { target: { id: 11, pid: 100, app: 'Game.exe', title: 'Chapter 1 — The Lighthouse' }, dock: 'cover' };
 async function win(label, route, w, h) {
   const ctx = await browser.newContext({ viewport: { width: w, height: h }, deviceScaleFactor: 1, reducedMotion: 'reduce' });
   await ctx.addInitScript(init(label, '{}', LENS));
@@ -39,6 +45,19 @@ async function lensWindow() {
     await wait(pg, 300); await measure(pg, `lens-${w}`);
     // 縦メニューは収納項目が有る幅のみ表示
     if (await pg.locator('.more').count()) { await reach(`lens-${w}-menu`, async () => { await pg.click('.more', { timeout: 2000 }); await pg.locator('.menu').waitFor({ timeout: 2000 }); }); await measure(pg, `lens-${w}-menu`); }
+    // 吸着メニュー：吸着なし（候補一覧）・吸着中（配置・解除）。縦メニューへ収納中の幅は縦メニュー経由
+    const attachMenu = async (state) => {
+      await reach(state, async () => {
+        if (await pg.locator('.am').count()) return;
+        if (await pg.locator('.tb[data-action="attach"]:not(.off)').count()) await pg.click('.tb[data-action="attach"]:not(.off)', { timeout: 2000 });
+        else { if (!(await pg.locator('.menu').count())) await pg.click('.more', { timeout: 2000 }); await pg.click('.mi[data-action="attach"]', { timeout: 2000 }); }
+        await pg.locator('.am .row').first().waitFor({ timeout: 2000 });
+      });
+      await measure(pg, state);
+    };
+    await attachMenu(`lens-${w}-attach`);
+    await pg.evaluate((a) => window.__emit('moonlens://attach', a), ATTACHED);
+    await wait(pg, 200); await attachMenu(`lens-${w}-attached`);
     await pg.context().close();
   }
   for (const placement of ['outside', 'free']) {
