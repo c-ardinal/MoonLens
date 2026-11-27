@@ -352,7 +352,7 @@ export const SECTIONS: Section[] = [
   {
     id: 'data',
     title: 'データ',
-    description: '保存先と使用容量。完全削除：アンインストール後、各保存先を削除。',
+    description: '保存先と使用容量。完全削除：本体の削除後、各保存先を削除。',
     component: 'data'
   },
   {

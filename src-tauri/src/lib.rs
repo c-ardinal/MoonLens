@@ -32,6 +32,8 @@ pub mod subtitle;
 pub mod translate_plan;
 pub mod translation_cache;
 pub mod user_error;
+#[cfg(windows)]
+mod webview2;
 
 use std::sync::OnceLock;
 
@@ -69,6 +71,12 @@ pub fn run() {
         tracing::error!("panic: {info}");
         default_hook(info);
     }));
+    #[cfg(windows)]
+    if let Err(e) = tauri::webview_version() {
+        tracing::error!("WebView2 runtime not found: {e}");
+        webview2::explain_missing();
+        return;
+    }
     app::build().expect("failed to build Tauri app");
 }
 

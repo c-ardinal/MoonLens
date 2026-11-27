@@ -11,23 +11,24 @@ MoonLens の導入〜削除の各段階で発生するケースと、期待動�
 
 ## 保存場所
 
-| 種類 | 場所（Linux／macOS／Windows） | アンインストーラーでの扱い |
+| 種類 | 場所（Linux／macOS／Windows） | 本体削除時の扱い |
 | --- | --- | --- |
-| 設定 `config.toml`（変更値のみ）・`config.default.toml`（既定値の参照用） | `~/.config/io.moonlens.app`／`~/Library/Application Support/io.moonlens.app`／`%APPDATA%\io.moonlens.app` | Windows（NSIS）：「アプリデータ削除」選択時に削除。deb／rpm／AppImage／dmg：残存 |
+| 設定 `config.toml`（変更値のみ）・`config.default.toml`（既定値の参照用） | `~/.config/io.moonlens.app`／`~/Library/Application Support/io.moonlens.app`／`%APPDATA%\io.moonlens.app` | 全 OS で残存（手動削除） |
 | 履歴 DB・プラグイン | `~/.local/share/io.moonlens.app`／同上／`%APPDATA%\io.moonlens.app` | 同上 |
 | モデル（GGUF・OCR・音声認識） | `~/.local/share/io.moonlens.app/models`／`~/Library/Application Support/io.moonlens.app/models`／`%LOCALAPPDATA%\io.moonlens.app\models` | 同上 |
 
 設定画面「データ」に実パス・使用容量を表示。
 
-## 1. インストール
+## 1. 導入
 
 | # | ケース | 期待動作 | 状態 | 確認 |
 | --- | --- | --- | --- | --- |
-| I-1 | 初回インストール後の起動 | メインウィンドウを表示（常駐のみの非表示状態を回避） | 修正 | Xvfb で起動しウィンドウ表示を確認。`--hidden` 指定時のみトレイ常駐で起動 |
+| I-1 | 初回導入後の起動 | メインウィンドウを表示（常駐のみの非表示状態を回避） | 修正 | Xvfb で起動しウィンドウ表示を確認。`--hidden` 指定時のみトレイ常駐で起動 |
 | I-2 | トレイ非対応のデスクトップ（GNOME 標準構成等） | 起動は継続。メインウィンドウ・ショートカットで全機能を利用可能 | 修正 | トレイ生成失敗をログ警告に変更（以前は起動失敗） |
 | I-3 | AVX2／FMA 非対応 CPU | 翻訳時に「非対応 CPU（AVX2・FMA 必須）」と表示。クラッシュなし | OK | `user_error` テスト、`cpu_supported()` |
 | I-4 | 起動中に再度起動 | 新プロセスは即終了し、既存のメインウィンドウを前面表示。トレイアイコン・ショートカットの二重登録なし | 修正 | 同一セッションバスで 2 回起動：2 回目は 0 秒で終了、登録失敗なし |
-| I-5 | 旧版（設定の全項目を保存する版）からの上書きインストール | 旧設定を継承し、旧既定値の一括更新（下記 U-*）を適用 | 修正 | `settings::store::tests::full_legacy_file_still_loads`、`migrate` テスト |
+| I-5 | 旧版（設定の全項目を保存する版）からの更新 | 旧設定を継承し、旧既定値の一括更新（下記 U-*）を適用 | 修正 | `settings::store::tests::full_legacy_file_still_loads`、`migrate` テスト |
+| I-6 | Windows で WebView2 ランタイム未導入（ポータブル zip は同ランタイムを導入しない） | 起動時にメッセージで理由を表示し、［OK］で Microsoft の配布ページを表示。無言終了なし | 修正・要実機 | `src-tauri/src/webview2.rs`。未導入環境での実機確認は未実施 |
 
 ## 2. 初回セットアップ
 
@@ -133,13 +134,13 @@ MoonLens の導入〜削除の各段階で発生するケースと、期待動�
 | U-10 | 旧版の項目名・廃止項目・旧プロバイダー識別子（`paddle`、`embedded.llm` 等） | 宣言的規則（`settings/rules.rs`）で起動時に自動更新、退避と通知 | 修正 | `pre_release_file_is_upgraded_by_the_rules` |
 | U-9 | アプリ本体の更新確認 | 自動更新・更新確認なし（通信しない方針）。GitHub Releases から手動更新 | 既知 | 方針。必要なら任意設定として別途検討 |
 
-## 6. アンインストール
+## 6. 削除
 
 | # | ケース | 期待動作 | 状態 | 確認 |
 | --- | --- | --- | --- | --- |
-| R-1 | Windows（NSIS）で「アプリデータ削除」を選択 | 設定・履歴・モデルを全削除 | 修正・要実機 | モデルを Tauri のアプリ用フォルダー（`%LOCALAPPDATA%\io.moonlens.app`）配下へ移動。以前は削除対象外の `%APPDATA%\moonlens\models` に数 GB 残存。Windows 実機での削除確認は未実施 |
+| R-1 | Windows（ポータブル zip）：展開済みフォルダーを削除 | 本体のみ削除。ユーザーデータは残存し、設定画面「データ」と同梱 `README.txt` に削除対象フォルダーを表示。レジストリは不使用 | 修正 | モデルの保存先は `%LOCALAPPDATA%\io.moonlens.app`（以前は `%APPDATA%\moonlens\models`）。インストーラー（NSIS／msi）は廃止 |
 | R-2 | deb／rpm／AppImage／dmg | ユーザーデータは OS の慣習に従い残存。設定画面「データ」に削除対象フォルダーと容量を表示 | 修正 | `DataLocations.svelte` |
-| R-3 | 実行中にアンインストール | Windows インストーラーが終了を要求 | 要実機 | NSIS 既定動作 |
+| R-3 | 実行中に本体フォルダーを削除 | Windows は実行中の exe を削除不可（OS がエラー表示）。終了後に削除 | 既知 | OS 既定動作 |
 
 ## 既知の課題（本表作成時点）
 

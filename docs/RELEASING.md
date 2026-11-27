@@ -101,14 +101,16 @@ Pushing the tag fires `release.yml`:
 1b. The same job runs `scripts/check-release.mjs <tag>` and stops the
    release when the tag does not match the app version, when
    `CHANGELOG.md` has no section for the tag, or when `changelog.d/`
-   still holds fragments. It then reads that section
-   (`scripts/changelog.mjs notes <tag>`) into the draft's body.
-2. The `build` matrix runs `tauri-action` on Linux, Windows and macOS
+   still holds fragments. It then creates the GitHub Release as a
+   **draft** (pre-release flag set for `-` tags); the body is
+   `.github/release-body.md` followed by that section
+   (`scripts/changelog.mjs notes <tag>`).
+2. The `build` matrix builds on Linux, Windows and macOS
    (see `docs/ci-and-release-policy.md`) and attaches `.AppImage` /
-   `.deb` / `.rpm`, `.msi` / `setup.exe`, `.dmg` (Apple silicon), plus
-   `THIRD_PARTY_LICENSES.html`.
-3. The GitHub Release is created as a **draft**, with the pre-release
-   flag set for `-` tags. Check the assets, then publish it.
+   `.deb` / `.rpm`, the Windows portable zip
+   (`MoonLens_<version>_x64-portable.zip`, no installer), `.dmg`
+   (Apple silicon), plus `THIRD_PARTY_LICENSES.html`.
+3. Check the draft's assets and notes, then publish it.
 
 Watch progress at
 <https://github.com/c-ardinal/MoonLens/actions/workflows/release.yml>.
@@ -149,7 +151,7 @@ and `release` can start accumulating work for the next cycle.
 Alternative: if rebuilding is undesirable, `gh release edit
 v0.2.0-rc.3 --prerelease=false --latest` flips the flag on the
 existing pre-release. Keeps the old artefact names; prefer the tag
-route for installers published to package managers (Homebrew,
+route for packages published to package managers (Homebrew,
 winget, Flatpak) which expect to discover the release at its tag
 URL.
 
