@@ -155,6 +155,26 @@ describe('settings-meta', () => {
     expect(duplicateHotkeys(setPath(base, 'hotkeys.toggle_subtitle', ''))).toEqual([]);
   });
 
+  it('holds extra triggers bound to the same input, apart from the shortcuts', () => {
+    const saved = {
+      hotkeys: { capture_region: 'Alt+A' },
+      triggers: { capture_region: 'Mouse4', toggle_subtitle: '', open_history: 'Pad:Back+Y' }
+    };
+    const draft = setPath(saved, 'triggers.toggle_subtitle', 'Mouse4');
+    expect(duplicateHotkeys(draft).sort()).toEqual(['triggers.capture_region', 'triggers.toggle_subtitle']);
+    expect(heldHotkeys(saved, draft)).toEqual(['triggers.toggle_subtitle']);
+    expect(savable(saved, draft).triggers).toEqual(saved.triggers);
+    expect(duplicateHotkeys(setPath(saved, 'triggers.toggle_subtitle', 'Mouse5'))).toEqual([]);
+  });
+
+  it('offers an extra trigger for every shortcut action', () => {
+    const paths = (kind: string) =>
+      allFields()
+        .filter((f) => f.kind === kind)
+        .map((f) => f.path.split('.')[1]);
+    expect(paths('trigger')).toEqual(paths('hotkey'));
+  });
+
   it('reads defaults from the schema section defaults', () => {
     const schema = { properties: { overlay: { default: { follow_source: true } } } };
     expect(schemaDefault(schema, 'overlay.follow_source')).toBe(true);

@@ -20,6 +20,7 @@ pub struct Settings {
     pub config_version: u32,
     pub appearance: Appearance,
     pub hotkeys: Hotkeys,
+    pub triggers: Triggers,
     pub overlay: OverlaySettings,
     pub subtitle: SubtitleSettings,
     pub clipboard: ClipboardSettings,
@@ -168,6 +169,25 @@ impl Default for Hotkeys {
             custom: BTreeMap::new(),
         }
     }
+}
+
+/* -------------------------------- triggers -------------------------------- */
+
+/// One more way to run each shortcut action: a mouse button, a modifier
+/// key pressed twice, or a gamepad button combination (text form:
+/// `trigger.rs`; e.g. `Mouse4`, `Double:Control`, `Pad:Back+Y`). Empty =
+/// none. The fields mirror [`Hotkeys`].
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(default, deny_unknown_fields)]
+pub struct Triggers {
+    pub capture_region: String,
+    pub toggle_pin_overlay: String,
+    pub toggle_window_operate: String,
+    pub toggle_window_pause: String,
+    pub hold_window_original: String,
+    pub toggle_subtitle: String,
+    pub open_command_palette: String,
+    pub open_history: String,
 }
 
 /* -------------------------------- overlay -------------------------------- */

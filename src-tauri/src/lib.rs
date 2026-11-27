@@ -50,6 +50,10 @@ pub mod subtitle_record;
 pub mod subtitle_revise;
 pub mod translate_plan;
 pub mod translation_cache;
+pub mod trigger;
+pub mod trigger_watch;
+#[cfg(windows)]
+pub mod trigger_win;
 pub mod user_error;
 #[cfg(windows)]
 mod webview2;

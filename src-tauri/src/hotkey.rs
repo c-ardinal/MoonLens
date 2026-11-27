@@ -11,20 +11,104 @@ use anyhow::Result;
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
+use crate::settings::schema::{Hotkeys, Triggers};
 use crate::tr;
-use crate::{
-    app::AppState, pipeline::Pipeline, settings::SettingsStore, subtitle::SubtitleService,
-};
+use crate::{app::AppState, settings::SettingsStore};
 
 /// Notice id for shortcuts that could not be registered.
 pub const NOTICE_HOTKEYS: &str = "hotkeys";
 
-pub fn register_all(
-    app: &AppHandle,
-    settings: Arc<SettingsStore>,
-    _pipeline: Arc<Pipeline>,
-    subtitle: Arc<SubtitleService>,
-) -> Result<()> {
+/// What a shortcut or an extra trigger (`trigger_watch.rs`) does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Action {
+    /// Window translation: open one more window under the mouse pointer.
+    /// (`capture_window` is no longer bound: a maximized window is the
+    /// full-screen translation.)
+    OpenWindow,
+    /// Window translation: open a window when there is none, otherwise
+    /// close them all.
+    ToggleWindows,
+    /// Window translation: mouse through the windows / operate them.
+    ToggleOperate,
+    /// Window translation: pause / resume every window.
+    TogglePause,
+    /// Window translation: the original instead of the translations
+    /// while the key is held.
+    HoldOriginal,
+    /// Subtitle: toggle the live subtitle service.
+    ToggleSubtitle,
+    OpenHistory,
+    OpenCommandPalette,
+}
+
+impl Action {
+    /// Run the action for a press (`pressed`) or a release. Only
+    /// [`Action::HoldOriginal`] reacts to the release.
+    pub fn run(self, app: &AppHandle, pressed: bool) {
+        let state = app.state::<AppState>();
+        if self == Action::HoldOriginal {
+            crate::lens::hold_original(app, &state.lenses, pressed);
+            return;
+        }
+        if !pressed {
+            return;
+        }
+        match self {
+            Action::OpenWindow => crate::lens::open_new(app),
+            Action::ToggleWindows => {
+                crate::lens::toggle(app, &state.lenses);
+            }
+            Action::ToggleOperate => {
+                crate::lens::toggle_operate(app, &state.lenses);
+            }
+            Action::TogglePause => {
+                crate::lens::toggle_pause(app, &state.lenses);
+            }
+            Action::HoldOriginal => {}
+            Action::ToggleSubtitle => state.subtitle.toggle_checked(app),
+            // History and the command palette live in the main window:
+            // bring it up first, or the event lands in a hidden window
+            // and nothing happens. (Reverse image search is not bound: it
+            // sends the image to a web service, and MoonLens stays fully
+            // local.)
+            Action::OpenHistory => crate::app::route_main(app, "/history/"),
+            Action::OpenCommandPalette => {
+                crate::app::show_main_window(app);
+                let _ = app.emit_to("main", "moonlens://hotkey", "open_command_palette");
+            }
+        }
+    }
+}
+
+/// The shortcut of every action.
+fn shortcuts(h: &Hotkeys) -> [(Action, &str); 8] {
+    [
+        (Action::OpenWindow, &h.capture_region),
+        (Action::ToggleWindows, &h.toggle_pin_overlay),
+        (Action::ToggleOperate, &h.toggle_window_operate),
+        (Action::TogglePause, &h.toggle_window_pause),
+        (Action::HoldOriginal, &h.hold_window_original),
+        (Action::ToggleSubtitle, &h.toggle_subtitle),
+        (Action::OpenHistory, &h.open_history),
+        (Action::OpenCommandPalette, &h.open_command_palette),
+    ]
+}
+
+/// The extra trigger of every action (see `trigger.rs` for the text form).
+pub fn triggers(t: &Triggers) -> [(Action, &str); 8] {
+    [
+        (Action::OpenWindow, &t.capture_region),
+        (Action::ToggleWindows, &t.toggle_pin_overlay),
+        (Action::ToggleOperate, &t.toggle_window_operate),
+        (Action::TogglePause, &t.toggle_window_pause),
+        (Action::HoldOriginal, &t.hold_window_original),
+        (Action::ToggleSubtitle, &t.toggle_subtitle),
+        (Action::OpenHistory, &t.open_history),
+        (Action::OpenCommandPalette, &t.open_command_palette),
+    ]
+}
+
+pub fn register_all(app: &AppHandle, settings: Arc<SettingsStore>) -> Result<()> {
     let s = settings.snapshot();
     let shortcut_mgr = app.global_shortcut();
     shortcut_mgr.unregister_all().ok();
@@ -36,120 +120,12 @@ pub fn register_all(
     // with it: register each one independently and report the failures.
     let mut failed: Vec<String> = Vec::new();
 
-    // Window translation: open one more window under the mouse pointer.
-    // (`capture_window` is no longer bound: a maximized window is the
-    // full-screen translation.)
-    let app_c = app.clone();
-    bind(
-        shortcut_mgr,
-        &mut failed,
-        s.hotkeys.capture_region.as_str(),
-        move |_app, _sc, event| {
-            if matches!(event.state(), ShortcutState::Pressed) {
-                crate::lens::open_new(&app_c);
-            }
-        },
-    );
-
-    // Window translation: open a window when there is none, otherwise
-    // close them all.
-    let app_p = app.clone();
-    bind(
-        shortcut_mgr,
-        &mut failed,
-        s.hotkeys.toggle_pin_overlay.as_str(),
-        move |_a, _s, e| {
-            if matches!(e.state(), ShortcutState::Pressed) {
-                let state = app_p.state::<AppState>();
-                crate::lens::toggle(&app_p, &state.lenses);
-            }
-        },
-    );
-
-    // Window translation: mouse through the windows / operate them.
-    let app_o = app.clone();
-    bind(
-        shortcut_mgr,
-        &mut failed,
-        s.hotkeys.toggle_window_operate.as_str(),
-        move |_a, _s, e| {
-            if matches!(e.state(), ShortcutState::Pressed) {
-                let state = app_o.state::<AppState>();
-                crate::lens::toggle_operate(&app_o, &state.lenses);
-            }
-        },
-    );
-
-    // Window translation: pause / resume every window.
-    let app_z = app.clone();
-    bind(
-        shortcut_mgr,
-        &mut failed,
-        s.hotkeys.toggle_window_pause.as_str(),
-        move |_a, _s, e| {
-            if matches!(e.state(), ShortcutState::Pressed) {
-                let state = app_z.state::<AppState>();
-                crate::lens::toggle_pause(&app_z, &state.lenses);
-            }
-        },
-    );
-
-    // Window translation: the original instead of the translations
-    // while the key is held.
-    let app_v = app.clone();
-    bind(
-        shortcut_mgr,
-        &mut failed,
-        s.hotkeys.hold_window_original.as_str(),
-        move |_a, _s, e| {
-            let state = app_v.state::<AppState>();
-            let pressed = matches!(e.state(), ShortcutState::Pressed);
-            crate::lens::hold_original(&app_v, &state.lenses, pressed);
-        },
-    );
-
-    // Subtitle: toggle the live subtitle service.
-    let app_s = app.clone();
-    let subtitle_s = subtitle.clone();
-    bind(
-        shortcut_mgr,
-        &mut failed,
-        s.hotkeys.toggle_subtitle.as_str(),
-        move |_a, _s, e| {
-            if !matches!(e.state(), ShortcutState::Pressed) {
-                return;
-            }
-            subtitle_s.toggle_checked(&app_s);
-        },
-    );
-
-    // History and the command palette live in the main window: bring it
-    // up first, or the event lands in a hidden window and nothing happens.
-    // (Reverse image search is not registered: it sends the image to a web
-    // service, and MoonLens stays fully local.)
-    let app_h = app.clone();
-    bind(
-        shortcut_mgr,
-        &mut failed,
-        s.hotkeys.open_history.as_str(),
-        move |_a, _s, e| {
-            if matches!(e.state(), ShortcutState::Pressed) {
-                crate::app::route_main(&app_h, "/history/");
-            }
-        },
-    );
-    let app_k = app.clone();
-    bind(
-        shortcut_mgr,
-        &mut failed,
-        s.hotkeys.open_command_palette.as_str(),
-        move |_a, _s, e| {
-            if matches!(e.state(), ShortcutState::Pressed) {
-                crate::app::show_main_window(&app_k);
-                let _ = app_k.emit_to("main", "moonlens://hotkey", "open_command_palette");
-            }
-        },
-    );
+    for (action, accel) in shortcuts(&s.hotkeys) {
+        let app_a = app.clone();
+        bind(shortcut_mgr, &mut failed, accel, move |_app, _sc, event| {
+            action.run(&app_a, matches!(event.state(), ShortcutState::Pressed));
+        });
+    }
 
     for (id, accel) in &s.hotkeys.custom {
         let app_x = app.clone();
@@ -165,6 +141,7 @@ pub fn register_all(
             },
         );
     }
+    failed.extend(crate::trigger_watch::apply(app, &s.triggers));
     if failed.is_empty() {
         crate::notices::clear(NOTICE_HOTKEYS);
         Ok(())
@@ -213,11 +190,25 @@ fn bind<R, F>(
 /// Convenience re-registration triggered from the settings save command.
 pub fn reapply(app: &AppHandle) -> Result<()> {
     let state = app.state::<AppState>();
-    let s = state.inner();
-    register_all(
-        app,
-        s.settings.clone(),
-        s.pipeline.clone(),
-        s.subtitle.clone(),
-    )
+    register_all(app, state.settings.clone())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_shortcut_action_has_an_extra_trigger() {
+        let actions = |pairs: [(Action, &str); 8]| pairs.map(|(a, _)| a);
+        assert_eq!(
+            actions(shortcuts(&Hotkeys::default())),
+            actions(triggers(&Triggers::default()))
+        );
+    }
+
+    #[test]
+    fn extra_triggers_are_off_by_default() {
+        let t = Triggers::default();
+        assert!(triggers(&t).iter().all(|(_, text)| text.is_empty()));
+    }
 }
