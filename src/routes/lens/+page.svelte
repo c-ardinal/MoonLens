@@ -17,10 +17,13 @@
     setLensInteractive,
     setLensOperate,
     setLensLanguage,
+    setLensReadMode,
     setLensTextDock,
     type CaptureFlowResult,
     type LensBefore,
-    type LensBlock
+    type LensBlock,
+    type LensDescriptor,
+    type LensReadMode
   } from '$lib/ipc';
   import { joinedText, languageLabel, maskClip, rgb } from '$lib/lens-overlay';
   import {
@@ -84,6 +87,7 @@
   let explanation = $state<string | null>(null);
   let sourceLanguage = $state<string | null>(null);
   let targetLanguage = $state('ja');
+  let readMode = $state<LensReadMode>('subtitle');
   let dpr = $state(typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1);
   let vw = $state(typeof window !== 'undefined' ? window.innerWidth : 0);
   const boxes = $derived(liveBoxes(blocks, hidden, dpr, vw * dpr));
@@ -209,6 +213,11 @@
     await setLensLanguage(id, code).catch(() => {});
     // One-off mode: nothing re-reads on its own.
     if (!continuous) refresh();
+  }
+
+  function changeReadMode(mode: LensReadMode) {
+    readMode = mode;
+    setLensReadMode(id, mode).catch(() => {});
   }
 
   async function explain() {
@@ -413,9 +422,10 @@
     unlisteners.push(() => window.removeEventListener('keydown', onKey));
     // Language: the one this lens was opened with, else the configured one.
     Promise.all([listLensWindows(), getSettings()])
-      .then(([lenses, s]: [{ id: string; target_language: string | null }[], any]) => {
-        targetLanguage =
-          lenses.find((l) => l.id === id)?.target_language ?? s?.subtitle?.target_language ?? 'ja';
+      .then(([lenses, s]: [LensDescriptor[], any]) => {
+        const me = lenses.find((l) => l.id === id);
+        targetLanguage = me?.target_language ?? s?.subtitle?.target_language ?? 'ja';
+        readMode = me?.read_mode ?? 'subtitle';
         const k = s?.hotkeys?.toggle_window_operate;
         operateKey = k ? displayAccelerator(k) : '';
       })
@@ -513,6 +523,8 @@
       {showOriginal}
       {showText}
       {targetLanguage}
+      {readMode}
+      onreadmode={changeReadMode}
       {hasText}
       busy={working}
       oncontinuous={() => (continuous = !continuous)}
