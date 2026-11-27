@@ -390,7 +390,7 @@ export type SubtitleEvent =
   | { kind: 'status'; phase: SubtitlePhase }
   | { kind: 'chunk'; id: number; original: string; translated: string }
   | {
-      /** 文単位の再翻訳結果。`replaces` の各行を 1 行（＋次文の冒頭 `rest`）へ置換。 */
+      /** 文単位の再翻訳結果。`replaces` の各行を 1 行（＋次文の冒頭 `rest`）へ置換。`original` が空の場合は遮断済みの文：行の除去のみ。 */
       kind: 'revised';
       replaces: number[];
       id: number;
@@ -398,6 +398,8 @@ export type SubtitleEvent =
       translated: string;
       rest: { id: number; original: string; translated: string } | null;
     }
+  /** 短時間に反復した文：遮断リストへの追加候補。 */
+  | { kind: 'candidate'; phrase: string }
   | { kind: 'error'; message: string };
 
 /** `id`：イベントの対象ウィンドウ（ラベル）。 */
@@ -409,6 +411,9 @@ export const subtitleState = () => safeInvoke<boolean>('subtitle_state', undefin
 /** 音声翻訳ウィンドウを全停止・全閉鎖。 */
 export const stopSubtitle = () => safeInvoke<void>('stop_subtitle');
 export const startSubtitle = () => safeInvoke<void>('start_subtitle');
+/** 音声翻訳の遮断リスト（`subtitle.blocked_phrases`）へ追加。 */
+export const blockSubtitlePhrase = (phrase: string) =>
+  safeInvoke<void>('block_subtitle_phrase', { phrase });
 /** 音声翻訳ウィンドウを追加（呼出元ウィンドウの隣へ配置）。 */
 export const openSubtitleWindow = (source?: AudioSource) =>
   safeInvoke<string>('open_subtitle_window', { source });

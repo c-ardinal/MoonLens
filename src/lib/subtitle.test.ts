@@ -5,6 +5,7 @@ import {
   inputHint,
   reduce,
   restore,
+  settle,
   sourceLabel,
   sourceOptions,
   statusLabel,
@@ -191,5 +192,62 @@ describe('音源メニューの選択肢', () => {
     });
     expect(v.lines.map((l) => l.original)).toEqual(['old', 'new a new b.']);
     expect(new Set(v.lines.map((l) => l.id)).size).toBe(2);
+  });
+});
+
+describe('遮断候補（反復検出）', () => {
+  let next = 0;
+  const heard = (original: string): SubtitleEvent => ({
+    kind: 'chunk',
+    id: ++next,
+    original,
+    translated: `訳：${original}`
+  });
+  const started: SubtitleEvent = { kind: 'started', device: 'スピーカー', source: { kind: 'system' } };
+
+  it('候補は検出順に保持、同一文の重複なし、開始時に初期化', () => {
+    let v = run([
+      started,
+      { kind: 'candidate', phrase: 'Thank you.' },
+      { kind: 'candidate', phrase: 'Bye.' },
+      { kind: 'candidate', phrase: 'Thank you.' }
+    ]);
+    expect(v.candidates).toEqual(['Thank you.', 'Bye.']);
+    v = reduce(v, started);
+    expect(v.candidates).toEqual([]);
+  });
+
+  it('遮断：候補と表示済みの同一文（表記差・反復を含む）を除去', () => {
+    const v = run([
+      heard('Thank you.'),
+      heard('Thank you for coming.'),
+      heard('thank you'),
+      heard('Thank you. Thank you.'),
+      { kind: 'candidate', phrase: 'Thank you.' }
+    ]);
+    const next = settle(v, 'Thank you.', true);
+    expect(next.candidates).toEqual([]);
+    expect(next.lines.map((l) => l.original)).toEqual(['Thank you for coming.']);
+  });
+
+  it('遮断済みの文の補正結果（原文が空）：置換対象の行を除去、次文の冒頭のみ残置', () => {
+    const v = run([heard('Thank you.'), heard('Please sit.')]);
+    const [first, second] = v.lines.map((l) => l.id);
+    const next = reduce(settle(v, 'Thank you.', true), {
+      kind: 'revised',
+      replaces: [first, second],
+      id: second + 1,
+      original: '',
+      translated: '',
+      rest: { id: second + 2, original: 'Please sit.', translated: '' }
+    });
+    expect(next.lines.map((l) => l.original)).toEqual(['Please sit.']);
+  });
+
+  it('無視：候補のみ除去、字幕は維持', () => {
+    const v = run([heard('Thank you.'), { kind: 'candidate', phrase: 'Thank you.' }]);
+    const next = settle(v, 'Thank you.', false);
+    expect(next.candidates).toEqual([]);
+    expect(next.lines).toHaveLength(1);
   });
 });

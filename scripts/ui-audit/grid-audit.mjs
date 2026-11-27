@@ -84,6 +84,7 @@ async function subtitleWindow() {
     await emit({ kind: 'status', phase: 'translating' });
     await emit({ kind: 'chunk', id: 1, original: 'And so, my fellow Americans,', translated: 'そして、同胞であるアメリカ国民の皆さん、' }); await m('chunk');
     await pg.mouse.move(w / 2, 20); await m('hover');
+    await emit({ kind: 'candidate', phrase: 'Thank you.' }); await m('candidate');
     // 吸着メニュー：吸着なし（候補一覧）・吸着中（配置 6 種・解除）
     const attachMenu = async (n) => {
       await reach(`subtitle-${w}-${n}`, async () => {

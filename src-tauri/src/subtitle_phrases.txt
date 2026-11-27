@@ -1,0 +1,122 @@
+# Stock phrases speech recognition invents over silence and background
+# music: video sign-offs and subtitle credits learned from captioned
+# videos. A recognized sentence that consists of one of these is removed
+# from the subtitles (see `subtitle_filter`).
+#
+# One phrase per line under its language. Case, spacing and punctuation
+# do not matter. A trailing `*` matches any sentence that starts with the
+# phrase. Keep to phrases nobody says in the middle of real content:
+# everyday words ("Thank you.") belong to the user's own list.
+
+[en]
+Thanks for watching
+Thank you for watching
+Thanks for watching and see you next time
+Thank you so much for watching
+Thanks for watching, and I'll see you in the next video
+Please subscribe to my channel
+Please subscribe to the channel
+Don't forget to like and subscribe
+Please like and subscribe
+Subtitles by the Amara.org community
+Subtitles by*
+Subtitles made by*
+Transcribed by*
+Transcription by*
+
+[ja]
+ご視聴ありがとうございました
+ご視聴ありがとうございます
+ご視聴いただきありがとうございます
+ご視聴いただきありがとうございました
+最後までご視聴ありがとうございました
+最後までご視聴いただきありがとうございます
+最後までご視聴いただきありがとうございました
+最後までご視聴頂きありがとうございました
+ご清聴ありがとうございました
+チャンネル登録お願いします
+チャンネル登録をお願いします
+チャンネル登録よろしくお願いします
+チャンネル登録をお願いいたします
+チャンネル登録と高評価をお願いします
+高評価とチャンネル登録をお願いします
+次回の動画でお会いしましょう
+また次回の動画でお会いしましょう
+字幕視聴ありがとうございました
+字幕作成者*
+字幕制作*
+字幕提供*
+
+[zh]
+谢谢观看
+謝謝觀看
+感谢观看
+感謝觀看
+谢谢大家观看
+謝謝大家收看
+请订阅我的频道
+請訂閱我的頻道
+请不吝点赞 订阅 转发 打赏支持明镜与点点栏目
+請不吝點贊訂閱轉發打賞支持明鏡與點點欄目
+字幕由Amara.org社区提供
+字幕由 Amara.org 社群提供
+由 Amara.org 社群提供的字幕
+字幕by*
+字幕志愿者*
+字幕志願者*
+
+[ko]
+시청해주셔서 감사합니다
+시청해 주셔서 감사합니다
+구독과 좋아요 부탁드립니다
+구독과 좋아요 부탁드려요
+한글자막 by*
+자막 제공*
+
+[de]
+Untertitel der Amara.org-Community
+Untertitel im Auftrag des ZDF*
+Untertitelung des ZDF*
+Untertitelung aufgrund der Amara.org-Community
+Untertitel von*
+Vielen Dank fürs Zuschauen
+Danke fürs Zuschauen
+
+[fr]
+Sous-titres réalisés par la communauté d'Amara.org
+Sous-titres réalisés para la communauté d'Amara.org
+Sous-titres par*
+Sous-titrage*
+Merci d'avoir regardé cette vidéo
+Merci d'avoir regardé
+
+[es]
+Subtítulos realizados por la comunidad de Amara.org
+Subtítulos por la comunidad de Amara.org
+Subtítulos por*
+Subtitulado por*
+Gracias por ver el video
+Gracias por ver el vídeo
+
+[pt]
+Legendas pela comunidade Amara.org
+Legendas pela comunidade de Amara.org
+Legendas por*
+Obrigado por assistir
+Obrigada por assistir
+
+[it]
+Sottotitoli creati dalla comunità Amara.org
+Sottotitoli a cura di*
+Sottotitoli e revisione a cura di*
+Grazie per aver guardato il video
+Grazie per la visione
+
+[ru]
+Субтитры сделал DimaTorzok
+Субтитры создавал DimaTorzok
+Субтитры делал DimaTorzok
+Субтитры подготовил*
+Редактор субтитров*
+Спасибо за просмотр
+Продолжение следует

@@ -325,6 +325,8 @@ fn last_boundary(text: &str) -> Option<usize> {
 pub struct Revision {
     pub replaces: Vec<u64>,
     pub id: u64,
+    /// Empty when the sentence is blocked by now (`subtitle_filter`):
+    /// the replaced lines go and only `rest` takes their place.
     pub original: String,
     pub translated: String,
     pub rest: Option<RevisedRest>,

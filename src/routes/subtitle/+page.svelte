@@ -4,6 +4,7 @@
   import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
   import { AppWindow, Check, ChevronDown, Eye, EyeOff, Magnet, Monitor, Plus, RotateCw, X } from 'lucide-svelte';
   import {
+    blockSubtitlePhrase,
     closeSubtitleWindow,
     getSettings,
     listAudioApps,
@@ -32,6 +33,7 @@
     reduce,
     restore,
     sameSource,
+    settle,
     sourceLabel,
     sourceOptions,
     statusLabel
@@ -248,6 +250,17 @@
     items[(at + step + items.length) % items.length]?.focus();
   }
 
+  // 反復検出の候補：遮断リストへの追加は利用者の承認時のみ。
+  const candidate = $derived(view.candidates[0]);
+  async function block(phrase: string) {
+    try {
+      await blockSubtitlePhrase(phrase);
+      view = settle(view, phrase, true);
+    } catch (e) {
+      view = { ...view, error: `遮断リストへの追加失敗：${e}` };
+    }
+  }
+
   function startResize(e: PointerEvent) {
     if (e.button !== 0) return;
     e.preventDefault();
@@ -422,6 +435,18 @@
       <button class="restart" onclick={restart}><RotateCw class="h-3.5 w-3.5" />再開</button>
     {/if}
   </section>
+  {#if candidate}
+    <aside class="cand" aria-label="遮断候補">
+      <span class="cand-label" title="同一文の反復を検出。誤認識の場合は遮断を選択">反復検出</span>
+      <span class="cand-text" title={candidate}>{candidate}</span>
+      <button class="cand-btn primary" title="以後、字幕から除外（設定 → 音声翻訳で解除可能）" onclick={() => block(candidate)}>
+        遮断
+      </button>
+      <button class="cand-btn" title="今回の音声翻訳中は再提示なし" onclick={() => (view = settle(view, candidate, false))}>
+        無視
+      </button>
+    </aside>
+  {/if}
 
   {#if menuOpen}
     <!-- 小寸法のウィンドウでも一覧可能とするため、字幕領域全面へ表示 -->
@@ -908,6 +933,51 @@
       animation: none;
       transition: none;
     }
+  }
+  /* 遮断候補：字幕の下端へ固定（字幕のスクロール対象外） */
+  .cand {
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    /* 右端：寸法変更の把手を回避 */
+    padding: 4px 16px 4px 12px;
+    font-size: 12px;
+    line-height: 16px;
+    background: rgba(24, 24, 28, 0.92);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12);
+    border-radius: 0 0 8px 8px;
+  }
+  .cand-label {
+    flex: none;
+    opacity: 0.75;
+    white-space: nowrap;
+  }
+  .cand-text {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-weight: 600;
+  }
+  .cand-btn {
+    flex: none;
+    border-radius: 6px;
+    padding: 4px 8px;
+    line-height: 16px;
+    cursor: pointer;
+    white-space: nowrap;
+    background: rgba(255, 255, 255, 0.08);
+  }
+  .cand-btn:hover {
+    background: rgba(255, 255, 255, 0.16);
+  }
+  .cand-btn.primary {
+    background: color-mix(in srgb, var(--ml-accent) 45%, transparent);
+  }
+  .cand-btn.primary:hover {
+    background: color-mix(in srgb, var(--ml-accent) 65%, transparent);
   }
   .grip {
     z-index: 2;

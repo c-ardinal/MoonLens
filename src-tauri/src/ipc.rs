@@ -1093,6 +1093,21 @@ pub async fn subtitle_state(state: State<'_, AppState>) -> Result<bool, String> 
     Ok(state.subtitle.is_running())
 }
 
+/// Block `phrase` in live subtitles from now on: the user approved a
+/// suggestion in the subtitle window. Persisted to config.toml
+/// (`subtitle.blocked_phrases`); takes effect from the next chunk.
+#[tauri::command]
+pub async fn block_subtitle_phrase(
+    phrase: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let mut next = (*state.settings.snapshot()).clone();
+    if crate::subtitle_filter::add_phrase(&mut next.subtitle.blocked_phrases, &phrase) {
+        state.settings.save(next).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 /// Stop and close every subtitle window.
 #[tauri::command]
 pub async fn stop_subtitle(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {

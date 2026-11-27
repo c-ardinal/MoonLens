@@ -27,6 +27,7 @@ use crate::{
     pipeline::Pipeline,
     providers::{Capability, TaskInput, TaskOutput},
     settings::SettingsStore,
+    subtitle_filter::StockFilter,
     subtitle_revise::{Assembler, Languages, Reviser, Revision, Translator},
 };
 
@@ -48,6 +49,11 @@ pub enum SubtitleEvent {
         id: u64,
         original: String,
         translated: String,
+    },
+    /// A short sentence that keeps coming back: the window asks whether
+    /// to block it from now on (see `subtitle_filter`).
+    Candidate {
+        phrase: String,
     },
     /// A finished sentence, translated again as a whole: it replaces
     /// the lines of the chunks it was recognized in.
@@ -596,9 +602,19 @@ pub async fn run_loop(
     };
     let mut heard = false;
     let mut closed = false;
+    let mut stock = StockFilter::default();
     let mut lines = Assembler::default();
     let mut reviser = Reviser::new(translator(pipeline.clone()));
-    let revised = |revision: Revision| emit(SubtitleEvent::Revised(revision));
+    // A sentence approved for blocking after its chunks were shown must
+    // not come back as a correction: its lines go (empty text), the
+    // start of the next sentence stays.
+    let revised = |stock: &mut StockFilter, mut revision: Revision| {
+        if stock.blocks_all(&settings.snapshot().subtitle, &revision.original) {
+            revision.original.clear();
+            revision.translated.clear();
+        }
+        emit(SubtitleEvent::Revised(revision))
+    };
     loop {
         let snap = settings.snapshot();
         let realtime = snap.subtitle.realtime_correction;
@@ -640,7 +656,7 @@ pub async fn run_loop(
                 // `None`: the work left needed no new translation.
                 revision = reviser.next(), if reviser.is_busy() => {
                     if let Some(revision) = revision {
-                        revised(revision);
+                        revised(&mut stock, revision);
                     }
                     set_phase(idle(&reviser));
                     continue;
@@ -669,7 +685,7 @@ pub async fn run_loop(
                 // The audio ended (stopping drops this task instead):
                 // finish what the pause above released.
                 while let Some(revision) = reviser.next().await {
-                    revised(revision);
+                    revised(&mut stock, revision);
                 }
                 set_phase(Phase::Waiting);
                 break;
@@ -709,7 +725,7 @@ pub async fn run_loop(
         // sentence under way finishes first; the next one starts when
         // the loop waits for audio again.
         if let Some(revision) = reviser.settle().await {
-            revised(revision);
+            revised(&mut stock, revision);
         }
         set_phase(Phase::Recognizing);
         let seconds = to_send.len() as f32 / 16_000.0;
@@ -729,15 +745,27 @@ pub async fn run_loop(
         match recognition.await {
             Ok(res) => {
                 failures = 0;
-                let original = match &res.output {
-                    TaskOutput::Transcript { segments } => segments
-                        .iter()
-                        .map(|s| s.text.trim())
-                        .collect::<Vec<_>>()
-                        .join(" "),
-                    TaskOutput::Text(t) => t.clone(),
-                    _ => String::new(),
+                let segments: Vec<&str> = match &res.output {
+                    TaskOutput::Transcript { segments } => {
+                        segments.iter().map(|s| s.text.as_str()).collect()
+                    }
+                    TaskOutput::Text(t) => vec![t.as_str()],
+                    _ => Vec::new(),
                 };
+                // Stock misrecognitions go no further: not shown, and
+                // not worth a translation.
+                let screened = stock.screen(
+                    &settings.snapshot().subtitle,
+                    &segments,
+                    std::time::Instant::now(),
+                );
+                for phrase in &screened.blocked {
+                    tracing::debug!("subtitle: stock phrase removed: {phrase}");
+                }
+                if let Some(phrase) = screened.candidate {
+                    emit(SubtitleEvent::Candidate { phrase });
+                }
+                let original = screened.text;
                 tracing::debug!(
                     "subtitle: {seconds:.1} s of audio recognized in {} ms ({} chars)",
                     started.elapsed().as_millis(),
@@ -770,6 +798,16 @@ pub async fn run_loop(
                         String::new()
                     }
                 };
+                // Approved for blocking while it was being translated
+                // (the window asked before translation began): the
+                // window dropped its copies, do not bring one back.
+                if stock.blocks_all(&settings.snapshot().subtitle, &original) {
+                    if correcting {
+                        pause(&mut lines, &mut reviser, &languages);
+                    }
+                    set_phase(idle(&reviser));
+                    continue;
+                }
                 let id = lines.next_id();
                 if correcting {
                     if let Some(sentence) = lines.push(id, &original, &translated, overlapped) {

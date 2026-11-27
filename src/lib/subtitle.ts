@@ -19,6 +19,8 @@ export type SubtitleView = {
   /** 音源：PC 全体、またはアプリ単位。 */
   source: AudioSource;
   lines: SubtitleLine[];
+  /** 遮断リストへの追加候補（利用者の判断待ち、検出順）。 */
+  candidates: string[];
   error: string | null;
   /**
    * 行 ID の加算値。バックエンドは開始（音源変更・再開）単位で 1 から採番する一方、
@@ -38,6 +40,7 @@ export const initialView = (): SubtitleView => ({
   device: '',
   source: { kind: 'system' },
   lines: [],
+  candidates: [],
   error: null,
   idBase: 0,
   lastId: 0
@@ -54,6 +57,8 @@ export function reduce(view: SubtitleView, ev: SubtitleEvent): SubtitleView {
         phase: 'waiting',
         device: ev.device,
         source: ev.source,
+        // 反復検出はバックエンド側で開始単位に初期化。
+        candidates: [],
         error: null,
         idBase: view.lastId
       };
@@ -79,17 +84,44 @@ export function reduce(view: SubtitleView, ev: SubtitleEvent): SubtitleView {
       // 置換対象が保持範囲外（破棄済み）の場合、行は不変。
       const at = view.lines.findIndex((l) => replaces.includes(l.id));
       if (at < 0) return lastId === view.lastId ? view : { ...view, lastId };
-      const next: SubtitleLine[] = [
-        { id: base + ev.id, original: ev.original, translated: ev.translated, revised: true }
-      ];
+      // 原文が空：補正前に遮断済みとなった文。置換対象の行は除去、次文の冒頭のみ残置。
+      const next: SubtitleLine[] = ev.original
+        ? [{ id: base + ev.id, original: ev.original, translated: ev.translated, revised: true }]
+        : [];
       if (ev.rest) next.push({ ...ev.rest, id: base + ev.rest.id });
       const lines = view.lines.filter((l) => !replaces.includes(l.id));
       lines.splice(at, 0, ...next);
       return { ...view, lines, lastId };
     }
+    case 'candidate':
+      return view.candidates.includes(ev.phrase)
+        ? view
+        : { ...view, candidates: [...view.candidates, ev.phrase] };
     case 'error':
       return { ...view, error: ev.message };
   }
+}
+
+/**
+ * 候補への判断を反映。遮断（`blocked`）の場合、表示済みの同一文の字幕も除去
+ * （誤認識と判断済みのため）。無視の場合、字幕は維持。
+ */
+export function settle(view: SubtitleView, phrase: string, blocked: boolean): SubtitleView {
+  const candidates = view.candidates.filter((c) => c !== phrase);
+  if (!blocked) return { ...view, candidates };
+  const key = phraseKey(phrase);
+  return { ...view, candidates, lines: view.lines.filter((l) => !saysOnly(l.original, key)) };
+}
+
+/** 表記差（大小文字・空白・約物）を除去した照合用の文字列。 */
+export function phraseKey(text: string): string {
+  return text.normalize('NFKC').toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
+}
+
+/** `text` の内容が `key` の文の反復のみか。 */
+function saysOnly(text: string, key: string): boolean {
+  const said = phraseKey(text);
+  return key !== '' && said !== '' && said.length % key.length === 0 && said === key.repeat(said.length / key.length);
 }
 
 /** タイトルバーの状態表記。音声待機中は入力状態を表示。 */

@@ -32,7 +32,9 @@ export type Field =
   | { kind: 'color'; path: string; label: string; help?: string }
   | { kind: 'hotkey'; path: string; label: string; help?: string }
   /** Editable term list (rendered by GlossaryEditor). */
-  | { kind: 'glossary'; path: string; label: string; help?: string };
+  | { kind: 'glossary'; path: string; label: string; help?: string }
+  /** Editable list of phrases (rendered by PhraseList). */
+  | { kind: 'phrases'; path: string; label: string; help?: string; placeholder?: string };
 
 export type Section =
   | { id: string; title: string; description?: string; fields: Field[] }
@@ -216,6 +218,19 @@ export const SECTIONS: Section[] = [
         path: 'subtitle.batch_correction',
         label: '一括補正',
         help: '無音時・終了時に未補正の文を一括で再翻訳。発話中の負荷なし。'
+      },
+      {
+        kind: 'toggle',
+        path: 'subtitle.block_stock_phrases',
+        label: '定型誤認識の遮断',
+        help: '無音・BGM 区間で音声認識が出力する定型文（視聴謝辞・字幕提供表記・効果音表記）を字幕から除外。除外分は翻訳も省略。'
+      },
+      {
+        kind: 'phrases',
+        path: 'subtitle.blocked_phrases',
+        label: '遮断文（追加分）',
+        help: '同梱リストへの追加分。文全体の一致で遮断（大小文字・空白・約物の差は無視）。音声翻訳ウィンドウの反復検出からも追加可能。',
+        placeholder: '例：Thank you.'
       }
     ]
   },
@@ -493,7 +508,12 @@ export function savable<T>(saved: T, draft: T): T {
     if (held.length === 0) break;
     for (const p of held) next = setPath(next, p, getPath(saved, p));
   }
-  return setPath(next, 'translation.glossary', compactGlossary(getPath(next, 'translation.glossary')));
+  next = setPath(next, 'translation.glossary', compactGlossary(getPath(next, 'translation.glossary')));
+  // 遮断文の空行も保存対象外（設定に項目の存在する場合のみ）。
+  const phrases = getPath(next, 'subtitle.blocked_phrases');
+  return Array.isArray(phrases)
+    ? setPath(next, 'subtitle.blocked_phrases', phrases.filter((p: string) => p.trim() !== ''))
+    : next;
 }
 
 /** 保存対象外のショートカット（重複の解消まで保存済の値を維持する項目）。 */
@@ -507,7 +527,7 @@ export function heldHotkeys(saved: any, draft: any): string[] {
 /** 連続入力の項目（スライダー・色・用語集）：保存までの待機時間（ミリ秒）。 */
 export function saveDelay(path: string): number {
   const f = allFields().find((x) => x.path === path);
-  if (f?.kind === 'glossary') return 600;
+  if (f?.kind === 'glossary' || f?.kind === 'phrases') return 600;
   return f?.kind === 'color' || (f?.kind === 'number' && f.slider) ? 300 : 0;
 }
 

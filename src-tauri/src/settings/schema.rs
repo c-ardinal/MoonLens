@@ -234,6 +234,14 @@ pub struct SubtitleSettings {
     /// Translate the sentences not yet corrected again when the speech
     /// pauses or the audio ends.
     pub batch_correction: bool,
+    /// Remove stock misrecognitions (video sign-offs, subtitle credits,
+    /// sound annotations) before they are shown or translated; see
+    /// `subtitle_filter`.
+    pub block_stock_phrases: bool,
+    /// The user's additions to the bundled list of stock phrases. Only
+    /// ever changed by the user (settings screen, or approving a
+    /// suggestion in the subtitle window).
+    pub blocked_phrases: Vec<String>,
 }
 
 impl Default for SubtitleSettings {
@@ -250,6 +258,8 @@ impl Default for SubtitleSettings {
             font_size_px: 22,
             realtime_correction: true,
             batch_correction: true,
+            block_stock_phrases: true,
+            blocked_phrases: Vec::new(),
         }
     }
 }

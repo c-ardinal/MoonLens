@@ -50,6 +50,12 @@ show_original = true
 font_size_px = 22
 realtime_correction = true
 batch_correction = true
+# Remove phrases speech recognition invents over silence and music
+# ("Thanks for watching", subtitle credits, "[Music]"). A removed line is
+# not translated either.
+block_stock_phrases = true
+# Phrases to remove in addition to the bundled list.
+blocked_phrases = []
 
 [clipboard]
 auto_copy_translation = true
