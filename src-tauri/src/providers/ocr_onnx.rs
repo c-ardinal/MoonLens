@@ -1,16 +1,15 @@
-//! ONNX Runtime for the PP-OCRv5 models: the faster way to run them.
+//! ONNX Runtime for the PP-OCR models: the faster way to run them.
 //!
-//! The same two networks [`super::ocr_ppocr`] runs on rten, in their
-//! official ONNX form (Apache-2.0, published by PaddlePaddle), on ONNX
-//! Runtime: on the CPU everywhere, and through DirectML on the GPU on
+//! The networks [`super::ocr_ppocr`] runs on rten, on ONNX Runtime
+//! instead: on the CPU everywhere, and through DirectML on the GPU on
 //! Windows. Which of them reads a line fastest differs from PC to PC,
 //! so [`super::ocr_ppocr::engine`] measures the ones that load and
 //! keeps the fastest (see `PpOcr::load`).
 //!
-//! ONNX Runtime is not linked in: its library and the two models are
-//! fetched on request with the other OCR models ([`install`]), each
-//! checked against a pinned SHA-256. Without them, or where the
-//! library does not load, OCR runs on rten as before.
+//! ONNX Runtime is not linked in: its library is fetched on request
+//! with the OCR models ([`install`]) and checked against a pinned
+//! SHA-256. Without it, or where the library does not load, OCR runs
+//! on rten.
 
 use std::path::{Path, PathBuf};
 
@@ -18,29 +17,35 @@ use std::path::{Path, PathBuf};
 /// `ort` crate must name the same minor version.
 pub const RUNTIME_VERSION: &str = "1.24.4";
 
-pub const DET_FILE: &str = "ppocrv5-det.onnx";
-pub const REC_FILE: &str = "ppocrv5-rec.onnx";
-
-/// A file fetched as it is.
+/// A file fetched as it is and stored under `file`.
+#[derive(Debug)]
 pub struct Remote {
     pub url: &'static str,
     pub sha256: &'static str,
     pub file: &'static str,
 }
 
-/// The models, pinned to a commit of the publisher's repository.
-pub const MODELS: [Remote; 2] = [
-    Remote {
-        url: "https://huggingface.co/PaddlePaddle/PP-OCRv5_mobile_det_onnx/resolve/e6f4fa85f00e168c862bc462aebca69eef9b3d3d/inference.onnx",
-        sha256: "a431985659dc921974177a95adcfbb90fd9e51989a5e04d70d0b75f597b6e61d",
-        file: DET_FILE,
-    },
-    Remote {
-        url: "https://huggingface.co/PaddlePaddle/PP-OCRv5_mobile_rec_onnx/resolve/ed152b8b495f84de93cda5709d768548a9127622/inference.onnx",
-        sha256: "da72dc72ca4dc220df0dfde68c1dedc31c58d3e76a25871122e5056227d50092",
-        file: REC_FILE,
-    },
-];
+impl Remote {
+    /// Whether the file is in `models_dir`.
+    pub fn present(&self, models_dir: &Path) -> bool {
+        present(&models_dir.join(self.file))
+    }
+
+    /// Download the file into `models_dir` unless it is there.
+    pub async fn install(
+        &'static self,
+        models_dir: &Path,
+        progress: Option<&super::ocr_ocrs::ProgressCb>,
+    ) -> anyhow::Result<()> {
+        if self.present(models_dir) {
+            return Ok(());
+        }
+        let bytes = fetch(&reqwest::Client::new(), self.url, self.file, progress).await?;
+        let dir = models_dir.to_path_buf();
+        tokio::task::spawn_blocking(move || verify_and_store(&bytes, self, &dir)).await??;
+        Ok(())
+    }
+}
 
 /// The ONNX Runtime build for one platform: a zip archive (the
 /// official Python wheel, the one distribution that carries a single
@@ -140,14 +145,13 @@ fn present(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
-/// Whether the models and the runtime library are on disk.
+/// Whether the runtime library is on disk.
 pub fn installed(models_dir: &Path) -> bool {
     let Some(runtime) = RUNTIME.as_ref() else {
         return false;
     };
     let dir = runtime_dir(models_dir);
-    MODELS.iter().all(|m| present(&models_dir.join(m.file)))
-        && runtime.members.iter().all(|(_, f)| present(&dir.join(f)))
+    runtime.members.iter().all(|(_, f)| present(&dir.join(f)))
 }
 
 fn check(bytes: &[u8], sha256: &str, what: &str) -> anyhow::Result<()> {
@@ -203,9 +207,8 @@ pub fn verify_and_unpack(
     Ok(())
 }
 
-/// Download what is missing of the models and the runtime into
-/// `models_dir`. No-op when all is installed or the platform has no
-/// runtime build.
+/// Download the runtime into `models_dir`. No-op when it is installed
+/// or the platform has no runtime build.
 pub async fn install(
     models_dir: &Path,
     progress: Option<&super::ocr_ocrs::ProgressCb>,
@@ -213,17 +216,9 @@ pub async fn install(
     let Some(runtime) = RUNTIME.as_ref() else {
         return Ok(());
     };
-    let client = reqwest::Client::new();
-    for model in &MODELS {
-        if present(&models_dir.join(model.file)) {
-            continue;
-        }
-        let bytes = fetch(&client, model.url, model.file, progress).await?;
-        let dir = models_dir.to_path_buf();
-        tokio::task::spawn_blocking(move || verify_and_store(&bytes, model, &dir)).await??;
-    }
     let dir = runtime_dir(models_dir);
     if !runtime.members.iter().all(|(_, f)| present(&dir.join(f))) {
+        let client = reqwest::Client::new();
         let bytes = fetch(&client, runtime.url, "onnxruntime", progress).await?;
         let dir = models_dir.to_path_buf();
         tokio::task::spawn_blocking(move || verify_and_unpack(&bytes, runtime, &dir)).await??;
@@ -264,7 +259,7 @@ pub mod runtime {
     use ort::value::Tensor;
     use parking_lot::Mutex;
 
-    use super::{library_path, DET_FILE, REC_FILE};
+    use super::library_path;
 
     /// What the networks run on.
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -323,51 +318,61 @@ pub mod runtime {
     #[cfg(not(windows))]
     fn preload_directml(_library: &Path) {}
 
-    /// The detection and recognition networks on one device.
-    pub struct Models {
-        det: Mutex<Session>,
-        /// One session per concurrent caller (see [`Models::rec`]).
-        rec: Vec<Mutex<Session>>,
+    fn cores() -> usize {
+        std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(2)
+            .clamp(1, 8)
     }
 
-    impl Models {
-        /// `rec_callers`: how many threads will call [`Models::rec`]
-        /// at the same time; the cores are split between them.
-        pub fn load(models_dir: &Path, device: Device, rec_callers: usize) -> Result<Self> {
-            let env = environment(models_dir)?;
-            let cores = std::thread::available_parallelism()
-                .map(|n| n.get())
-                .unwrap_or(2)
-                .clamp(1, 8);
-            let open = |file: &str, threads: usize| -> Result<Mutex<Session>> {
-                let mut builder = Session::builder(env).map_err(|e| anyhow!("{e}"))?;
-                builder = match device {
-                    Device::Cpu => builder
-                        .with_intra_threads(threads)
-                        .map_err(|e| anyhow!("{e}"))?,
-                    Device::DirectMl => directml(builder)?,
-                };
-                let session = builder
-                    .commit_from_file(models_dir.join(file))
-                    .map_err(|e| anyhow!("load {file}: {e}"))?;
-                Ok(Mutex::new(session))
-            };
-            let rec_callers = rec_callers.clamp(1, cores);
-            Ok(Self {
-                det: open(DET_FILE, cores)?,
-                rec: (0..rec_callers)
-                    .map(|_| open(REC_FILE, (cores / rec_callers).max(1)))
-                    .collect::<Result<_>>()?,
-            })
+    fn open(models_dir: &Path, file: &str, device: Device, threads: usize) -> Result<Session> {
+        let env = environment(models_dir)?;
+        let mut builder = Session::builder(env).map_err(|e| anyhow!("{e}"))?;
+        builder = match device {
+            Device::Cpu => builder
+                .with_intra_threads(threads)
+                .map_err(|e| anyhow!("{e}"))?,
+            Device::DirectMl => directml(builder)?,
+        };
+        builder
+            .commit_from_file(models_dir.join(file))
+            .map_err(|e| anyhow!("load {file}: {e}"))
+    }
+
+    /// The detection network on one device.
+    pub struct Detector(Mutex<Session>);
+
+    impl Detector {
+        pub fn load(models_dir: &Path, file: &str, device: Device) -> Result<Self> {
+            Ok(Self(Mutex::new(open(models_dir, file, device, cores())?)))
         }
 
         /// Run the detector on one `[1, 3, h, w]` picture.
-        pub fn det(&self, input: Vec<f32>, h: usize, w: usize) -> Result<(Vec<f32>, Vec<usize>)> {
-            run(self.det.lock(), input, [1, 3, h, w])
+        pub fn run(&self, input: Vec<f32>, h: usize, w: usize) -> Result<(Vec<f32>, Vec<usize>)> {
+            run(self.0.lock(), input, [1, 3, h, w])
+        }
+    }
+
+    /// A recognition network on one device: one session per concurrent
+    /// caller (see [`Recognizer::run`]).
+    pub struct Recognizer(Vec<Mutex<Session>>);
+
+    impl Recognizer {
+        /// `callers`: how many threads will call [`Recognizer::run`]
+        /// at the same time; the cores are split between them.
+        pub fn load(models_dir: &Path, file: &str, device: Device, callers: usize) -> Result<Self> {
+            let callers = callers.clamp(1, cores());
+            Ok(Self(
+                (0..callers)
+                    .map(|_| {
+                        open(models_dir, file, device, (cores() / callers).max(1)).map(Mutex::new)
+                    })
+                    .collect::<Result<_>>()?,
+            ))
         }
 
         /// Run recognition on `n` lines of `[3, h, w]`.
-        pub fn rec(
+        pub fn run(
             &self,
             input: Vec<f32>,
             n: usize,
@@ -376,10 +381,10 @@ pub mod runtime {
         ) -> Result<(Vec<f32>, Vec<usize>)> {
             // A free session when there is one, else wait for the first.
             let session = self
-                .rec
+                .0
                 .iter()
                 .find_map(|s| s.try_lock())
-                .unwrap_or_else(|| self.rec[0].lock());
+                .unwrap_or_else(|| self.0[0].lock());
             run(session, input, [n, 3, h, w])
         }
     }

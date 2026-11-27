@@ -1,0 +1,1 @@
+- The text view shown outside a window translation window now moves together with its window instead of trailing behind in jumps.

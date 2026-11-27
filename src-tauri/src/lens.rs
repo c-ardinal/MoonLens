@@ -18,18 +18,22 @@
 //!
 //! The capture flow:
 //! 1. The watcher (or the frontend, on request) captures a given lens id.
-//! 2. The captured frame must not include the lens UI. Windows and macOS
-//!    exclude the window from screen capture (content protection); on
-//!    other platforms Rust hides the window for the moment of the grab.
+//! 2. The captured frame must not include the lens UI. Windows excludes
+//!    the windows from screen capture for the moment of the grab only
+//!    ([`lens_shield`]), so the user's screenshots still show them;
+//!    macOS excludes them for good (content protection); on other
+//!    platforms Rust hides the window for the moment of the grab.
 //! 3. Rust resolves the window's client bounds, shrinks them by the
 //!    header the renderer tells us about (CSS pixels, scaled to physical
-//!    pixels here), and feeds the resulting rect to
+//!    pixels here), widens the result by the scan margin so text cut by
+//!    the frame is read whole ([`scan_margin`]), and feeds that rect to
 //!    [`crate::capture::capture_global_rect`].
 //! 4. Pipeline runs as usual; the translation appears in the lens body.
 //!
 //! Pure geometry and id generation live in [`geometry`] and [`ids`] so
 //! they are testable.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -44,11 +48,15 @@ use tauri::{
 };
 
 use crate::{
+    attach,
     capture::CaptureRect,
+    lens_control::{self, Hold},
     lens_drag::{self, DragGate},
+    lens_shield,
     lens_text::{self, Follow},
     pipeline::Pipeline,
-    region_watcher::{Frame, Geometry, LiveEvent, Tick, TickEnv, Tracker},
+    region_watcher::{Frame, Geometry, LiveEvent, ReadMode, Tick, TickEnv, Tracker},
+    scan_margin::{self, Visible},
     settings::SettingsStore,
 };
 
@@ -57,6 +65,13 @@ pub const LENS_LIVE_EVENT: &str = "moonlens://lens-live";
 
 /// Operate mode on (`true`) / off for a lens window (operate hotkey).
 pub const LENS_OPERATE_EVENT: &str = "moonlens://lens-operate";
+
+/// Every window paused (`true`) / reading again (pause hotkey).
+pub const LENS_PAUSE_EVENT: &str = "moonlens://lens-pause";
+
+/// The original is shown (`true`: translations hidden) while the
+/// show-original hotkey is held.
+pub const LENS_PEEK_EVENT: &str = "moonlens://lens-peek";
 
 /// Height of the lens header in CSS pixels (fixed in `routes/lens`), used
 /// to put the header just above a range when a lens opens over it.
@@ -397,6 +412,7 @@ pub struct LensDescriptor {
     pub continuous: bool,
     /// Language it translates into; `None` = the configured target.
     pub target_language: Option<String>,
+    pub read_mode: ReadMode,
 }
 
 struct LensEntry {
@@ -404,6 +420,7 @@ struct LensEntry {
     watch: Option<Watch>,
     /// Translate into this language; `None` = the configured target.
     target_language: Option<String>,
+    read_mode: ReadMode,
     /// The renderer shows controls over the body (text view): the body
     /// takes the mouse too.
     interactive: bool,
@@ -420,6 +437,7 @@ pub struct Placement {
     /// Monitor-relative physical pixels, like the selector's crops.
     pub rect: CaptureRect,
     pub target_language: Option<String>,
+    pub read_mode: ReadMode,
 }
 
 /// A running continuous reading of one lens.
@@ -440,6 +458,9 @@ impl Watch {
 #[derive(Default)]
 pub struct LensRegistry {
     entries: Mutex<Vec<(String, LensEntry)>>,
+    /// No window reads or translates (see [`toggle_pause`]).
+    paused: AtomicBool,
+    hold: Mutex<Hold>,
 }
 
 impl LensRegistry {
@@ -457,15 +478,16 @@ impl LensRegistry {
                 insets: e.insets,
                 continuous: e.watch.is_some(),
                 target_language: e.target_language.clone(),
+                read_mode: e.read_mode,
             })
             .collect()
     }
 
     pub fn track(&self, id: String) {
-        self.track_with(id, None);
+        self.track_with(id, None, ReadMode::default());
     }
 
-    fn track_with(&self, id: String, target_language: Option<String>) {
+    fn track_with(&self, id: String, target_language: Option<String>, read_mode: ReadMode) {
         self.entries.lock().push((
             id,
             LensEntry {
@@ -478,6 +500,7 @@ impl LensRegistry {
                 },
                 watch: None,
                 target_language,
+                read_mode,
                 interactive: false,
                 operate: false,
                 text: None,
@@ -496,6 +519,21 @@ impl LensRegistry {
     pub fn set_target_language(&self, id: &str, lang: Option<String>) {
         if let Some((_, e)) = self.entries.lock().iter_mut().find(|(i, _)| i == id) {
             e.target_language = lang;
+        }
+    }
+
+    /// `None` for a lens that is gone.
+    pub fn read_mode(&self, id: &str) -> Option<ReadMode> {
+        self.entries
+            .lock()
+            .iter()
+            .find(|(i, _)| i == id)
+            .map(|(_, e)| e.read_mode)
+    }
+
+    pub fn set_read_mode(&self, id: &str, mode: ReadMode) {
+        if let Some((_, e)) = self.entries.lock().iter_mut().find(|(i, _)| i == id) {
+            e.read_mode = mode;
         }
     }
 
@@ -543,7 +581,38 @@ impl LensRegistry {
 
     pub fn untrack(&self, id: &str) {
         self.set_watch(id, None);
-        self.entries.lock().retain(|(i, _)| i != id);
+        let mut entries = self.entries.lock();
+        entries.retain(|(i, _)| i != id);
+        // A pause does not outlive the windows it stopped: the next
+        // window opened reads at once.
+        if entries.is_empty() {
+            self.paused.store(false, Ordering::Relaxed);
+        }
+    }
+
+    pub fn paused(&self) -> bool {
+        self.paused.load(Ordering::Relaxed)
+    }
+
+    /// The show-original hotkey is held.
+    pub fn original_held(&self) -> bool {
+        self.hold.lock().shown()
+    }
+
+    /// Pause every window, or let them read again. Returns the new
+    /// state; `None` without a window (nothing to pause).
+    pub fn toggle_paused(&self) -> Option<bool> {
+        let entries = self.entries.lock();
+        if entries.is_empty() {
+            return None;
+        }
+        let paused = !self.paused.fetch_xor(true, Ordering::Relaxed);
+        if !paused {
+            for w in entries.iter().filter_map(|(_, e)| e.watch.as_ref()) {
+                w.kick.notify_one();
+            }
+        }
+        Some(paused)
     }
 
     /// Replace the lens's continuous reading (stopping the old one).
@@ -632,15 +701,22 @@ pub fn create(
         // instead does not work on Windows: `hide()` returns before DWM
         // has faded the window out, so the grab read the lens itself
         // (its own Japanese placeholder) and nothing got translated.
-        .content_protected(EXCLUDED_FROM_CAPTURE)
+        // Windows excludes the window per grab instead (see `grab`).
+        .content_protected(hidden_from_captures(app))
         .visible(false)
         .build()
         .context("create lens window")?;
     let source = beside.and_then(|b| app.get_webview_window(b));
-    let target_language = match &placement {
-        Some(p) => p.target_language.clone(),
-        // Opened from a window: the same language as that window.
-        None => beside.and_then(|b| registry.target_language(b)),
+    let (target_language, read_mode) = match &placement {
+        Some(p) => (p.target_language.clone(), p.read_mode),
+        // Opened from a window: the same language and reading mode as
+        // that window.
+        None => (
+            beside.and_then(|b| registry.target_language(b)),
+            beside
+                .and_then(|b| registry.read_mode(b))
+                .unwrap_or_default(),
+        ),
     };
     let placed = match (&placement, &source) {
         (Some(p), _) => place(&win, &p.rect),
@@ -652,7 +728,29 @@ pub fn create(
     }
     win.show().ok();
     let _ = win.set_always_on_top(true);
-    registry.track_with(id.clone(), target_language);
+    registry.track_with(id.clone(), target_language, read_mode);
+    // An outside text view goes along with every move, in the same turn
+    // of the event loop (the poll in `run_passthrough` alone left it
+    // trailing behind in jumps).
+    let (ev_app, ev_registry, ev_id) = (app.clone(), registry.clone(), id.clone());
+    win.on_window_event(move |event| {
+        if !matches!(
+            event,
+            tauri::WindowEvent::Moved(_) | tauri::WindowEvent::Resized(_)
+        ) {
+            return;
+        }
+        if let Some(win) = ev_app.get_webview_window(&ev_id) {
+            lens_text::follow(
+                &ev_app,
+                &ev_registry,
+                &ev_id,
+                &win,
+                lens_text::Cause::LensMoved,
+                false,
+            );
+        }
+    });
     tauri::async_runtime::spawn(run_passthrough(app.clone(), registry.clone(), id.clone()));
     Ok(id)
 }
@@ -737,6 +835,52 @@ pub fn toggle_operate(app: &AppHandle, registry: &LensRegistryHandle) -> bool {
     operate
 }
 
+/// Pause hotkey: stop reading and translating in every window (the
+/// windows stay where they are), or resume. Each window hides its
+/// translations while paused ([`LENS_PAUSE_EVENT`]) and is read at once
+/// on resume. Returns whether the windows are paused afterwards.
+pub fn toggle_pause(app: &AppHandle, registry: &LensRegistryHandle) -> bool {
+    let Some(paused) = registry.toggle_paused() else {
+        return false;
+    };
+    emit_all(app, registry, LENS_PAUSE_EVENT, paused);
+    paused
+}
+
+/// Show-original hotkey: every window hides its translations while the
+/// key is down ([`LENS_PEEK_EVENT`]). Reading goes on, so the
+/// translations are current when they come back.
+pub fn hold_original(app: &AppHandle, registry: &LensRegistryHandle, pressed: bool) {
+    if pressed {
+        if registry.hold.lock().press() {
+            emit_all(app, registry, LENS_PEEK_EVENT, true);
+        }
+        return;
+    }
+    let ticket = registry.hold.lock().release();
+    let (app, registry) = (app.clone(), registry.clone());
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(lens_control::RELEASE_GRACE_MS)).await;
+        if registry.hold.lock().settle(ticket) {
+            emit_all(&app, &registry, LENS_PEEK_EVENT, false);
+        }
+    });
+}
+
+/// The show-original binding is being replaced: its release would never
+/// arrive, so end a hold in progress.
+pub fn cancel_hold(app: &AppHandle, registry: &LensRegistryHandle) {
+    if registry.hold.lock().cancel() {
+        emit_all(app, registry, LENS_PEEK_EVENT, false);
+    }
+}
+
+fn emit_all(app: &AppHandle, registry: &LensRegistryHandle, event: &str, on: bool) {
+    for d in registry.list() {
+        let _ = app.emit_to(tauri::EventTarget::WebviewWindow { label: d.id }, event, on);
+    }
+}
+
 /// Put a new window's header under the mouse pointer (default size),
 /// kept on the pointer's monitor.
 fn place_at_pointer(app: &AppHandle, win: &WebviewWindow) -> Result<()> {
@@ -812,7 +956,8 @@ async fn run_passthrough(app: AppHandle, registry: LensRegistryHandle, id: Strin
         let Some(body_interactive) = registry.interactive(&id) else {
             break;
         };
-        lens_text::follow(&app, &registry, &id, &win);
+        let hidden = app.state::<attach::Handle>().hidden(&id);
+        lens_text::follow(&app, &registry, &id, &win, lens_text::Cause::Poll, hidden);
         let take = body_interactive || pointer_on_controls(&app, &win, &registry, &id);
         since_apply += 1;
         // Re-apply now and then: hiding and showing the window for a
@@ -824,8 +969,14 @@ async fn run_passthrough(app: AppHandle, registry: LensRegistryHandle, id: Strin
             since_apply = 0;
         }
     }
-    // The lens is gone, however it was closed: so is its text view.
+    // The lens is gone, however it was closed: so are its text view and
+    // its attachment to another app's window.
     lens_text::close(&app, &id);
+    app.state::<attach::Handle>().forget(&id);
+    if let Some(streams) = app.try_state::<crate::stream::Handle>() {
+        streams.forget(&id);
+    }
+    crate::stream::attachment_changed(&app, &id);
 }
 
 fn pointer_on_controls(
@@ -922,6 +1073,66 @@ pub fn inner_rect(win: &WebviewWindow) -> Result<geometry::LensOuterRect> {
 /// `NSWindowSharingNone`). Elsewhere the window is hidden for the grab.
 pub const EXCLUDED_FROM_CAPTURE: bool = cfg!(any(target_os = "windows", target_os = "macos"));
 
+/// Whether the translation windows stay out of *every* screen capture,
+/// the user's screenshots and recordings included. macOS: always (no
+/// per-grab switch there). Windows: only with
+/// `overlay.show_in_screenshots` off; otherwise [`grab`] excludes them
+/// just for its own capture.
+pub fn hidden_from_captures(app: &AppHandle) -> bool {
+    if !cfg!(windows) {
+        return cfg!(target_os = "macos");
+    }
+    app.try_state::<crate::app::AppState>()
+        .is_some_and(|s| !s.settings.snapshot().overlay.show_in_screenshots)
+}
+
+#[cfg(windows)]
+fn handle(win: &WebviewWindow) -> Option<lens_shield::Handle> {
+    win.hwnd().ok().map(|h| h.0 as lens_shield::Handle)
+}
+
+#[cfg(not(windows))]
+fn handle(_win: &WebviewWindow) -> Option<lens_shield::Handle> {
+    None
+}
+
+/// Handles of the translation windows (text windows included) that a
+/// capture of `observed` (the rect captured) by lens `id` would show: its own, and any
+/// other one lying over that rect. All of them with `observed` unset.
+fn shield(
+    app: &AppHandle,
+    registry: &LensRegistryHandle,
+    observed: Option<(&str, geometry::LensOuterRect)>,
+) -> Vec<lens_shield::Handle> {
+    let over = |win: &WebviewWindow| {
+        let Some((id, r)) = observed else { return true };
+        if win.label() == id || win.label() == lens_text::label(id) {
+            return true;
+        }
+        let (Ok(p), Ok(s)) = (win.outer_position(), win.outer_size()) else {
+            return true;
+        };
+        (p.x as i64) < r.x as i64 + r.w as i64
+            && (r.x as i64) < p.x as i64 + s.width as i64
+            && (p.y as i64) < r.y as i64 + r.h as i64
+            && (r.y as i64) < p.y as i64 + s.height as i64
+    };
+    registry
+        .list()
+        .iter()
+        .flat_map(|l| [l.id.clone(), lens_text::label(&l.id)])
+        .filter_map(|label| app.get_webview_window(&label))
+        .filter(over)
+        .filter_map(|win| handle(&win))
+        .collect()
+}
+
+/// Apply `overlay.show_in_screenshots` to the open translation windows
+/// (after a settings change).
+pub fn apply_capture_visibility(app: &AppHandle, registry: &LensRegistryHandle) {
+    lens_shield::persist(&shield(app, registry, None), hidden_from_captures(app));
+}
+
 /// Convert the renderer's CSS-pixel insets to physical pixels. The outer
 /// rect is physical, so at 150 % scaling unscaled insets left part of the
 /// header inside the captured region.
@@ -955,36 +1166,71 @@ fn as_geometry(r: geometry::LensOuterRect) -> Geometry {
     [r.x, r.y, r.w as i32, r.h as i32]
 }
 
-/// Capture the observed rect without the lens window in the frame.
-pub fn grab(
-    app: &AppHandle,
-    registry: &LensRegistryHandle,
-    id: &str,
-) -> Result<(DynamicImage, geometry::LensOuterRect)> {
-    use crate::capture;
+/// One capture for a lens.
+pub struct Grab {
+    pub image: DynamicImage,
+    /// The rect the lens observes (see [`observed`]).
+    pub observed: geometry::LensOuterRect,
+    /// Where that rect lies in `image`.
+    pub visible: Visible,
+}
+
+/// Capture the observed rect, `margin` CSS pixels wider on every side
+/// (see [`scan_margin`]), without the lens window in the frame.
+pub fn grab(app: &AppHandle, registry: &LensRegistryHandle, id: &str, margin: u32) -> Result<Grab> {
+    use crate::capture::{self, rect::GlobalRect};
 
     let observed = observed(app, registry, id)?;
-    if EXCLUDED_FROM_CAPTURE {
-        let image = capture::capture_global_rect(observed.x, observed.y, observed.w, observed.h)?;
-        return Ok((image, observed));
-    }
     let win = app
         .get_webview_window(id)
         .ok_or_else(|| anyhow!("lens window {id} not found"))?;
-    // No content protection: hide the window for the moment of the grab,
-    // with a brief pause so the compositor unmaps it first.
-    win.hide().ok();
-    std::thread::sleep(std::time::Duration::from_millis(60));
-    let result = capture::capture_global_rect(observed.x, observed.y, observed.w, observed.h);
-    win.show().ok();
-    Ok((result?, observed))
+    let margin = (margin as f64 * win.scale_factor().unwrap_or(1.0)).round() as u32;
+    let region = GlobalRect {
+        x: observed.x,
+        y: observed.y,
+        w: observed.w,
+        h: observed.h,
+    };
+    let wanted = scan_margin::widened(region, margin);
+    let captured = if EXCLUDED_FROM_CAPTURE {
+        // Every translation window the wider capture would show.
+        let covered = geometry::LensOuterRect {
+            x: wanted.x,
+            y: wanted.y,
+            w: wanted.w,
+            h: wanted.h,
+        };
+        let windows = shield(app, registry, Some((id, covered)));
+        lens_shield::excluded(&windows, hidden_from_captures(app), || {
+            capture::capture_global_rect_clipped(wanted)
+        })
+    } else {
+        // No content protection: hide the window for the moment of the
+        // grab, with a brief pause so the compositor unmaps it first.
+        win.hide().ok();
+        std::thread::sleep(std::time::Duration::from_millis(60));
+        let result = capture::capture_global_rect_clipped(wanted);
+        win.show().ok();
+        result
+    };
+    let (image, covered) = captured?;
+    Ok(Grab {
+        image,
+        observed,
+        visible: scan_margin::visible_in(region, covered),
+    })
 }
 
 /// Compute the observed rect and capture it without the lens window in
-/// the frame. Returns the captured PNG.
-pub fn capture_lens(app: &AppHandle, registry: &LensRegistryHandle, id: &str) -> Result<Vec<u8>> {
-    let (image, _) = grab(app, registry, id)?;
-    crate::capture::png_bytes(&image)
+/// the frame. Returns the captured PNG and where the lens lies in it.
+pub fn capture_lens(
+    app: &AppHandle,
+    registry: &LensRegistryHandle,
+    id: &str,
+    margin: u32,
+) -> Result<(Vec<u8>, Visible)> {
+    let grab = grab(app, registry, id, margin)?;
+    Ok((crate::capture::png_bytes(&grab.image)?, grab.visible))
 }
 
 /// Switch continuous reading of a lens on or off.
@@ -1049,7 +1295,19 @@ async fn run_watch(
     // capture follows without another pause. Only once in a row, so a
     // region that never settles is not read back to back.
     let mut confirm_now = false;
+    // A reading on request that a screenshot tool held back.
+    let mut held = false;
     loop {
+        // Paused: nothing is captured, read or translated. A kick wakes
+        // the wait (resume, or a refresh that has to keep waiting).
+        while registry.paused() {
+            tokio::select! {
+                _ = stop.notified() => return,
+                _ = kick.notified() => {}
+            }
+            // Resumed: read at once, the screen may have changed.
+            first = true;
+        }
         let mut manual = std::mem::take(&mut first);
         let confirming = std::mem::take(&mut confirm_now) && EXCLUDED_FROM_CAPTURE;
         let mut interval = settings
@@ -1074,14 +1332,23 @@ async fn run_watch(
                 _ = kick.notified() => manual = true,
                 _ = tokio::time::sleep(Duration::from_millis(pause)) => {}
             }
+            // Paused during the wait: nothing more is captured.
+            if registry.paused() {
+                continue;
+            }
         }
         let target_language = registry
             .target_language(&id)
             .unwrap_or_else(|| settings.snapshot().subtitle.target_language.clone());
+        // Text read from a window of another application is cached
+        // (and counted on the settings page) under that application.
+        let attached_to = app.state::<attach::Handle>().app(&id);
         let env = TickEnv {
             pipeline: &pipeline,
             target_language: &target_language,
+            mode: registry.read_mode(&id).unwrap_or_default(),
             history_kind: crate::pipeline::history_kind::LENS,
+            app: attached_to.as_ref().map(|a| a.key.as_str()),
             emit: &emit,
             geometry_now: &geometry_now,
         };
@@ -1103,14 +1370,27 @@ async fn run_watch(
         if !gate.allow(moved, lens_drag::button_down()) {
             continue;
         }
+        // Hidden along with the minimized window it is attached to:
+        // nothing of that window is on the screen to read.
+        if app.state::<attach::Handle>().hidden(&id) {
+            continue;
+        }
         // Dropped: read the new spot at once, like a manual refresh.
-        manual |= was_moving;
+        manual |= was_moving | std::mem::take(&mut held);
+        // A screenshot tool shows a still of the screen, translations
+        // included: reading it would hide the translations and
+        // translate the still. Reading goes on once the tool is gone.
+        if lens_shield::capture_tool_active() {
+            held = manual;
+            continue;
+        }
 
         let (a, r, i) = (app.clone(), registry.clone(), id.clone());
         let started = std::time::Instant::now();
-        let grabbed = tokio::task::spawn_blocking(move || grab(&a, &r, &i)).await;
+        let margin = settings.snapshot().performance.scan_margin_px;
+        let grabbed = tokio::task::spawn_blocking(move || grab(&a, &r, &i, margin)).await;
         let capture_ms = started.elapsed().as_millis();
-        let (image, rect) = match grabbed {
+        let grab = match grabbed {
             Ok(Ok(g)) => g,
             Ok(Err(e)) => {
                 tracing::debug!("lens {id} capture: {e}");
@@ -1119,8 +1399,9 @@ async fn run_watch(
             Err(_) => break,
         };
         let frame = Frame {
-            image,
-            geometry: as_geometry(rect),
+            image: grab.image,
+            geometry: as_geometry(grab.observed),
+            visible: Some(grab.visible),
         };
         let (width, height) = (frame.image.width(), frame.image.height());
         let started = std::time::Instant::now();
@@ -1237,6 +1518,22 @@ mod tests {
     }
 
     #[test]
+    fn pause_needs_a_window_and_ends_with_the_last_one() {
+        let r = new_registry_for_test();
+        assert_eq!(r.toggle_paused(), None);
+        assert!(!r.paused());
+        r.track("lens-1".into());
+        r.track("lens-2".into());
+        assert_eq!(r.toggle_paused(), Some(true));
+        assert_eq!(r.toggle_paused(), Some(false));
+        assert_eq!(r.toggle_paused(), Some(true));
+        r.untrack("lens-1");
+        assert!(r.paused());
+        r.untrack("lens-2");
+        assert!(!r.paused());
+    }
+
+    #[test]
     fn insets_are_remembered_per_lens() {
         let r = new_registry_for_test();
         r.track("a".into());
@@ -1267,8 +1564,16 @@ mod tests {
     #[test]
     fn per_lens_language_and_interaction() {
         let r = new_registry_for_test();
-        r.track_with("a".into(), Some("en".into()));
+        r.track_with("a".into(), Some("en".into()), ReadMode::Ui);
         r.track("b".into());
+        // Reading mode: per window, subtitles unless set otherwise.
+        assert_eq!(r.read_mode("a"), Some(ReadMode::Ui));
+        assert_eq!(r.read_mode("b"), Some(ReadMode::Subtitle));
+        r.set_read_mode("b", ReadMode::Ui);
+        r.set_read_mode("a", ReadMode::Subtitle);
+        let modes: Vec<ReadMode> = r.list().iter().map(|l| l.read_mode).collect();
+        assert_eq!(modes, [ReadMode::Subtitle, ReadMode::Ui]);
+        assert_eq!(r.read_mode("missing"), None);
         assert_eq!(r.target_language("a").as_deref(), Some("en"));
         assert_eq!(r.target_language("b"), None);
         r.set_target_language("b", Some("ko".into()));

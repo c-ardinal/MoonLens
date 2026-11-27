@@ -1,0 +1,2 @@
+- Window translation: a shortcut pauses and resumes every window at once (default `Ctrl+Shift+X`, also in the tray menu and the command palette). Windows keep their place, and no capture, OCR or translation runs while paused.
+- Window translation: holding a shortcut (default `Ctrl+Shift+O`) hides the translations of every window to show the original text; releasing it brings them back.

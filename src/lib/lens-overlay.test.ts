@@ -6,12 +6,16 @@ import {
   dragRect,
   growRoom,
   joinedText,
+  LANGUAGES,
+  SOURCE_LANGUAGES,
   languageLabel,
+  maskClip,
   rgb,
   splitStreaming,
   toCssRect,
   toFrameRect,
-  toolbarPosition
+  toolbarPosition,
+  writtenLanguage
 } from './lens-overlay';
 import type { LensBlock } from './ipc';
 
@@ -153,11 +157,20 @@ describe('target language', () => {
 
   it('labels languages', () => {
     expect(languageLabel('ja')).toBe('日本語');
+    expect(languageLabel('ja-easy')).toBe('やさしい日本語');
     expect(languageLabel('EN')).toBe('英語');
     expect(languageLabel('en-US')).toBe('英語');
     expect(languageLabel('zh')).toBe('中国語');
     expect(languageLabel('xx')).toBe('xx');
     expect(languageLabel(null)).toBe('');
+  });
+
+  it('keeps target-only variants out of the source languages', () => {
+    expect(LANGUAGES.map((l) => l.code)).toContain('ja-easy');
+    expect(SOURCE_LANGUAGES.map((l) => l.code)).not.toContain('ja-easy');
+    expect(writtenLanguage('ja-easy')).toBe('ja');
+    expect(writtenLanguage('zh-Hans')).toBe('zh-Hans');
+    expect(writtenLanguage('en')).toBe('en');
   });
 
   it('detects when nothing needed translating', () => {
@@ -181,5 +194,32 @@ describe('growRoom', () => {
   });
   it('keeps paragraphs at their width', () => {
     expect(growRoom([b([10, 10, 300, 60], 3)], 0, 1000)).toBe(0);
+  });
+});
+
+describe('maskClip', () => {
+  const rows: [number, number, number, number][] = [
+    [10, 10, 180, 20],
+    [10, 40, 180, 20],
+    [10, 70, 380, 20]
+  ];
+  const base = block({ bbox: [10, 10, 380, 80], lines: rows });
+
+  it('leaves the mask whole when no row is limited', () => {
+    expect(maskClip(base, 1)).toBe('');
+    expect(maskClip({ ...base, row_limits: [390, 390, 390] }, 1)).toBe('');
+  });
+
+  it('ends the bands of limited rows at their limit', () => {
+    // Picture from x = 200 beside the first two rows; pad 2 px.
+    const clip = maskClip({ ...base, row_limits: [200, 200, 390] }, 1);
+    expect(clip).toBe(
+      'polygon(0px 0px, 194px 0px, 194px 27px, 194px 27px, 194px 57px, 384px 57px, 384px 84px, 0px 84px)'
+    );
+  });
+
+  it('scales with the device pixel ratio', () => {
+    const clip = maskClip({ ...base, row_limits: [200, 200, 390] }, 2);
+    expect(clip.startsWith('polygon(0px 0px, 99px 0px, 99px 14.5px')).toBe(true);
   });
 });

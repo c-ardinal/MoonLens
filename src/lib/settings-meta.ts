@@ -8,7 +8,7 @@
  */
 
 import { compactGlossary } from './glossary';
-import { LANGUAGES } from './lens-overlay';
+import { LANGUAGES, SOURCE_LANGUAGES } from './lens-overlay';
 
 export type Option = { value: string; label: string };
 
@@ -32,7 +32,9 @@ export type Field =
   | { kind: 'color'; path: string; label: string; help?: string }
   | { kind: 'hotkey'; path: string; label: string; help?: string }
   /** Editable term list (rendered by GlossaryEditor). */
-  | { kind: 'glossary'; path: string; label: string; help?: string };
+  | { kind: 'glossary'; path: string; label: string; help?: string }
+  /** Editable list of phrases (rendered by PhraseList). */
+  | { kind: 'phrases'; path: string; label: string; help?: string; placeholder?: string };
 
 export type Section =
   | { id: string; title: string; description?: string; fields: Field[] }
@@ -48,6 +50,10 @@ export type SectionComponent = 'llm-translate' | 'llm-assist' | 'ocr' | 'asr' | 
 export type Group = { id: string; title: string; sections: string[] };
 
 const LANGUAGE_OPTIONS: Option[] = LANGUAGES.map((l) => ({ value: l.code, label: l.label }));
+const SOURCE_LANGUAGE_OPTIONS: Option[] = SOURCE_LANGUAGES.map((l) => ({
+  value: l.code,
+  label: l.label
+}));
 
 export const SECTIONS: Section[] = [
   {
@@ -66,7 +72,7 @@ export const SECTIONS: Section[] = [
         kind: 'select',
         path: 'translation.style',
         label: '文体',
-        help: '日本語への翻訳時のみ適用。',
+        help: '日本語への翻訳時のみ適用。やさしい日本語は対象外。',
         options: [
           { value: 'auto', label: '自動' },
           { value: 'polite', label: '敬体（です・ます）' },
@@ -135,6 +141,18 @@ export const SECTIONS: Section[] = [
         label: 'ウィンドウ翻訳 透過／操作',
         help: '全ウィンドウの切替。透過：ウィンドウ上のクリックは背面へ。操作：訳文の選択・コピー可。'
       },
+      {
+        kind: 'hotkey',
+        path: 'hotkeys.toggle_window_pause',
+        label: 'ウィンドウ翻訳 一時停止／再開',
+        help: '全ウィンドウの読取・翻訳を停止（配置は維持、訳文は非表示）。再押下で再開。'
+      },
+      {
+        kind: 'hotkey',
+        path: 'hotkeys.hold_window_original',
+        label: 'ウィンドウ翻訳 原文表示（押下中）',
+        help: '押下中のみ全ウィンドウの訳文を非表示化し、原文を表示。解放で訳文を再表示。'
+      },
       { kind: 'hotkey', path: 'hotkeys.toggle_subtitle', label: '音声翻訳 開始／停止' },
       { kind: 'hotkey', path: 'hotkeys.open_command_palette', label: 'コマンドパレット' },
       { kind: 'hotkey', path: 'hotkeys.open_history', label: '履歴表示' }
@@ -149,7 +167,7 @@ export const SECTIONS: Section[] = [
         kind: 'select',
         path: 'subtitle.source_language',
         label: '音声言語',
-        options: [{ value: 'auto', label: '自動判定' }, ...LANGUAGE_OPTIONS]
+        options: [{ value: 'auto', label: '自動判定' }, ...SOURCE_LANGUAGE_OPTIONS]
       },
       {
         kind: 'toggle',
@@ -188,6 +206,31 @@ export const SECTIONS: Section[] = [
         step: 0.1,
         unit: '秒',
         slider: true
+      },
+      {
+        kind: 'toggle',
+        path: 'subtitle.realtime_correction',
+        label: 'リアルタイム補正',
+        help: '文の認識完了時、文脈を参照して文全体を再翻訳、訳文を更新。負荷増。'
+      },
+      {
+        kind: 'toggle',
+        path: 'subtitle.batch_correction',
+        label: '一括補正',
+        help: '無音時・終了時に未補正の文を一括で再翻訳。発話中の負荷なし。'
+      },
+      {
+        kind: 'toggle',
+        path: 'subtitle.block_stock_phrases',
+        label: '定型誤認識の遮断',
+        help: '無音・BGM 区間で音声認識が出力する定型文（視聴謝辞・字幕提供表記・効果音表記）を字幕から除外。除外分は翻訳も省略。'
+      },
+      {
+        kind: 'phrases',
+        path: 'subtitle.blocked_phrases',
+        label: '遮断文（追加分）',
+        help: '同梱リストへの追加分。文全体の一致で遮断（大小文字・空白・約物の差は無視）。音声翻訳ウィンドウの反復検出からも追加可能。',
+        placeholder: '例：Thank you.'
       }
     ]
   },
@@ -198,6 +241,18 @@ export const SECTIONS: Section[] = [
     fields: [
       {
         kind: 'number',
+        path: 'performance.scan_margin_px',
+        label: '読取余白',
+        help: 'ウィンドウ枠の外側へ加算する読取幅。枠で分断された文字を完全な形で認識。訳文の表示はウィンドウ内に限定。',
+        min: 0,
+        max: 128,
+        step: 4,
+        unit: 'px',
+        zeroLabel: '無効',
+        slider: true
+      },
+      {
+        kind: 'number',
         path: 'performance.region_watcher_poll_ms',
         label: '監視間隔',
         help: '画面変化の検出間隔。短時間ほど応答性向上、CPU 負荷増大。',
@@ -206,6 +261,12 @@ export const SECTIONS: Section[] = [
         step: 50,
         unit: 'ミリ秒',
         slider: true
+      },
+      {
+        kind: 'toggle',
+        path: 'overlay.show_in_screenshots',
+        label: '撮影への表示',
+        help: 'スクリーンショット・録画へ翻訳ウィンドウを表示。OFF：常時除外。Windows 専用。'
       }
     ]
   },
@@ -342,15 +403,23 @@ export const SECTIONS: Section[] = [
         slider: true
       },
       {
-        kind: 'number',
-        path: 'performance.cache_ttl_seconds',
-        label: '翻訳キャッシュ保持期間',
-        help: '同一文の再選択時、期間内なら前回の訳文を即時表示。0：アプリ終了まで。',
-        min: 0,
-        max: 604800,
-        step: 60,
-        unit: '秒',
-        zeroLabel: '無期限'
+        kind: 'toggle',
+        path: 'storage.keep_translation_cache',
+        label: '訳文キャッシュ保存',
+        help: '同一原文の再出現時、保存済の訳文を即時表示（再起動後も有効、保存先は端末内のみ）。翻訳モデル・文体・用語集の変更分は自動で再翻訳。無効時：アプリ終了時に破棄。'
+      }
+    ]
+  },
+  {
+    id: 'startup',
+    title: '起動',
+    description: 'OS ログイン時の動作。',
+    fields: [
+      {
+        kind: 'toggle',
+        path: 'startup.launch_at_login',
+        label: 'ログイン時の自動起動',
+        help: 'OS ログイン時、通知領域へ常駐状態で起動。実行ファイルの移動後は、次回の手動起動時に登録を更新。'
       }
     ]
   },
@@ -363,7 +432,7 @@ export const SECTIONS: Section[] = [
   {
     id: 'data',
     title: 'データ',
-    description: '保存先と使用容量。完全削除：アンインストール後、各保存先を削除。',
+    description: '保存先と使用容量。完全削除：本体の削除後、各保存先を削除。',
     component: 'data'
   },
   {
@@ -395,7 +464,7 @@ export const GROUPS: Group[] = [
   { id: 'output', title: '履歴・コピー', sections: ['history', 'clipboard'] },
   { id: 'hotkeys', title: 'ショートカット', sections: ['hotkeys'] },
   { id: 'plugins', title: '拡張', sections: ['plugins'] },
-  { id: 'system', title: 'システム', sections: ['appearance', 'performance', 'data', 'advanced'] }
+  { id: 'system', title: 'システム', sections: ['appearance', 'performance', 'startup', 'data', 'advanced'] }
 ];
 
 /** 小分類の所属する大分類。 */
@@ -458,7 +527,12 @@ export function savable<T>(saved: T, draft: T): T {
     if (held.length === 0) break;
     for (const p of held) next = setPath(next, p, getPath(saved, p));
   }
-  return setPath(next, 'translation.glossary', compactGlossary(getPath(next, 'translation.glossary')));
+  next = setPath(next, 'translation.glossary', compactGlossary(getPath(next, 'translation.glossary')));
+  // 遮断文の空行も保存対象外（設定に項目の存在する場合のみ）。
+  const phrases = getPath(next, 'subtitle.blocked_phrases');
+  return Array.isArray(phrases)
+    ? setPath(next, 'subtitle.blocked_phrases', phrases.filter((p: string) => p.trim() !== ''))
+    : next;
 }
 
 /** 保存対象外のショートカット（重複の解消まで保存済の値を維持する項目）。 */
@@ -472,7 +546,7 @@ export function heldHotkeys(saved: any, draft: any): string[] {
 /** 連続入力の項目（スライダー・色・用語集）：保存までの待機時間（ミリ秒）。 */
 export function saveDelay(path: string): number {
   const f = allFields().find((x) => x.path === path);
-  if (f?.kind === 'glossary') return 600;
+  if (f?.kind === 'glossary' || f?.kind === 'phrases') return 600;
   return f?.kind === 'color' || (f?.kind === 'number' && f.slider) ? 300 : 0;
 }
 

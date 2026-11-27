@@ -71,6 +71,50 @@ export function blockCssRect(block: LensBlock, crop: FrameRect, scale: number, p
 }
 
 /**
+ * CSS `clip-path` that keeps the mask of a block off the pictures beside
+ * its rows (see `row_limits`): each row's band ends at the row's limit.
+ * Empty when no row is limited.
+ */
+export function maskClip(block: LensBlock, scale: number, pad = 2): string {
+  const bands = maskBands(block, scale, pad);
+  if (!bands.length) return '';
+  const px = (n: number) => `${Math.round(n * 100) / 100}px`;
+  const points = ['0px 0px'];
+  for (const b of bands) points.push(`${px(b.right)} ${px(b.top)}`, `${px(b.right)} ${px(b.bottom)}`);
+  points.push(`0px ${px(bands[bands.length - 1].bottom)}`);
+  return `polygon(${points.join(', ')})`;
+}
+
+/** One row's part of a block's mask, in CSS px from the mask's corner. */
+export interface MaskBand {
+  top: number;
+  bottom: number;
+  right: number;
+}
+
+/**
+ * The bands {@link maskClip} is made of: per row, from the left edge to
+ * the row's limit. Empty when no row is limited (the mask is the whole
+ * rectangle).
+ */
+export function maskBands(block: LensBlock, scale: number, pad = 2): MaskBand[] {
+  const rows = block.lines ?? [];
+  const limits = block.row_limits ?? [];
+  if (rows.length < 2 || limits.length !== rows.length) return [];
+  const [bx, by, bw, bh] = block.bbox;
+  const width = bw / scale + pad * 2;
+  const height = bh / scale + pad * 2;
+  const rights = limits.map((l) => Math.min(width, (l - bx) / scale + pad * 2));
+  if (rights.every((r) => r >= width - 0.5)) return [];
+  const mid = (i: number) => ((rows[i][1] + rows[i][3] + rows[i + 1][1]) / 2 - by) / scale + pad;
+  return rows.map((_, i) => ({
+    top: i === 0 ? 0 : mid(i - 1),
+    bottom: i === rows.length - 1 ? height : mid(i),
+    right: rights[i]
+  }));
+}
+
+/**
  * Distribute a partially streamed translation of `"p1\n\np2\n\n…"` over
  * `n` blocks. Paragraphs that have not arrived yet stay null. With a
  * single block everything streamed so far belongs to it.
@@ -178,9 +222,17 @@ export function applyStreaming(
   return out;
 }
 
-/** Target languages offered in the selector's toolbar. */
-export const LANGUAGES: { code: string; label: string }[] = [
+/** Easy Japanese: a target-only variant of Japanese (PLaMo's `ja-easy`). */
+export const EASY_JAPANESE = 'ja-easy';
+
+/**
+ * Target languages offered in the selector's toolbar. `targetOnly`
+ * entries are ways of writing a language, not languages a source text
+ * or a glossary entry can be in: see {@link SOURCE_LANGUAGES}.
+ */
+export const LANGUAGES: { code: string; label: string; targetOnly?: boolean }[] = [
   { code: 'ja', label: '日本語' },
+  { code: EASY_JAPANESE, label: 'やさしい日本語', targetOnly: true },
   { code: 'en', label: '英語' },
   { code: 'zh-Hans', label: '中国語（簡体）' },
   { code: 'zh-Hant', label: '中国語（繁体）' },
@@ -195,6 +247,18 @@ export const LANGUAGES: { code: string; label: string }[] = [
   { code: 'th', label: 'タイ語' },
   { code: 'id', label: 'インドネシア語' }
 ];
+
+/** Languages a text can be written in (source pickers, glossary rows). */
+export const SOURCE_LANGUAGES = LANGUAGES.filter((l) => !l.targetOnly);
+
+/**
+ * The language a target is written in: itself, or the base language of
+ * a target-only variant (`ja-easy` → `ja`).
+ */
+export function writtenLanguage(code: string): string {
+  const hit = LANGUAGES.find((l) => l.code === code);
+  return hit?.targetOnly ? code.split('-')[0] : code;
+}
 
 /** Display name for a language tag, falling back to the tag itself. */
 export function languageLabel(code: string | null | undefined): string {

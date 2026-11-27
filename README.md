@@ -5,9 +5,10 @@ PC 常駐型の Google Lens 風ツール。単一のグローバルホットキ�
 - ウィンドウ翻訳：ウィンドウの背面を OCR + ローカル LLM で常時翻訳し、原文位置へ訳文を重畳表示。
   ウィンドウは複数・任意サイズ・任意位置で配置可能（最大化で全画面翻訳）。字幕・チャット等の変化へ追従。
   既定は透過モード（ウィンドウ上のクリックは背面へ）、操作モードで訳文の選択・コピー。
-  処理中は斜光の走査で表示、ウィンドウの「追加」ボタンでウィンドウを増設
+  処理中は斜光の走査で表示、ウィンドウの「追加」ボタンでウィンドウを増設。
+  「字幕領域へ整形」で文字の出現範囲を観測し、ウィンドウを字幕帯へ自動整形
 - QR コード認識
-- 音声翻訳：外国語動画のループバック音声から字幕表示
+- 音声翻訳：外国語動画のループバック音声から字幕表示。音源は PC 全体・アプリ単位（Windows）から選択、ウィンドウは複数配置可能
 - ローカル LLM による要約・説明・対話
 
 を統合。OCR・翻訳・要約・説明はアプリ内蔵エンジンにより端末内で完結し
@@ -21,7 +22,7 @@ PC 常駐型の Google Lens 風ツール。単一のグローバルホットキ�
 
 | OS | ファイル | 備考 |
 | --- | --- | --- |
-| Windows 10/11 (x64) | `MoonLens_<版>_x64-setup.exe` または `.msi` | 未署名のため SmartScreen を表示。「詳細情報 → 実行」で起動 |
+| Windows 10/11 (x64) | `MoonLens_<版>_x64-portable.zip` | インストール不要。任意の場所へ展開し `MoonLens.exe` を実行。未署名のため SmartScreen を表示（「詳細情報 → 実行」で起動）。WebView2 ランタイムが必要（Windows 11 は標準搭載、未導入時は起動時に案内） |
 | Linux (x64) | `.AppImage` / `.deb` / `.rpm` | AppImage は `chmod +x` 後に実行。Wayland ではポータル経由で画面取得 |
 | macOS 11 以降（Apple シリコン） | `MoonLens_<版>_aarch64.dmg` | 未署名。初回は「システム設定 → プライバシーとセキュリティ → このまま開く」。画面収録・マイクの許可が必要 |
 
@@ -41,15 +42,22 @@ PC 常駐型の Google Lens 風ツール。単一のグローバルホットキ�
 | ウィンドウ翻訳（ウィンドウの追加） | `Ctrl+Shift+Space` |
 | ウィンドウ翻訳 表示／全終了 | `Ctrl+Shift+P` |
 | ウィンドウ翻訳 透過／操作（全ウィンドウ） | `Ctrl+Shift+E` |
+| ウィンドウ翻訳 一時停止／再開（全ウィンドウ、配置は維持） | `Ctrl+Shift+X` |
+| ウィンドウ翻訳 原文表示（押下中のみ、全ウィンドウ） | `Ctrl+Shift+O` |
 | 履歴 | `Ctrl+Shift+H` |
 | コマンドパレット | `Ctrl+K` |
 | 音声翻訳 | `Ctrl+Shift+S`（初回は設定で音声認識モデルを導入） |
 
-### アンインストール
+### 更新
 
-OS の標準手順で削除。Windows のインストーラー（setup.exe）で「アプリデータ削除」を選択すると
-設定・履歴・モデルも一括削除。その他（.msi、deb／rpm／AppImage）は次のフォルダーが残存するため、
-不要なら手動で削除。実パスと使用容量は設定画面の「データ」に表示
+Windows：アプリ終了後、展開済みフォルダーを新版と置換。設定・履歴・モデルは本体と別の場所に
+保存するため継続利用可能。旧版のインストーラー（setup.exe／.msi）で導入済みの場合は、
+アンインストール後に zip 版へ移行（「アプリデータ削除」は非選択）。
+
+### 削除
+
+Windows：アプリ終了後、展開済みフォルダーを削除（レジストリは不使用）。Linux／macOS：OS の標準手順で削除。
+全 OS で次のフォルダーが残存するため、不要なら手動で削除。実パスと使用容量は設定画面の「データ」に表示
 （詳細は [docs/lifecycle.md](docs/lifecycle.md)）。
 
 - Linux: `~/.config/io.moonlens.app/`、`~/.local/share/io.moonlens.app/`
@@ -59,7 +67,7 @@ OS の標準手順で削除。Windows のインストーラー（setup.exe）で
 
 - **アプリシェル**: Tauri 2.x (Rust)
 - **UI**: Svelte 5 (runes) + Vite + Tailwind CSS v4
-- **OCR**: PP-OCRv5 mobile（日中英）を既定とし、実行構成は環境別に自動選択（Windows は DirectML による GPU 実行、または ONNX Runtime の CPU 実行のうち実測で高速な構成。Linux・macOS は ONNX Runtime の CPU 実行。ONNX Runtime 未取得時は `rten`）。ラテン文字専用の [`ocrs`](https://github.com/robertknight/ocrs) をフォールバックに使う（追加の OCR エンジンはプラグインで差し替え可）
+- **OCR**: PP-OCRv6 small（日中英）を既定とし、韓国語・キリル文字・アラビア文字・タイ語・デーヴァナーガリー・タミル語・テルグ語は認識モデルを任意追加（選定の記録：[docs/ocr-models.md](docs/ocr-models.md)）。実行構成は環境別に自動選択（Windows は DirectML による GPU 実行、または ONNX Runtime の CPU 実行のうち実測で高速な構成。Linux・macOS は ONNX Runtime の CPU 実行。ONNX Runtime 未取得時は `rten`）。ラテン文字専用の [`ocrs`](https://github.com/robertknight/ocrs) をフォールバックに使う（追加の OCR エンジンはプラグインで差し替え可）
 - **QR**: `rqrr` crate
 - **翻訳 (local)**: 内蔵 llama.cpp（`llama-cpp-2`、静的リンク）で GGUF を実行。GPU は Windows / Linux が Vulkan（NVIDIA・AMD・Intel）、macOS が Metal。GPU がない環境では CPU で動く。翻訳の既定は PLaMo 3 Translate 2B（0.8B も選択可）、説明・要約は Gemma 4 E4B。モデルはアプリのホーム画面からダウンロード（SHA-256 検証・中断再開）。モデル選定の根拠は [docs/translation-models.md](docs/translation-models.md)
 - **翻訳 (cloud / Ollama)**: DeepL / Gemini API、Ollama は任意のオプション（既定チェーンには入っていない）
@@ -192,7 +200,7 @@ Visual Studio ジェネレーターではカスタムコマンドが並列実行
 
 `.github/workflows/build.yml` が PR 単位で Linux 上の svelte-check / vitest / vite build と
 `cargo fmt` / `clippy` / `cargo test` を実行。ネイティブコード変更を含む PR は `windows.yml` で
-Windows でも検証。インストーラーはタグ push 時に `release.yml` が生成。
+Windows でも検証。配布物（Windows はポータブル zip）はタグ push 時に `release.yml` が生成。
 方針は [docs/ci-and-release-policy.md](docs/ci-and-release-policy.md)、
 リリース手順は [docs/RELEASING.md](docs/RELEASING.md)。
 
@@ -206,7 +214,7 @@ Windows でも検証。インストーラーはタグ push 時に `release.yml` 
 MoonLens 本体は [MIT License](LICENSE)。
 
 同梱ライブラリ（Rust crate、npm パッケージ、llama.cpp）のライセンス全文は、リリース単位で
-`THIRD_PARTY_LICENSES.html` としてインストーラーに同梱し、Releases にも添付
+`THIRD_PARTY_LICENSES.html` として配布物に同梱し、Releases にも添付
 （生成: `node scripts/third-party-licenses.mjs`、`cargo install cargo-about` が必要）。
 
 同梱書体 DotGothic16 は SIL Open Font License 1.1（全文：`static/fonts/DotGothic16-OFL.txt`）。
@@ -217,7 +225,7 @@ MoonLens 本体は [MIT License](LICENSE)。
 | --- | --- |
 | PLaMo 3 Translate 2B / 0.8B | [PLaMo Community License](https://plamo.preferredai.jp/info/plamo-community-license-en) |
 | Gemma 4 E4B / E2B | [Apache-2.0](https://ai.google.dev/gemma/apache_2) |
-| PP-OCRv5 mobile | [Apache-2.0](https://github.com/PaddlePaddle/PaddleOCR/blob/main/LICENSE) |
+| PP-OCRv6 small、PP-OCRv5 mobile（追加の文字体系） | [Apache-2.0](https://github.com/PaddlePaddle/PaddleOCR/blob/main/LICENSE) |
 
 文字認識の高速実行部品として、ONNX Runtime（[MIT](https://github.com/microsoft/onnxruntime/blob/main/LICENSE)）の公式配布物を取得（Windows 版は [DirectML](https://github.com/microsoft/DirectML/blob/master/LICENSE) を同梱）。
 

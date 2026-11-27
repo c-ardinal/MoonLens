@@ -28,6 +28,8 @@ tauri = { version = "2", features = [
 tauri-plugin-global-shortcut = "2"
 tauri-plugin-shell = "2"
 tauri-plugin-dialog = "2"
+# Local time for the default file name of exports; already in the tree.
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
 tauri-plugin-fs = "2"
 tauri-plugin-notification = "2"
 tauri-plugin-clipboard-manager = "2"
@@ -72,8 +74,6 @@ xcap = "0.9"
 ocrs = { version = "0.14", optional = true }
 rten = { version = "0.28", optional = true, features = ["rten_format"] }
 rten-tensor = { version = "0.28", optional = true }
-flate2 = { version = "1", optional = true }
-tar = { version = "0.4", optional = true }
 # ONNX Runtime for the PP-OCR models. The library is loaded at run time
 # from the models directory (providers/ocr_onnx.rs), never linked or
 # downloaded by the build. `api-24` must match RUNTIME_VERSION there.
@@ -82,6 +82,9 @@ rqrr = "0.7"
 
 # audio
 cpal = { version = "0.15", optional = true }
+
+# Composite window for stream capture (Windows; a stub elsewhere).
+moonlens-stream = { path = "crates/stream" }
 
 # storage
 rusqlite = { version = "0.43", features = ["bundled"] }
@@ -130,7 +133,7 @@ local-asr = ["local-llm", "dep:llama-cpp-sys-2"]
 llm-vulkan = ["local-llm", "llama-cpp-2/vulkan"]
 llm-cuda = ["local-llm", "llama-cpp-2/cuda"]
 audio = ["dep:cpal"]
-ocrs-engine = ["dep:ocrs", "dep:rten", "dep:rten-tensor", "dep:flate2", "dep:tar"]
+ocrs-engine = ["dep:ocrs", "dep:rten", "dep:rten-tensor"]
 # PP-OCR on ONNX Runtime (CPU, and DirectML on Windows) beside rten.
 ocr-onnx = ["ocrs-engine", "dep:ort"]
 
@@ -146,14 +149,21 @@ wat = "1"
 # DirectML: the GPU path of ONNX Runtime on Windows.
 ort = { version = "=2.0.0-rc.15", optional = true, default-features = false, features = ["directml"] }
 libloading = "0.8"
+# Audio of one application (process loopback) and the audio sessions the
+# source menu of a subtitle window lists (audio.rs, audio_apps.rs).
+wasapi = "0.27"
 windows = { version = "0.62", features = [
+    "Win32_Foundation",
     "Win32_System_Com",
+    "Win32_UI_WindowsAndMessaging",
     "Foundation",
     "Foundation_Collections",
     "Globalization",
     "Graphics_Imaging",
     "Media_Ocr",
     "Storage_Streams",
+    # Message box when the WebView2 runtime is missing (src/webview2.rs).
+    "Win32_UI_WindowsAndMessaging",
 ] }
 windows-future = "0.3"
 
@@ -217,3 +227,8 @@ opt-level = 3
 [patch.crates-io]
 llama-cpp-2 = { git = "https://github.com/utilityai/llama-cpp-rs", rev = "955aa2f72463c2535cc5ab894d5d52f27a38cde2" }
 llama-cpp-sys-2 = { git = "https://github.com/utilityai/llama-cpp-rs", rev = "955aa2f72463c2535cc5ab894d5d52f27a38cde2" }
+
+# Login item (`autostart.rs`): registry Run key / launch agent. Linux
+# writes its XDG autostart entry itself.
+[target.'cfg(not(target_os = "linux"))'.dependencies]
+auto-launch = "0.6.0"

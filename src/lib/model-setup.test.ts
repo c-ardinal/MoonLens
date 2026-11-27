@@ -6,6 +6,7 @@ import {
   formatBytes,
   hardwareLines,
   inferenceDevice,
+  pendingConsents,
   replacementCandidates,
   totalBytes
 } from './model-setup';
@@ -22,6 +23,7 @@ const llmModel = (id: string, style: 'pfml3' | 'chat_template', size: number, in
   license: '',
   license_url: '',
   style,
+  consent: null as string | null,
   installed,
   partial_bytes: 0,
   downloading: false
@@ -31,6 +33,7 @@ const llm = (installed: string[] = []): LlmModels => ({
   selected: 'plamo-3-translate-2b',
   assistant: 'gemma-4-e4b',
   dir: '',
+  accepted_licenses: [] as string[],
   models: [
     llmModel('plamo-3-translate-2b', 'pfml3', 1_800_000_000),
     llmModel('plamo-3-translate-0.8b', 'pfml3', 570_000_000),
@@ -55,7 +58,7 @@ const rec: Recommendation = {
   asr: { model: 'whisper-small', reason: '' }
 };
 
-const noOcr = { ppocr: false, ocrs: false, fast: false, dir: '' };
+const noOcr = { ppocr: false, current: false, ocrs: false, fast: false, dir: '' };
 
 describe('buildFeatures', () => {
   it('selects the recommended model of every feature', () => {
@@ -84,14 +87,25 @@ describe('buildFeatures', () => {
 
 describe('ocrChoice', () => {
   it('offers the faster runtime alone when the OCR models are already installed', () => {
-    const c = ocrChoice({ ppocr: true, ocrs: true, fast: false, dir: '' });
+    const c = ocrChoice({ ppocr: true, current: true, ocrs: true, fast: false, dir: '' });
     expect(c.installed).toBe(false);
-    expect(c.size).toBe(45_000_000);
+    expect(c.size).toBe(25_000_000);
     expect(c.note).toContain('高速実行部品');
   });
 
   it('counts as installed once the faster runtime is there too', () => {
-    expect(ocrChoice({ ppocr: true, ocrs: true, fast: true, dir: '' }).installed).toBe(true);
+    expect(ocrChoice({ ppocr: true, current: true, ocrs: true, fast: true, dir: '' }).installed).toBe(true);
+  });
+
+  it('offers the new generation alone to an install that still runs the earlier one', () => {
+    const c = ocrChoice({ ppocr: true, current: false, ocrs: true, fast: true, dir: '' });
+    expect(c.installed).toBe(false);
+    expect(c.size).toBe(31_000_000);
+    expect(c.note).toContain('PP-OCRv5');
+  });
+
+  it('asks for everything when nothing is installed', () => {
+    expect(ocrChoice(noOcr).size).toBe(68_000_000);
   });
 });
 
@@ -104,11 +118,11 @@ describe('downloadQueue', () => {
       ['llm', 'gemma-4-e2b'],
       ['asr', 'whisper-small']
     ]);
-    expect(totalBytes(q)).toBe(1_800_000_000 + 83_000_000 + 3_100_000_000 + 190_000_000);
+    expect(totalBytes(q)).toBe(1_800_000_000 + 68_000_000 + 3_100_000_000 + 190_000_000);
   });
 
   it('skips installed models and features left out', () => {
-    const f = buildFeatures(llm(['plamo-3-translate-2b']), asr, { ppocr: true, ocrs: true, fast: true, dir: '' }, rec);
+    const f = buildFeatures(llm(['plamo-3-translate-2b']), asr, { ppocr: true, current: true, ocrs: true, fast: true, dir: '' }, rec);
     f[3].enabled = false;
     expect(downloadQueue(f).map((d) => d.id)).toEqual(['gemma-4-e2b']);
   });
@@ -207,5 +221,29 @@ describe('inferenceDevice', () => {
 
   it('reports a PC without a usable GPU', () => {
     expect(inferenceDevice(profile([]), true)).toBe('CPU（対応 GPU：非検出）');
+  });
+});
+
+describe('pendingConsents', () => {
+  const withConsent = (l: LlmModels): LlmModels => ({
+    ...l,
+    models: l.models.map((m) => (m.style === 'pfml3' ? { ...m, consent: 'plamo-community' } : m))
+  });
+
+  it('lists a licence once for every queued model that needs it', () => {
+    const f = buildFeatures(withConsent(llm()), asr, noOcr, rec);
+    const q = downloadQueue(f);
+    expect(pendingConsents(q, [])).toEqual(['plamo-community']);
+  });
+
+  it('is empty once accepted, or when the queue holds no such model', () => {
+    const q = downloadQueue(buildFeatures(withConsent(llm()), asr, noOcr, rec));
+    expect(pendingConsents(q, ['plamo-community'])).toEqual([]);
+    expect(pendingConsents(downloadQueue(buildFeatures(llm(), asr, noOcr, rec)), [])).toEqual([]);
+  });
+
+  it('ignores models that are already installed', () => {
+    const f = buildFeatures(withConsent(llm(['plamo-3-translate-2b'])), asr, noOcr, rec);
+    expect(pendingConsents(downloadQueue(f), [])).toEqual([]);
   });
 });

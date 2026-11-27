@@ -10,7 +10,8 @@
     scale,
     pad = 2,
     grow = 0,
-    background = 'transparent'
+    background = 'transparent',
+    onlayout
   }: {
     block: LensBlock;
     text: string;
@@ -22,6 +23,8 @@
     grow?: number;
     /** Mask colour, painted behind text that runs past the box. */
     background?: string;
+    /** The lines as placed, on every new layout. */
+    onlayout?: (layout: FlowResult) => void;
   } = $props();
 
   let host = $state<HTMLElement | null>(null);
@@ -31,12 +34,16 @@
 
   function rowsOf(b: LensBlock): Row[] {
     const [bx, by] = b.bbox;
-    return (b.lines ?? []).map(([x, y, w, h]) => ({
-      left: (x - bx) / scale + pad,
-      top: (y - by) / scale + pad,
-      width: w / scale,
-      height: h / scale
-    }));
+    return (b.lines ?? []).map(([x, y, w, h], i) => {
+      const limit = b.row_limits?.[i];
+      return {
+        left: (x - bx) / scale + pad,
+        top: (y - by) / scale + pad,
+        width: w / scale,
+        height: h / scale,
+        ...(limit == null ? {} : { limit: (limit - bx) / scale + pad })
+      };
+    });
   }
 
   $effect(() => {
@@ -50,7 +57,7 @@
     if (!ctx) return;
     // Measure at 100 px and scale: widths are linear in the font size.
     ctx.font = `${weight} 100px ${cs.fontFamily}`;
-    layout = flowLayout(text, {
+    const placed = flowLayout(text, {
       width,
       height,
       rows: rowsOf(block),
@@ -59,6 +66,8 @@
       grow,
       measure: (t) => ctx.measureText(t).width / 100
     });
+    layout = placed;
+    onlayout?.(placed);
   });
 </script>
 

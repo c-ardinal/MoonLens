@@ -44,8 +44,12 @@ macro_rules! all_commands {
             ipc::read_image_file,
             ipc::install_ocr_models,
             ipc::ocr_models_status,
+            ipc::ocr_scripts_status,
+            ipc::install_ocr_script,
+            ipc::delete_ocr_script,
             ipc::list_llm_models,
             ipc::install_llm_model,
+            ipc::accept_license,
             ipc::cancel_llm_download,
             ipc::delete_llm_model,
             ipc::select_llm_model,
@@ -59,7 +63,13 @@ macro_rules! all_commands {
             ipc::toggle_subtitle,
             ipc::subtitle_state,
             ipc::stop_subtitle,
+            ipc::block_subtitle_phrase,
             ipc::start_subtitle,
+            ipc::open_subtitle_window,
+            ipc::close_subtitle_window,
+            ipc::set_subtitle_source,
+            ipc::subtitle_session,
+            ipc::list_audio_apps,
             ipc::get_onboarding_status,
             ipc::get_system_profile,
             ipc::complete_setup,
@@ -69,19 +79,36 @@ macro_rules! all_commands {
             ipc::macos_request_screen_capture,
             ipc::open_lens,
             ipc::set_lens_language,
+            ipc::set_lens_read_mode,
             ipc::set_lens_interactive,
             ipc::set_lens_operate,
             ipc::set_lens_text_dock,
             ipc::close_lens_window,
             ipc::list_lens_windows,
+            crate::attach::list_attach_targets,
+            crate::attach::attach_window,
+            crate::attach::detach_window,
+            crate::attach::window_attachment,
+            crate::stream::stream_state,
+            crate::stream::set_stream,
+            crate::stream::set_stream_paint,
             ipc::set_lens_insets,
             ipc::set_lens_continuous,
             ipc::refresh_lens,
+            ipc::toggle_lens_pause,
+            ipc::lens_controls,
+            ipc::fit_lens,
+            ipc::restore_lens,
             ipc::capture_lens_now,
             ipc::list_history,
             ipc::delete_history_entry,
             ipc::restore_history_entry,
+            ipc::get_subtitle_record,
+            ipc::replace_subtitle_lines,
+            ipc::export_subtitle_record,
             ipc::clear_history,
+            ipc::translation_cache_usage,
+            ipc::clear_translation_cache,
             ipc::list_notices,
             ipc::dismiss_notice,
             ipc::list_config_issues,
@@ -143,15 +170,24 @@ pub fn build() -> Result<()> {
             // react (providers + hotkeys). `subscribe` returns a fresh
             // receiver each call so this does not starve any other
             // subscriber.
+            // Before subscribing: a login item the OS switched off turns
+            // the setting off here, and that save needs no reaction.
+            crate::autostart::sync_at_startup(&settings);
+            let mut launch_at_login = settings.snapshot().startup.launch_at_login;
             let reload_handle = handle.clone();
             let mut reload_rx = settings.subscribe();
             tauri::async_runtime::spawn(async move {
                 while let Ok(snapshot) = reload_rx.recv().await {
                     crate::apply_log_level(snapshot.privacy.log_level);
+                    if snapshot.startup.launch_at_login != launch_at_login {
+                        launch_at_login = snapshot.startup.launch_at_login;
+                        crate::autostart::sync_on_change(launch_at_login);
+                    }
                     // Let every window (overlay, subtitle, lens) apply theme
                     // or font changes, whether saved here or edited on disk.
                     let _ = reload_handle.emit("moonlens://settings-changed", &*snapshot);
                     let state = reload_handle.state::<AppState>();
+                    crate::lens::apply_capture_visibility(&reload_handle, &state.lenses);
                     if let Err(e) = state.storage.apply_retention(
                         snapshot.storage.retention_days,
                         snapshot.storage.max_entries,
@@ -199,7 +235,11 @@ pub fn build() -> Result<()> {
                 let pipeline = pipeline.clone();
                 tauri::async_runtime::spawn(async move { pipeline.warm_up().await });
             }
-            let subtitle = Arc::new(SubtitleService::new(settings.clone(), pipeline.clone()));
+            let subtitle = Arc::new(SubtitleService::new(
+                settings.clone(),
+                pipeline.clone(),
+                storage.clone(),
+            ));
             let lenses: LensRegistryHandle = Arc::new(LensRegistry::new());
 
             crate::model_idle::spawn(
@@ -225,6 +265,8 @@ pub fn build() -> Result<()> {
                 tracing::warn!("tray unavailable: {e}");
             }
 
+            app.manage(crate::attach::Handle::default());
+            app.manage(crate::stream::Handle::default());
             app.manage(AppState {
                 settings,
                 storage,
@@ -257,15 +299,13 @@ pub fn build() -> Result<()> {
                     }
                 }
             }
-            // The subtitle window is kept for the next start: closing it
-            // (its × button goes through `stop_subtitle`; this is Alt+F4)
-            // stops the subtitles and hides it.
-            if window.label() == "subtitle" {
-                if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                    api.prevent_close();
+            // A subtitle window closing by itself (Alt+F4; its × button
+            // goes through `close_subtitle_window`): stop its recognition.
+            if crate::subtitle::is_window(window.label()) {
+                if let tauri::WindowEvent::CloseRequested { .. } = event {
                     let app = window.app_handle();
                     if let Some(state) = app.try_state::<AppState>() {
-                        let _ = state.subtitle.stop(app);
+                        state.subtitle.forget(app, window.label());
                     }
                 }
             }
@@ -278,6 +318,13 @@ pub fn build() -> Result<()> {
 fn build_tray(app: &AppHandle) -> Result<()> {
     let open = MenuItem::with_id(app, "open", "MoonLens 表示", true, None::<&str>)?;
     let capture = MenuItem::with_id(app, "capture", "ウィンドウ翻訳", true, None::<&str>)?;
+    let pause = MenuItem::with_id(
+        app,
+        "pause",
+        "ウィンドウ翻訳 一時停止／再開",
+        true,
+        None::<&str>,
+    )?;
     let subtitle = MenuItem::with_id(app, "subtitle", "音声翻訳 開始／停止", true, None::<&str>)?;
     let plugins = MenuItem::with_id(app, "plugins", "拡張機能", true, None::<&str>)?;
     let history = MenuItem::with_id(app, "history", "履歴", true, None::<&str>)?;
@@ -286,7 +333,9 @@ fn build_tray(app: &AppHandle) -> Result<()> {
 
     let menu = Menu::with_items(
         app,
-        &[&open, &capture, &subtitle, &plugins, &history, &sep, &quit],
+        &[
+            &open, &capture, &pause, &subtitle, &plugins, &history, &sep, &quit,
+        ],
     )?;
 
     TrayIconBuilder::with_id("moonlens-tray")
@@ -300,6 +349,10 @@ fn build_tray(app: &AppHandle) -> Result<()> {
         .on_menu_event(move |app, event| match event.id.as_ref() {
             "open" => show_main_window(app),
             "capture" => crate::lens::open_new(app),
+            "pause" => {
+                let state = app.state::<AppState>();
+                crate::lens::toggle_pause(app, &state.lenses);
+            }
             "subtitle" => {
                 let state = app.state::<AppState>();
                 state.subtitle.toggle_checked(app);

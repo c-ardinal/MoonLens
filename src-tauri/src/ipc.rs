@@ -10,13 +10,14 @@ use crate::{
     capture::{self, CaptureRect},
     clipboard, hotkey, intent,
     lens::{self, geometry::LensInsets, LensDescriptor},
-    lens_text, overlay,
+    lens_fit, lens_text, overlay,
     pipeline::{CaptureFlowResult, TaskResult, LOCAL_ASSIST_ID, LOCAL_LLM_ID},
     plugins::PluginDescriptor,
     providers::{
         asr_local::LOCAL_ASR_ID, llm_models, model_store, ocr_ocrs, whisper_models, Capability,
         TaskInput,
     },
+    region_watcher::ReadMode,
     settings::schema::Settings,
     user_error,
 };
@@ -528,11 +529,10 @@ pub struct ModelProgress {
     pub fraction: Option<f32>,
 }
 
-#[tauri::command]
-pub async fn install_ocr_models(app: AppHandle) -> Result<String, String> {
-    let dir = ocr_ocrs::default_models_dir().ok_or("no data dir")?;
+/// Reports download progress as `moonlens://ocr-model-progress`.
+fn ocr_progress(app: &AppHandle) -> Box<ocr_ocrs::ProgressCb> {
     let app_for_cb = app.clone();
-    let cb: Box<ocr_ocrs::ProgressCb> = Box::new(move |filename, downloaded, total| {
+    Box::new(move |filename, downloaded, total| {
         let fraction = total.and_then(|t| {
             if t == 0 {
                 None
@@ -547,8 +547,14 @@ pub async fn install_ocr_models(app: AppHandle) -> Result<String, String> {
             fraction,
         };
         let _ = app_for_cb.emit("moonlens://ocr-model-progress", payload);
-    });
-    // PP-OCRv5 (Japanese / Chinese / English) first: it is the default
+    })
+}
+
+#[tauri::command]
+pub async fn install_ocr_models(app: AppHandle) -> Result<String, String> {
+    let dir = ocr_ocrs::default_models_dir().ok_or("no data dir")?;
+    let cb = ocr_progress(&app);
+    // PP-OCR (Japanese / Chinese / English) first: it is the default
     // OCR engine; ocrs stays as the Latin-only fallback.
     #[cfg(feature = "ocrs-engine")]
     crate::providers::ocr_ppocr::install_models_with_progress(&dir, Some(&*cb))
@@ -569,12 +575,15 @@ pub async fn install_ocr_models(app: AppHandle) -> Result<String, String> {
 /// Whether the OCR models are on disk, for the setup / settings screens.
 #[derive(serde::Serialize)]
 pub struct OcrModelsStatus {
-    /// PP-OCRv5 (Japanese / Chinese / English), the default engine.
+    /// PP-OCR (Japanese / Chinese / English), the default engine.
     pub ppocr: bool,
+    /// The PP-OCR models are the generation this version installs
+    /// (false: an earlier version's, which read less well).
+    pub current: bool,
     /// ocrs (Latin only), the fallback engine.
     pub ocrs: bool,
-    /// The faster runtime for PP-OCRv5 (ONNX Runtime and its models)
-    /// is installed, or this platform has none to install.
+    /// The faster runtime for PP-OCR (ONNX Runtime) is installed, or
+    /// this platform has none to install.
     pub fast: bool,
     pub dir: String,
 }
@@ -584,11 +593,59 @@ pub async fn ocr_models_status() -> Result<OcrModelsStatus, String> {
     let dir = ocr_ocrs::default_models_dir().ok_or("no data dir")?;
     Ok(OcrModelsStatus {
         ppocr: crate::providers::ocr_ppocr::models_installed(&dir),
+        current: crate::providers::ocr_ppocr::models_current(&dir),
         ocrs: ocr_ocrs::model_paths(&dir).is_some(),
         fast: !crate::providers::ocr_onnx::supported()
             || crate::providers::ocr_onnx::installed(&dir),
         dir: dir.display().to_string(),
     })
+}
+
+/// A writing system with a recognition model of its own
+/// (`providers::ocr_scripts`), for the model settings.
+#[derive(serde::Serialize)]
+pub struct OcrScriptStatus {
+    pub id: &'static str,
+    /// Download size in bytes.
+    pub size: u64,
+    pub installed: bool,
+}
+
+#[tauri::command]
+pub async fn ocr_scripts_status() -> Result<Vec<OcrScriptStatus>, String> {
+    use crate::providers::ocr_scripts;
+    let dir = ocr_ocrs::default_models_dir().ok_or("no data dir")?;
+    Ok(ocr_scripts::SCRIPTS
+        .iter()
+        .map(|s| OcrScriptStatus {
+            id: s.id,
+            size: s.bytes,
+            installed: s.model.present(&dir),
+        })
+        .collect())
+}
+
+/// Download the recognition model of one script. Progress arrives as
+/// `moonlens://ocr-model-progress` with the model's file name.
+#[tauri::command]
+pub async fn install_ocr_script(app: AppHandle, id: String) -> Result<(), String> {
+    use crate::providers::ocr_scripts;
+    let dir = ocr_ocrs::default_models_dir().ok_or("no data dir")?;
+    let script = ocr_scripts::by_id(&id).ok_or_else(|| format!("unknown script {id}"))?;
+    let cb = ocr_progress(&app);
+    script
+        .model
+        .install(&dir, Some(&*cb))
+        .await
+        .map_err(|e| user_error::download(&e))
+}
+
+#[tauri::command]
+pub async fn delete_ocr_script(id: String) -> Result<(), String> {
+    use crate::providers::ocr_scripts;
+    let dir = ocr_ocrs::default_models_dir().ok_or("no data dir")?;
+    let script = ocr_scripts::by_id(&id).ok_or_else(|| format!("unknown script {id}"))?;
+    ocr_scripts::remove(&dir, script).map_err(|e| e.to_string())
 }
 
 /// Local LLM models the app can download, with install state, plus the
@@ -601,6 +658,8 @@ pub struct LlmModels {
     pub assistant: String,
     pub dir: String,
     pub models: Vec<llm_models::ModelStatus>,
+    /// Licence ids the user already accepted (see `CatalogModel::consent`).
+    pub accepted_licenses: Vec<String>,
 }
 
 fn llm_dir() -> Result<PathBuf, String> {
@@ -630,7 +689,19 @@ pub async fn list_llm_models(state: State<'_, AppState>) -> Result<LlmModels, St
         assistant: selected_llm(&s, LOCAL_ASSIST_ID),
         dir: dir.display().to_string(),
         models: llm_models::status(&dir),
+        accepted_licenses: s.onboarding.accepted_licenses.clone(),
     })
+}
+
+/// Record that the user accepted licence `id` (a `CatalogModel::consent`
+/// id). Idempotent; persisted so the prompt never repeats.
+#[tauri::command]
+pub async fn accept_license(id: String, state: State<'_, AppState>) -> Result<(), String> {
+    let mut s = (*state.settings.snapshot()).clone();
+    if llm_models::accept_license(&mut s.onboarding.accepted_licenses, &id)? {
+        state.settings.save(s).map_err(|e| e.to_string())?;
+    }
+    Ok(())
 }
 
 #[derive(serde::Serialize, Clone)]
@@ -650,6 +721,20 @@ pub async fn install_llm_model(
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<String, String> {
+    if let Some(m) = llm_models::find(&id) {
+        let accepted = state
+            .settings
+            .snapshot()
+            .onboarding
+            .accepted_licenses
+            .clone();
+        if llm_models::require_consent(m, &accepted).is_err() {
+            return Err(user_error::coded(
+                "license_consent",
+                "利用許諾への同意が必要",
+            ));
+        }
+    }
     let dir = llm_dir()?;
     let app_for_cb = app.clone();
     let cb: Box<llm_models::ProgressCb> = Box::new(move |id, downloaded, total| {
@@ -1001,20 +1086,104 @@ pub async fn list_history(
     .map_err(|e| e.to_string())
 }
 
+/// 個別削除の結果。`record` は音声翻訳の記録（削除時点の全行）：取消時に
+/// `restore_history_entry` へ引渡し。
+#[derive(Serialize)]
+pub struct DeletedHistoryEntry {
+    /// 削除行数（0：該当 id なし）。
+    pub deleted: usize,
+    pub record: Option<crate::storage::SubtitleRecord>,
+}
+
 #[tauri::command]
-pub async fn delete_history_entry(id: i64, state: State<'_, AppState>) -> Result<usize, String> {
-    // Return the affected row count so the UI can distinguish "no such
-    // id" (0) from an actual removal (1) without a second round-trip.
-    state.storage.delete(id).map_err(|e| e.to_string())
+pub async fn delete_history_entry(
+    id: i64,
+    state: State<'_, AppState>,
+) -> Result<DeletedHistoryEntry, String> {
+    let (deleted, record) = state
+        .storage
+        .delete_keeping_record(id)
+        .map_err(|e| e.to_string())?;
+    Ok(DeletedHistoryEntry { deleted, record })
 }
 
 /// 個別削除の取消：削除済みの行を元の id・日時で復元。
 #[tauri::command]
 pub async fn restore_history_entry(
     entry: crate::storage::HistoryEntry,
+    record: Option<crate::storage::SubtitleRecord>,
     state: State<'_, AppState>,
 ) -> Result<usize, String> {
-    state.storage.restore(&entry).map_err(|e| e.to_string())
+    state
+        .storage
+        .restore_with_record(&entry, record.as_ref())
+        .map_err(|e| e.to_string())
+}
+
+/// 音声翻訳の履歴（時刻付き行）。記録なしの行は null。
+#[tauri::command]
+pub async fn get_subtitle_record(
+    id: i64,
+    state: State<'_, AppState>,
+) -> Result<Option<crate::storage::SubtitleRecord>, String> {
+    state.storage.subtitle_record(id).map_err(|e| e.to_string())
+}
+
+/// 記録の全行を置換（再翻訳とその取消）。`revision` は行の取得時点の値：
+/// 取得後に記録が変化した場合は失敗（記録中の行を保護）。戻り値は新しい値。
+#[tauri::command]
+pub async fn replace_subtitle_lines(
+    id: i64,
+    revision: i64,
+    lines: Vec<crate::storage::SubtitleLine>,
+    state: State<'_, AppState>,
+) -> Result<i64, String> {
+    state
+        .storage
+        .replace_subtitle_lines(id, revision, &lines)
+        .map_err(|e| format!("{e:#}"))
+}
+
+/// 記録を SRT・テキストで保存。保存先ダイアログの取消は `None`。
+#[tauri::command]
+pub async fn export_subtitle_record(
+    id: i64,
+    format: crate::subtitle_record::ExportFormat,
+    content: crate::subtitle_record::ExportContent,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<Option<String>, String> {
+    use tauri_plugin_dialog::DialogExt;
+    let record = state
+        .storage
+        .subtitle_record(id)
+        .map_err(|e| e.to_string())?
+        .ok_or("字幕記録なし")?;
+    let created_at = state
+        .storage
+        .entry(id)
+        .map_err(|e| e.to_string())?
+        .map_or(0, |e| e.created_at);
+    let text = crate::subtitle_record::render(&record, format, content);
+    let name = crate::subtitle_record::export_file_name(created_at, format);
+    let label = match format {
+        crate::subtitle_record::ExportFormat::Srt => "SRT 字幕",
+        crate::subtitle_record::ExportFormat::Txt => "テキスト",
+    };
+    let dialog = app.dialog().clone();
+    let chosen = tokio::task::spawn_blocking(move || {
+        dialog
+            .file()
+            .set_file_name(name)
+            .add_filter(label, &[format.extension()])
+            .blocking_save_file()
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+    let Some(file) = chosen else { return Ok(None) };
+    let path = file.into_path().map_err(|e| e.to_string())?;
+    std::fs::write(&path, text).map_err(|e| e.to_string())?;
+    Ok(Some(path.to_string_lossy().to_string()))
 }
 
 #[tauri::command]
@@ -1022,10 +1191,37 @@ pub async fn clear_history(state: State<'_, AppState>) -> Result<usize, String> 
     state.storage.clear_all().map_err(|e| e.to_string())
 }
 
+/// Size of the translation cache on disk, in total and per app.
+#[tauri::command]
+pub async fn translation_cache_usage(
+    state: State<'_, AppState>,
+) -> Result<crate::translation_cache::Usage, String> {
+    let pipeline = state.pipeline.clone();
+    tokio::task::spawn_blocking(move || pipeline.translation_cache_usage())
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())
+}
+
+/// Delete cached translations: those of one app (`""` = text that
+/// belongs to no app), or all of them when `app` is absent. Returns the
+/// number of entries removed.
+#[tauri::command]
+pub async fn clear_translation_cache(
+    app: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<usize, String> {
+    let pipeline = state.pipeline.clone();
+    tokio::task::spawn_blocking(move || pipeline.clear_translation_cache(app.as_deref()))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 pub async fn toggle_subtitle(app: AppHandle, state: State<'_, AppState>) -> Result<bool, String> {
-    if state.subtitle.is_running() {
-        state.subtitle.stop(&app).map_err(|e| e.to_string())?;
+    if state.subtitle.has_windows() {
+        state.subtitle.stop(&app);
         return Ok(false);
     }
     start_subtitle(app, state).await.map(|_| true)
@@ -1036,22 +1232,103 @@ pub async fn subtitle_state(state: State<'_, AppState>) -> Result<bool, String> 
     Ok(state.subtitle.is_running())
 }
 
+/// Block `phrase` in live subtitles from now on: the user approved a
+/// suggestion in the subtitle window. Persisted to config.toml
+/// (`subtitle.blocked_phrases`); takes effect from the next chunk.
+#[tauri::command]
+pub async fn block_subtitle_phrase(
+    phrase: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let mut next = (*state.settings.snapshot()).clone();
+    if crate::subtitle_filter::add_phrase(&mut next.subtitle.blocked_phrases, &phrase) {
+        state.settings.save(next).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+/// Stop and close every subtitle window.
 #[tauri::command]
 pub async fn stop_subtitle(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
-    state.subtitle.stop(&app).map_err(|e| e.to_string())
+    state.subtitle.stop(&app);
+    Ok(())
 }
 
 #[tauri::command]
 pub async fn start_subtitle(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
-    // Check the speech recognition engine before opening the subtitle
-    // window, instead of failing every few seconds once it is open.
-    state.subtitle.preflight().await?;
-    state
-        .subtitle
-        .start(app)
-        .map_err(|e| user_error::coded("error", format!("音声取得の開始失敗：{e:#}")))?;
+    // The speech recognition engine is checked before a subtitle window
+    // opens, instead of failing every few seconds once it is open.
+    state.subtitle.start(&app).await?;
     crate::notices::clear("subtitle_unavailable");
     Ok(())
+}
+
+fn subtitle_failure(e: anyhow::Error) -> String {
+    user_error::coded("error", format!("音声取得の開始失敗：{e:#}"))
+}
+
+/// One more subtitle window, opened from the window `window` (its ＋
+/// button) and placed next to it. Returns the new window's label.
+#[tauri::command]
+pub async fn open_subtitle_window(
+    app: AppHandle,
+    window: tauri::WebviewWindow,
+    state: State<'_, AppState>,
+    source: Option<crate::audio::AudioSource>,
+) -> Result<String, String> {
+    state.subtitle.preflight().await?;
+    let beside = crate::subtitle::is_window(window.label()).then(|| window.label());
+    state
+        .subtitle
+        .open(&app, source.unwrap_or_default(), beside)
+        .map_err(subtitle_failure)
+}
+
+/// Stop and close the calling subtitle window.
+#[tauri::command]
+pub async fn close_subtitle_window(
+    app: AppHandle,
+    window: tauri::WebviewWindow,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    state.subtitle.close(&app, window.label());
+    Ok(())
+}
+
+/// Switch the calling subtitle window to another audio source, or
+/// restart its current one after it stopped.
+#[tauri::command]
+pub async fn set_subtitle_source(
+    app: AppHandle,
+    window: tauri::WebviewWindow,
+    state: State<'_, AppState>,
+    source: crate::audio::AudioSource,
+) -> Result<(), String> {
+    state.subtitle.preflight().await?;
+    let (subtitle, label) = (state.subtitle.clone(), window.label().to_string());
+    // Opening a source waits for the capture thread: off the async
+    // runtime.
+    tauri::async_runtime::spawn_blocking(move || subtitle.set_source(&app, &label, source))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(subtitle_failure)
+}
+
+/// Source and state of the calling subtitle window.
+#[tauri::command]
+pub async fn subtitle_session(
+    window: tauri::WebviewWindow,
+    state: State<'_, AppState>,
+) -> Result<Option<crate::subtitle::SessionInfo>, String> {
+    Ok(state.subtitle.session(window.label()))
+}
+
+/// The applications a subtitle window can listen to.
+#[tauri::command]
+pub async fn list_audio_apps() -> Result<crate::audio_apps::AudioApps, String> {
+    tauri::async_runtime::spawn_blocking(crate::audio_apps::list)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 /// Describes which first-run guidance the UI should show. Exposed as a
@@ -1209,11 +1486,13 @@ fn platform_label(os: &str) -> &'static str {
 /// physical pixels) its body covers that range; without, it opens
 /// under the mouse pointer. `target_language` defaults to the
 /// configured target. `beside` (a window id, without `rect`): next to
-/// that window, with its size and language.
+/// that window, with its size, language and reading mode. `read_mode`
+/// applies with `rect` (default: subtitles).
 #[tauri::command]
 pub async fn open_lens(
     rect: Option<RegionArgs>,
     target_language: Option<String>,
+    read_mode: Option<ReadMode>,
     beside: Option<String>,
     app: AppHandle,
     state: State<'_, AppState>,
@@ -1227,6 +1506,7 @@ pub async fn open_lens(
             h: r.h,
         },
         target_language: clean_language(target_language.clone()),
+        read_mode: read_mode.unwrap_or_default(),
     });
     // Window creation must not run on the IPC worker on Windows (it
     // deadlocks with the event loop); hand it to the main thread.
@@ -1259,6 +1539,18 @@ pub async fn set_lens_language(
         .lenses
         .set_target_language(&id, clean_language(target_language));
     state.lenses.kick(&id);
+    Ok(())
+}
+
+/// Change how a lens window reads its range (see [`ReadMode`]). Applies
+/// from the next reading; what is shown stays.
+#[tauri::command]
+pub async fn set_lens_read_mode(
+    id: String,
+    mode: ReadMode,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    state.lenses.set_read_mode(&id, mode);
     Ok(())
 }
 
@@ -1368,12 +1660,58 @@ pub async fn set_lens_continuous(
     Ok(())
 }
 
+/// Pause every lens window, or let them read again. Returns whether
+/// they are paused afterwards (false without a window).
+#[tauri::command]
+pub async fn toggle_lens_pause(app: AppHandle, state: State<'_, AppState>) -> Result<bool, String> {
+    Ok(lens::toggle_pause(&app, &state.lenses))
+}
+
+/// State of the all-window controls, asked by a window as it opens.
+#[derive(Debug, Serialize)]
+pub struct LensControls {
+    pub paused: bool,
+    /// The show-original hotkey is held.
+    pub original: bool,
+}
+
+#[tauri::command]
+pub async fn lens_controls(state: State<'_, AppState>) -> Result<LensControls, String> {
+    Ok(LensControls {
+        paused: state.lenses.paused(),
+        original: state.lenses.original_held(),
+    })
+}
+
 /// Read a continuously reading lens now, even when nothing changed.
 /// Returns false when the lens is not reading continuously (the caller
 /// then uses `capture_lens_now`).
 #[tauri::command]
 pub async fn refresh_lens(id: String, state: State<'_, AppState>) -> Result<bool, String> {
     Ok(state.lenses.kick(&id))
+}
+
+/// Shrink a lens window to `band`, a rect inside the range it observes
+/// (`[x, y, w, h]`, physical pixels from the range's top-left corner).
+/// Returns where the window was, for `restore_lens`.
+#[tauri::command]
+pub async fn fit_lens(
+    id: String,
+    band: [i32; 4],
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<lens_fit::Before, String> {
+    lens_fit::fit(&app, &state.lenses, &id, band).map_err(|e| e.to_string())
+}
+
+/// Put a lens window back where it was before `fit_lens`.
+#[tauri::command]
+pub async fn restore_lens(
+    id: String,
+    before: lens_fit::Before,
+    app: AppHandle,
+) -> Result<(), String> {
+    lens_fit::restore(&app, &id, before).map_err(|e| e.to_string())
 }
 
 /// Capture the observed rect of a lens window and run the full pipeline.
@@ -1390,13 +1728,15 @@ pub async fn capture_lens_now(
     let pipeline = state.pipeline.clone();
     let app_clone = app.clone();
     let id_clone = id.clone();
-    let png =
-        tokio::task::spawn_blocking(move || lens::capture_lens(&app_clone, &lenses, &id_clone))
-            .await
-            .map_err(|e| e.to_string())?
-            .map_err(|e| e.to_string())?;
+    let margin = state.settings.snapshot().performance.scan_margin_px;
+    let (png, visible) = tokio::task::spawn_blocking(move || {
+        lens::capture_lens(&app_clone, &lenses, &id_clone, margin)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())?;
     let mut bundle = pipeline
-        .analyze_capture(png)
+        .analyze_capture_in(png, Some(visible))
         .await
         .map_err(|e| user_error::provider(&e, Capability::Ocr))?;
     if bundle.needs_translation() {
