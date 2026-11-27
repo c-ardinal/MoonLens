@@ -790,8 +790,8 @@ pub async fn run_loop(
             lines.clear();
             reviser.clear();
         }
-        let pair = (mode == Mode::Conversation).then(|| Pair::from_settings(&snap.subtitle));
-        if pair.is_none() {
+        let conversation = mode == Mode::Conversation;
+        if !conversation {
             languages = Languages {
                 source: snap.subtitle.source_language.clone(),
                 target: snap.subtitle.target_language.clone(),
@@ -815,7 +815,7 @@ pub async fn run_loop(
             tokio::select! {
                 _ = stop.notified() => break,
                 maybe = rx.recv() => match maybe {
-                    Some(frame) if frame.is_empty() => turn_ended = pair.is_some(),
+                    Some(frame) if frame.is_empty() => turn_ended = conversation,
                     Some(frame) => {
                         buffer.extend_from_slice(&frame);
                         heard_until = loop_started.elapsed();
@@ -843,7 +843,7 @@ pub async fn run_loop(
         // Collect whatever arrived during the previous recognition.
         while !turn_ended {
             match rx.try_recv() {
-                Ok(frame) if frame.is_empty() => turn_ended = pair.is_some(),
+                Ok(frame) if frame.is_empty() => turn_ended = conversation,
                 Ok(frame) => {
                     buffer.extend_from_slice(&frame);
                     heard_until = loop_started.elapsed();
@@ -917,6 +917,9 @@ pub async fn run_loop(
             revised(&mut stock, revision);
         }
         set_phase(Phase::Recognizing);
+        // Read now, not when the wait for this audio began: a partner
+        // language chosen during a silence applies to what is said next.
+        let pair = conversation.then(|| Pair::from_settings(&settings.snapshot().subtitle));
         let seconds = to_send.len() as f32 / 16_000.0;
         let started = std::time::Instant::now();
         let pcm_bytes = pcm16_to_bytes(&to_send);
