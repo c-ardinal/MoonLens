@@ -120,6 +120,10 @@ impl Assembler {
     /// The speaker paused (or the audio ended): whatever is open is a
     /// sentence now.
     pub fn flush(&mut self) -> Option<Sentence> {
+        // What comes after the pause shares no audio with what came
+        // before it, whatever the loop's audio overlap holds (the tail
+        // of a silent chunk, for one).
+        self.last_chunk.clear();
         self.is_open().then(|| self.close(None))
     }
 
@@ -650,6 +654,15 @@ mod tests {
         let texts: Vec<&str> = done.iter().map(|s| s.text.as_str()).collect();
         assert_eq!(texts, ["We are done.", "And now we go."]);
         assert_eq!(done[1].rest.as_ref().unwrap().1, "Then");
+    }
+
+    #[test]
+    fn words_after_a_pause_are_never_a_repeat() {
+        let mut asm = Assembler::default();
+        assert!(chunks(&mut asm, &["He said no."]).is_empty());
+        assert_eq!(asm.flush().unwrap().text, "He said no.");
+        assert!(chunks(&mut asm, &["No one", "left."]).is_empty());
+        assert_eq!(asm.flush().unwrap().text, "No one left.");
     }
 
     #[test]
