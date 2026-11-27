@@ -46,6 +46,11 @@ pub fn visible_in(observed: GlobalRect, captured: GlobalRect) -> Visible {
     }
 }
 
+/// Whether `rect` has an area, i.e. the engine reported where it is.
+fn placed(rect: [f32; 4]) -> bool {
+    rect[2] > 0.0 && rect[3] > 0.0
+}
+
 impl Visible {
     /// `rect` (`[x, y, w, h]`, capture pixels) cut to the window, in
     /// capture pixels. `None` when nothing of it is inside.
@@ -91,8 +96,13 @@ impl Visible {
 
     /// The rows the window shows. Rows wholly in the margin belong to
     /// whatever lies next to the window and are not translated.
+    /// A row without a place (an engine that returns text only) cannot
+    /// be told apart and is kept.
     pub fn keep_lines(&self, lines: Vec<OcrLine>) -> Vec<OcrLine> {
-        lines.into_iter().filter(|l| self.shows(l.bbox)).collect()
+        lines
+            .into_iter()
+            .filter(|l| !placed(l.bbox) || self.shows(l.bbox))
+            .collect()
     }
 
     /// Move blocks read in the capture to window pixels and cut their
@@ -100,6 +110,9 @@ impl Visible {
     /// frame, the place it is drawn at does not leave the window.
     pub fn to_window(&self, blocks: &mut Vec<LensBlock>) {
         blocks.retain_mut(|b| {
+            if !placed(b.bbox) {
+                return true;
+            }
             let Some(bbox) = self.local(b.bbox) else {
                 return false;
             };
@@ -285,6 +298,17 @@ mod tests {
             h: 10,
         };
         assert!(off.crop(&capture).is_none());
+    }
+
+    #[test]
+    fn text_without_a_place_is_kept() {
+        let v = window();
+        let kept = v.keep_lines(vec![line("text only", [0.0; 4])]);
+        assert_eq!(kept.len(), 1);
+        let mut blocks = vec![block([0.0; 4], vec![])];
+        v.to_window(&mut blocks);
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].bbox, [0.0; 4]);
     }
 
     #[test]
