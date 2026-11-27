@@ -18,7 +18,7 @@ export type SpeechEvent =
   /** 完了、または停止。 */
   | { kind: 'ended' }
   | { kind: 'skipped'; reason: SpeechSkip; lang: string }
-  /** 新規の依頼による待機分の破棄。 */
+  /** 案内なしの破棄（新規の依頼による待機分の破棄、発音対象のない文面）。 */
   | { kind: 'dropped' };
 
 /** 導入済みの音声。 */

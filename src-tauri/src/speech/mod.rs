@@ -98,7 +98,8 @@ pub enum Event {
         reason: Skip,
         lang: String,
     },
-    /// Left the queue unspoken: newer requests took its place.
+    /// Left unspoken without a notice: newer requests took its place,
+    /// or the text holds nothing to pronounce.
     Dropped,
 }
 
@@ -201,6 +202,8 @@ impl<E: Engine, H: Host> Player<E, H> {
 
     pub fn say(&mut self, utterance: Utterance) {
         let Some(text) = prepare(&utterance.text) else {
+            // Nothing to pronounce: the window stops waiting for it.
+            self.host.emit(&utterance.owner, Event::Dropped);
             return;
         };
         if self.host.blocked() {

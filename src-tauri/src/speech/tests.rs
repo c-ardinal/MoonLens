@@ -273,11 +273,13 @@ fn an_engine_failure_is_reported_and_does_not_stall_the_queue() {
 }
 
 #[test]
-fn text_without_anything_to_pronounce_is_ignored() {
+fn text_without_anything_to_pronounce_is_not_spoken() {
     let (mut p, fake) = player();
     p.say(say("lens-1", " … \n—"));
     assert!(p.idle());
-    assert!(fake.events().is_empty());
+    assert!(fake.spoken().is_empty());
+    // Answered, so the window stops waiting for it.
+    assert_eq!(fake.events(), [("lens-1".to_string(), Event::Dropped)]);
 }
 
 #[test]
