@@ -28,7 +28,9 @@ const BAYER = [
   [15, 7, 13, 5]
 ];
 
-export const PIXEL_FONT = '16px DotGothic16';
+const PIXEL_FONT_PX = 16;
+const PIXEL_FONT_FAMILY = 'DotGothic16';
+export const PIXEL_FONT = `${PIXEL_FONT_PX}px ${PIXEL_FONT_FAMILY}`;
 /** 大型見出し用：高精細な太字を 1 ドット単位で 2 値化。 */
 export const TITLE_FONT_FAMILY = "'BIZ UDGothic','Yu Gothic UI','Hiragino Sans','Noto Sans JP',sans-serif";
 
@@ -87,6 +89,12 @@ export function slabCenterOrigin(ink: InkBox, slab: Slab): { x: number; y: numbe
 export class Pix {
   readonly g: CanvasRenderingContext2D;
   private scratch: HTMLCanvasElement | null = null;
+
+  /**
+   * 標準書体（PIXEL_FONT）の拡縮率。1 以外では 2 値化せず、輪郭書体として内部解像度で描画
+   * （本文画面の文字と同一の描画）。配置は 16px の行枠の中央基準で不変。
+   */
+  textScale = 1;
 
   /** ss：内部解像度の倍率（整数）。描画座標は論理画素のまま、1 画素を ss×ss で打点。 */
   constructor(
@@ -228,15 +236,21 @@ export class Pix {
     );
   }
 
+  /** 拡縮後の標準書体の指定。 */
+  private scaledFont(): string {
+    return `${PIXEL_FONT_PX * this.textScale}px ${PIXEL_FONT_FAMILY}`;
+  }
+
   textW(s: string, font = PIXEL_FONT): number {
-    this.g.font = font;
+    this.g.font = font === PIXEL_FONT ? this.scaledFont() : font;
     return Math.ceil(this.g.measureText(s).width);
   }
 
   /** 文字を原寸で描画し 2 値化前の画素列を取得。 */
   private raster(s: string, font: string): { d: Uint8ClampedArray; w: number; h: number; tw: number } | null {
     const size = Number(/(\d+)px/.exec(font)?.[1] ?? 16);
-    const tw = this.textW(s, font),
+    this.g.font = font;
+    const tw = Math.ceil(this.g.measureText(s).width),
       th = Math.ceil(size * 1.15);
     const t = (this.scratch ??= document.createElement('canvas'));
     t.width = tw + 2;
@@ -264,6 +278,7 @@ export class Pix {
   ): number {
     const scale = opt.scale ?? 1,
       k = opt.k ?? 0;
+    if (this.textScale !== 1 && !opt.font && scale === 1 && k === 0) return this.smoothText(s, x, y, c, opt.align);
     const r = this.raster(s, opt.font ?? PIXEL_FONT);
     if (!r) return 0;
     const { d, tw } = r;
@@ -278,6 +293,21 @@ export class Pix {
         if (d[(j * r.w + i) * 4 + 3] > INK_THRESHOLD) this.g.fillRect(x + i * scale + o, y + j * scale, scale, scale);
     }
     return tw * scale;
+  }
+
+  /** 拡縮した標準書体の描画。字面は 2 値化描画の行枠（上端 +1、高さ 16）の中央へ配置。 */
+  private smoothText(s: string, x: number, y: number, c: Color, align?: 'left' | 'center' | 'right'): number {
+    const g = this.g;
+    g.font = this.scaledFont();
+    const tw = Math.ceil(g.measureText(s).width);
+    if (align === 'center') x -= tw / 2;
+    else if (align === 'right') x -= tw;
+    // 内部解像度の画素へ整列（文字の滲みを抑制）
+    const snap = (v: number) => Math.round(v * this.ss) / this.ss;
+    g.textBaseline = 'top';
+    g.fillStyle = this.col(c);
+    g.fillText(s, snap(x), snap(Math.round(y) + 1 + (PIXEL_FONT_PX * (1 - this.textScale)) / 2));
+    return tw;
   }
 
   /**
@@ -337,8 +367,8 @@ export class Pix {
   /** 幅 w に収まるよう末尾を省略。長文も計測回数は対数（二分探索）。 */
   fit(s: string, w: number): string {
     const chars = [...s];
-    // 1 文字は最低 4 ドット幅：w / 4 文字超は確実に超過のため先に切詰め
-    const cap = Math.min(chars.length, Math.ceil(w / 4) + 1);
+    // 1 文字は最低 4 ドット幅（拡縮後）：超過が確実な文字数を先に切詰め
+    const cap = Math.min(chars.length, Math.ceil(w / (4 * this.textScale)) + 1);
     if (cap === chars.length && this.textW(s) <= w) return s;
     let lo = 1,
       hi = cap; // lo：収まる最長（最低 1 文字）、hi：探索上限

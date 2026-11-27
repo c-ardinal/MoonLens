@@ -7,7 +7,6 @@
     drawHomeMotion,
     homeDot,
     homeRegions,
-    homeSupersample,
     titleOffsets,
     type HomeRegion,
     type HomeView
@@ -46,7 +45,7 @@
   let top: Pix | null = null;
   let low: Pix | null = null;
   let dot = $state(2);
-  /** Canvas の内部解像度の倍率（ドットが端末画素の整数倍でない場合は 2 以上）。 */
+  /** 静止層の内部解像度の倍率。文字の拡縮時は端末画素と等倍（輪郭書体を高精細で描画）。 */
   let ss = $state(1);
   let hover = $state<number | null>(null);
   let hot = $state<HomeRegion | null>(null);
@@ -66,8 +65,8 @@
   function measure() {
     const r = host.getBoundingClientRect();
     const dpr = window.devicePixelRatio || 1;
-    dot = homeDot(r.width, r.height, dpr, textScale.zoom);
-    ss = homeSupersample(dot, dpr);
+    dot = homeDot(r.width, r.height, dpr);
+    ss = textScale.zoom === 1 ? 1 : Math.max(1, Math.round(dot * dpr));
     size = { w: Math.floor(r.width / dot), h: Math.floor(r.height / dot) };
   }
 
@@ -75,20 +74,15 @@
     const { w, h } = size;
     if (!top || top.w !== w || top.h !== h || top.ss !== ss || low?.w !== w) {
       top = new Pix(canvas, w, h, ss);
-      low = new Pix(under, w, h, ss);
-      for (const c of [canvas, under]) {
-        c.style.width = `${w * dot}px`;
-        c.style.height = `${h * dot}px`;
-      }
-    } else if (canvas.style.width !== `${w * dot}px`) {
-      // 論理寸法が同一でドット寸法のみ変化（文字サイズ変更）
+      low = new Pix(under, w, h);
       for (const c of [canvas, under]) {
         c.style.width = `${w * dot}px`;
         c.style.height = `${h * dot}px`;
       }
     }
+    top.textScale = textScale.zoom;
   }
-  // 文字サイズ設定の変更：ドット寸法を再計算
+  // 文字サイズ設定の変更：静止層の内部解像度を再計算
   $effect(() => {
     void textScale.zoom;
     if (host) untrack(measure);
@@ -118,8 +112,8 @@
   $effect(() => {
     const state = { ...view, selected, hover, hot, turn, slide, leave };
     void size;
-    void dot;
     void ss;
+    void textScale.zoom;
     void palette.version; // 配色変更時に再描画
     if (!ok()) return;
     ensure();
@@ -136,7 +130,7 @@
       const el = rotorEls[i];
       if (!el) return;
       const n = rotorSize(o.id, ring.r);
-      drawRotor(new Pix(el, n, n, ss), o.id, ring.r);
+      drawRotor(new Pix(el, n, n), o.id, ring.r);
       const half = (n - 1) / 2;
       Object.assign(el.style, {
         left: `${(ring.cx - half) * dot}px`,
@@ -316,7 +310,7 @@
   onDestroy(() => ro?.disconnect());
 </script>
 
-<div class="home-canvas" class:smooth={ss > 1} bind:this={host}>
+<div class="home-canvas" bind:this={host}>
   <!-- 視覚表現。操作はキーボード（←→・Enter・数字）と支援技術向けボタン群でも可能。 -->
   <canvas bind:this={under} aria-hidden="true" class="layer"></canvas>
   {#each ROTORS as o, i (o.id)}
@@ -356,10 +350,6 @@
     top: 0;
     display: block;
     image-rendering: pixelated;
-  }
-  /* 内部解像度を整数倍で描画した Canvas の縮小表示：補間あり（ドットの太さを均一化） */
-  .smooth .layer {
-    image-rendering: auto;
   }
   canvas.pointer {
     cursor: pointer;

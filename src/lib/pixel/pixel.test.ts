@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { slantPolygon } from './slant';
 import { ROTORS, SELECTED_ANGLE, SIDE_WIDTH, dialGeometry, hitTest, labelPlacement, rotorSize } from './dial';
-import { homeDot, homeSupersample, titleOffsets } from './home';
+import { homeDot, titleOffsets } from './home';
 import { inkBounds, slabCenterOrigin } from './pix';
 
 const points = (poly: string) =>
@@ -76,31 +76,18 @@ describe('labelPlacement', () => {
 });
 
 describe('homeDot', () => {
-  it('最大の文字サイズ（32px）は 2 倍表示', () => {
+  it('既定寸法は 2 倍表示、拡大率 125% は 2 端末画素', () => {
     expect(homeDot(1280, 736, 1)).toBe(2);
-    expect(homeDot(1280, 736, 1.25)).toBe(2);
+    expect(homeDot(1280, 736, 1.25)).toBeCloseTo(1.6);
     expect(homeDot(1280, 736, 2)).toBe(2);
   });
-  it('文字サイズ設定と同率で拡縮（16 ドット文字＝設定の文字寸法）', () => {
-    expect([0.5, 0.625, 0.75, 0.875, 1].map((z) => homeDot(1280, 736, 1, z) * 16)).toEqual([16, 20, 24, 28, 32]);
-  });
-  it('最小寸法（1120×700）は全段階で設定値を維持', () => {
+  it('最小寸法（1120×700）は 2 倍表示を維持', () => {
     expect(homeDot(1120, 636, 1)).toBe(2);
-    expect(homeDot(1120, 636, 1, 0.75)).toBe(1.5);
   });
   it('高さ不足は端末画素単位で縮小（見切れ防止）', () => {
     // 1920×1080・150% の画面（作業領域 1280×672 相当）
     expect(homeDot(1280, 608, 1.5)).toBeCloseTo(2 / 1.5);
     expect(homeDot(1000, 560, 1)).toBe(1);
-  });
-});
-
-describe('homeSupersample', () => {
-  it('端末画素の整数倍は等倍、端数は次の整数倍で描画', () => {
-    expect(homeSupersample(2, 1)).toBe(1);
-    expect(homeSupersample(1.6, 1.25)).toBe(1);
-    expect(homeSupersample(1.5, 1)).toBe(2);
-    expect(homeSupersample(1.75, 1.5)).toBe(3);
   });
 });
 
