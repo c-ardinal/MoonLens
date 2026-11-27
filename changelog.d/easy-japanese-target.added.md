@@ -1,0 +1,1 @@
+- Easy Japanese (やさしい日本語) target language: translates into plain Japanese for learners and children, and rewrites Japanese screens the same way. Available wherever a target language is chosen; the Japanese glossary applies, the plain/polite style setting does not.

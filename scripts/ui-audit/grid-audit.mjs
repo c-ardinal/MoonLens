@@ -22,7 +22,7 @@ const BLOCKS = [
   { source: 'The North Wind and the Sun were disputing which was the stronger.', translation: '北風と太陽が、どちらが強いかで言い争っていました。', bbox: [20, 64, 400, 44], same_language: false }
 ];
 const LENS = JSON.stringify({
-  get_settings: { subtitle: { target_language: 'ja', show_original: true, font_size_px: 22 }, hotkeys: { toggle_window_operate: 'Ctrl+Shift+O' } },
+  get_settings: { subtitle: { target_language: 'ja', show_original: true, font_size_px: 22 }, hotkeys: { toggle_window_operate: 'Ctrl+Shift+O', toggle_window_pause: 'Ctrl+Shift+X' } },
   list_lens_windows: [{ id: 'lens-1', target_language: 'ja' }], refresh_lens: true, subtitle_state: false,
   window_attachment: { target: null, dock: null },
   stream_state: { supported: true, active: false, title: null },
@@ -45,6 +45,8 @@ async function lensWindow() {
     await measure(pg, `lens-${w}-idle`);
     await pg.evaluate((blocks) => window.__emit('moonlens://lens-live', { kind: 'blocks', blocks, translating: false, provider: 'PLaMo', via_cloud: false }), BLOCKS);
     await wait(pg, 300); await measure(pg, `lens-${w}`);
+    await pg.evaluate(() => window.__emit('moonlens://lens-pause', true)); await wait(pg, 100); await measure(pg, `lens-${w}-paused`);
+    await pg.evaluate(() => window.__emit('moonlens://lens-pause', false)); await wait(pg, 100);
     // 縦メニューは収納項目が有る幅のみ表示
     if (await pg.locator('.more').count()) { await reach(`lens-${w}-menu`, async () => { await pg.click('.more', { timeout: 2000 }); await pg.locator('.menu').waitFor({ timeout: 2000 }); }); await measure(pg, `lens-${w}-menu`); }
     // 吸着メニュー：吸着なし（候補一覧）・吸着中（配置・解除）。縦メニューへ収納中の幅は縦メニュー経由
@@ -67,7 +69,7 @@ async function lensWindow() {
   }
   for (const placement of ['outside', 'free']) {
     const pg = await win('lens-1-text', '/lens/text/?id=lens-1', 420, 300);
-    await pg.evaluate(([blocks, placement]) => window.__emit('moonlens://lens-text', { blocks, translation: '', source: null, explanation: placement === 'free' ? '北風と太陽の寓話の冒頭。' : null, placement }), [BLOCKS, placement]);
+    await pg.evaluate(([blocks, placement]) => window.__emit('moonlens://lens-text', { blocks, translation: '', source: null, explanation: placement === 'free' ? { status: 'done', text: '北風と太陽の寓話の冒頭。' } : null, placement }), [BLOCKS, placement]);
     await wait(pg, 300); await measure(pg, `lens-text-${placement}`);
     await pg.context().close();
   }
@@ -75,18 +77,31 @@ async function lensWindow() {
 async function subtitleWindow() {
   for (const [w, h] of [[900, 190], [480, 160]]) {
     const pg = await win('subtitle', '/subtitle/', w, h);
-    const emit = (p) => pg.evaluate((p) => window.__emit('moonlens://subtitle', p), p);
+    const emit = (p) => pg.evaluate((p) => window.__emit('moonlens://subtitle', { window: 'subtitle', ...p }), p);
     const m = async (n) => { await wait(pg, 200); await measure(pg, `subtitle-${w}-${n}`); };
     await m('idle');
-    await emit({ kind: 'started', device: 'スピーカー (Realtek(R) Audio)' }); await m('started');
+    await emit({ kind: 'started', device: 'スピーカー (Realtek(R) Audio)', source: { kind: 'system' } }); await m('started');
     // 入力レベル：閾値未満 → 音声検出（波形・メーター・状態表記）
     const level = (bins) => pg.evaluate((bins) => window.__emit('moonlens://subtitle-level', { bins, gate_db: -50.3 }), bins);
     await level(Array(40).fill(-64)); await m('low');
     await level(Array.from({ length: 40 }, (_, i) => -34 + 12 * Math.sin(i / 3))); await m('detected');
     await emit({ kind: 'status', phase: 'recognizing' }); await m('recognizing');
     await emit({ kind: 'status', phase: 'translating' });
-    await emit({ kind: 'chunk', original: 'And so, my fellow Americans,', translated: 'そして、同胞であるアメリカ国民の皆さん、' }); await m('chunk');
+    await emit({ kind: 'chunk', id: 1, original: 'And so, my fellow Americans,', translated: 'そして、同胞であるアメリカ国民の皆さん、' }); await m('chunk');
     await pg.mouse.move(w / 2, 20); await m('hover');
+    await emit({ kind: 'candidate', phrase: 'Thank you.' }); await m('candidate');
+    // 吸着メニュー：吸着なし（候補一覧）・吸着中（配置 6 種・解除）
+    const attachMenu = async (n) => {
+      await reach(`subtitle-${w}-${n}`, async () => {
+        if (!(await pg.locator('.am').count())) await pg.click('[data-action="attach"]', { timeout: 2000 });
+        await pg.locator('.am .row').first().waitFor({ timeout: 2000 });
+      });
+      await m(n);
+    };
+    await attachMenu('attach');
+    await pg.evaluate((a) => window.__emit('moonlens://attach', a), { ...ATTACHED, dock: 'inside' });
+    await attachMenu('attached');
+    await pg.keyboard.press('Escape');
     await emit({ kind: 'error', message: '音声認識の連続失敗により停止：モデル読込失敗' }); await emit({ kind: 'stopped' }); await m('error');
     await pg.context().close();
   }

@@ -6,6 +6,7 @@
 
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
+import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 import type { AttachCandidate, AttachDock, Attachment } from './attach';
 import { NO_STREAM, type StreamItem, type StreamState } from './stream';
 
@@ -148,16 +149,38 @@ export const pickAndInstallPlugin = () =>
 export const installOcrModels = () => safeInvoke<string>('install_ocr_models');
 
 export interface OcrModelsStatus {
-  /** PP-OCRv5 (Japanese / Chinese / English), the default engine. */
+  /** PP-OCR (Japanese / Chinese / English), the default engine. */
   ppocr: boolean;
+  /** PP-OCR が現行世代（PP-OCRv6）。false：旧版で取得した PP-OCRv5 で動作中。 */
+  current: boolean;
   /** ocrs (Latin only), the fallback engine. */
   ocrs: boolean;
-  /** PP-OCRv5 の高速実行部品（ONNX Runtime）が取得済み、または当該環境で対象外。 */
+  /** PP-OCR の高速実行部品（ONNX Runtime）が取得済み、または当該環境で対象外。 */
   fast: boolean;
   dir: string;
 }
 export const ocrModelsStatus = () =>
-  safeInvoke<OcrModelsStatus>('ocr_models_status', undefined, { ppocr: false, ocrs: false, fast: false, dir: '' });
+  safeInvoke<OcrModelsStatus>('ocr_models_status', undefined, {
+    ppocr: false,
+    current: false,
+    ocrs: false,
+    fast: false,
+    dir: ''
+  });
+
+/** 標準モデルの対象外の文字体系（韓国語・キリル文字等）と、その認識モデルの取得状態。 */
+export interface OcrScript {
+  id: string;
+  /** 取得量（バイト）。 */
+  size: number;
+  installed: boolean;
+}
+export const ocrScriptsStatus = () => safeInvoke<OcrScript[]>('ocr_scripts_status', undefined, []);
+/** 進捗は onModelProgress（filename：ocrScriptFile(id)）で通知。 */
+export const installOcrScript = (id: string) => safeInvoke<void>('install_ocr_script', { id });
+export const deleteOcrScript = (id: string) => safeInvoke<void>('delete_ocr_script', { id });
+/** 文字体系の認識モデルのファイル名（進捗通知の filename）。 */
+export const ocrScriptFile = (id: string) => `ppocrv5-rec-${id}.onnx`;
 
 /** Fired after settings are saved, so every window can apply them at once. */
 export const onSettingsChanged = (handler: (s: Settings) => void): Promise<UnlistenFn> =>
@@ -336,28 +359,88 @@ export const onHotkey = (handler: (action: string) => void): Promise<UnlistenFn>
   listen<string>('moonlens://hotkey', (e) => handler(e.payload));
 
 /** 音声翻訳の処理段階：音声待機・音声認識・翻訳。 */
-export type SubtitlePhase = 'waiting' | 'recognizing' | 'translating';
+export type SubtitlePhase = 'waiting' | 'recognizing' | 'translating' | 'revising';
+
+/** 音声翻訳ウィンドウの音源：PC 全体、またはアプリ単位（プロセスツリー）。 */
+export type AudioSource = { kind: 'system' } | { kind: 'app'; pid: number };
+
+/** 音声出力ストリームを保持するアプリ。 */
+export type AudioApp = {
+  /** 取得対象プロセス（子プロセス含む）。 */
+  pid: number;
+  /** 実行ファイル名（拡張子なし）。 */
+  name: string;
+  /** アプリのウィンドウ題名。 */
+  title: string | null;
+  /** 音声再生中。 */
+  playing: boolean;
+};
+
+export type AudioApps = {
+  /** アプリ単位の音声取得に対応する OS。 */
+  supported: boolean;
+  apps: AudioApp[];
+};
+
+/** 音声翻訳ウィンドウ 1 枚の音源と稼働状態。 */
+export type SubtitleSession = { source: AudioSource; device: string; running: boolean };
 
 export type SubtitleEvent =
-  | { kind: 'started'; device: string }
+  | { kind: 'started'; device: string; source: AudioSource }
   | { kind: 'stopped' }
   | { kind: 'status'; phase: SubtitlePhase }
-  | { kind: 'chunk'; original: string; translated: string }
+  | { kind: 'chunk'; id: number; original: string; translated: string }
+  | {
+      /** 文単位の再翻訳結果。`replaces` の各行を 1 行（＋次文の冒頭 `rest`）へ置換。`original` が空の場合は遮断済みの文：行の除去のみ。 */
+      kind: 'revised';
+      replaces: number[];
+      id: number;
+      original: string;
+      translated: string;
+      rest: { id: number; original: string; translated: string } | null;
+    }
+  /** 短時間に反復した文：遮断リストへの追加候補。 */
+  | { kind: 'candidate'; phrase: string }
   | { kind: 'error'; message: string };
 
+/** `window`：イベントの対象ウィンドウ（ラベル）。イベント固有のキー（行の `id` 等）と重複不可。 */
+export type SubtitleMessage = SubtitleEvent & { window: string };
+
 export const toggleSubtitle = () => safeInvoke<boolean>('toggle_subtitle');
+/** 稼働中の音声翻訳ウィンドウの有無。 */
 export const subtitleState = () => safeInvoke<boolean>('subtitle_state', undefined, false);
+/** 音声翻訳ウィンドウを全停止・全閉鎖。 */
 export const stopSubtitle = () => safeInvoke<void>('stop_subtitle');
 export const startSubtitle = () => safeInvoke<void>('start_subtitle');
-export const onSubtitle = (handler: (event: SubtitleEvent) => void): Promise<UnlistenFn> =>
-  listen<SubtitleEvent>('moonlens://subtitle', (e) => handler(e.payload));
+/** 音声翻訳の遮断リスト（`subtitle.blocked_phrases`）へ追加。 */
+export const blockSubtitlePhrase = (phrase: string) =>
+  safeInvoke<void>('block_subtitle_phrase', { phrase });
+/** 音声翻訳ウィンドウを追加（呼出元ウィンドウの隣へ配置）。 */
+export const openSubtitleWindow = (source?: AudioSource) =>
+  safeInvoke<string>('open_subtitle_window', { source });
+/** 呼出元の音声翻訳ウィンドウを停止・閉鎖。 */
+export const closeSubtitleWindow = () => safeInvoke<void>('close_subtitle_window');
+/** 呼出元の音声翻訳ウィンドウの音源を変更（停止後は同一音源で再開）。 */
+export const setSubtitleSource = (source: AudioSource) =>
+  safeInvoke<void>('set_subtitle_source', { source });
+export const subtitleSession = () =>
+  safeInvoke<SubtitleSession | null>('subtitle_session', undefined, null);
+export const listAudioApps = () =>
+  safeInvoke<AudioApps>('list_audio_apps', undefined, { supported: false, apps: [] });
+/** 全ウィンドウ分のイベントを受信（`id` で対象を判別）。 */
+export const onSubtitle = (handler: (event: SubtitleMessage) => void): Promise<UnlistenFn> =>
+  listen<SubtitleMessage>('moonlens://subtitle', (e) => handler(e.payload));
 
-/** 音声翻訳の入力レベル（波形表示用、50 ms 間隔）。 */
+/**
+ * 音声翻訳の入力レベル（波形表示用、50 ms 間隔）。送出先は対象ウィンドウ限定のため、
+ * 呼出元ウィンドウ宛のイベントのみ受信。
+ */
 export const onSubtitleLevel = (
   handler: (event: import('./subtitle-level').LevelEvent) => void
 ): Promise<UnlistenFn> =>
-  listen<import('./subtitle-level').LevelEvent>('moonlens://subtitle-level', (e) =>
-    handler(e.payload)
+  getCurrentWebviewWindow().listen<import('./subtitle-level').LevelEvent>(
+    'moonlens://subtitle-level',
+    (e) => handler(e.payload)
   );
 
 export type PermissionStatus = 'granted' | 'denied' | 'unknown';
@@ -482,8 +565,27 @@ export interface LensDescriptor {
 export const closeLensWindow = (id: string) => safeInvoke<void>('close_lens_window', { id });
 export const listLensWindows = () =>
   safeInvoke<LensDescriptor[]>('list_lens_windows', undefined, []);
+/** Pause every lens window, or resume. Resolves to the new state. */
+export const toggleLensPause = () => safeInvoke<boolean>('toggle_lens_pause', undefined, false);
+/** All-window controls as they are now (for a window that just opened). */
+export const lensControls = () =>
+  safeInvoke<{ paused: boolean; original: boolean }>('lens_controls', undefined, {
+    paused: false,
+    original: false
+  });
 export const captureLensNow = (id: string) =>
   safeInvoke<CaptureFlowResult>('capture_lens_now', { id });
+
+/** Where a lens window was before `fitLens` (physical screen pixels). */
+export interface LensBefore {
+  rect: { x: number; y: number; w: number; h: number };
+  maximized: boolean;
+}
+/** Shrink a lens window to `band` ([x, y, w, h] inside its observed range, physical px). */
+export const fitLens = (id: string, band: [number, number, number, number]) =>
+  safeInvoke<LensBefore>('fit_lens', { id, band });
+export const restoreLens = (id: string, before: LensBefore) =>
+  safeInvoke<void>('restore_lens', { id, before });
 
 export interface HistoryEntry {
   id: number;
@@ -503,14 +605,83 @@ export const listHistory = (args: { limit?: number; query?: string } = {}) =>
     []
   );
 
+/** 個別削除。`record` は音声翻訳の記録（削除時点の全行）：取消時に復元へ引渡し。 */
 export const deleteHistoryEntry = (id: number) =>
-  safeInvoke<number>('delete_history_entry', { id }, 0);
+  safeInvoke<{ deleted: number; record: SubtitleRecord | null }>(
+    'delete_history_entry',
+    { id },
+    { deleted: 0, record: null }
+  );
 
-/** 個別削除の取消：削除済みの履歴を元の id・日時で復元。 */
-export const restoreHistoryEntry = (entry: HistoryEntry) =>
-  safeInvoke<number>('restore_history_entry', { entry }, 0);
+/** 個別削除の取消：削除済みの履歴を元の id・日時で復元。音声翻訳は記録（行）も復元。 */
+export const restoreHistoryEntry = (entry: HistoryEntry, record?: SubtitleRecord | null) =>
+  safeInvoke<number>('restore_history_entry', { entry, record: record ?? null }, 0);
+
+/** 音声翻訳の 1 行（時刻付き）。 */
+export interface SubtitleLine {
+  /** 記録内の順序（0 始まり）。 */
+  seq: number;
+  /** 実行開始からの経過時間（ms）。 */
+  start_ms: number;
+  end_ms: number;
+  original: string;
+  /** 翻訳失敗・不要の場合は空文字。 */
+  translated: string;
+}
+
+/** 音声翻訳 1 回分の記録。 */
+export interface SubtitleRecord {
+  history_id: number;
+  /** 音源（取得対象のデバイス・アプリの名称）。 */
+  source: string;
+  /** 実行時の設定値（auto の場合あり）。 */
+  source_language: string;
+  target_language: string;
+  /** 行の変更回数。全行の置換時に取得時点の値を指定（記録中の行の消失防止）。 */
+  revision: number;
+  lines: SubtitleLine[];
+}
+
+export type SubtitleExportFormat = 'srt' | 'txt';
+export type SubtitleExportContent = 'translated' | 'original' | 'both';
+
+/** 音声翻訳の記録の取得。記録のない履歴は null。 */
+export const getSubtitleRecord = (id: number) =>
+  safeInvoke<SubtitleRecord | null>('get_subtitle_record', { id }, null);
+
+/**
+ * 記録の全行の置換（再翻訳とその取消）。履歴の原文・訳文も再構築。
+ * `revision` は行の取得時点の値：取得後に記録が変化した場合は失敗。戻り値は新しい値。
+ */
+export const replaceSubtitleLines = (id: number, revision: number, lines: SubtitleLine[]) =>
+  safeInvoke<number>('replace_subtitle_lines', { id, revision, lines });
+
+/** 記録の書出し。戻り値は保存先、保存先の選択を取消した場合は null。 */
+export const exportSubtitleRecord = (
+  id: number,
+  format: SubtitleExportFormat,
+  content: SubtitleExportContent
+) => safeInvoke<string | null>('export_subtitle_record', { id, format, content }, null);
 
 export const clearHistory = () => safeInvoke<number>('clear_history', undefined, 0);
+
+/** 訳文キャッシュの使用量（端末内保存分）。 */
+export interface TranslationCacheUsage {
+  /** キャッシュファイルの容量（バイト）。 */
+  bytes: number;
+  entries: number;
+  /** アプリ単位の内訳。scope が空文字：追従先アプリ未指定の共通分。 */
+  scopes: { scope: string; entries: number; bytes: number }[];
+}
+export const translationCacheUsage = () =>
+  safeInvoke<TranslationCacheUsage>('translation_cache_usage', undefined, {
+    bytes: 0,
+    entries: 0,
+    scopes: []
+  });
+/** 訳文キャッシュの消去。app 省略：全消去。戻り値：消去件数。 */
+export const clearTranslationCache = (app?: string) =>
+  safeInvoke<number>('clear_translation_cache', { app: app ?? null }, 0);
 
 /* ------------------------------ lifecycle ------------------------------ */
 

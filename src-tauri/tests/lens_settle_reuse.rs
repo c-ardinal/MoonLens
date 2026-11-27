@@ -170,6 +170,7 @@ impl Run {
             target_language: "ja",
             mode: ReadMode::default(),
             history_kind: "lens",
+            app: None,
             emit: &emit,
             geometry_now: &geometry_now,
         };
@@ -178,6 +179,7 @@ impl Run {
                 Frame {
                     image,
                     geometry: GEOMETRY,
+                    visible: None,
                 },
                 force,
                 &env,

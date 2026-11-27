@@ -1,0 +1,1 @@
+- 内容説明 in a translation window no longer fails with a timeout: a local explain / summarize request now gets the time the general model needs to load and write its answer (it had a fixed 10 seconds). A failed explanation shows a retry button.
