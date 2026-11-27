@@ -263,7 +263,7 @@ impl DiskCache {
                 Self::connect(path)?
             }
         };
-        Ok(Self::over(db, Some(path.to_path_buf())))
+        Ok(Self::over(db, Some(path.to_path_buf())).trimmed())
     }
 
     pub fn open_in_memory() -> Result<Self> {
@@ -283,6 +283,16 @@ impl DiskCache {
 
     pub fn with_max_entries(mut self, max: u64) -> Self {
         self.max_entries = max.max(1);
+        self.trimmed()
+    }
+
+    /// Apply the limit now. Done at every start: sessions that write
+    /// less than [`Self::TRIM_EVERY`] entries would otherwise never
+    /// trim, and the file would grow without end.
+    fn trimmed(self) -> Self {
+        if let Err(e) = Self::trim(&self.db.lock(), self.max_entries) {
+            tracing::warn!("translation cache trim failed: {e}");
+        }
         self
     }
 
@@ -623,6 +633,25 @@ mod tests {
             );
         }
         assert_eq!(disk.usage().unwrap().entries, 10);
+    }
+
+    #[test]
+    fn the_limit_is_applied_at_every_start() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(DiskCache::FILE_NAME);
+        // Short sessions: fewer writes each than the trim interval.
+        for session in 0..3 {
+            let disk = DiskCache::open(&path).unwrap().with_max_entries(5);
+            for i in 0..4 {
+                disk.put(
+                    &("".into(), "ja".into(), format!("s{session}-{i}"), "".into()),
+                    "f",
+                    &v("t"),
+                );
+            }
+        }
+        let disk = DiskCache::open(&path).unwrap().with_max_entries(5);
+        assert_eq!(disk.usage().unwrap().entries, 5);
     }
 
     #[test]
