@@ -230,7 +230,7 @@
       <section class="px-win panel" aria-labelledby="dl-title">
         <span class="px-win-title px-chip" data-tone="amber" id="dl-title" use:slant>一括取得</span>
         {#if queue.length === 0}
-          <p>取得対象なし。選択モデルは全て取得済み。</p>
+          <p>取得対象なし。選択モデルは全件取得済。</p>
         {/if}
         <ul class="dl">
           {#each queue as d (keyOf(d))}
@@ -261,9 +261,9 @@
       <button class="px-btn primary" disabled={!report && !loadError} onclick={toSelect}>次へ</button>
     {:else if step === 'select'}
       <p class="sum" class:warn={short}>
-        合計 {formatBytes(total)}{free != null ? `／空き ${formatBytes(free)}` : ''}{short ? '。空き容量不足' : ''}
+        合計 {formatBytes(total)}{free != null ? `／残容量 ${formatBytes(free)}` : ''}{short ? '。残容量不足' : ''}
       </p>
-      <button class="px-btn" onclick={() => (step = 'check')}>戻る</button>
+      <button class="px-btn" onclick={() => (step = 'check')}>前画面</button>
       <button class="px-btn primary" disabled={short} onclick={run}>
         {planned.length ? '承認・一括取得' : '適用'}
       </button>

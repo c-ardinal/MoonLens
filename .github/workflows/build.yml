@@ -78,6 +78,13 @@ jobs:
       - name: Release preflight
         run: node scripts/check-release.mjs
 
+      # Copy style (CLAUDE.md): no native-Japanese words in UI text and
+      # messages; banned terms are checked in comments too.
+      - name: Copy lint
+        run: |
+          node --test scripts/copy-lint.test.mjs
+          npm run lint:copy
+
       - name: Typecheck (svelte-check)
         run: npm run check
 
@@ -101,6 +108,11 @@ jobs:
       # the window and overlapping siblings.
       - name: UI overflow audit
         run: npm run audit:overflow
+
+      # <select> option lists are drawn by the OS / WebView: every option
+      # needs a readable text / background pair in light and dark schemes.
+      - name: UI select contrast audit
+        run: npm run audit:select
 
   rust:
     strategy:

@@ -203,7 +203,7 @@
   );
   const shownGroup = $derived(groups.find((g) => g.sections.some((v) => v === shown)) ?? groups[0]);
 
-  /** 選択中の行（選択帯と説明窓の対象）。 */
+  /** 選択中の行（選択帯と説明欄の対象）。 */
   const rows = provideRowSelection();
   const MODEL_COMPONENTS = ['llm-translate', 'llm-assist', 'ocr', 'asr'];
   const component = $derived(shown && 'component' in shown.section ? shown.section.component : null);
@@ -406,7 +406,7 @@
           </div>
         </div>
       </section>
-      <!-- 説明窓：右列の下部（タブ列は全高を使用し、分類の見切れを防止） -->
+      <!-- 説明欄：右列の下部（タブ列は全高を使用し、分類の見切れを防止） -->
       <section class="px-win desc" aria-live="polite">
         <span class="px-chip px-win-title" data-tone="amber" use:slant>説明</span>
         <p use:replay={{ key: explain, effect: 'type' }}>
@@ -444,7 +444,7 @@
     padding: var(--ml-page-y) var(--ml-page-x);
     box-sizing: border-box;
   }
-  /* 通知バー（画面下端固定）表示中：説明窓との重複を回避 */
+  /* 通知バー（画面下端固定）表示中：説明欄との重複を回避 */
   .cfg.with-bar {
     padding-bottom: calc(var(--ml-sp-16) + var(--ml-page-y));
   }
@@ -573,7 +573,7 @@
     padding-top: var(--ml-sp-6);
     box-sizing: border-box;
   }
-  /* 説明文：常時 2 行分の高さ（項目選択での窓の伸縮を防止）。超過分は窓内スクロール */
+  /* 説明文：常時 2 行分の高さ（項目選択でのウィンドウの伸縮を防止）。超過分はウィンドウ内スクロール */
   .desc p {
     height: calc(var(--ml-sp-9) * 2);
     margin: 0;
@@ -640,7 +640,7 @@
     color: var(--ml-px-cream);
     border-color: var(--ml-px-faint);
   }
-  /* 枠内の部品（モデル管理・データ）：外枠と二重化する独自の窓枠を解除 */
+  /* 枠内の部品（モデル管理・データ）：外枠と二重化する独自の外枠を解除 */
   .scroll :global(section.rounded-ml.border) {
     padding: 0 0 var(--ml-sp-5);
     border: 0;
