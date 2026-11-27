@@ -405,6 +405,8 @@ mod tests {
         assert_eq!(desktop_exec_quote("/x/100%/m"), "\"/x/100%%/m\"");
     }
 
+    // Unix paths: `/data/cfg` is not absolute on Windows.
+    #[cfg(unix)]
     #[test]
     fn a_relocated_config_home_is_followed() {
         let home = Some(OsStr::new("/home/u"));
