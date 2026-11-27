@@ -106,6 +106,14 @@ struct Running {
     stop: Arc<tokio::sync::Notify>,
 }
 
+/// Whether [`SubtitleService::run`] starts the first run of a window
+/// being opened, or a further one of a window that must still be open.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Window {
+    New,
+    Open,
+}
+
 impl Running {
     fn halt(self) {
         self.stop.notify_waiters();
@@ -267,7 +275,7 @@ impl SubtitleService {
             .visible(false)
             .build()
             .context("create subtitle window")?;
-        if let Err(e) = self.run(app, &label, source) {
+        if let Err(e) = self.run(app, &label, source, Window::New) {
             let _ = win.destroy();
             return Err(e);
         }
@@ -283,16 +291,16 @@ impl SubtitleService {
     /// after it stopped). The current source keeps running when the new
     /// one cannot be opened.
     pub fn set_source(&self, app: &AppHandle, label: &str, source: AudioSource) -> Result<()> {
-        anyhow::ensure!(
-            self.sessions.lock().contains_key(label),
-            "音声翻訳ウィンドウ未検出：{label}"
-        );
-        self.run(app, label, source)
+        self.run(app, label, source, Window::Open)
     }
 
     /// Open `source` and start a recognition loop for the window
     /// `label`, replacing its current one.
-    fn run(&self, app: &AppHandle, label: &str, source: AudioSource) -> Result<()> {
+    fn run(&self, app: &AppHandle, label: &str, source: AudioSource, window: Window) -> Result<()> {
+        let missing = || anyhow::anyhow!("音声翻訳ウィンドウ未検出：{label}");
+        if window == Window::Open && !self.sessions.lock().contains_key(label) {
+            return Err(missing());
+        }
         // Frames keep arriving while a chunk is being recognized; the
         // capture callback drops what does not fit, so leave room for a
         // long decode (callbacks deliver ~10 ms each).
@@ -315,6 +323,13 @@ impl SubtitleService {
         // Hold the sessions while the loop is spawned: it must not end
         // (and look itself up) before it is registered.
         let mut sessions = self.sessions.lock();
+        // Opening the source took a while: the window may have been
+        // closed meanwhile. Starting now would recognize for no window.
+        if window == Window::Open && !sessions.contains_key(label) {
+            drop(sessions);
+            drop(stream);
+            return Err(missing());
+        }
         let handle = tauri::async_runtime::spawn(async move {
             let emit = {
                 let app = app_emit.clone();
