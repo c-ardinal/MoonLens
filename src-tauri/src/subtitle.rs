@@ -799,6 +799,13 @@ pub async fn run_loop(
                 if gave_up {
                     return true;
                 }
+                // The chunk's words are lost: the open sentence cannot
+                // be completed, and the next chunk overlaps this audio,
+                // not the last recognized text.
+                if correcting {
+                    pause(&mut lines, &mut reviser, &languages);
+                    set_phase(idle(&reviser));
+                }
             }
         }
     }
