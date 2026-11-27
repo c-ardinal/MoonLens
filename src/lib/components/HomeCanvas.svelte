@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onDestroy, onMount, untrack } from 'svelte';
   import { Pix } from '$lib/pixel/pix';
-  import { ROTORS, dialGeometry, drawRotor, hitTest, rotorSize } from '$lib/pixel/dial';
+  import { ROTORS, dialGeometry, drawMoon, drawRotor, hitTest, moonSize, rotorSize } from '$lib/pixel/dial';
   import {
     drawHome,
     drawHomeMotion,
@@ -18,8 +18,9 @@
   /**
    * ホーム画面の描画層。Canvas を重ねる構成。
    * - 下層（動作層）：光点・波紋・中心核の円。12 fps で再描画（文字処理なし）。
+   * - 中層（中心の月）：寸法変化時のみ描画。回転体の背面、静止層は月の範囲を透過。
    * - 中層（回転体）：ルーン環・中心核の正方形。寸法変化時のみ描画し、CSS で等速回転（ドット単位の段差なし）。
-   * - 上層（静止層）：文字・枠・ノード・中心の月。状態変化時と選択切替の演出中のみ再描画。
+   * - 上層（静止層）：文字・枠・ノード。状態変化時と選択切替の演出中のみ再描画。
    * 推論中・動き削減設定時・非表示時は演出を停止し、静止画のみ描画。
    * 選択切替：クリック・キー操作に加え、ホイールと魔法陣のドラッグ（回転）にも対応。
    */
@@ -40,6 +41,7 @@
 
   let under: HTMLCanvasElement;
   let canvas: HTMLCanvasElement;
+  let moonEl: HTMLCanvasElement;
   const rotorEls: HTMLCanvasElement[] = [];
   let host: HTMLDivElement;
   let top: Pix | null = null;
@@ -126,18 +128,22 @@
   $effect(() => {
     void palette.version;
     if (!ring || !fontsReady) return;
-    ROTORS.forEach((o, i) => {
-      const el = rotorEls[i];
-      if (!el) return;
-      const n = rotorSize(o.id, ring.r);
-      drawRotor(new Pix(el, n, n), o.id, ring.r);
+    const { cx, cy, r } = ring;
+    /** 魔法陣の中心へ n 四方の Canvas を配置。 */
+    const place = (el: HTMLCanvasElement, n: number) => {
       const half = (n - 1) / 2;
       Object.assign(el.style, {
-        left: `${(ring.cx - half) * dot}px`,
-        top: `${(ring.cy - half) * dot}px`,
+        left: `${(cx - half) * dot}px`,
+        top: `${(cy - half) * dot}px`,
         width: `${n * dot}px`,
         height: `${n * dot}px`
       });
+      return new Pix(el, n, n);
+    };
+    if (moonEl) drawMoon(place(moonEl, moonSize(r)), r);
+    ROTORS.forEach((o, i) => {
+      const el = rotorEls[i];
+      if (el) drawRotor(place(el, rotorSize(o.id, r)), o.id, r);
     });
   });
 
@@ -313,6 +319,7 @@
 <div class="home-canvas" bind:this={host}>
   <!-- 視覚表現。操作はキーボード（←→・Enter・数字）と支援技術向けボタン群でも可能。 -->
   <canvas bind:this={under} aria-hidden="true" class="layer"></canvas>
+  <canvas bind:this={moonEl} aria-hidden="true" class="layer fixed"></canvas>
   {#each ROTORS as o, i (o.id)}
     <canvas
       bind:this={rotorEls[i]}
@@ -350,6 +357,9 @@
     top: 0;
     display: block;
     image-rendering: pixelated;
+  }
+  .fixed {
+    pointer-events: none;
   }
   canvas.pointer {
     cursor: pointer;
