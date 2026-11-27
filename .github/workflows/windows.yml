@@ -221,6 +221,11 @@ jobs:
         working-directory: src-tauri
         run: cargo test --release --locked --lib backends_read_the_same_lines -- --ignored --nocapture
 
+      # TEMPORARY diagnostic (not for merge).
+      - name: Windows OCR timing (diagnostic)
+        working-directory: src-tauri
+        run: cargo test --release --locked --test windows_ocr_diag -- --ignored --nocapture
+
       - name: Screen → OCR → translation
         working-directory: src-tauri
         run: cargo test --release --locked --test lens_screen_windows_live -- --ignored --nocapture
