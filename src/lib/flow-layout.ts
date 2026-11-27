@@ -54,12 +54,15 @@ export interface FlowOptions {
 }
 
 /** Characters that must not start a line (Japanese kinsoku + Latin). */
+// i18n-ignore（禁則処理の文字集合）
 const NO_START = new Set(
   Array.from(
+    // i18n-ignore
     '、。，．,.:;!?！？：；・…‥ー〜～）)]｝}」』】〕〉》〙〗’”ゝゞヽヾぁぃぅぇぉっゃゅょゎゕゖァィゥェォッャュョヮヵヶㇰㇱㇲㇳㇴㇵㇶㇷㇸㇹㇺㇻㇼㇽㇾㇿ々〻%％'
   )
 );
 /** Characters that must not end a line. */
+// i18n-ignore
 const NO_END = new Set(Array.from('（([｛{「『【〔〈《〘〖‘“'));
 
 const isSpace = (s: string) => /^\s+$/.test(s);

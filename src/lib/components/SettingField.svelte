@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { t } from '$lib/i18n';
   import { RotateCcw } from 'lucide-svelte';
   import type { Field } from '$lib/settings-meta';
   import HotkeyInput from './HotkeyInput.svelte';
@@ -44,10 +45,10 @@
 >
   <div class="min-w-0 flex-1">
     <label for={id} class="text-sm font-medium {invalid ? 'text-red-500' : 'text-ink'}">
-      {field.label}{#if invalid}<span class="ml-2 text-xs font-normal">重複</span>{/if}
+      {t(field.label)}{#if invalid}<span class="ml-2 text-xs font-normal">{t('重複')}</span>{/if}
     </label>
     {#if field.help && !compact}
-      <p class="mt-0.5 text-xs leading-relaxed text-ink-muted">{field.help}</p>
+      <p class="mt-0.5 text-xs leading-relaxed text-ink-muted">{t(field.help)}</p>
     {/if}
   </div>
   <!-- 設定画面：操作部は固定幅の右寄せ列（行間で左右端を統一） -->
@@ -88,10 +89,10 @@
         onchange={(e) => onChange((e.currentTarget as HTMLSelectElement).value)}
       >
         {#if !field.options.some((o) => o.value === value)}
-          <option value={value ?? ''}>{value ?? '未設定'}</option>
+          <option value={value ?? ''}>{value ?? t('未設定')}</option>
         {/if}
         {#each field.options as o (o.value)}
-          <option value={o.value}>{o.label}</option>
+          <option value={o.value}>{t(o.label)}</option>
         {/each}
       </select>
     {:else if field.kind === 'number'}
@@ -108,9 +109,9 @@
         />
         <span class="value-text min-w-24 whitespace-nowrap text-right text-sm tabular-nums text-ink-muted">
           {#if field.zeroLabel && !value}
-            {field.zeroLabel}
+            {t(field.zeroLabel)}
           {:else}
-            {fmt(value ?? field.min)}{field.unit ? ` ${field.unit}` : ''}
+            {fmt(value ?? field.min)}{field.unit ? ` ${t(field.unit)}` : ''}
           {/if}
         </span>
       {:else}
@@ -125,7 +126,7 @@
           onchange={(e) => onChange(clamp(Number((e.currentTarget as HTMLInputElement).value)))}
         />
         <span class="value-text min-w-16 whitespace-nowrap text-sm text-ink-muted">
-          {field.zeroLabel && !value ? field.zeroLabel : (field.unit ?? '')}
+          {field.zeroLabel && !value ? t(field.zeroLabel) : t(field.unit ?? '')}
         </span>
       {/if}
     {:else if field.kind === 'color'}
@@ -138,15 +139,15 @@
       />
       <code class="font-mono text-xs text-ink-muted">{value}</code>
     {:else if field.kind === 'hotkey'}
-      <HotkeyInput value={value ?? ''} label={field.label} {onChange} />
+      <HotkeyInput value={value ?? ''} label={t(field.label)} {onChange} />
     {/if}
     <button
       type="button"
       class="reset rounded-ml-sm p-1 text-ink-faint transition hover:bg-surface-muted hover:text-ink {isDefault
         ? 'invisible'
         : ''}"
-      title="初期値に復元"
-      aria-label="{field.label}：初期値に復元"
+      title={t('初期値に復元')}
+      aria-label={t('{label}：初期値に復元', { label: t(field.label) })}
       onclick={() => onChange(defaultValue)}
     >
       <RotateCcw class="h-3.5 w-3.5" />

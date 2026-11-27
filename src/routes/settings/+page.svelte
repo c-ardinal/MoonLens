@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { t } from '$lib/i18n';
   import PixelTitle from '$lib/components/PixelTitle.svelte';
   import { slant } from '$lib/pixel/slant';
   import { onDestroy, onMount, tick, untrack } from 'svelte';
@@ -43,6 +44,7 @@
   /** The selector remembers the language last picked in its toolbar. */
   const SELECTOR_LANG_KEY = 'moonlens.selector.targetLanguage';
 
+  /** 日本語の原文（表示時に `t()` で翻訳）。 */
   const DEVICE_HELP =
     '翻訳・音声認識の実行先。文字認識（OCR）は CPU 専用。実行結果の詳細はログに記録。';
 
@@ -73,7 +75,7 @@
       ({ section, fields }) =>
         fields.length > 0 ||
         ('component' in section &&
-          (!query.trim() || `${section.title} ${section.description ?? ''}`.toLowerCase().includes(query.trim().toLowerCase())))
+          (!query.trim() || `${section.title} ${section.description ?? ''} ${t(section.title)} ${t(section.description ?? '')}`.toLowerCase().includes(query.trim().toLowerCase())))
     )
   );
 
@@ -145,8 +147,8 @@
     update(path, list);
     if (isBlankEntry(row.entry)) return;
     const id = undoable({
-      text: '用語 1 件：削除完了',
-      failure: '復元失敗',
+      text: t('用語 1 件：削除完了'),
+      failure: t('復元失敗'),
       undo: async () => {
         glossaryUndo.delete(id);
         update(path, glossaryRemovals.restore($state.snapshot(getPath(draft, path)) ?? [], row));
@@ -212,7 +214,7 @@
     if (component && MODEL_COMPONENTS.includes(component)) modelsMounted = true;
   });
   // 項目名の再掲は冗長：説明のない項目は小分類の説明を表示
-  const explain = $derived(rows.help ?? shown?.section.description ?? '');
+  const explain = $derived(rows.help ?? t(shown?.section.description ?? ''));
 
   /** 先頭行を選択状態へ（分類切替時）。 */
   async function selectFirstRow() {
@@ -303,28 +305,28 @@
 
 <div class="cfg px-body" class:with-bar={clashes.length > 0 || !!saveError}>
   <header class="head">
-    <div class="page-title"><PixelTitle text="設定" tag="h1" height={40} fit /></div>
+    <div class="page-title"><PixelTitle text={t('設定')} tag="h1" height={40} fit /></div>
     <p class="status" class:done={status === 'saved'} role="status">
-      {status === 'saving' ? '保存中…' : status === 'saved' ? '保存完了' : '変更は即時保存'}
+      {status === 'saving' ? t('保存中…') : status === 'saved' ? t('保存完了') : t('変更は即時保存')}
     </p>
     <!-- 操作案内：全文を収容不可の幅では非表示（途中切れを防止） -->
-    <p class="hint" data-grid-glyph data-overflow-exempt><span>↑↓項目 ←→タブ PgUp/Dn分類</span></p>
+    <p class="hint" data-grid-glyph data-overflow-exempt><span>{t('↑↓項目 ←→タブ PgUp/Dn分類')}</span></p>
     <div class="search">
       <Search class="icon" />
-      <input id="settings-search" bind:value={query} type="search" placeholder="設定を検索" aria-label="設定を検索" />
+      <input id="settings-search" bind:value={query} type="search" placeholder={t('設定を検索')} aria-label={t('設定を検索')} />
     </div>
   </header>
 
   {#if loadError}
-    <p class="px-win error">設定の読込に失敗：{loadError}</p>
+    <p class="px-win error">{t('設定の読込に失敗：{loadError}', { loadError })}</p>
   {:else if !draft || !defaults}
-    <p class="loading">読込中…</p>
+    <p class="loading">{t('読込中…')}</p>
   {:else if visible.length === 0}
-    <p class="px-win empty">「{query}」：該当なし</p>
+    <p class="px-win empty">{t('「{query}」：該当なし', { query })}</p>
   {:else}
     <div class="body">
       <!-- 大分類：等幅の斜め帯を階段状に配置（左右端とも同じ傾きで整列） -->
-      <nav aria-label="設定の分類" class="tabs scrollbar-minimal" style="--n: {groups.length}" use:wheelStep={wheelGroup}>
+      <nav aria-label={t('設定の分類')} class="tabs scrollbar-minimal" style="--n: {groups.length}" use:wheelStep={wheelGroup}>
         {#each groups as { group }, i (group.id)}
           <button
             class="px-chip tab"
@@ -334,7 +336,7 @@
             use:slant
             onclick={() => jump(group.id)}
           >
-            {group.title}
+            {t(group.title)}
           </button>
         {/each}
       </nav>
@@ -343,12 +345,12 @@
       <section
         class="main"
         id="section-{shown.section.id}"
-        aria-label={shown.section.title}
+        aria-label={t(shown.section.title)}
       >
         <div class="frame" aria-hidden="true"></div>
         {#if (shownGroup?.sections.length ?? 0) > 1}
           <!-- 小分類：枠上部の矩形タブ -->
-          <div class="subtabs" role="tablist" aria-label="{shownGroup.group.title}の小分類" use:wheelStep={wheelSection}>
+          <div class="subtabs" role="tablist" aria-label={t('{title}の小分類', { title: t(shownGroup.group.title) })} use:wheelStep={wheelSection}>
             {#each shownGroup.sections as { section } (section.id)}
               <button
                 class="subtab"
@@ -356,7 +358,7 @@
                 aria-selected={shown.section.id === section.id}
                 onclick={() => jump(section.id)}
               >
-                {section.title}
+                {t(section.title)}
               </button>
             {/each}
           </div>
@@ -376,10 +378,10 @@
             <Plugins />
           {:else if !component}
             {#each shown.fields as field (field.path)}
-              <SettingRow id={field.path} help={field.help}>
+              <SettingRow id={field.path} help={field.help ? t(field.help) : null}>
                 {#if field.kind === 'glossary'}
                   <GlossaryEditor
-                    label={field.label}
+                    label={t(field.label)}
                     value={getPath(draft, field.path)}
                     defaultLang={getPath(draft, 'subtitle.target_language') ?? 'ja'}
                     onChange={(v) => update(field.path, v)}
@@ -397,7 +399,7 @@
                 {/if}
               </SettingRow>
               {#if field.path === 'performance.use_gpu_if_available'}
-                <SettingRow id="info:inference-device" help={DEVICE_HELP}>
+                <SettingRow id="info:inference-device" help={t(DEVICE_HELP)}>
                   <InferenceDevice useGpu={!!getPath(draft, field.path)} />
                 </SettingRow>
               {/if}
@@ -408,7 +410,7 @@
       </section>
       <!-- 説明欄：右列の下部（タブ列は全高を使用し、分類の見切れを防止） -->
       <section class="px-win desc" aria-live="polite">
-        <span class="px-chip px-win-title" data-tone="amber" use:slant>説明</span>
+        <span class="px-chip px-win-title" data-tone="amber" use:slant>{t('説明')}</span>
         <p use:replay={{ key: explain, effect: 'type' }}>
           <!-- 文と参照先の間隔は余白トークンで指定（空白文字の幅は文字サイズ設定により 4px 格子から逸脱） -->
           {explain}{#if rows.link}<a href={rows.link.href} target="_blank" rel="noreferrer">{rows.link.label}</a>{/if}
@@ -423,12 +425,12 @@
   <!-- 通知バー：保存不可の変更・保存時のエラー。画面下端固定。本文と同じ左右余白で整列 -->
   <div class="savebar px-zoom">
     <p class="msg error" role="alert">
-      {#if clashes.length > 0}ショートカット重複：該当項目は未保存。重複解消後に自動保存。{/if}
+      {#if clashes.length > 0}{t('ショートカット重複：該当項目は未保存。重複解消後に自動保存。')}{/if}
       {#if clashes.length > 0 && saveError}<br />{/if}
       {#if saveError}{saveError}{/if}
     </p>
     {#if saveError}
-      <button class="px-btn" onclick={() => (saveError = null)}>閉じる</button>
+      <button class="px-btn" onclick={() => (saveError = null)}>{t('閉じる')}</button>
     {/if}
   </div>
 {/if}

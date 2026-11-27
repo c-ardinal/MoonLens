@@ -349,15 +349,30 @@ export class Pix {
   wrap(s: string, x: number, y: number, w: number, c: Color, lh = 18, maxLines = Infinity): number {
     const lines: string[] = [];
     let line = '';
-    for (const ch of s) {
-      // 行頭禁則：句読点・長音・閉じ括弧は前行へ追込み
-      const hang = /[、。，．ー・）」』！？]/.test(ch);
-      if (ch === '\n' || (this.textW(line + ch) > w && !hang)) {
+    // 欧文の単語は分割不可の単位、他は 1 文字単位（単語が幅を超過する場合のみ文字単位へ分割）
+    for (const unit of s.match(/[A-Za-z0-9'’\-/+]+[,.;:!?)]*|\s|[^]/g) ?? []) {
+      if (unit === '\n') {
         lines.push(line);
-        line = ch === '\n' ? '' : ch;
-      } else line += ch;
+        line = '';
+        continue;
+      }
+      // 行頭禁則：句読点・長音・閉じ括弧は前行へ追込み
+      const hang = /^[、。，．ー・）」』！？]$/.test(unit);
+      if (this.textW(line + unit) <= w || hang) {
+        line += unit;
+        continue;
+      }
+      if (line.trim()) lines.push(line.trimEnd());
+      line = '';
+      if (unit === ' ') continue; // 行頭の空白は破棄
+      for (const ch of this.textW(unit) > w ? unit : [unit]) {
+        if (line && this.textW(line + ch) > w) {
+          lines.push(line);
+          line = ch;
+        } else line += ch;
+      }
     }
-    if (line) lines.push(line);
+    if (line.trim()) lines.push(line.trimEnd());
     const shown = lines.slice(0, maxLines);
     if (lines.length > maxLines) shown[maxLines - 1] = this.fit(shown[maxLines - 1] + '…', w);
     shown.forEach((l, i) => this.text(l, x, y + i * lh, c));

@@ -9,6 +9,7 @@
 </script>
 
 <script lang="ts">
+  import { t } from '$lib/i18n';
   import PixelTitle from '$lib/components/PixelTitle.svelte';
   import { onDestroy, onMount, untrack } from 'svelte';
   import { replay, type Effect } from '$lib/pixel/transition';
@@ -48,11 +49,11 @@
 
   function copy(which: 'source' | 'result') {
     const text = which === 'source' ? current?.source_text : current?.result_text;
-    if (text) void copyText(text, which === 'source' ? '原文' : resultLabel(current!));
+    if (text) void copyText(text, which === 'source' ? t('原文') : resultLabel(current!));
   }
 
   /** 結果欄の名称（QR は翻訳なし）。 */
-  const resultLabel = (e: HistoryEntry) => (e.kind === 'qr' ? '内容' : '訳文');
+  const resultLabel = (e: HistoryEntry) => (e.kind === 'qr' ? t('内容') : t('訳文'));
 
   function dateLabel(created: number): string {
     return new Date(created * 1000).toLocaleString('ja-JP', {
@@ -113,15 +114,15 @@
     try {
       deleted = await deleteHistoryEntry(entry.id);
     } catch (e) {
-      notifyError(`削除失敗：${errorText(e)}`);
+      notifyError(t('削除失敗：{error}', { error: errorText(e) }));
       restores += 1;
       return;
     }
     // 削除済みの項目（0 行）：取消の対象なし
     if (deleted === 0) return;
     const toast = undoable({
-      text: '履歴 1 件：削除完了',
-      failure: '復元失敗',
+      text: t('履歴 1 件：削除完了'),
+      failure: t('復元失敗'),
       undo: async () => {
         await restoreHistoryEntry($state.snapshot(entry));
         selectedId = entry.id;
@@ -140,7 +141,7 @@
       const count = await clearHistory();
       entries = [];
       confirmClear = false;
-      notify(`履歴 ${count} 件：全消去完了`);
+      notify(t('履歴 {count} 件：全消去完了', { count }));
     } catch (e) {
       confirmClear = false;
       error = String(e);
@@ -149,10 +150,10 @@
 
   function when(created: number): string {
     const delta = Date.now() / 1000 - created;
-    if (delta < 60) return `${Math.floor(delta)}秒前`;
-    if (delta < 3600) return `${Math.floor(delta / 60)}分前`;
-    if (delta < 86_400) return `${Math.floor(delta / 3600)}時間前`;
-    return `${Math.floor(delta / 86_400)}日前`;
+    if (delta < 60) return t('{n}秒前', { n: Math.floor(delta) });
+    if (delta < 3600) return t('{n}分前', { n: Math.floor(delta / 60) });
+    if (delta < 86_400) return t('{n}時間前', { n: Math.floor(delta / 3600) });
+    return t('{n}日前', { n: Math.floor(delta / 86_400) });
   }
 
   /** 種別の切替演出：タブの並び順で左右。 */
@@ -164,9 +165,9 @@
 <main class="px-body history mx-auto flex max-w-5xl flex-col gap-4 px-4 py-6 sm:px-6">
   <header class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
     <div>
-      <div class="page-title"><PixelTitle text="履歴" tag="h1" height={40} fit /></div>
+      <div class="page-title"><PixelTitle text={t('履歴')} tag="h1" height={40} fit /></div>
       <!-- 件数は種別タブ「全件」に表示済み -->
-      {#if loading}<p class="text-sm text-ink-muted">読込中…</p>{/if}
+      {#if loading}<p class="text-sm text-ink-muted">{t('読込中…')}</p>{/if}
     </div>
     <div class="flex min-w-0 items-center gap-2">
       <div class="relative min-w-0 flex-1 sm:flex-none">
@@ -176,16 +177,16 @@
         <input
           value={q}
           oninput={(e) => onQueryInput((e.target as HTMLInputElement).value)}
-          placeholder="原文・訳文で検索"
-          aria-label="履歴を検索"
+          placeholder={t('原文・訳文で検索')}
+          aria-label={t('履歴を検索')}
           class="w-full rounded-ml-sm sm:w-72 border border-border bg-surface-elevated py-1.5 pl-7 pr-3 text-sm"
         />
       </div>
       <button
         class="inline-flex items-center gap-1 rounded-ml-sm border border-border bg-surface px-3 py-1.5 text-sm text-ink-muted transition hover:border-accent/60 hover:text-ink"
         onclick={() => refresh()}
-        title="再読込"
-        aria-label="再読込"
+        title={t('再読込')}
+        aria-label={t('再読込')}
       >
         <RefreshCw class="h-4 w-4" />
       </button>
@@ -195,7 +196,7 @@
           onclick={() => (confirmClear = true)}
         >
           <Trash2 class="h-4 w-4" />
-          全消去
+          {t('全消去')}
         </button>
       {/if}
     </div>
@@ -205,7 +206,7 @@
     <div
       class="rounded-ml border border-red-500/50 bg-red-500/10 p-3 text-sm text-red-500"
     >
-      エラー: {error}
+      {t('エラー: {error}', { error })}
     </div>
   {/if}
 
@@ -214,18 +215,18 @@
       class="rounded-ml border border-dashed border-border bg-surface-elevated p-8 text-center text-ink-muted"
     >
       {#if q.trim().length > 0}
-        <p class="break-words">「{q}」：該当なし</p>
+        <p class="break-words">{t('「{q}」：該当なし', { q })}</p>
       {:else if keepHistory === false}
-        <p>履歴保存：オフ（変更は<a href="/settings/#section-history" class="text-accent underline-offset-2 hover:underline">設定</a>）</p>
+        <p>{t('履歴保存：オフ。')}<a href="/settings/#section-history" class="text-accent underline-offset-2 hover:underline">{t('設定で変更')}</a></p>
       {:else}
-        <p>履歴なし。翻訳の実行後に表示。</p>
+        <p>{t('履歴なし。翻訳の実行後に表示。')}</p>
       {/if}
     </div>
   {:else if entries.length > 0}
     <div
       class="scrollbar-minimal flex gap-1 overflow-x-auto"
       role="tablist"
-      aria-label="種別"
+      aria-label={t('種別')}
     >
       {#each HISTORY_FILTERS.filter((f) => f.value === 'all' || f.value === filter || counts[f.value] > 0) as f (f.value)}
         <button
@@ -236,7 +237,7 @@
             : 'text-ink-muted hover:bg-surface-muted hover:text-ink'}"
           onclick={() => (filter = f.value)}
         >
-          {f.label}
+          {t(f.label)}
           <span class="text-xs tabular-nums text-ink-faint">{counts[f.value]}</span>
         </button>
       {/each}
@@ -245,12 +246,12 @@
     <div class="grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)] gap-3 sm:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
       <ul
         class="scrollbar-minimal flex min-h-0 flex-col gap-1.5 overflow-y-auto"
-        aria-label="履歴一覧"
+        aria-label={t('履歴一覧')}
         use:replay={{ key: filter, effect: filterMotion }}
       >
         {#if visible.length === 0}
           <li class="rounded-ml border border-dashed border-border p-6 text-center text-sm text-ink-muted">
-            該当なし
+            {t('該当なし')}
           </li>
         {/if}
         {#each visible as e (e.id)}
@@ -277,7 +278,7 @@
       {#if current}
         <section
           class="flex min-h-0 min-w-0 flex-col rounded-ml border border-border bg-surface-elevated shadow-ml"
-          aria-label="履歴詳細"
+          aria-label={t('履歴詳細')}
           use:replay={{ key: current.id, effect: 'open' }}
         >
           <div class="flex flex-wrap items-center gap-2 border-b border-border px-4 py-3 text-xs text-ink-faint">
@@ -298,8 +299,8 @@
             {#if current.source_text}
               <div>
                 <div class="mb-1 flex items-center justify-between">
-                  <h2 class="text-xs font-medium text-ink-muted">原文</h2>
-                  <button class="sbtn icon neutral" title="原文をコピー" aria-label="原文をコピー" onclick={() => copy('source')}>
+                  <h2 class="text-xs font-medium text-ink-muted">{t('原文')}</h2>
+                  <button class="sbtn icon neutral" title={t('原文をコピー')} aria-label={t('原文をコピー')} onclick={() => copy('source')}>
                     <Copy class="h-3.5 w-3.5" />
                   </button>
                 </div>
@@ -312,8 +313,8 @@
                   <h2 class="text-xs font-medium text-ink-muted">{resultLabel(current)}</h2>
                   <button
                     class="sbtn icon neutral"
-                    title="{resultLabel(current)}をコピー"
-                    aria-label="{resultLabel(current)}をコピー"
+                    title={t('{label}をコピー', { label: resultLabel(current) })}
+                    aria-label={t('{label}をコピー', { label: resultLabel(current) })}
                     onclick={() => copy('result')}
                   >
                     <Copy class="h-3.5 w-3.5" />
@@ -326,8 +327,8 @@
           <div class="flex justify-end border-t border-border px-4 py-2">
             <button
               class="sbtn icon"
-              title="当該履歴を削除"
-              aria-label="当該履歴を削除"
+              title={t('当該履歴を削除')}
+              aria-label={t('当該履歴を削除')}
               onclick={() => current && remove(current)}
             >
               <Trash2 class="h-3.5 w-3.5" />
@@ -353,20 +354,20 @@
       onclick={(e) => e.stopPropagation()}
       onkeydown={(e) => e.key === 'Escape' && (confirmClear = false)}
     >
-      <h2 class="text-base font-semibold">全履歴を削除</h2>
-      <p class="mt-1 text-sm text-ink-muted">本操作は復元不可。</p>
+      <h2 class="text-base font-semibold">{t('全履歴を削除')}</h2>
+      <p class="mt-1 text-sm text-ink-muted">{t('本操作は復元不可。')}</p>
       <div class="mt-4 flex justify-end gap-2">
         <button
           class="rounded-ml-sm border border-border bg-surface px-3 py-1.5 text-sm"
           onclick={() => (confirmClear = false)}
         >
-          キャンセル
+          {t('キャンセル')}
         </button>
         <button
           class="rounded-ml-sm bg-red-500 px-3 py-1.5 text-sm font-medium text-white"
           onclick={wipe}
         >
-          削除
+          {t('削除')}
         </button>
       </div>
     </div>

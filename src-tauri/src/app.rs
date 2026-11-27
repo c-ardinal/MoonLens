@@ -9,6 +9,7 @@ use tauri::{
     AppHandle, Emitter, Manager,
 };
 
+use crate::tr;
 use crate::{
     hotkey, ipc,
     lens::{LensRegistry, LensRegistryHandle},
@@ -136,8 +137,10 @@ pub fn build() -> Result<()> {
         .setup(|app| {
             let handle = app.handle().clone();
             crate::notices::attach(&handle);
+            crate::i18n::apply(SettingsStore::peek_ui_language(&handle));
             let settings = Arc::new(SettingsStore::load_or_default(&handle)?);
             crate::apply_log_level(settings.snapshot().privacy.log_level);
+            crate::i18n::apply(settings.snapshot().appearance.ui_language);
             let settings_watcher = Watcher::spawn(settings.clone())?;
             // Wire disk reloads to the parts of the app that need to
             // react (providers + hotkeys). `subscribe` returns a fresh
@@ -148,6 +151,9 @@ pub fn build() -> Result<()> {
             tauri::async_runtime::spawn(async move {
                 while let Ok(snapshot) = reload_rx.recv().await {
                     crate::apply_log_level(snapshot.privacy.log_level);
+                    if crate::i18n::apply(snapshot.appearance.ui_language) {
+                        retitle(&reload_handle);
+                    }
                     // Let every window (overlay, subtitle, lens) apply theme
                     // or font changes, whether saved here or edited on disk.
                     let _ = reload_handle.emit("moonlens://settings-changed", &*snapshot);
@@ -217,6 +223,10 @@ pub fn build() -> Result<()> {
                 // the hotkeys still work.
                 tracing::warn!("tray unavailable: {e}");
             }
+            // tauri.conf.json carries the Japanese title.
+            if let Some(w) = handle.get_webview_window("subtitle") {
+                let _ = w.set_title(&subtitle_title());
+            }
 
             app.manage(AppState {
                 settings,
@@ -261,19 +271,50 @@ pub fn build() -> Result<()> {
     Ok(())
 }
 
-fn build_tray(app: &AppHandle) -> Result<()> {
-    let open = MenuItem::with_id(app, "open", "MoonLens 表示", true, None::<&str>)?;
-    let capture = MenuItem::with_id(app, "capture", "ウィンドウ翻訳", true, None::<&str>)?;
-    let subtitle = MenuItem::with_id(app, "subtitle", "音声翻訳 開始／停止", true, None::<&str>)?;
-    let plugins = MenuItem::with_id(app, "plugins", "拡張機能", true, None::<&str>)?;
-    let history = MenuItem::with_id(app, "history", "履歴", true, None::<&str>)?;
+/// Tray menu in the current display language.
+fn tray_menu(app: &AppHandle) -> Result<Menu<tauri::Wry>> {
+    let item = |id: &str, text: String| MenuItem::with_id(app, id, text, true, None::<&str>);
+    let open = item("open", tr!("MoonLens 表示", "Show MoonLens"))?;
+    let capture = item("capture", tr!("ウィンドウ翻訳", "Window Translation"))?;
+    let subtitle = item(
+        "subtitle",
+        tr!("音声翻訳 開始／停止", "Audio Translation: start / stop"),
+    )?;
+    let plugins = item("plugins", tr!("拡張機能", "Extensions"))?;
+    let history = item("history", tr!("履歴", "History"))?;
     let sep = tauri::menu::PredefinedMenuItem::separator(app)?;
-    let quit = MenuItem::with_id(app, "quit", "終了", true, None::<&str>)?;
-
-    let menu = Menu::with_items(
+    let quit = item("quit", tr!("終了", "Quit"))?;
+    Ok(Menu::with_items(
         app,
         &[&open, &capture, &subtitle, &plugins, &history, &sep, &quit],
-    )?;
+    )?)
+}
+
+/// Title of the audio translation window (also its taskbar entry).
+fn subtitle_title() -> String {
+    tr!("MoonLens 音声翻訳", "MoonLens Audio Translation")
+}
+
+/// Re-word the tray menu and the audio translation window's title after
+/// the display language changed. Window contents follow
+/// `moonlens://settings-changed`; translation windows have no visible
+/// title (frameless, off the taskbar) and take the language when opened.
+fn retitle(app: &AppHandle) {
+    if let Some(tray) = app.tray_by_id("moonlens-tray") {
+        match tray_menu(app) {
+            Ok(menu) => {
+                let _ = tray.set_menu(Some(menu));
+            }
+            Err(e) => tracing::warn!("tray menu rebuild failed: {e}"),
+        }
+    }
+    if let Some(w) = app.get_webview_window("subtitle") {
+        let _ = w.set_title(&subtitle_title());
+    }
+}
+
+fn build_tray(app: &AppHandle) -> Result<()> {
+    let menu = tray_menu(app)?;
 
     TrayIconBuilder::with_id("moonlens-tray")
         .tooltip("MoonLens")

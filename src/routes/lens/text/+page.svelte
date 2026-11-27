@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { t } from '$lib/i18n';
   import { onDestroy, onMount } from 'svelte';
   import { emitTo, type UnlistenFn } from '@tauri-apps/api/event';
   import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
@@ -65,7 +66,7 @@
     onplacement={(value) => send({ kind: 'placement', value })}
     onclose={() => send({ kind: 'close' })}
   />
-  <div class="grip" role="presentation" title="サイズ変更" onpointerdown={startResize}></div>
+  <div class="grip" role="presentation" title={t('サイズ変更')} onpointerdown={startResize}></div>
 </main>
 
 <style>

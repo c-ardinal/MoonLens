@@ -6,6 +6,7 @@
 
 use std::path::{Path, PathBuf};
 
+use crate::tr;
 use anyhow::{Context, Result};
 use parking_lot::Mutex;
 use rusqlite::Connection;
@@ -60,8 +61,9 @@ impl Storage {
                 }
                 crate::notices::push(
                     "history-db",
-                    format!(
+                    tr!(
                         "履歴データベースを読込不可のため再作成。旧ファイル：{}",
+                        "The history database could not be read and was recreated. Old file: {}",
                         aside.file_name().unwrap_or_default().to_string_lossy()
                     ),
                     None,

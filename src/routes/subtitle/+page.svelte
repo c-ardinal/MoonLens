@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { t } from '$lib/i18n';
   import { onDestroy, onMount, tick } from 'svelte';
   import { type UnlistenFn } from '@tauri-apps/api/event';
   import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
@@ -171,14 +172,14 @@
 
 <main class="sub">
   <header class="bar" data-tauri-drag-region>
-    <span class="title" data-tauri-drag-region>音声翻訳</span>
+    <span class="title" data-tauri-drag-region>{t('音声翻訳')}</span>
     <span
       class="state"
       class:busy
       class:ok={waiting && input === 'ok'}
       class:low={waiting && input === 'low'}
       class:error={!!view.error}
-      title={view.device ? `音声取得：${view.device}` : undefined}
+      title={view.device ? t('音声取得：{device}', { device: view.device }) : undefined}
       data-tauri-drag-region
     >
       {status}
@@ -189,32 +190,32 @@
         class:over={input === 'ok'}
         bind:this={meter}
         role="img"
-        aria-label="入力レベル"
-        title="入力レベル（縦線：認識閾値）"
+        aria-label={t('入力レベル')}
+        title={t('入力レベル（縦線：認識閾値）')}
         data-grid-exempt
         data-tauri-drag-region
       ></span>
     {/if}
     <span class="fill" data-tauri-drag-region></span>
-    <span class="lang" title="翻訳先言語" data-tauri-drag-region>{languageLabel(targetLanguage)}</span>
+    <span class="lang" title={t('翻訳先言語')} data-tauri-drag-region>{languageLabel(targetLanguage)}</span>
     <button
       class="btn"
       class:on={showOriginal}
       aria-pressed={showOriginal}
-      title="原文表示"
+      title={t('原文表示')}
       onclick={() => (showOriginal = !showOriginal)}
     >
       {#if showOriginal}<Eye class="h-4 w-4" />{:else}<EyeOff class="h-4 w-4" />{/if}
     </button>
-    <button class="btn" title="閉じる" onclick={close}><X class="h-4 w-4" /></button>
+    <button class="btn" title={t('閉じる')} onclick={close}><X class="h-4 w-4" /></button>
   </header>
 
   <canvas class="wave" class:dim={view.lines.length > 0} bind:this={canvas} aria-hidden="true"
   ></canvas>
   {#if view.running}
-    <span class="gate" class:dim={view.lines.length > 0} aria-hidden="true">認識閾値</span>
+    <span class="gate" class:dim={view.lines.length > 0} aria-hidden="true">{t('認識閾値')}</span>
   {/if}
-  <section class="body" bind:this={scroller} aria-live="polite" aria-label="字幕">
+  <section class="body" bind:this={scroller} aria-live="polite" aria-label={t('字幕')}>
     {#each view.lines as line (line.id)}
       <div class="line">
         {#if showOriginal && line.translated}
@@ -225,8 +226,8 @@
     {:else}
       {#if !view.error}
         <p class="hint">
-          {view.running ? inputHint(input) : '音声翻訳は停止中。'}
-          {#if view.running && view.device}<br />音声取得：{view.device}{/if}
+          {view.running ? inputHint(input) : t('音声翻訳は停止中。')}
+          {#if view.running && view.device}<br />{t('音声取得：{device}', { device: view.device })}{/if}
         </p>
       {/if}
     {/each}
@@ -234,7 +235,7 @@
       <p class="err" role="alert">{errorText(view.error)}</p>
     {/if}
   </section>
-  <div class="grip" role="presentation" title="サイズ変更" onpointerdown={startResize}></div>
+  <div class="grip" role="presentation" title={t('サイズ変更')} onpointerdown={startResize}></div>
 </main>
 
 <style>

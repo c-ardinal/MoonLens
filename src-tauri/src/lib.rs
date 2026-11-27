@@ -9,6 +9,7 @@ pub mod capture;
 pub mod clipboard;
 pub mod gpu;
 pub mod hotkey;
+pub mod i18n;
 pub mod intent;
 pub mod ipc;
 pub mod lang;

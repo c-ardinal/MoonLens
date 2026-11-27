@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { t } from '$lib/i18n';
   import { onMount } from 'svelte';
   import { Trash2 } from 'lucide-svelte';
   import {
@@ -24,11 +25,11 @@
   const places = $derived(
     info
       ? [
-          { id: 'models', label: 'モデル', value: size(info.models_bytes), path: info.models_dir },
-          { id: 'data', label: '履歴・拡張機能', value: size(info.data_bytes), path: info.data_dir },
-          { id: 'config', label: '設定ファイル', value: '', path: info.config_dir },
+          { id: 'models', label: t('モデル'), value: size(info.models_bytes), path: info.models_dir },
+          { id: 'data', label: t('履歴・拡張機能'), value: size(info.data_bytes), path: info.data_dir },
+          { id: 'config', label: t('設定ファイル'), value: '', path: info.config_dir },
           ...(info.log_dir
-            ? [{ id: 'log', label: 'ログ', value: '不具合報告時に添付', path: info.log_dir }]
+            ? [{ id: 'log', label: t('ログ'), value: t('不具合報告時に添付'), path: info.log_dir }]
             : [])
         ]
       : []
@@ -48,7 +49,7 @@
     error = null;
     try {
       await deleteOrphanLlmFile(name);
-      notify(`${name}：削除完了`);
+      notify(t('{name}：削除完了', { name }));
     } catch (e) {
       error = errorText(e);
     }
@@ -57,14 +58,14 @@
 </script>
 
 {#if info}
-  <SettingRow id="data:version" help="バージョン：{info.version}">
+  <SettingRow id="data:version" help={t('バージョン：{version}', { version: info.version })}>
     <div class="srow">
-      <span class="row-label">バージョン</span>
+      <span class="row-label">{t('バージョン')}</span>
       <span class="row-ctl"><span class="row-value">{info.version}</span></span>
     </div>
   </SettingRow>
   {#each places as p (p.id)}
-    <SettingRow id="data:{p.id}" help="保存先：{p.path}">
+    <SettingRow id="data:{p.id}" help={t('保存先：{path}', { path: p.path })}>
       <div class="srow">
         <span class="row-label">{p.label}</span>
         <span class="row-ctl"><span class="row-value">{p.value}</span></span>
@@ -72,12 +73,12 @@
     </SettingRow>
   {/each}
   {#each orphans as o (o.name)}
-    <SettingRow id="data:orphan:{o.name}" help="旧版のモデル（現行版で未使用）。削除で容量を解放。{o.name}">
+    <SettingRow id="data:orphan:{o.name}" help={t('旧版のモデル（現行版で未使用）。削除で容量を解放。{name}', { name: o.name })}>
       <div class="srow">
-        <span class="row-label" title={o.name}>旧モデル：{o.name}</span>
+        <span class="row-label" title={o.name}>{t('旧モデル：{name}', { name: o.name })}</span>
         <span class="row-ctl">
           <span class="row-value">{size(o.size)}</span>
-          <button class="sbtn icon" title="削除" aria-label="{o.name} を削除" onclick={() => removeOrphan(o.name)}>
+          <button class="sbtn icon" title={t('削除')} aria-label={t('{name} を削除', { name: o.name })} onclick={() => removeOrphan(o.name)}>
             <Trash2 class="h-4 w-4" />
           </button>
         </span>
@@ -85,7 +86,7 @@
     </SettingRow>
   {/each}
 {:else if !error}
-  <p class="srow"><span class="row-label">読込中…</span></p>
+  <p class="srow"><span class="row-label">{t('読込中…')}</span></p>
 {/if}
 {#if error}
   <div class="srow error"><p class="row-label">{error}</p></div>

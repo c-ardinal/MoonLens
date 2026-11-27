@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { t } from '$lib/i18n';
   import { onDestroy, onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import PixelTitle from '$lib/components/PixelTitle.svelte';
@@ -35,6 +36,7 @@
   type Step = 'check' | 'select' | 'download';
   type ItemState = 'wait' | 'run' | 'done' | 'error' | 'cancel';
 
+  /** title は日本語の原文（表示時に `t()` で翻訳）。 */
   const STEPS: { id: Step; title: string }[] = [
     { id: 'check', title: '構成診断' },
     { id: 'select', title: 'モデル選定' },
@@ -157,28 +159,28 @@
   const stateText = (d: DownloadItem) => {
     const s = states[keyOf(d)];
     if (s === 'run') return `${Math.round((fractions[keyOf(d)] ?? 0) * 100)}%`;
-    return { wait: '待機', done: '完了', error: '失敗', cancel: '中止' }[s ?? 'wait'] ?? '';
+    return t({ wait: '待機', done: '完了', error: '失敗', cancel: '中止' }[s ?? 'wait'] ?? '');
   };
 </script>
 
 <div class="setup">
   <header class="head">
-    <div class="page-title"><PixelTitle text="初期設定" tag="h1" height={40} fit /></div>
-    <ol class="steps" aria-label="手順">
+    <div class="page-title"><PixelTitle text={t('初期設定')} tag="h1" height={40} fit /></div>
+    <ol class="steps" aria-label={t('手順')}>
       {#each STEPS as s, i (s.id)}
-        <li aria-current={step === s.id ? 'step' : undefined}>{i + 1} {s.title}</li>
+        <li aria-current={step === s.id ? 'step' : undefined}>{i + 1} {t(s.title)}</li>
       {/each}
     </ol>
   </header>
 
   <main class="body scrollbar-minimal">
     {#if loadError}
-      <p class="px-win error" role="alert">読込失敗：{loadError}</p>
+      <p class="px-win error" role="alert">{t('読込失敗：{loadError}', { loadError })}</p>
     {:else if step === 'check'}
       <section class="px-win panel" aria-labelledby="hw-title">
-        <span class="px-win-title px-chip" data-tone="amber" id="hw-title" use:slant>本 PC の構成</span>
+        <span class="px-win-title px-chip" data-tone="amber" id="hw-title" use:slant>{t('本 PC の構成')}</span>
         {#if !report}
-          <p class="muted">診断中…</p>
+          <p class="muted">{t('診断中…')}</p>
         {:else}
           <dl class="hw">
             {#each lines as l (l.label)}
@@ -189,19 +191,19 @@
         {/if}
       </section>
       <p class="lead">
-        本 PC の構成から機能別の推奨モデルを選定。モデルは本 PC 内で動作し、診断結果・翻訳内容の外部送信は皆無。
+        {t('本 PC の構成から機能別の推奨モデルを選定。モデルは本 PC 内で動作し、診断結果・翻訳内容の外部送信は皆無。')}
       </p>
     {:else if step === 'select'}
-      <p class="lead">各機能のモデルを選択。初期選択は本 PC の推奨モデル。</p>
+      <p class="lead">{t('各機能のモデルを選択。初期選択は本 PC の推奨モデル。')}</p>
       {#each features as f (f.feature)}
         <section class="px-win panel" aria-labelledby="f-{f.feature}">
-          <span class="px-win-title px-chip" data-tone="amber" id="f-{f.feature}" use:slant>{f.title}</span>
+          <span class="px-win-title px-chip" data-tone="amber" id="f-{f.feature}" use:slant>{t(f.title)}</span>
           <div class="fhead">
-            <p class="muted">{f.reason ? `推奨理由：${f.reason}` : ''}</p>
+            <p class="muted">{f.reason ? t('推奨理由：{reason}', { reason: f.reason }) : ''}</p>
             {#if !f.required}
               <label class="opt">
                 <input type="checkbox" bind:checked={f.enabled} />
-                今回取得
+                {t('今回取得')}
               </label>
             {/if}
           </div>
@@ -216,28 +218,28 @@
               >
                 <span class="sradio" aria-hidden="true"></span>
                 <span class="name">{c.label}</span>
-                {#if c.id === f.recommended}<span class="stag rec">推奨</span>{/if}
-                <span class="size">{c.installed ? '取得済' : formatBytes(c.size)}</span>
+                {#if c.id === f.recommended}<span class="stag rec">{t('推奨')}</span>{/if}
+                <span class="size">{c.installed ? t('取得済') : formatBytes(c.size)}</span>
               </button>
             {/each}
           </div>
           {#if !f.enabled}
-            <p class="muted">後日、設定画面のモデル一覧から取得可能。</p>
+            <p class="muted">{t('後日、設定画面のモデル一覧から取得可能。')}</p>
           {/if}
         </section>
       {/each}
     {:else}
       <section class="px-win panel" aria-labelledby="dl-title">
-        <span class="px-win-title px-chip" data-tone="amber" id="dl-title" use:slant>一括取得</span>
+        <span class="px-win-title px-chip" data-tone="amber" id="dl-title" use:slant>{t('一括取得')}</span>
         {#if queue.length === 0}
-          <p>取得対象なし。選択モデルは全件取得済。</p>
+          <p>{t('取得対象なし。選択モデルは全件取得済。')}</p>
         {/if}
         <ul class="dl">
           {#each queue as d (keyOf(d))}
             {@const k = keyOf(d)}
             <li data-state={states[k]}>
               <span class="name">{d.label}</span>
-              <span class="muted">{d.features.map((x) => FEATURE_TITLES[x]).join('・')}</span>
+              <span class="muted">{d.features.map((x) => t(FEATURE_TITLES[x])).join(t('・'))}</span>
               <span class="size">{formatBytes(d.size)}</span>
               <span class="st">{stateText(d)}</span>
               {#if states[k] === 'run'}
@@ -250,33 +252,35 @@
         {#if errors.apply}<p class="err">{errors.apply}</p>{/if}
       </section>
       {#if !running && (finished || queue.length === 0)}
-        <p class="lead" role="status">準備完了。選択モデルで各機能が使用可能。</p>
+        <p class="lead" role="status">{t('準備完了。選択モデルで各機能が使用可能。')}</p>
       {/if}
     {/if}
   </main>
 
   <footer class="actions">
     {#if step === 'check'}
-      <button class="px-btn" onclick={finish}>スキップ</button>
-      <button class="px-btn primary" disabled={!report && !loadError} onclick={toSelect}>次へ</button>
+      <button class="px-btn" onclick={finish}>{t('スキップ')}</button>
+      <button class="px-btn primary" disabled={!report && !loadError} onclick={toSelect}>{t('次へ')}</button>
     {:else if step === 'select'}
       <p class="sum" class:warn={short}>
-        合計 {formatBytes(total)}{free != null ? `／残容量 ${formatBytes(free)}` : ''}{short ? '。残容量不足' : ''}
+        {free != null
+          ? t('合計 {total}／残容量 {free}', { total: formatBytes(total), free: formatBytes(free) })
+          : t('合計 {total}', { total: formatBytes(total) })}{short ? t('。残容量不足') : ''}
       </p>
-      <button class="px-btn" onclick={() => (step = 'check')}>前画面</button>
+      <button class="px-btn" onclick={() => (step = 'check')}>{t('前画面')}</button>
       <button class="px-btn primary" disabled={short} onclick={run}>
-        {planned.length ? '承認・一括取得' : '適用'}
+        {planned.length ? t('承認・一括取得') : t('適用')}
       </button>
     {:else if running}
-      <p class="sum">取得中：{current?.label ?? ''}</p>
-      <button class="px-btn" disabled={current?.kind === 'ocr'} onclick={cancel}>中止</button>
+      <p class="sum">{t('取得中：{label}', { label: current?.label ?? '' })}</p>
+      <button class="px-btn" disabled={current?.kind === 'ocr'} onclick={cancel}>{t('中止')}</button>
     {:else}
       {#if failed}
-        <p class="sum warn">一部未完了。再試行または後日設定画面から取得</p>
-        <button class="px-btn" onclick={finish}>後日取得</button>
-        <button class="px-btn primary" onclick={run}>再試行</button>
+        <p class="sum warn">{t('一部未完了。再試行または後日設定画面から取得')}</p>
+        <button class="px-btn" onclick={finish}>{t('後日取得')}</button>
+        <button class="px-btn primary" onclick={run}>{t('再試行')}</button>
       {:else}
-        <button class="px-btn primary" onclick={finish}>開始</button>
+        <button class="px-btn primary" onclick={finish}>{t('開始')}</button>
       {/if}
     {/if}
   </footer>

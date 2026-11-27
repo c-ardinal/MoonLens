@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { t } from '$lib/i18n';
   import { acceleratorFromEvent, displayAccelerator } from '$lib/hotkey';
 
   interface Props {
@@ -36,16 +37,16 @@
   class="inline-flex min-h-8 min-w-36 max-w-full items-center justify-center rounded-ml-sm border px-3 py-1 font-mono text-sm transition {recording
     ? 'border-accent bg-accent-soft text-ink'
     : 'border-border bg-surface text-ink hover:border-accent/60'}"
-  aria-label="{label}のショートカット"
+  aria-label={t('{label}のショートカット', { label })}
   onclick={() => (recording = !recording)}
   onkeydown={keydown}
   onblur={() => (recording = false)}
 >
   {#if recording}
-    <span class="font-sans text-xs text-ink-muted">キー入力待機中（Esc：取消／Backspace：無効化）</span>
+    <span class="font-sans text-xs text-ink-muted">{t('キー入力待機中（Esc：取消／Backspace：無効化）')}</span>
   {:else if value}
     {displayAccelerator(value)}
   {:else}
-    <span class="font-sans text-xs text-ink-faint">未設定</span>
+    <span class="font-sans text-xs text-ink-faint">{t('未設定')}</span>
   {/if}
 </button>

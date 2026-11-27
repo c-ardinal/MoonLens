@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { t } from '$lib/i18n';
   import { X } from 'lucide-svelte';
   import { close, hold, release, toasts } from '$lib/toast.svelte';
 </script>
@@ -8,23 +9,23 @@
   左寄せの理由：各画面の右下は操作部（履歴の削除・訳文のコピー）の定位置で、通知による遮蔽を回避。
   常設の領域（role=status）：通知の追加を読上げ対象とし、エラーのみ role=alert で即時読上げ。
 -->
-<div class="toaster px-zoom" role="status" aria-label="通知">
-  {#each toasts.items as t (t.id)}
+<div class="toaster px-zoom" role="status" aria-label={t('通知')}>
+  {#each toasts.items as toast (toast.id)}
     <!-- svelte-ignore a11y_no_static_element_interactions -->
     <div
       class="toast"
-      class:error={t.kind === 'error'}
-      role={t.kind === 'error' ? 'alert' : undefined}
-      onmouseenter={() => hold(t.id, 'pointer')}
-      onmouseleave={() => release(t.id, 'pointer')}
-      onfocusin={() => hold(t.id, 'focus')}
-      onfocusout={() => release(t.id, 'focus')}
+      class:error={toast.kind === 'error'}
+      role={toast.kind === 'error' ? 'alert' : undefined}
+      onmouseenter={() => hold(toast.id, 'pointer')}
+      onmouseleave={() => release(toast.id, 'pointer')}
+      onfocusin={() => hold(toast.id, 'focus')}
+      onfocusout={() => release(toast.id, 'focus')}
     >
-      <p class="text">{t.text}</p>
-      {#if t.action}
-        <button class="act" onclick={() => close(t.id, 'action')}>{t.action}</button>
+      <p class="text">{toast.text}</p>
+      {#if toast.action}
+        <button class="act" onclick={() => close(toast.id, 'action')}>{toast.action}</button>
       {/if}
-      <button class="x" title="閉じる" aria-label="通知を閉じる" onclick={() => close(t.id, 'dismiss')}>
+      <button class="x" title={t('閉じる')} aria-label={t('通知を閉じる')} onclick={() => close(toast.id, 'dismiss')}>
         <X class="h-4 w-4" />
       </button>
     </div>

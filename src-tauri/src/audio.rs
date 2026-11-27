@@ -363,7 +363,12 @@ pub mod backend {
             // Wait for the thread to confirm device selection or fail fast.
             let device = ready_rx
                 .recv_timeout(std::time::Duration::from_millis(2000))
-                .map_err(|e| anyhow!("音声取得スレッドの応答なし：{e}"))??;
+                .map_err(|e| {
+                    anyhow!(crate::tr!(
+                        "音声取得スレッドの応答なし：{e}",
+                        "The audio capture thread did not respond: {e}"
+                    ))
+                })??;
             Ok(Self {
                 stop,
                 thread: Some(thread),
@@ -384,7 +389,9 @@ pub mod backend {
     ) -> Result<()> {
         let host = cpal::default_host();
         let (device, config) = pick_loopback(&host)?;
-        let name = device.name().unwrap_or_else(|_| "不明".into());
+        let name = device
+            .name()
+            .unwrap_or_else(|_| crate::tr!("不明", "Unknown"));
         tracing::info!(
             "audio: capturing \"{name}\" ({} Hz, {} ch, {:?})",
             config.sample_rate().0,
@@ -492,10 +499,13 @@ pub mod backend {
     /// microphone and the subtitles never heard the PC's own sound.
     #[cfg(windows)]
     fn pick_loopback(host: &cpal::Host) -> Result<(cpal::Device, cpal::SupportedStreamConfig)> {
-        let device = host.default_output_device().context("再生デバイス未検出")?;
-        let config = device
-            .default_output_config()
-            .context("再生デバイスの音声形式を取得不可")?;
+        let device = host
+            .default_output_device()
+            .context(crate::tr!("再生デバイス未検出", "No playback device found"))?;
+        let config = device.default_output_config().context(crate::tr!(
+            "再生デバイスの音声形式を取得不可",
+            "Could not read the playback device's audio format"
+        ))?;
         Ok((device, config))
     }
 
@@ -503,10 +513,14 @@ pub mod backend {
     /// macOS: a virtual loopback driver (BlackHole, Loopback).
     #[cfg(not(windows))]
     fn pick_loopback(host: &cpal::Host) -> Result<(cpal::Device, cpal::SupportedStreamConfig)> {
-        let device = pick_loopback_device(host).context("音声取得デバイス未検出")?;
-        let config = device
-            .default_input_config()
-            .context("音声取得デバイスの音声形式を取得不可")?;
+        let device = pick_loopback_device(host).context(crate::tr!(
+            "音声取得デバイス未検出",
+            "No audio capture device found"
+        ))?;
+        let config = device.default_input_config().context(crate::tr!(
+            "音声取得デバイスの音声形式を取得不可",
+            "Could not read the capture device's audio format"
+        ))?;
         Ok((device, config))
     }
 

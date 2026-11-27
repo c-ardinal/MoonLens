@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { t } from '$lib/i18n';
   import { Copy, Sparkles, Languages, Radio, ExternalLink } from 'lucide-svelte';
   import type { Intent } from '$lib/ipc';
 
@@ -21,8 +22,9 @@
   type Action = { id: ActionId; label: string; icon: any };
 
   // Base catalogue keyed by id so intent-specific lists can reuse labels.
+  /** label は日本語の原文（表示時に `t()` で翻訳）。 */
   const all: Record<ActionId, Action> = {
-    translate: { id: 'translate', label: '翻訳', icon: Languages },
+    translate: { id: 'translate', label: '翻訳#action', icon: Languages },
     copy: { id: 'copy', label: 'コピー', icon: Copy },
     explain: { id: 'explain', label: '説明', icon: Sparkles },
     pin: { id: 'pin', label: '常時', icon: Radio },
@@ -62,7 +64,7 @@
       data-action={a.id}
     >
       <a.icon class="h-3.5 w-3.5" />
-      <span>{a.label}</span>
+      <span>{t(a.label)}</span>
     </button>
   {/each}
 </nav>

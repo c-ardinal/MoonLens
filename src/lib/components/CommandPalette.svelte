@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { t } from '$lib/i18n';
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import {
@@ -61,25 +62,25 @@
   const commands: Command[] = $derived([
     {
       id: 'capture',
-      label: 'ウィンドウ翻訳',
+      label: t('ウィンドウ翻訳'),
       hint: hint('capture_region'),
       icon: Camera,
       run: openWindow
     },
     {
       id: 'subtitle',
-      label: subtitleRunning ? '音声翻訳 停止' : '音声翻訳 開始',
+      label: subtitleRunning ? t('音声翻訳 停止') : t('音声翻訳 開始'),
       hint: hint('toggle_subtitle'),
       icon: subtitleRunning ? MicOff : Mic,
       run: toggleSub
     },
-    { id: 'home', label: 'ホーム', icon: Home, run: go('/') },
-    { id: 'image', label: '画像翻訳', icon: ImageIcon, run: go('/image/') },
-    { id: 'translate', label: 'テキスト翻訳', icon: Languages, run: go('/translate/') },
-    { id: 'settings', label: '設定', icon: SettingsIcon, run: go('/settings/') },
-    { id: 'history', label: '履歴', hint: hint('open_history'), icon: History, run: go('/history/') },
-    { id: 'plugins', label: '拡張機能管理', icon: Puzzle, run: go('/settings/#section-plugins') },
-    { id: 'quit', label: 'MoonLens 終了', icon: Power, run: () => quitApp() }
+    { id: 'home', label: t('ホーム'), icon: Home, run: go('/') },
+    { id: 'image', label: t('画像翻訳'), icon: ImageIcon, run: go('/image/') },
+    { id: 'translate', label: t('テキスト翻訳'), icon: Languages, run: go('/translate/') },
+    { id: 'settings', label: t('設定'), icon: SettingsIcon, run: go('/settings/') },
+    { id: 'history', label: t('履歴'), hint: hint('open_history'), icon: History, run: go('/history/') },
+    { id: 'plugins', label: t('拡張機能管理'), icon: Puzzle, run: go('/settings/#section-plugins') },
+    { id: 'quit', label: t('MoonLens 終了'), icon: Power, run: () => quitApp() }
   ]);
 
   const filtered = $derived(
@@ -161,7 +162,7 @@
       <input
         autofocus
         bind:value={q}
-        placeholder="コマンド検索"
+        placeholder={t('コマンド検索')}
         class="w-full rounded-t-ml border-b border-border bg-transparent px-4 py-3 text-sm focus:outline-none"
       />
       <ul class="scrollbar-minimal max-h-80 overflow-auto">
@@ -182,7 +183,7 @@
             </button>
           </li>
         {:else}
-          <li class="px-4 py-6 text-center text-sm text-ink-faint">該当なし</li>
+          <li class="px-4 py-6 text-center text-sm text-ink-faint">{t('該当なし')}</li>
         {/each}
       </ul>
       {#if error}

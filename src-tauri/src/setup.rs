@@ -6,6 +6,7 @@
 //! to PCs that would otherwise struggle. The detected hardware never
 //! leaves the PC.
 
+use crate::i18n::Text;
 use serde::Serialize;
 
 use crate::gpu::GpuDevice;
@@ -87,7 +88,7 @@ impl SystemProfile {
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct Pick {
     pub model: &'static str,
-    pub reason: &'static str,
+    pub reason: Text,
 }
 
 /// The model each feature should use on this PC.
@@ -112,12 +113,18 @@ pub fn recommend(p: &SystemProfile) -> Recommendation {
     let translate = if mem >= 6 * GIB || gpu.is_some_and(|g| g.memory_total >= 3 * GIB) {
         Pick {
             model: llm_models::DEFAULT_TRANSLATE_MODEL_ID,
-            reason: "高品質・高速。本 PC で快適動作",
+            reason: Text::new(
+                "高品質・高速。本 PC で快適動作",
+                "High quality and fast. Runs comfortably on this PC",
+            ),
         }
     } else {
         Pick {
             model: "plamo-3-translate-0.8b",
-            reason: "メモリ容量を基準に省メモリ版を選定",
+            reason: Text::new(
+                "メモリ容量を基準に省メモリ版を選定",
+                "Low-memory model, chosen for this PC's memory",
+            ),
         }
     };
 
@@ -125,12 +132,18 @@ pub fn recommend(p: &SystemProfile) -> Recommendation {
     let assistant = if gpu.is_some_and(|g| g.memory_total >= 8 * GIB) || p.ram_total >= 16 * GIB {
         Pick {
             model: llm_models::DEFAULT_ASSIST_MODEL_ID,
-            reason: "高品質な説明・要約。本 PC で快適動作",
+            reason: Text::new(
+                "高品質な説明・要約。本 PC で快適動作",
+                "High-quality explanations and summaries. Runs comfortably on this PC",
+            ),
         }
     } else {
         Pick {
             model: "gemma-4-e2b",
-            reason: "メモリ容量を基準に軽量版を選定",
+            reason: Text::new(
+                "メモリ容量を基準に軽量版を選定",
+                "Lightweight model, chosen for this PC's memory",
+            ),
         }
     };
 
@@ -141,12 +154,18 @@ pub fn recommend(p: &SystemProfile) -> Recommendation {
     {
         Pick {
             model: whisper_models::DEFAULT_MODEL_ID,
-            reason: "日英双方で高精度。本 PC で実時間処理可能",
+            reason: Text::new(
+                "日英双方で高精度。本 PC で実時間処理可能",
+                "Accurate in Japanese and English. This PC keeps up in real time",
+            ),
         }
     } else {
         Pick {
             model: "whisper-small",
-            reason: "CPU 性能を基準に高速版を選定",
+            reason: Text::new(
+                "CPU 性能を基準に高速版を選定",
+                "Fast model, chosen for this PC's CPU",
+            ),
         }
     };
 
@@ -155,7 +174,10 @@ pub fn recommend(p: &SystemProfile) -> Recommendation {
         assistant,
         ocr: Pick {
             model: OCR_MODEL_ID,
-            reason: "日本語・中国語・英語に対応",
+            reason: Text::new(
+                "日本語・中国語・英語に対応",
+                "Reads Japanese, Chinese and English",
+            ),
         },
         asr,
     }

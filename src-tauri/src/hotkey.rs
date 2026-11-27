@@ -11,6 +11,7 @@ use anyhow::Result;
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
+use crate::tr;
 use crate::{
     app::AppState, pipeline::Pipeline, settings::SettingsStore, subtitle::SubtitleService,
 };
@@ -136,8 +137,9 @@ pub fn register_all(
         crate::notices::clear(NOTICE_HOTKEYS);
         Ok(())
     } else {
-        let msg = format!(
+        let msg = tr!(
             "ショートカット登録失敗（他アプリと重複、または形式不正）：{}",
+            "Could not register shortcuts (used by another app, or malformed): {}",
             failed.join(", ")
         );
         // Also shown on the home screen: at start-up nobody is looking

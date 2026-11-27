@@ -4,6 +4,7 @@
  */
 
 import type { LensBlock } from './ipc';
+import { t } from './i18n';
 
 /** Rect in image pixels (e.g. the part of an image shown on screen). */
 export interface FrameRect {
@@ -178,7 +179,7 @@ export function applyStreaming(
   return out;
 }
 
-/** Target languages offered in the selector's toolbar. */
+/** Target languages offered in the selector's toolbar. label は日本語の原文（表示時は `t()`／`languageLabel`）。 */
 export const LANGUAGES: { code: string; label: string }[] = [
   { code: 'ja', label: '日本語' },
   { code: 'en', label: '英語' },
@@ -196,14 +197,23 @@ export const LANGUAGES: { code: string; label: string }[] = [
   { code: 'id', label: 'インドネシア語' }
 ];
 
+/** 言語名（日本語の原文、LLM プロンプト用）。未知の言語は空文字。 */
+export function languageName(code: string | null | undefined): string {
+  if (!code) return '';
+  const exact = LANGUAGES.find((l) => l.code.toLowerCase() === code.toLowerCase());
+  // i18n-ignore
+  return exact?.label ?? (code.split(/[-_]/)[0].toLowerCase() === 'zh' ? '中国語' : '');
+}
+
 /** Display name for a language tag, falling back to the tag itself. */
 export function languageLabel(code: string | null | undefined): string {
   if (!code) return '';
   const exact = LANGUAGES.find((l) => l.code.toLowerCase() === code.toLowerCase());
-  if (exact) return exact.label;
+  if (exact) return t(exact.label);
   const primary = code.split(/[-_]/)[0].toLowerCase();
-  if (primary === 'zh') return '中国語';
-  return LANGUAGES.find((l) => l.code === primary)?.label ?? code;
+  if (primary === 'zh') return t('中国語');
+  const base = LANGUAGES.find((l) => l.code === primary);
+  return base ? t(base.label) : code;
 }
 
 /** True when every block was already in the target language. */

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { t, textEm } from '$lib/i18n';
   import { ChevronDown, X } from 'lucide-svelte';
   import { TEXT_PLACEMENTS, parsePlacement, type TextPlacement, type TextView } from '$lib/lens-text';
 
@@ -20,27 +21,27 @@
 
   const hasText = $derived(!!(view.source?.trim() || view.translation.trim()));
   const placementLabel = $derived(
-    TEXT_PLACEMENTS.find((p) => p.value === view.placement)?.label ?? ''
+    t(TEXT_PLACEMENTS.find((p) => p.value === view.placement)?.label ?? '')
   );
 </script>
 
 <div class="lt">
   <header class="head" class:drag data-tauri-drag-region={drag ? '' : undefined}>
-    <span class="name" data-tauri-drag-region={drag ? '' : undefined}>テキスト</span>
-    <label class="place" title="表示位置">
+    <span class="name" data-tauri-drag-region={drag ? '' : undefined}>{t('テキスト')}</span>
+    <label class="place" title={t('表示位置')}>
       <select
-        aria-label="表示位置"
-        style="width: calc({placementLabel.length}em + 6px)"
+        aria-label={t('表示位置')}
+        style="width: calc({textEm(placementLabel)}em + 6px)"
         value={view.placement}
         onchange={(e) => onplacement(parsePlacement((e.currentTarget as HTMLSelectElement).value))}
       >
         {#each TEXT_PLACEMENTS as p (p.value)}
-          <option value={p.value}>{p.label}</option>
+          <option value={p.value}>{t(p.label)}</option>
         {/each}
       </select>
       <ChevronDown class="h-3 w-3 opacity-70" />
     </label>
-    <button class="close" onclick={onclose} title="閉じる"><X class="h-3.5 w-3.5" /></button>
+    <button class="close" onclick={onclose} title={t('閉じる')}><X class="h-3.5 w-3.5" /></button>
   </header>
   <div class="content">
     {#if view.explanation}
@@ -51,7 +52,7 @@
         {#if b.same_language}
           <p class="para">{b.source}</p>
         {:else}
-          <p class="para tight">{b.translation ?? '（翻訳中）'}</p>
+          <p class="para tight">{b.translation ?? t('（翻訳中）')}</p>
           <p class="para src">{b.source}</p>
         {/if}
       {/each}
@@ -59,7 +60,7 @@
       <p class="para tight">{view.translation}</p>
       {#if view.source}<p class="para src">{view.source}</p>{/if}
     {:else}
-      <p class="none">文字なし</p>
+      <p class="none">{t('文字なし')}</p>
     {/if}
   </div>
 </div>

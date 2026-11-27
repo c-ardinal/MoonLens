@@ -1,6 +1,7 @@
 /**
  * What the settings screen shows, in which group, under which Japanese
- * label. The settings struct (src-tauri/src/settings/schema.rs) holds more
+ * label (the i18n source text: the screen passes labels, help texts and
+ * titles through `t()` when it renders them). The settings struct (src-tauri/src/settings/schema.rs) holds more
  * fields than this list on purpose: fields the app does not act on yet,
  * cloud / network switches (MoonLens is fully local), and internal state
  * stay in config.toml only, so the screen never offers a switch that does
@@ -9,6 +10,7 @@
 
 import { compactGlossary } from './glossary';
 import { LANGUAGES } from './lens-overlay';
+import { t } from './i18n';
 
 export type Option = { value: string; label: string };
 
@@ -258,8 +260,19 @@ export const SECTIONS: Section[] = [
   {
     id: 'appearance',
     title: '外観',
-    description: 'メインウィンドウの外観。',
+    description: '表示言語とメインウィンドウの外観。',
     fields: [
+      {
+        kind: 'select',
+        path: 'appearance.ui_language',
+        label: '表示言語',
+        help: '全ウィンドウ・通知・トレイメニューの言語。自動：OS の言語へ追従（日本語以外は英語）。',
+        options: [
+          { value: 'auto', label: '自動（OS の言語）' },
+          { value: 'ja', label: '日本語' },
+          { value: 'en', label: 'English' }
+        ]
+      },
       {
         kind: 'select',
         path: 'appearance.theme',
@@ -379,7 +392,8 @@ export const SECTIONS: Section[] = [
 
 export const GROUPS: Group[] = [
   { id: 'translation', title: '翻訳', sections: ['translation', 'glossary', 'pin'] },
-  { id: 'subtitle', title: '音声翻訳', sections: ['subtitle'] },
+  // `#group`：英語表示は帯幅内の短縮名（Audio）
+  { id: 'subtitle', title: '音声翻訳#group', sections: ['subtitle'] },
   { id: 'models', title: 'モデル', sections: ['models', 'model-assist', 'model-ocr', 'model-asr'] },
   { id: 'output', title: '履歴・コピー', sections: ['history', 'clipboard'] },
   { id: 'hotkeys', title: 'ショートカット', sections: ['hotkeys'] },
@@ -418,7 +432,9 @@ export function fieldMatches(field: Field, section: Section, query: string): boo
   const q = query.trim().toLowerCase();
   if (!q) return true;
   const group = groupOf(section.id)?.title ?? '';
-  const hay = [field.label, field.help ?? '', section.title, group, field.path].join(' ').toLowerCase();
+  // 原文と表示言語の訳文の双方を検索対象へ
+  const words = [field.label, field.help ?? '', section.title, group];
+  const hay = [...words, ...words.map((w) => t(w)), field.path].join(' ').toLowerCase();
   return q.split(/\s+/).every((t) => hay.includes(t));
 }
 

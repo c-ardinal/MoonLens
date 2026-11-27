@@ -10,6 +10,7 @@ import type {
   Recommendation,
   SystemReport
 } from '$lib/ipc';
+import { t } from './i18n';
 
 export type Feature = 'translate' | 'ocr' | 'assistant' | 'asr';
 
@@ -45,6 +46,7 @@ const OCR_BYTES = 83_000_000;
 /** 高速実行部品のみ未取得の場合の取得量。 */
 const OCR_FAST_BYTES = 45_000_000;
 
+/** 機能名（日本語の原文）。表示時は `t()` で翻訳。 */
 export const FEATURE_TITLES: Record<Feature, string> = {
   translate: '翻訳',
   ocr: '文字認識',
@@ -62,8 +64,8 @@ export function ocrChoice(ocr: OcrModelsStatus): Choice {
     installed: ocr.ppocr && ocr.ocrs && ocr.fast,
     partial: 0,
     note: fastOnly
-      ? '高速実行部品が未取得（取得後は読取を高速化、環境別の最適構成は自動選択）'
-      : '日本語・中国語・英語に対応（予備の英語専用 ocrs を同梱）'
+      ? t('高速実行部品が未取得（取得後は読取を高速化、環境別の最適構成は自動選択）')
+      : t('日本語・中国語・英語に対応（予備の英語専用 ocrs を同梱）')
   };
 }
 
@@ -175,23 +177,31 @@ export interface HardwareLine {
 /** PC 構成の表示行（初回セットアップの診断欄）。 */
 export function hardwareLines(r: SystemReport): HardwareLine[] {
   const p = r.profile;
-  const cpu = p.cpu_name ? `${p.cpu_name}（${p.cpu_cores} スレッド）` : `${p.cpu_cores} スレッド`;
+  const cpu = p.cpu_name
+    ? t('{name}（{n} スレッド）', { name: p.cpu_name, n: p.cpu_cores })
+    : t('{n} スレッド', { n: p.cpu_cores });
   const gpus = p.gpus.length
     ? p.gpus
-        .map((g) => `${g.name}（${formatBytes(g.memory_total)}・${g.backend}${g.integrated ? '・内蔵' : ''}）`)
-        .join('、')
-    : '非検出';
+        .map((g) =>
+          t(g.integrated ? '{name}（{memory}・{backend}・内蔵）' : '{name}（{memory}・{backend}）', {
+            name: g.name,
+            memory: formatBytes(g.memory_total),
+            backend: g.backend
+          })
+        )
+        .join(t('、'))
+    : t('非検出');
   let device: string;
-  if (r.accelerator) device = `GPU：${r.accelerator.name}`;
-  else if (!p.use_gpu && p.gpus.length) device = 'CPU（GPU 使用：無効）';
+  if (r.accelerator) device = t('GPU：{name}', { name: r.accelerator.name });
+  else if (!p.use_gpu && p.gpus.length) device = t('CPU（GPU 使用：無効）');
   else device = 'CPU';
   const lines: HardwareLine[] = [
     { label: 'CPU', value: cpu },
-    { label: 'メモリ', value: formatBytes(p.ram_total) },
+    { label: t('メモリ'), value: formatBytes(p.ram_total) },
     { label: 'GPU', value: gpus },
-    { label: '推論処理', value: device }
+    { label: t('推論処理'), value: device }
   ];
-  if (p.disk_free != null) lines.push({ label: '残容量', value: formatBytes(p.disk_free) });
+  if (p.disk_free != null) lines.push({ label: t('残容量'), value: formatBytes(p.disk_free) });
   return lines;
 }
 
@@ -200,9 +210,11 @@ export function hardwareLines(r: SystemReport): HardwareLine[] {
  * GPU 全てを使用するため、全 GPU 名を列挙。`useGpu` は「GPU 使用」の現在値。
  */
 export function inferenceDevice(p: SystemProfile, useGpu: boolean): string {
-  if (!p.gpus.length) return 'CPU（対応 GPU：非検出）';
-  if (!useGpu) return 'CPU（GPU 使用：無効）';
-  return `GPU：${p.gpus.map((g) => `${g.name}（${g.backend}）`).join('、')}`;
+  if (!p.gpus.length) return t('CPU（対応 GPU：非検出）');
+  if (!useGpu) return t('CPU（GPU 使用：無効）');
+  return t('GPU：{name}', {
+    name: p.gpus.map((g) => t('{name}（{backend}）', { name: g.name, backend: g.backend })).join(t('、'))
+  });
 }
 
 /**

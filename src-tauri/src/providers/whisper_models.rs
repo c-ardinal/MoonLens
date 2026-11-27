@@ -5,6 +5,7 @@
 //! are pinned by size + SHA-256; downloading, resuming and verification
 //! live in [`super::model_store`].
 
+use crate::i18n::Text;
 use std::path::{Path, PathBuf};
 
 use serde::Serialize;
@@ -17,7 +18,7 @@ pub struct AsrModel {
     pub id: &'static str,
     pub label: &'static str,
     /// One-line description shown in the model list (Japanese UI).
-    pub note: &'static str,
+    pub note: Text,
     pub file: &'static str,
     pub url: &'static str,
     pub size: u64,
@@ -36,7 +37,10 @@ pub const CATALOG: &[AsrModel] = &[
     AsrModel {
         id: "whisper-large-v3-turbo",
         label: "Whisper large-v3-turbo",
-        note: "推奨。日英双方で高精度",
+        note: Text::new(
+            "推奨。日英双方で高精度",
+            "Recommended. Accurate in Japanese and English",
+        ),
         file: "ggml-large-v3-turbo-q8_0.bin",
         url:
             "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo-q8_0.bin",
@@ -48,7 +52,10 @@ pub const CATALOG: &[AsrModel] = &[
     AsrModel {
         id: "whisper-small",
         label: "Whisper small",
-        note: "軽量・高速。低スペック PC 用。精度は中程度",
+        note: Text::new(
+            "軽量・高速。低スペック PC 用。精度は中程度",
+            "Light and fast, for low-spec PCs. Medium accuracy",
+        ),
         file: "ggml-small-q5_1.bin",
         url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small-q5_1.bin",
         size: 190_085_487,

@@ -13,6 +13,7 @@ use tauri::{
 };
 
 use crate::lens::{self, geometry::LensOuterRect as Rect, LensRegistryHandle};
+use crate::tr;
 
 /// Event telling a lens window what the user did in its companion (the
 /// renderer's `TextCommand`); sent from here when the companion was
@@ -285,7 +286,7 @@ pub fn set_dock(
         if app.get_webview_window(&label).is_none() {
             let url = format!("/lens/text/?id={id}");
             WebviewWindowBuilder::new(app, &label, WebviewUrl::App(url.into()))
-                .title("MoonLens テキスト")
+                .title(tr!("MoonLens テキスト", "MoonLens Text"))
                 .inner_size(WIDTH_CSS, HEIGHT_CSS)
                 .min_inner_size(MIN_WIDTH_CSS, MIN_HEIGHT_CSS)
                 .decorations(false)

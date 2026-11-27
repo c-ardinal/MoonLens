@@ -1,4 +1,5 @@
-//! Turn internal errors into the short Japanese messages the UI shows.
+//! Turn internal errors into the short messages the UI shows, in the
+//! display language (`crate::i18n`).
 //!
 //! Commands return errors as `"<code>|<message>"`. The code lets the
 //! frontend offer the fix next to the message (for example a button that
@@ -17,29 +18,68 @@
 //! | `error`           | anything else (raw detail appended)        |
 
 use crate::providers::{Capability, ProviderError};
+use crate::tr;
 
 pub fn coded(code: &str, message: impl AsRef<str>) -> String {
     format!("{code}|{}", message.as_ref())
+}
+
+fn timeout_message() -> String {
+    tr!(
+        "制限時間超過。範囲を縮小して再試行",
+        "Timed out. Try a smaller area."
+    )
+}
+
+/// The bundled engines need AVX2 and FMA.
+pub fn unsupported_cpu() -> String {
+    tr!(
+        "非対応 CPU（AVX2・FMA 必須）",
+        "Unsupported CPU (AVX2 and FMA required)"
+    )
 }
 
 /// Message for a failed pipeline task.
 pub fn provider(e: &ProviderError, cap: Capability) -> String {
     match e {
         ProviderError::NotInstalled(what) => match cap {
-            Capability::Ocr => coded("model_missing", "OCR モデル未導入"),
-            Capability::Explain | Capability::Summarize => {
-                coded("model_missing", format!("説明用モデル未導入：{what}"))
-            }
-            Capability::Asr => coded("model_missing", format!("音声認識モデル未導入：{what}")),
-            _ => coded("model_missing", format!("翻訳モデル未導入：{what}")),
+            Capability::Ocr => coded(
+                "model_missing",
+                tr!("OCR モデル未導入", "OCR model not downloaded"),
+            ),
+            Capability::Explain | Capability::Summarize => coded(
+                "model_missing",
+                tr!(
+                    "説明用モデル未導入：{what}",
+                    "Explanation model not downloaded: {what}"
+                ),
+            ),
+            Capability::Asr => coded(
+                "model_missing",
+                tr!(
+                    "音声認識モデル未導入：{what}",
+                    "Speech recognition model not downloaded: {what}"
+                ),
+            ),
+            _ => coded(
+                "model_missing",
+                tr!(
+                    "翻訳モデル未導入：{what}",
+                    "Translation model not downloaded: {what}"
+                ),
+            ),
         },
         ProviderError::Timeout(ms) if *ms > 0 => coded(
             "timeout",
-            format!("制限時間（{} 秒）超過。範囲を縮小して再試行", ms / 1000),
+            tr!(
+                "制限時間（{} 秒）超過。範囲を縮小して再試行",
+                "Timed out after {} s. Try a smaller area.",
+                ms / 1000
+            ),
         ),
-        ProviderError::Timeout(_) => coded("timeout", "制限時間超過。範囲を縮小して再試行"),
+        ProviderError::Timeout(_) => coded("timeout", timeout_message()),
         ProviderError::Other(m) if m.contains("AVX2") => {
-            coded("cpu_unsupported", "非対応 CPU（AVX2・FMA 必須）")
+            coded("cpu_unsupported", unsupported_cpu())
         }
         ProviderError::Other(m)
             if m.starts_with("all providers failed") && m.contains(": timeout") =>
@@ -47,8 +87,11 @@ pub fn provider(e: &ProviderError, cap: Capability) -> String {
             coded(
                 "timeout",
                 match cap {
-                    Capability::Ocr => "文字認識の制限時間超過。範囲を縮小して再試行",
-                    _ => "制限時間超過。範囲を縮小して再試行",
+                    Capability::Ocr => tr!(
+                        "文字認識の制限時間超過。範囲を縮小して再試行",
+                        "Text recognition timed out. Try a smaller area."
+                    ),
+                    _ => timeout_message(),
                 },
             )
         }
@@ -64,16 +107,21 @@ pub fn provider(e: &ProviderError, cap: Capability) -> String {
                 .collect();
             coded(
                 "error",
-                format!(
+                tr!(
                     "未対応プロバイダー：{}。設定のプロバイダー再確認が必要",
-                    ids.join("、")
+                    "Unsupported provider: {}. Check the providers in the settings.",
+                    ids.join(crate::i18n::pick("、", ", "))
                 ),
             )
         }
-        ProviderError::Other(m) if m.starts_with("no provider configured") => {
-            coded("error", "本機能のプロバイダー未設定")
-        }
-        other => coded("error", format!("処理失敗：{other}")),
+        ProviderError::Other(m) if m.starts_with("no provider configured") => coded(
+            "error",
+            tr!(
+                "本機能のプロバイダー未設定",
+                "No provider is set for this feature"
+            ),
+        ),
+        other => coded("error", tr!("処理失敗：{other}", "Failed: {other}")),
     }
 }
 
@@ -86,9 +134,15 @@ pub fn download(e: &anyhow::Error) -> String {
         || lower.contains("os error 112")
         || lower.contains("disk full")
     {
-        coded("disk_full", "残容量不足")
+        coded("disk_full", tr!("残容量不足", "Not enough free space"))
     } else if lower.contains("integrity") {
-        coded("integrity", "整合性検証失敗。再ダウンロードが必要")
+        coded(
+            "integrity",
+            tr!(
+                "整合性検証失敗。再ダウンロードが必要",
+                "Integrity check failed. Download it again."
+            ),
+        )
     } else if lower.contains("error sending request")
         || lower.contains("dns")
         || lower.contains("connect")
@@ -98,12 +152,24 @@ pub fn download(e: &anyhow::Error) -> String {
     {
         coded(
             "network",
-            "ネットワーク接続失敗。接続確認後に再試行（途中から再開）",
+            tr!(
+                "ネットワーク接続失敗。接続確認後に再試行（途中から再開）",
+                "Network error. Check the connection and retry (the download resumes)."
+            ),
         )
     } else if lower.contains("status") && (lower.contains("404") || lower.contains("403")) {
-        coded("network", format!("配布元からの取得失敗：{raw}"))
+        coded(
+            "network",
+            tr!(
+                "配布元からの取得失敗：{raw}",
+                "Could not download from the source: {raw}"
+            ),
+        )
     } else {
-        coded("error", format!("ダウンロード失敗：{raw}"))
+        coded(
+            "error",
+            tr!("ダウンロード失敗：{raw}", "Download failed: {raw}"),
+        )
     }
 }
 

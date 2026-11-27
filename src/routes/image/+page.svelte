@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { t } from '$lib/i18n';
   import { holdMotion } from '$lib/pixel/motion.svelte';
   import PixelTitle from '$lib/components/PixelTitle.svelte';
   import { onDestroy, onMount } from 'svelte';
@@ -88,7 +89,7 @@
 
   async function open(bytes: Uint8Array, name: string) {
     if (bytes.byteLength > MAX_IMAGE_BYTES) {
-      error = { code: 'error', message: '画像サイズ超過（上限 40 MB）', fix: null };
+      error = { code: 'error', message: t('画像サイズ超過（上限 40 MB）'), fix: null };
       return;
     }
     if (imageUrl) URL.revokeObjectURL(imageUrl);
@@ -100,15 +101,15 @@
 
   async function openFile(file: File | null) {
     if (!file) {
-      error = { code: 'error', message: '非対応形式（PNG・JPEG・WebP のみ対応）', fix: null };
+      error = { code: 'error', message: t('非対応形式（PNG・JPEG・WebP のみ対応）'), fix: null };
       return;
     }
-    await open(new Uint8Array(await file.arrayBuffer()), file.name || 'ペースト画像');
+    await open(new Uint8Array(await file.arrayBuffer()), file.name || t('ペースト画像'));
   }
 
   async function openPath(path: string | null) {
     if (!path) {
-      error = { code: 'error', message: '非対応形式（PNG・JPEG・WebP のみ対応）', fix: null };
+      error = { code: 'error', message: t('非対応形式（PNG・JPEG・WebP のみ対応）'), fix: null };
       return;
     }
     try {
@@ -161,7 +162,7 @@
     const text = blocks.length
       ? joinedText(blocks, showOriginal ? 'source' : 'translation')
       : plainText;
-    if (text) await copyText(text, showOriginal && blocks.length ? '原文' : '訳文');
+    if (text) await copyText(text, showOriginal && blocks.length ? t('原文') : t('訳文'));
   }
 
   function onPaste(e: ClipboardEvent) {
@@ -237,9 +238,9 @@
 <main class="px-body mx-auto flex max-w-6xl flex-col gap-4 px-4 py-6 sm:px-6" class:fit={!!imageUrl} data-fit-viewport={imageUrl ? '' : undefined}>
   <header class="flex flex-wrap items-end justify-between gap-3">
     <div class="min-w-0">
-      <div class="page-title"><PixelTitle text="画像翻訳" tag="h1" height={40} fit /></div>
+      <div class="page-title"><PixelTitle text={t('画像翻訳')} tag="h1" height={40} fit /></div>
       {#if !imageUrl}
-        <p class="truncate text-sm text-ink-muted">画像ファイルの文字を認識・翻訳。全処理ローカル実行。</p>
+        <p class="truncate text-sm text-ink-muted">{t('画像ファイルの文字を認識・翻訳。全処理ローカル実行。')}</p>
       {/if}
     </div>
     <!-- 操作部：折返し時も右寄せ（他画面の見出し行と統一）。画像表示中は左端へファイル名（残余の幅、超過分は省略） -->
@@ -248,15 +249,15 @@
         <p class="name truncate text-sm text-ink-muted" title={imageName}>{imageName}</p>
       {/if}
       <label class="flex items-center gap-1.5 text-sm text-ink-muted">
-        訳文
+        {t('訳文')}
         <select
           class="rounded-ml-sm border border-border bg-surface px-2 py-1.5 text-sm text-ink"
           value={target}
           onchange={(e) => setTarget((e.currentTarget as HTMLSelectElement).value)}
-          aria-label="訳文の言語"
+          aria-label={t('訳文の言語')}
         >
           {#each LANGUAGES as l (l.code)}
-            <option value={l.code}>{l.label}</option>
+            <option value={l.code}>{t(l.label)}</option>
           {/each}
         </select>
       </label>
@@ -267,12 +268,12 @@
           disabled={blocks.length === 0}
           aria-pressed={showOriginal}
         >
-          {#if showOriginal}<Eye class="h-4 w-4" />訳文表示{:else}<EyeOff class="h-4 w-4" />原文表示{/if}
+          {#if showOriginal}<Eye class="h-4 w-4" />{t('訳文表示')}{:else}<EyeOff class="h-4 w-4" />{t('原文表示')}{/if}
         </button>
         <button
           class="sbtn icon neutral"
-          title="全文をコピー"
-          aria-label="全文をコピー"
+          title={t('全文をコピー')}
+          aria-label={t('全文をコピー')}
           onclick={copyAll}
           disabled={busy || (blocks.length === 0 && !plainText)}
         >
@@ -283,7 +284,7 @@
         class="inline-flex items-center gap-1.5 rounded-ml-sm border border-accent bg-accent px-3 py-1.5 text-sm font-medium text-white shadow-ml transition hover:opacity-90"
         onclick={() => fileInput?.click()}
       >
-        <FolderOpen class="h-4 w-4" />ファイルを開く
+        <FolderOpen class="h-4 w-4" />{t('ファイルを開く')}
       </button>
       <input
         bind:this={fileInput}
@@ -318,14 +319,14 @@
       onclick={() => fileInput?.click()}
     >
       <ImageIcon class="h-10 w-10 text-ink-faint" />
-      <span class="text-base font-medium">画像をドロップ、または Ctrl+V でペースト</span>
-      <span class="text-sm text-ink-muted">PNG・JPEG・WebP（40 MB まで）。クリックでファイル選択。</span>
+      <span class="text-base font-medium">{t('画像をドロップ、または Ctrl+V でペースト')}</span>
+      <span class="text-sm text-ink-muted">{t('PNG・JPEG・WebP（40 MB まで）。クリックでファイル選択。')}</span>
     </button>
   {:else}
     <div class="work">
       <section
         class="relative overflow-hidden rounded-ml border bg-surface-muted p-2 {dragging ? 'border-accent' : 'border-border'}"
-        aria-label="画像"
+        aria-label={t('画像')}
       >
         <div class="room" use:trackRoom>
           <!-- 画像と訳文の重畳：原文準拠の表示（ドット絵外観の走査線・書体・拡大補間の対象外） -->
@@ -371,33 +372,33 @@
             aria-live="polite"
           >
             <Loader2 class="h-3.5 w-3.5 animate-spin" />
-            {phase === 'ocr' ? '文字認識中…' : '翻訳中…'}
+            {phase === 'ocr' ? t('文字認識中…') : t('翻訳中…')}
           </div>
         {/if}
       </section>
 
       <aside class="flex min-h-0 flex-col rounded-ml border border-border bg-surface-elevated shadow-ml">
         <div class="flex items-center justify-between gap-4 border-b border-border px-4 py-2.5 text-sm whitespace-nowrap">
-          <span class="font-medium">認識結果</span>
-          <span class="text-xs text-ink-faint">{blocks.length} ブロック</span>
+          <span class="font-medium">{t('認識結果')}</span>
+          <span class="text-xs text-ink-faint">{t('{length} ブロック', { length: blocks.length })}</span>
         </div>
         <ol class="min-h-0 flex-1 divide-y divide-border overflow-y-auto">
           {#each blocks as b, i (i)}
             <li class="px-4 py-2.5 text-sm">
               <p class="text-xs break-words whitespace-pre-wrap text-ink-faint">{b.source}</p>
               {#if b.same_language}
-                <p class="mt-1 text-xs text-ink-faint">（翻訳対象外）</p>
+                <p class="mt-1 text-xs text-ink-faint">{t('（翻訳対象外）')}</p>
               {:else if b.translation != null}
                 <p class="mt-1 break-words whitespace-pre-wrap select-text">{b.translation}</p>
               {:else}
-                <p class="mt-1 text-xs text-ink-faint">翻訳待機中…</p>
+                <p class="mt-1 text-xs text-ink-faint">{t('翻訳待機中…')}</p>
               {/if}
             </li>
           {:else}
             <li class="px-4 py-6 text-center text-sm text-ink-faint">
-              {#if busy}文字認識中…{:else if plainText}<span class="break-words whitespace-pre-wrap text-ink"
+              {#if busy}{t('文字認識中…')}{:else if plainText}<span class="break-words whitespace-pre-wrap text-ink"
                   >{plainText}</span
-                >{:else if result}文字なし{/if}
+                >{:else if result}{t('文字なし')}{/if}
             </li>
           {/each}
         </ol>

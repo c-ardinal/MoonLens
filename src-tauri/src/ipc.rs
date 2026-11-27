@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State};
 
+use crate::tr;
 use crate::{
     app::AppState,
     capture::{self, CaptureRect},
@@ -278,7 +279,7 @@ pub async fn capture_and_process(
     overlay::emit(
         &app,
         overlay::OverlayEvent::Processing {
-            message: "キャプチャ中…".into(),
+            message: tr!("キャプチャ中…", "Capturing…"),
         },
     )
     .ok();
@@ -418,7 +419,10 @@ pub async fn translate_image(
     state: State<'_, AppState>,
 ) -> Result<CaptureFlowResult, String> {
     let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else {
-        return Err(user_error::coded("error", "画像データなし"));
+        return Err(user_error::coded(
+            "error",
+            tr!("画像データなし", "No image data"),
+        ));
     };
     let header = |name: &str| {
         request
@@ -432,13 +436,21 @@ pub async fn translate_image(
     let target = header("target")
         .unwrap_or_else(|| state.settings.snapshot().subtitle.target_language.clone());
     if bytes.len() > capture::MAX_IMAGE_FILE_BYTES {
-        return Err(user_error::coded("error", "画像サイズ超過（上限 40 MB）"));
+        return Err(user_error::coded("error", image_too_large()));
     }
     let bytes = bytes.clone();
     let png = tokio::task::spawn_blocking(move || capture::image_file_png(&bytes))
         .await
         .map_err(|e| e.to_string())?
-        .map_err(|_| user_error::coded("error", "画像読込失敗（PNG・JPEG・WebP のみ対応）"))?;
+        .map_err(|_| {
+            user_error::coded(
+                "error",
+                tr!(
+                    "画像読込失敗（PNG・JPEG・WebP のみ対応）",
+                    "Could not read the image (PNG, JPEG and WebP only)"
+                ),
+            )
+        })?;
     let mut bundle = state
         .pipeline
         .analyze_capture(png)
@@ -490,18 +502,29 @@ pub async fn read_image_file(path: String) -> Result<tauri::ipc::Response, Strin
     if !is_image_path(&p) {
         return Err(user_error::coded(
             "error",
-            "非対応形式（PNG・JPEG・WebP のみ対応）",
+            tr!(
+                "非対応形式（PNG・JPEG・WebP のみ対応）",
+                "Unsupported format (PNG, JPEG and WebP only)"
+            ),
         ));
     }
     let len = std::fs::metadata(&p)
-        .map_err(|e| user_error::coded("error", format!("読込失敗：{e}")))?
+        .map_err(|e| {
+            user_error::coded(
+                "error",
+                tr!("読込失敗：{e}", "Could not read the file: {e}"),
+            )
+        })?
         .len();
     if len as usize > capture::MAX_IMAGE_FILE_BYTES {
-        return Err(user_error::coded("error", "画像サイズ超過（上限 40 MB）"));
+        return Err(user_error::coded("error", image_too_large()));
     }
-    let bytes = tokio::fs::read(&p)
-        .await
-        .map_err(|e| user_error::coded("error", format!("読込失敗：{e}")))?;
+    let bytes = tokio::fs::read(&p).await.map_err(|e| {
+        user_error::coded(
+            "error",
+            tr!("読込失敗：{e}", "Could not read the file: {e}"),
+        )
+    })?;
     Ok(tauri::ipc::Response::new(bytes))
 }
 
@@ -676,11 +699,7 @@ pub async fn install_llm_model(
             if free < need + llm_models::FREE_SPACE_MARGIN {
                 return Err(user_error::coded(
                     "disk_full",
-                    format!(
-                        "残容量不足：必要 {:.1} GB／残容量 {:.1} GB",
-                        (need + llm_models::FREE_SPACE_MARGIN) as f64 / 1e9,
-                        free as f64 / 1e9
-                    ),
+                    not_enough_space(need + llm_models::FREE_SPACE_MARGIN, free),
                 ));
             }
         }
@@ -797,11 +816,7 @@ pub async fn install_asr_model(id: String, app: AppHandle) -> Result<String, Str
         if free < need + model_store::FREE_SPACE_MARGIN {
             return Err(user_error::coded(
                 "disk_full",
-                format!(
-                    "残容量不足：必要 {:.1} GB／残容量 {:.1} GB",
-                    (need + model_store::FREE_SPACE_MARGIN) as f64 / 1e9,
-                    free as f64 / 1e9
-                ),
+                not_enough_space(need + model_store::FREE_SPACE_MARGIN, free),
             ));
         }
     }
@@ -1046,10 +1061,15 @@ pub async fn start_subtitle(app: AppHandle, state: State<'_, AppState>) -> Resul
     // Check the speech recognition engine before opening the subtitle
     // window, instead of failing every few seconds once it is open.
     state.subtitle.preflight().await?;
-    state
-        .subtitle
-        .start(app)
-        .map_err(|e| user_error::coded("error", format!("音声取得の開始失敗：{e:#}")))?;
+    state.subtitle.start(app).map_err(|e| {
+        user_error::coded(
+            "error",
+            tr!(
+                "音声取得の開始失敗：{e:#}",
+                "Could not start audio capture: {e:#}"
+            ),
+        )
+    })?;
     crate::notices::clear("subtitle_unavailable");
     Ok(())
 }
@@ -1475,10 +1495,12 @@ pub async fn apply_config_fixes(
     ids: Vec<String>,
     state: State<'_, AppState>,
 ) -> Result<usize, String> {
-    let n = state
-        .settings
-        .apply_fixes(&ids)
-        .map_err(|e| crate::user_error::coded("error", format!("設定修正失敗：{e:#}")))?;
+    let n = state.settings.apply_fixes(&ids).map_err(|e| {
+        crate::user_error::coded(
+            "error",
+            tr!("設定修正失敗：{e:#}", "Could not fix the settings: {e:#}"),
+        )
+    })?;
     // A reload that left the settings unchanged does not broadcast;
     // re-check the chains anyway.
     state.pipeline.rebuild_providers();
@@ -1494,7 +1516,10 @@ pub async fn open_external_url(url: String, app: AppHandle) -> Result<(), String
     if !(lower.starts_with("https://") || lower.starts_with("http://")) {
         return Err(user_error::coded(
             "error",
-            "http／https 以外のリンクは非対応",
+            tr!(
+                "http／https 以外のリンクは非対応",
+                "Only http and https links are supported"
+            ),
         ));
     }
     tauri_plugin_opener::OpenerExt::opener(&app)
@@ -1650,4 +1675,21 @@ mod image_file_tests {
         assert!(!is_image_path(Path::new("notes.txt")));
         assert!(!is_image_path(Path::new("png")));
     }
+}
+
+fn image_too_large() -> String {
+    tr!(
+        "画像サイズ超過（上限 40 MB）",
+        "Image too large (limit 40 MB)"
+    )
+}
+
+/// Disk-full message for a download that needs `need` bytes with `free` left.
+fn not_enough_space(need: u64, free: u64) -> String {
+    tr!(
+        "残容量不足：必要 {:.1} GB／残容量 {:.1} GB",
+        "Not enough free space: {:.1} GB needed, {:.1} GB free",
+        need as f64 / 1e9,
+        free as f64 / 1e9
+    )
 }

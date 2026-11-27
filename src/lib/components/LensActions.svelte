@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { t, textEm } from '$lib/i18n';
   import { onMount, type Snippet } from 'svelte';
   import {
     ChevronDown,
@@ -95,21 +96,21 @@
     {
       key: 'continuous',
       icon: Radio,
-      label: '常時翻訳',
+      label: t('常時翻訳'),
       title: continuous
-        ? '常時翻訳：ON（画面変化時に再翻訳）'
-        : '常時翻訳：OFF（クリックで画面変化へ追従）',
+        ? t('常時翻訳：ON（画面変化時に再翻訳）')
+        : t('常時翻訳：OFF（クリックで画面変化へ追従）'),
       pressed: continuous,
       run: oncontinuous
     },
     {
       key: 'operate',
       icon: operate ? MousePointerClick : MousePointerBan,
-      label: operate ? '操作モード' : '透過モード',
+      label: operate ? t('操作モード') : t('透過モード'),
       title:
         (operate
-          ? '操作モード：訳文の選択・コピー可（クリックで透過モードへ）'
-          : '透過モード：ウィンドウ上のクリックは背面へ（クリックで操作モードへ）') +
+          ? t('操作モード：訳文の選択・コピー可（クリックで透過モードへ）')
+          : t('透過モード：ウィンドウ上のクリックは背面へ（クリックで操作モードへ）')) +
         (operateKey ? ` (${operateKey})` : ''),
       pressed: operate,
       run: onoperate
@@ -117,8 +118,8 @@
     {
       key: 'refresh',
       icon: RefreshCw,
-      label: '再取得',
-      title: '再取得',
+      label: t('再取得'),
+      title: t('再取得'),
       disabled: busy,
       spin: busy,
       run: onrefresh
@@ -126,8 +127,8 @@
     {
       key: 'original',
       icon: showOriginal ? Eye : EyeOff,
-      label: showOriginal ? '訳文表示' : '原文表示',
-      title: '原文／訳文の切替',
+      label: showOriginal ? t('訳文表示') : t('原文表示'),
+      title: t('原文／訳文の切替'),
       pressed: showOriginal,
       disabled: !hasText,
       run: onoriginal
@@ -136,24 +137,24 @@
     {
       key: 'copy',
       icon: ClipboardCopy,
-      label: 'コピー',
-      title: 'コピー (Ctrl+C)',
+      label: t('コピー'),
+      title: t('コピー (Ctrl+C)'),
       disabled: !hasText,
       run: oncopy
     },
     {
       key: 'text',
       icon: TextSelect,
-      label: 'テキスト表示',
-      title: 'テキスト表示',
+      label: t('テキスト表示'),
+      title: t('テキスト表示'),
       pressed: showText,
       run: ontext
     },
     {
       key: 'explain',
       icon: Languages,
-      label: '内容説明',
-      title: '内容説明',
+      label: t('内容説明'),
+      title: t('内容説明'),
       disabled: !hasText,
       run: onexplain
     }
@@ -206,12 +207,12 @@
 <svelte:window onpointerdown={outside} onblur={() => (menuOpen = false)} />
 
 {#snippet language(inMenu: boolean)}
-  <label class={inMenu ? 'mi lang' : 'tb lang'} title="翻訳先言語">
-    {#if inMenu}<Languages class="h-4 w-4" /><span class="lb">翻訳先</span>{/if}
+  <label class={inMenu ? 'mi lang' : 'tb lang'} title={t('翻訳先言語')}>
+    {#if inMenu}<Languages class="h-4 w-4" /><span class="lb">{t('翻訳先')}</span>{/if}
     <span class="sel">
       <select
-        aria-label="翻訳先言語"
-        style="width: calc({languageLabel(targetLanguage).length}em + 2px)"
+        aria-label={t('翻訳先言語')}
+        style="width: calc({textEm(languageLabel(targetLanguage))}em + 2px)"
         value={targetLanguage}
         onchange={(e) => onlanguage((e.currentTarget as HTMLSelectElement).value)}
       >
@@ -219,7 +220,7 @@
           <option value={targetLanguage}>{languageLabel(targetLanguage)}</option>
         {/if}
         {#each LANGUAGES as l (l.code)}
-          <option value={l.code}>{l.label}</option>
+          <option value={l.code}>{t(l.label)}</option>
         {/each}
       </select>
       <ChevronDown class="h-3 w-3 opacity-70" />
@@ -227,12 +228,12 @@
   </label>
 {/snippet}
 
-<button class="tb" onclick={onadd} title="ウィンドウ追加（同一サイズで隣へ配置）">
+<button class="tb" onclick={onadd} title={t('ウィンドウ追加（同一サイズで隣へ配置）')}>
   <Plus class="h-4 w-4" />
 </button>
 {@render lead?.()}
 
-<div class="fit" bind:this={fitEl} role="group" aria-label="ウィンドウ翻訳の操作" data-tauri-drag-region>
+<div class="fit" bind:this={fitEl} role="group" aria-label={t('ウィンドウ翻訳の操作')} data-tauri-drag-region>
   {#each actions as a, i (a === 'language' ? a : a.key)}
     {#if a === 'language'}
       <span class="item" class:off={i >= shown} data-item>{@render language(false)}</span>
@@ -259,18 +260,18 @@
     aria-expanded={menuOpen}
     aria-pressed={menuOpen}
     onclick={() => (menuOpen = !menuOpen)}
-    title="他の操作"
+    title={t('他の操作')}
   >
     <EllipsisVertical class="h-4 w-4" />
   </button>
 {/if}
-<button class="tb" onclick={onmaximize} title={maximized ? '元のサイズ' : '最大化（全画面翻訳）'}>
+<button class="tb" onclick={onmaximize} title={maximized ? t('元のサイズ') : t('最大化（全画面翻訳）')}>
   {#if maximized}<Minimize2 class="h-4 w-4" />{:else}<Maximize2 class="h-4 w-4" />{/if}
 </button>
-<button class="tb" onclick={onclose} title="閉じる (Esc)"><X class="h-4 w-4" /></button>
+<button class="tb" onclick={onclose} title={t('閉じる (Esc)')}><X class="h-4 w-4" /></button>
 
 {#if menuOpen && overflow}
-  <div class="menu" role="menu" aria-label="他の操作">
+  <div class="menu" role="menu" aria-label={t('他の操作')}>
     {#each actions.slice(shown) as a (a === 'language' ? a : a.key)}
       {#if a === 'language'}
         {@render language(true)}

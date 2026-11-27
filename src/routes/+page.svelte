@@ -4,6 +4,7 @@
 </script>
 
 <script lang="ts">
+  import { t } from '$lib/i18n';
   import { goto } from '$app/navigation';
   import { onDestroy, onMount } from 'svelte';
   import { X } from 'lucide-svelte';
@@ -53,9 +54,9 @@
       const [ocr, llm, asr] = await Promise.all([ocrModelsStatus(), listLlmModels(), listAsrModels()]);
       engines = engineRows(llm, ocr, asr);
       const out: string[] = [];
-      if (engines[0].state !== 'ready') out.push('翻訳モデル');
+      if (engines[0].state !== 'ready') out.push(t('翻訳モデル'));
       // ocrs alone reads Latin only, so PP-OCR is still offered for setup.
-      if (!ocr.ppocr) out.push('OCR モデル');
+      if (!ocr.ppocr) out.push(t('OCR モデル'));
       missing = out;
     } catch {
       engines = [];
@@ -84,7 +85,7 @@
       unlisteners.push(
         await onHotkey((action) => {
           if (action === 'toggle_pin_overlay_empty')
-            lastError = '常時翻訳の対象なし。ウィンドウ翻訳を先に実行。';
+            lastError = t('常時翻訳の対象なし。ウィンドウ翻訳を先に実行。');
         })
       );
       unlisteners.push(
@@ -92,7 +93,7 @@
           if (event.kind === 'started') subtitleRunning = true;
           else if (event.kind === 'stopped') subtitleRunning = false;
           else if (event.kind === 'chunk') subtitlePreview = event.translated || event.original;
-          else if (event.kind === 'error') lastError = `音声翻訳：${event.message}`;
+          else if (event.kind === 'error') lastError = t('音声翻訳：{message}', { message: event.message });
         })
       );
       subtitleRunning = await subtitleState();
@@ -127,34 +128,34 @@
   /** 魔法陣の 4 機能。順序は数字キー（1〜4）と一致。 */
   const functions = $derived([
     {
-      label: 'ウィンドウ',
-      title: 'ウィンドウ翻訳',
+      label: t('ウィンドウ'),
+      title: t('ウィンドウ翻訳'),
       icon: 'region',
-      desc: 'ウィンドウの背面を常時翻訳。複数配置・任意サイズ、最大化で全画面。',
+      desc: t('ウィンドウの背面を常時翻訳。複数配置・任意サイズ、最大化で全画面。'),
       hotkey: key('capture_region'),
       run: () => openLens()
     },
     {
-      label: '画像',
-      title: '画像翻訳',
+      label: t('画像'),
+      title: t('画像翻訳'),
       icon: 'image',
-      desc: '画像ファイルの文字を認識・翻訳。ドロップ・貼付に対応。',
+      desc: t('画像ファイルの文字を認識・翻訳。ドロップ・貼付に対応。'),
       hotkey: '',
       run: () => goto('/image/')
     },
     {
-      label: 'テキスト',
-      title: 'テキスト翻訳',
+      label: t('テキスト'),
+      title: t('テキスト翻訳'),
       icon: 'text',
-      desc: '入力文の翻訳。用語集・文脈指定に対応。',
+      desc: t('入力文の翻訳。用語集・文脈指定に対応。'),
       hotkey: '',
       run: () => goto('/translate/')
     },
     {
-      label: '音声',
-      title: '音声翻訳',
+      label: t('音声'),
+      title: t('音声翻訳'),
       icon: 'mic',
-      desc: subtitleRunning ? '字幕表示中。Enter で停止。' : 'システム音声を認識・翻訳し、字幕表示。',
+      desc: subtitleRunning ? t('字幕表示中。Enter で停止。') : t('システム音声を認識・翻訳し、字幕表示。'),
       hotkey: key('toggle_subtitle'),
       // 施錠なし：外部 whisper.cpp サーバー・ASR プラグインも有効なため、可否判定は本体側
       run: toggleSubtitle
@@ -175,7 +176,7 @@
       if (!e) return (recent = null);
       const d = new Date(e.created_at * 1000);
       const text = (e.result_text || e.source_text || '').replace(/\s+/g, ' ').trim();
-      recent = { text: text || '（画像）', time: `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}` };
+      recent = { text: text || t('（画像）'), time: `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}` };
     } catch {
       recent = null;
     }
@@ -191,7 +192,9 @@
     error: null,
     engines,
     recent,
-    hint: `←→選択 Enter・1-${functions.length}起動${key('open_command_palette') ? ` ${key('open_command_palette')}パレット` : ''}`
+    hint: key('open_command_palette')
+      ? t('←→選択 Enter・1-{n}起動 {key}パレット', { n: functions.length, key: key('open_command_palette') })
+      : t('←→選択 Enter・1-{n}起動', { n: functions.length })
   });
 
   function onRegion(r: HomeRegion) {
@@ -229,23 +232,23 @@
         <section class="px-win notice" role="alert">
           <p class="min-w-0 flex-1 break-words">
             {n.message}
-            {#if n.action}<a href={n.action} class="link">設定<span class="px-tri" aria-hidden="true"></span></a>{/if}
+            {#if n.action}<a href={n.action} class="link">{t('設定')}<span class="px-tri" aria-hidden="true"></span></a>{/if}
           </p>
-          <button class="close" title="閉じる" aria-label="通知を閉じる" onclick={() => dismissNotice(n.id).catch(() => {})}>
+          <button class="close" title={t('閉じる')} aria-label={t('通知を閉じる')} onclick={() => dismissNotice(n.id).catch(() => {})}>
             <X class="h-4 w-4" />
           </button>
         </section>
       {/each}
       {#if missing.length > 0}
         <section class="px-win notice">
-          <p class="min-w-0 flex-1">{missing.join('・')}未取得。初期設定で推奨モデルを一括取得</p>
-          <button class="px-chip" data-tone="amber" use:slant onclick={() => goto('/setup/')}>初期設定</button>
+          <p class="min-w-0 flex-1">{t('{models}未取得。初期設定で推奨モデルを一括取得', { models: missing.join(t('・')) })}</p>
+          <button class="px-chip" data-tone="amber" use:slant onclick={() => goto('/setup/')}>{t('初期設定')}</button>
         </section>
       {/if}
       {#if lastError}
         <section class="px-win notice error" role="alert">
           <p class="min-w-0 flex-1 break-words">{lastError}</p>
-          <button class="close" title="閉じる" aria-label="エラーを閉じる" onclick={() => (lastError = null)}>
+          <button class="close" title={t('閉じる')} aria-label={t('エラーを閉じる')} onclick={() => (lastError = null)}>
             <X class="h-4 w-4" />
           </button>
         </section>
@@ -256,9 +259,9 @@
   </div>
 
   <!-- 支援技術向けの機能一覧（視覚表現は魔法陣） -->
-  <ul class="sr-only" aria-label="機能">
-    {#each functions as f, i (f.label)}
-      <li><button onclick={() => activate(i)}>{i + 1}. {f.label}：{f.desc}</button></li>
+  <ul class="sr-only" aria-label={t('機能')}>
+    {#each functions as f, i (f.icon)}
+      <li><button onclick={() => activate(i)}>{t('{n}. {label}：{desc}', { n: i + 1, label: f.label, desc: f.desc })}</button></li>
     {/each}
   </ul>
 

@@ -302,6 +302,7 @@
     ro.observe(host);
     Promise.all([
       document.fonts?.load('16px DotGothic16'),
+      // i18n-ignore（見出し書体の先行読込に使用する字種）
       document.fonts?.load("700 44px 'BIZ UDGothic','Yu Gothic UI','Hiragino Sans','Noto Sans JP',sans-serif", 'ウィンドウ画像テキスト音声翻訳')
     ])
       .catch(() => {})

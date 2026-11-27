@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { t } from '$lib/i18n';
   import { onDestroy, onMount } from 'svelte';
   import { installOcrModels, ocrModelsStatus, onModelProgress, type OcrModelsStatus } from '$lib/ipc';
   import { ocrChoice, OCR_CHOICE_ID } from '$lib/model-setup';
@@ -45,7 +46,7 @@
   <!-- 選択肢は PP-OCRv5 のみ（常に選択状態）。未取得時は取得を案内 -->
   <ModelChoice
     key="ocr"
-    feature="文字認識"
+    feature={t('文字認識')}
     rows={[ocrChoice(status)]}
     selected={OCR_CHOICE_ID}
     recommended={OCR_CHOICE_ID}

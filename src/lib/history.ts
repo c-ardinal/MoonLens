@@ -8,9 +8,11 @@
  * translations share one tab.
  */
 import type { HistoryEntry } from './ipc';
+import { t } from './i18n';
 
 export type HistoryFilter = 'all' | 'window' | 'image' | 'text' | 'qr';
 
+/** 絞込みタブ。label は日本語の原文（表示時は `t()` で翻訳）。 */
 export const HISTORY_FILTERS: { value: HistoryFilter; label: string }[] = [
   { value: 'all', label: '全件' },
   { value: 'window', label: 'ウィンドウ' },
@@ -36,7 +38,7 @@ const KIND_LABELS: Record<string, string> = {
 
 /** Display label for a history row's kind (unknown kinds as is). */
 export function kindLabel(kind: string): string {
-  return KIND_LABELS[kind] ?? kind;
+  return kind in KIND_LABELS ? t(KIND_LABELS[kind]) : kind;
 }
 
 /** Filter a kind belongs to; `null` for kinds no tab covers. */

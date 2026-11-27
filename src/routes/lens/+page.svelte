@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { t } from '$lib/i18n';
   import { onDestroy, onMount, tick } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
   import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
@@ -19,7 +20,7 @@
     type CaptureFlowResult,
     type LensBlock
   } from '$lib/ipc';
-  import { joinedText, languageLabel, rgb } from '$lib/lens-overlay';
+  import { joinedText, languageName, rgb } from '$lib/lens-overlay';
   import { liveBoxes, liveText, type LensLiveEvent } from '$lib/live';
   import {
     TEXT_COMMAND_EVENT,
@@ -204,15 +205,15 @@
     const src = source?.trim() || joinedText(blocks, 'source');
     if (!src) return;
     showText = true;
-    explanation = '説明を生成中…';
+    explanation = t('説明を生成中…');
     try {
       const r = await runExplain(
-        // copy-lint-ignore（LLM プロンプト）
-        `次のテキストの内容を${languageLabel(targetLanguage) || '日本語'}で簡潔に説明してください:\n\n${src}`
+        // copy-lint-ignore i18n-ignore（LLM プロンプト。言語名は日本語の原文）
+        `次のテキストの内容を${languageName(targetLanguage) || '日本語'}で簡潔に説明してください:\n\n${src}`
       );
       explanation = extractText(r);
     } catch (e) {
-      explanation = `説明の生成に失敗：${errorText(e)}`;
+      explanation = t('説明の生成に失敗：{error}', { error: errorText(e) });
     }
   }
 
@@ -375,15 +376,15 @@
     lastError
       ? lastError
       : busy || reading
-        ? '文字認識中…'
+        ? t('文字認識中…')
         : translating
-          ? '翻訳中…'
+          ? t('翻訳中…')
         : empty
-          ? '範囲内に文字なし'
+          ? t('範囲内に文字なし')
           : !hasText
             ? continuous
-              ? '画面変化時に自動翻訳'
-              : '再取得で翻訳'
+              ? t('画面変化時に自動翻訳')
+              : t('再取得で翻訳')
             : null
   );
 </script>
@@ -415,7 +416,7 @@
     >
       {#snippet lead()}
         <div class="lead pointer-events-none flex items-center gap-2" data-tauri-drag-region>
-          <span class="title">ウィンドウ翻訳</span>
+          <span class="title">{t('ウィンドウ翻訳')}</span>
           {#if hasText}
             <PrivacyBadge {viaCloud} {provider} />
           {/if}
@@ -425,7 +426,7 @@
   </header>
 
   <!-- The observed range. Transparent; the mouse passes through it. -->
-  <section class="body" class:operate class:working aria-label="訳文" aria-busy={working}>
+  <section class="body" class:operate class:working aria-label={t('訳文')} aria-busy={working}>
     {#if !showOriginal}
       {#each boxes as b (b.rect.key)}
         <div
@@ -449,7 +450,7 @@
     {/if}
 
     {#if textInside}
-      <aside class="panel" aria-label="テキスト">
+      <aside class="panel" aria-label={t('テキスト')}>
         <LensText view={textView} onplacement={setPlacement} onclose={() => (showText = false)} />
       </aside>
     {/if}
@@ -459,7 +460,7 @@
     {/if}
     <!-- Resize grip (also clickable while the body lets the mouse through). -->
     {#if !maximized}
-      <div class="grip" role="presentation" title="サイズ変更" onpointerdown={startResize}></div>
+      <div class="grip" role="presentation" title={t('サイズ変更')} onpointerdown={startResize}></div>
     {/if}
   </section>
 </main>

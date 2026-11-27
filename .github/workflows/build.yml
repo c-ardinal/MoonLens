@@ -60,7 +60,7 @@ env:
 jobs:
   frontend:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v5
 
@@ -85,6 +85,14 @@ jobs:
           node --test scripts/copy-lint.test.mjs
           npm run lint:copy
 
+      # Display language (CLAUDE.md): Japanese is the source text; every
+      # Japanese string needs its English entry in src/lib/i18n/en.json
+      # and must reach the screen through t().
+      - name: i18n lint
+        run: |
+          node --test scripts/i18n-lint.test.mjs
+          npm run lint:i18n
+
       - name: Typecheck (svelte-check)
         run: npm run check
 
@@ -108,6 +116,14 @@ jobs:
       # the window and overlapping siblings.
       - name: UI overflow audit
         run: npm run audit:overflow
+
+      # English text is longer: the largest and the default text size.
+      - name: UI overflow audit (English)
+        run: npm run audit:overflow:en
+
+      # English display: no window may still show a Japanese source string.
+      - name: UI i18n audit (English)
+        run: npm run audit:i18n
 
       # <select> option lists are drawn by the OS / WebView: every option
       # needs a readable text / background pair in light and dark schemes.

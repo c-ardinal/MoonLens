@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { t } from '$lib/i18n';
   import { onMount } from 'svelte';
   import {
     CheckCircle2,
@@ -28,6 +29,7 @@
     detectable: boolean;
   };
 
+  /** title・description は日本語の原文（表示時に `t()` で翻訳）。 */
   const rows: PermissionRow[] = [
     {
       id: 'screen_capture',
@@ -111,18 +113,18 @@
     >
       <header class="flex items-start justify-between gap-3">
         <div>
-          <h2 class="text-base font-semibold">macOS の権限設定</h2>
+          <h2 class="text-base font-semibold">{t('macOS の権限設定')}</h2>
           <p class="mt-1 text-sm text-ink-muted">
-            主要機能に OS 権限が必要。各項目のシステム設定で MoonLens を許可。
+            {t('主要機能に OS 権限が必要。各項目のシステム設定で MoonLens を許可。')}
           </p>
         </div>
         <button
           class="inline-flex items-center gap-2 rounded-ml-sm border border-border bg-surface px-2 py-1 text-xs text-ink-muted hover:border-accent/60 hover:text-ink"
           onclick={refreshNow}
-          title="権限状態の再確認"
+          title={t('権限状態の再確認')}
         >
           <RefreshCw class="h-3.5 w-3.5" />
-          再確認
+          {t('再確認')}
         </button>
       </header>
 
@@ -136,31 +138,31 @@
               <row.icon class="mt-1 h-5 w-5 text-ink-muted" />
               <div>
                 <p class="flex items-center gap-2 text-sm font-medium">
-                  {row.title}
+                  {t(row.title)}
                   {#if st === 'granted'}
                     <span
                       class="inline-flex items-center gap-1 rounded-full bg-accent-soft px-2 py-1 text-[10px] font-medium uppercase tracking-wide text-accent"
                     >
                       <CheckCircle2 class="h-3 w-3" />
-                      許可済
+                      {t('許可済')}
                     </span>
                   {:else if st === 'denied'}
                     <span
                       class="inline-flex items-center gap-1 rounded-full bg-red-500/10 px-2 py-1 text-[10px] font-medium uppercase tracking-wide text-red-500"
                     >
                       <CircleAlert class="h-3 w-3" />
-                      未許可
+                      {t('未許可')}
                     </span>
                   {:else}
                     <span
                       class="inline-flex items-center gap-1 rounded-full bg-surface-muted px-2 py-1 text-[10px] font-medium uppercase tracking-wide text-ink-faint"
                     >
                       <CircleHelp class="h-3 w-3" />
-                      不明
+                      {t('不明')}
                     </span>
                   {/if}
                 </p>
-                <p class="text-xs text-ink-muted">{row.description}</p>
+                <p class="text-xs text-ink-muted">{t(row.description)}</p>
               </div>
             </div>
             <div class="flex flex-col items-stretch gap-1">
@@ -169,14 +171,14 @@
                   class="rounded-ml-sm bg-accent px-3 py-1 text-xs font-medium text-white hover:opacity-90"
                   onclick={requestScreenCapture}
                 >
-                  許可要求
+                  {t('許可要求')}
                 </button>
               {/if}
               <button
                 class="rounded-ml-sm border border-border bg-surface-elevated px-3 py-1 text-xs text-ink-muted hover:border-accent/60 hover:text-ink"
                 onclick={() => openPane(row.id)}
               >
-                設定を開く
+                {t('設定を開く')}
               </button>
             </div>
           </li>
@@ -188,7 +190,7 @@
           class="rounded-ml-sm bg-accent px-3 py-2 text-sm font-medium text-white"
           onclick={dismiss}
         >
-          完了／スキップ
+          {t('完了／スキップ')}
         </button>
       </footer>
     </div>

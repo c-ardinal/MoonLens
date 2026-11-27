@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { t } from '$lib/i18n';
   import { onDestroy, onMount } from 'svelte';
   import {
     cancelAsrDownload,
@@ -72,13 +73,13 @@
         if (data.selected !== replacement) return;
       }
       await deleteAsrModel(id);
-      notify(`${data.models.find((m) => m.id === id)?.label ?? id}：削除完了`);
+      notify(t('{name}：削除完了', { name: data.models.find((m) => m.id === id)?.label ?? id }));
     });
 </script>
 
 <ModelChoice
   key="asr"
-  feature="音声認識"
+  feature={t('音声認識')}
   rows={data.models}
   selected={data.selected}
   {recommended}
