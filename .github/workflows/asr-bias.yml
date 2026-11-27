@@ -33,7 +33,7 @@ env:
   # Runs of this workflow whose recognitions are reused where their jobs
   # (recording, condition, prompt) are the same as this run's, so a
   # change to the scoring does not cost two hours again. Empty = none.
-  SEED_RUN_IDS: '45950404118 45973250850'
+  SEED_RUN_IDS: '45950404118 45973250850 45979418529'
 
 jobs:
   bench:
