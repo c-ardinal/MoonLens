@@ -456,6 +456,10 @@ impl SubtitleService {
         let Some(session) = self.sessions.lock().remove(label) else {
             return;
         };
+        // No longer follows a window of another app.
+        if let Some(attachments) = app.try_state::<crate::attach::Handle>() {
+            attachments.forget(label);
+        }
         if let Some(running) = session.running {
             running.halt();
         }

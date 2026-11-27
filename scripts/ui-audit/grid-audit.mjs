@@ -82,6 +82,18 @@ async function subtitleWindow() {
     await emit({ kind: 'status', phase: 'translating' });
     await emit({ kind: 'chunk', id: 1, original: 'And so, my fellow Americans,', translated: 'そして、同胞であるアメリカ国民の皆さん、' }); await m('chunk');
     await pg.mouse.move(w / 2, 20); await m('hover');
+    // 吸着メニュー：吸着なし（候補一覧）・吸着中（配置 6 種・解除）
+    const attachMenu = async (n) => {
+      await reach(`subtitle-${w}-${n}`, async () => {
+        if (!(await pg.locator('.am').count())) await pg.click('[data-action="attach"]', { timeout: 2000 });
+        await pg.locator('.am .row').first().waitFor({ timeout: 2000 });
+      });
+      await m(n);
+    };
+    await attachMenu('attach');
+    await pg.evaluate((a) => window.__emit('moonlens://attach', a), { ...ATTACHED, dock: 'inside' });
+    await attachMenu('attached');
+    await pg.keyboard.press('Escape');
     await emit({ kind: 'error', message: '音声認識の連続失敗により停止：モデル読込失敗' }); await emit({ kind: 'stopped' }); await m('error');
     await pg.context().close();
   }
