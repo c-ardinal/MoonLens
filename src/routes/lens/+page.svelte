@@ -210,6 +210,7 @@
     explanation = { status: 'pending' };
     try {
       const r = await runExplain(
+        // copy-lint-ignore（LLM プロンプト）
         `次のテキストの内容を${languageLabel(targetLanguage) || '日本語'}で簡潔に説明してください:\n\n${src}`
       );
       explanation = { status: 'done', text: extractText(r) };
@@ -501,7 +502,7 @@
     border-radius: 8px 8px 0 0;
     user-select: none;
     --la-hover: rgba(255, 255, 255, 0.12);
-    --la-pressed: rgba(139, 92, 246, 0.45);
+    --la-pressed: color-mix(in srgb, var(--ml-accent) 45%, transparent);
     --la-bg: rgb(24, 24, 28);
     container-type: inline-size;
   }
@@ -531,11 +532,13 @@
     flex: 1;
     overflow: hidden;
     /* Marks the range without covering it. */
-    box-shadow: inset 0 0 0 2px rgba(139, 92, 246, 0.6);
+    box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--ml-accent) 60%, transparent);
   }
-  /* 操作モード：枠を琥珀色へ変更し、訳文を選択可能化 */
+  /* 操作モード：枠を破線へ変更し（配色に依存しない識別）、訳文を選択可能化 */
   .body.operate {
-    box-shadow: inset 0 0 0 2px rgba(245, 158, 11, 0.85);
+    box-shadow: none;
+    outline: 2px dashed color-mix(in srgb, var(--ml-accent) 70%, white);
+    outline-offset: -2px;
   }
   .box {
     position: absolute;
@@ -558,9 +561,9 @@
     background: linear-gradient(
       90deg,
       transparent,
-      rgba(167, 139, 250, 0.26) 40%,
+      color-mix(in srgb, var(--ml-accent) 26%, transparent) 40%,
       rgba(255, 255, 255, 0.34) 50%,
-      rgba(167, 139, 250, 0.26) 60%,
+      color-mix(in srgb, var(--ml-accent) 26%, transparent) 60%,
       transparent
     );
     transform: translateX(-140%) skewX(-16deg);
@@ -573,15 +576,15 @@
     }
   }
   .box.pending {
-    background-image: linear-gradient(100deg, transparent 30%, rgba(139, 92, 246, 0.18) 50%, transparent 70%) !important;
+    background-image: linear-gradient(100deg, transparent 30%, color-mix(in srgb, var(--ml-accent) 18%, transparent) 50%, transparent 70%) !important;
   }
-  /* 動作軽減の設定時：走査を停止し、淡色の面で表示 */
+  /* 動作軽減の設定時：走査を停止し、淡色の単色で表示 */
   @media (prefers-reduced-motion: reduce) {
     .body.working::before {
       animation: none;
       transform: none;
       width: 100%;
-      background: rgba(167, 139, 250, 0.12);
+      background: color-mix(in srgb, var(--ml-accent) 12%, transparent);
     }
   }
   .panel {
@@ -614,7 +617,7 @@
     width: 18px;
     height: 18px;
     cursor: nwse-resize;
-    background: linear-gradient(135deg, transparent 50%, rgba(139, 92, 246, 0.85) 50%);
+    background: linear-gradient(135deg, transparent 50%, color-mix(in srgb, var(--ml-accent) 85%, transparent) 50%);
     border-bottom-right-radius: 2px;
   }
 </style>

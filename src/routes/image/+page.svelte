@@ -103,7 +103,7 @@
       error = { code: 'error', message: '非対応形式（PNG・JPEG・WebP のみ対応）', fix: null };
       return;
     }
-    await open(new Uint8Array(await file.arrayBuffer()), file.name || '貼り付け画像');
+    await open(new Uint8Array(await file.arrayBuffer()), file.name || 'ペースト画像');
   }
 
   async function openPath(path: string | null) {
@@ -318,7 +318,7 @@
       onclick={() => fileInput?.click()}
     >
       <ImageIcon class="h-10 w-10 text-ink-faint" />
-      <span class="text-base font-medium">画像をドロップ、または Ctrl+V で貼り付け</span>
+      <span class="text-base font-medium">画像をドロップ、または Ctrl+V でペースト</span>
       <span class="text-sm text-ink-muted">PNG・JPEG・WebP（40 MB まで）。クリックでファイル選択。</span>
     </button>
   {:else}
@@ -390,7 +390,7 @@
               {:else if b.translation != null}
                 <p class="mt-1 break-words whitespace-pre-wrap select-text">{b.translation}</p>
               {:else}
-                <p class="mt-1 text-xs text-ink-faint">翻訳待ち…</p>
+                <p class="mt-1 text-xs text-ink-faint">翻訳待機中…</p>
               {/if}
             </li>
           {:else}
@@ -455,7 +455,7 @@
     box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.04);
   }
   .block-box.pending {
-    background-image: linear-gradient(100deg, transparent 30%, rgba(139, 92, 246, 0.18) 50%, transparent 70%) !important;
+    background-image: linear-gradient(100deg, transparent 30%, color-mix(in srgb, var(--ml-accent) 18%, transparent) 50%, transparent 70%) !important;
     background-size: 250% 100%;
     animation: scan 1.1s linear infinite;
   }

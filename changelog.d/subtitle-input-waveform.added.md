@@ -1,0 +1,1 @@
+- Live subtitle window: the input waveform and the recognition threshold are drawn behind the subtitles, with a level meter in the title bar. The status now tells apart "no input", "below threshold" and "speech detected" instead of a single "waiting" label.

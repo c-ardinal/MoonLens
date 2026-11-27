@@ -9,7 +9,7 @@
     defaultValue?: any;
     /** The value clashes with another field (e.g. a duplicate shortcut). */
     invalid?: boolean;
-    /** 設定画面の行表示：説明文は外部の説明窓へ委譲し、1 行で表示。 */
+    /** 設定画面の行表示：説明文は外部の説明欄へ委譲し、1 行で表示。 */
     compact?: boolean;
     onChange: (v: any) => void;
   }

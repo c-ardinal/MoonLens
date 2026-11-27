@@ -11,7 +11,7 @@
     type TextView
   } from '$lib/lens-text';
 
-  // ウィンドウ翻訳のテキスト表示（窓外）。内容は本体ウィンドウが送信し、
+  // ウィンドウ翻訳のテキスト表示（ウィンドウ外）。内容は本体ウィンドウが送信し、
   // 位置は本体の移動・サイズ変更へバックエンドが追従（lens_text.rs）。
 
   const params = new URLSearchParams(
@@ -81,7 +81,7 @@
     height: 100vh;
     overflow: hidden;
     /* 本体の範囲枠と同色：対応関係の明示 */
-    box-shadow: inset 0 0 0 1px rgba(139, 92, 246, 0.6);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ml-accent) 60%, transparent);
   }
   .grip {
     position: absolute;
@@ -90,6 +90,6 @@
     width: 14px;
     height: 14px;
     cursor: nwse-resize;
-    background: linear-gradient(135deg, transparent 50%, rgba(139, 92, 246, 0.85) 50%);
+    background: linear-gradient(135deg, transparent 50%, color-mix(in srgb, var(--ml-accent) 85%, transparent) 50%);
   }
 </style>

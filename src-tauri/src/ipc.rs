@@ -677,7 +677,7 @@ pub async fn install_llm_model(
                 return Err(user_error::coded(
                     "disk_full",
                     format!(
-                        "空き容量不足：必要 {:.1} GB／空き {:.1} GB",
+                        "残容量不足：必要 {:.1} GB／残容量 {:.1} GB",
                         (need + llm_models::FREE_SPACE_MARGIN) as f64 / 1e9,
                         free as f64 / 1e9
                     ),
@@ -798,7 +798,7 @@ pub async fn install_asr_model(id: String, app: AppHandle) -> Result<String, Str
             return Err(user_error::coded(
                 "disk_full",
                 format!(
-                    "空き容量不足：必要 {:.1} GB／空き {:.1} GB",
+                    "残容量不足：必要 {:.1} GB／残容量 {:.1} GB",
                     (need + model_store::FREE_SPACE_MARGIN) as f64 / 1e9,
                     free as f64 / 1e9
                 ),

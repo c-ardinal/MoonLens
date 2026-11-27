@@ -207,9 +207,9 @@ describe('<LocalModels> housekeeping', () => {
       dir: '/d',
       models: [model('x', { style: 'pfml3' })]
     });
-    ipc.installLlmModel.mockRejectedValue('disk_full|空き容量不足：必要 2.3 GB／空き 1.0 GB');
+    ipc.installLlmModel.mockRejectedValue('disk_full|残容量不足：必要 2.3 GB／残容量 1.0 GB');
     const r = render(LocalModels);
     await fireEvent.click(await r.findByRole('button', { name: '取得' }));
-    await waitFor(() => expect(r.getByText('空き容量不足：必要 2.3 GB／空き 1.0 GB')).toBeInTheDocument());
+    await waitFor(() => expect(r.getByText('残容量不足：必要 2.3 GB／残容量 1.0 GB')).toBeInTheDocument());
   });
 });
