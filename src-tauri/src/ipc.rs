@@ -1257,6 +1257,17 @@ pub async fn start_subtitle(app: AppHandle, state: State<'_, AppState>) -> Resul
     Ok(())
 }
 
+/// Start a face-to-face conversation (microphone, translated in both
+/// directions) in a window of its own.
+#[tauri::command]
+pub async fn start_conversation(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+    let (subtitle, handle) = (state.subtitle.clone(), app.clone());
+    // Opening the microphone may wait for the device; off the IPC thread.
+    tauri::async_runtime::spawn(async move { subtitle.start_conversation(&handle).await })
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 fn subtitle_failure(e: anyhow::Error) -> String {
     user_error::coded(
         "error",

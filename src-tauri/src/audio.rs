@@ -1,4 +1,5 @@
-//! System audio loopback capture for live subtitles.
+//! Audio capture for live subtitles: a loopback of what the PC plays,
+//! or the microphone (face-to-face conversation).
 //!
 //! Pure resampling/downmix math lives in [`dsp`] so it can be unit tested
 //! without a cpal stream.
@@ -15,6 +16,17 @@ pub enum AudioSource {
     /// What one application plays: the process `pid` and the processes
     /// it started (a browser plays through a child process).
     App { pid: u32 },
+    /// The default microphone: a face-to-face conversation, translated
+    /// in both directions (see `conversation`).
+    Microphone,
+}
+
+impl AudioSource {
+    /// A source that delivers frames all the time, silence included (a
+    /// loopback delivers nothing while nothing plays).
+    pub fn is_continuous(self) -> bool {
+        matches!(self, AudioSource::Microphone)
+    }
 }
 
 pub mod dsp {
@@ -222,6 +234,192 @@ pub mod dsp {
     }
 }
 
+pub mod gate {
+    //! Voice gate for a microphone.
+    //!
+    //! A microphone delivers frames all the time: room noise between
+    //! the sentences, never a pause. The subtitle loop ends a sentence
+    //! when frames stop arriving, as a loopback does while nothing
+    //! plays. The gate makes a microphone behave the same way: it passes
+    //! frames while someone speaks (and a little before and after) and
+    //! holds back the rest.
+    //!
+    //! "Speaking" is judged against the room's own noise floor, tracked
+    //! as the quietest recent level, so a noisy microphone does not
+    //! count as speech all the time.
+
+    use std::collections::VecDeque;
+
+    /// Speech is this many times louder than the noise floor (~10 dB).
+    const OVER_FLOOR: f64 = 3.0;
+
+    /// The threshold never drops below this (RMS): the silence gate of
+    /// the subtitle loop.
+    pub const MIN_THRESHOLD: f64 = 100.0;
+
+    /// Nor rises above this (about -24 dBFS): ordinary speech into a
+    /// microphone stays audible however loud the room is.
+    const MAX_THRESHOLD: f64 = 2000.0;
+
+    /// The floor creeps up by this factor per 10 ms above it (doubling
+    /// in about 3.5 s) and drops at once to a quieter frame: the gaps
+    /// between words bring it back during speech.
+    const FLOOR_RISE_PER_10MS: f64 = 1.002;
+
+    /// Kept open this long after the last loud frame (300 ms): the
+    /// quiet end of a word, and the gaps between words.
+    const HANGOVER_SAMPLES: usize = 4_800;
+
+    /// Audio from just before the gate opened that is passed on with it
+    /// (200 ms): the quiet onset of the first word.
+    const PREROLL_SAMPLES: usize = 3_200;
+
+    #[derive(Default)]
+    pub struct VoiceGate {
+        /// `None` until the first frame.
+        floor: Option<f64>,
+        /// Samples the gate stays open for without another loud frame.
+        open_for: usize,
+        preroll: VecDeque<Vec<i16>>,
+        preroll_samples: usize,
+    }
+
+    fn rms(samples: &[i16]) -> f64 {
+        if samples.is_empty() {
+            return 0.0;
+        }
+        let sum: f64 = samples.iter().map(|&s| (s as f64) * (s as f64)).sum();
+        (sum / samples.len() as f64).sqrt()
+    }
+
+    impl VoiceGate {
+        /// Level (RMS) from which a frame counts as speech.
+        pub fn threshold(&self) -> f64 {
+            (self.floor.unwrap_or(0.0) * OVER_FLOOR).clamp(MIN_THRESHOLD, MAX_THRESHOLD)
+        }
+
+        /// Takes the next captured frame and returns the frames to pass
+        /// on, oldest first: none while nobody speaks.
+        pub fn push(&mut self, frame: Vec<i16>) -> Vec<Vec<i16>> {
+            if frame.is_empty() {
+                return Vec::new();
+            }
+            let level = rms(&frame);
+            let floor = match self.floor {
+                Some(floor) if level >= floor => {
+                    floor * FLOOR_RISE_PER_10MS.powf(frame.len() as f64 / 160.0)
+                }
+                _ => level,
+            };
+            self.floor = Some(floor.max(1.0));
+            if level >= self.threshold() {
+                self.open_for = HANGOVER_SAMPLES;
+                let mut out: Vec<Vec<i16>> = self.preroll.drain(..).collect();
+                self.preroll_samples = 0;
+                out.push(frame);
+                return out;
+            }
+            if self.open_for > 0 {
+                self.open_for = self.open_for.saturating_sub(frame.len());
+                return vec![frame];
+            }
+            self.preroll_samples += frame.len();
+            self.preroll.push_back(frame);
+            while self.preroll_samples > PREROLL_SAMPLES {
+                match self.preroll.pop_front() {
+                    Some(old) => self.preroll_samples -= old.len(),
+                    None => break,
+                }
+            }
+            Vec::new()
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        /// 10 ms of a square wave at RMS `level`.
+        fn frame(level: i16) -> Vec<i16> {
+            (0..160)
+                .map(|i| if i % 2 == 0 { level } else { -level })
+                .collect()
+        }
+
+        /// Samples passed on for `count` frames at `level`.
+        fn feed(gate: &mut VoiceGate, level: i16, count: usize) -> usize {
+            (0..count)
+                .map(|_| {
+                    gate.push(frame(level))
+                        .iter()
+                        .map(|f| f.len())
+                        .sum::<usize>()
+                })
+                .sum()
+        }
+
+        #[test]
+        fn room_noise_is_held_back_and_speech_passes_with_its_onset() {
+            let mut gate = VoiceGate::default();
+            // One second of room noise: nothing reaches the loop.
+            assert_eq!(feed(&mut gate, 60, 100), 0);
+            // Speech opens the gate, with the 200 ms before it.
+            assert_eq!(feed(&mut gate, 3000, 1), 160 + PREROLL_SAMPLES);
+            assert_eq!(feed(&mut gate, 3000, 49), 49 * 160);
+        }
+
+        #[test]
+        fn the_gate_closes_after_the_hangover_so_the_loop_sees_a_pause() {
+            let mut gate = VoiceGate::default();
+            feed(&mut gate, 60, 50);
+            feed(&mut gate, 3000, 50);
+            // Two seconds of noise after the sentence: only the hangover
+            // (300 ms) is passed on.
+            assert_eq!(feed(&mut gate, 60, 200), HANGOVER_SAMPLES);
+        }
+
+        #[test]
+        fn short_gaps_between_words_stay_open() {
+            let mut gate = VoiceGate::default();
+            feed(&mut gate, 60, 50);
+            feed(&mut gate, 3000, 30);
+            // A 200 ms gap, then the next word: nothing is cut out.
+            assert_eq!(feed(&mut gate, 60, 20), 20 * 160);
+            assert_eq!(feed(&mut gate, 3000, 30), 30 * 160);
+        }
+
+        #[test]
+        fn a_noisy_microphone_does_not_count_as_speech() {
+            let mut gate = VoiceGate::default();
+            // Hiss well above the fixed silence gate (RMS 100).
+            assert_eq!(feed(&mut gate, 400, 300), 0);
+            assert!(gate.threshold() > 400.0);
+            // Speech over the hiss still opens it.
+            assert!(feed(&mut gate, 4000, 10) > 0);
+        }
+
+        #[test]
+        fn the_threshold_recovers_after_long_speech() {
+            let mut gate = VoiceGate::default();
+            feed(&mut gate, 60, 50);
+            // Ten seconds of speech without a gap raise the floor …
+            feed(&mut gate, 3000, 1000);
+            // … and the first quiet frame brings it back.
+            feed(&mut gate, 60, 1);
+            assert_eq!(gate.threshold(), MIN_THRESHOLD.max(60.0 * OVER_FLOOR));
+        }
+
+        #[test]
+        fn digital_silence_keeps_the_minimum_threshold() {
+            let mut gate = VoiceGate::default();
+            assert_eq!(feed(&mut gate, 0, 100), 0);
+            assert_eq!(gate.threshold(), MIN_THRESHOLD);
+            // Faint hiss right after silence is not speech.
+            assert_eq!(feed(&mut gate, 40, 100), 0);
+        }
+    }
+}
+
 pub mod level {
     //! Input level metering for the live subtitle window.
     //!
@@ -319,7 +517,7 @@ pub mod level {
 // `mpsc` channel that the rest of the app reads from.
 #[cfg(feature = "audio")]
 pub mod backend {
-    //! Loopback capture backend.
+    //! Capture backend: a loopback, or the default microphone.
     //!
     //! Each platform exposes loopback differently:
     //! - **Windows**: WASAPI loopback on the default render device, or a
@@ -382,7 +580,9 @@ pub mod backend {
                 .name("moonlens-audio".into())
                 .spawn(move || {
                     let run = match source {
-                        AudioSource::System => run_capture(sink, stop_t, ready_tx.clone()),
+                        AudioSource::System | AudioSource::Microphone => {
+                            run_capture(source, sink, stop_t, ready_tx.clone())
+                        }
                         AudioSource::App { pid } => {
                             run_app_capture(pid, sink, stop_t, ready_tx.clone())
                         }
@@ -427,12 +627,16 @@ pub mod backend {
     const START_TIMEOUT_MS: u64 = 5000;
 
     fn run_capture(
+        source: AudioSource,
         sink: mpsc::Sender<AudioFrame>,
         stop: Arc<AtomicBool>,
         ready: std::sync::mpsc::Sender<Result<String>>,
     ) -> Result<()> {
         let host = cpal::default_host();
-        let (device, config) = pick_loopback(&host)?;
+        let (device, config) = match source {
+            AudioSource::Microphone => pick_microphone(&host)?,
+            _ => pick_loopback(&host)?,
+        };
         let name = device
             .name()
             .unwrap_or_else(|_| crate::tr!("common:unknown"));
@@ -662,6 +866,17 @@ pub mod backend {
 
     fn pcm16_from_f32(v: f32) -> i16 {
         dsp::pcm16_from_f32(v)
+    }
+
+    /// The default recording device and its stream format.
+    fn pick_microphone(host: &cpal::Host) -> Result<(cpal::Device, cpal::SupportedStreamConfig)> {
+        let device = host
+            .default_input_device()
+            .context(crate::tr!("audio:no_microphone_found"))?;
+        let config = device
+            .default_input_config()
+            .context(crate::tr!("audio:could_not_read_the_microphones_audio"))?;
+        Ok((device, config))
     }
 
     /// The device to capture and the stream format to open it with.

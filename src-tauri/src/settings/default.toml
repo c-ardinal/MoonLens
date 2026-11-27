@@ -41,6 +41,7 @@ show_in_screenshots = true
 [subtitle]
 source_language = "auto"
 target_language = "ja"
+conversation_language = "en"
 model = "large-v3-turbo"
 fallback_model = "base"
 vad_aggressiveness = 2
