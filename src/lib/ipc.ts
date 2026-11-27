@@ -490,8 +490,13 @@ export const listHistory = (args: { limit?: number; query?: string } = {}) =>
     []
   );
 
+/** 個別削除。`record` は音声翻訳の記録（削除時点の全行）：取消時に復元へ引渡し。 */
 export const deleteHistoryEntry = (id: number) =>
-  safeInvoke<number>('delete_history_entry', { id }, 0);
+  safeInvoke<{ deleted: number; record: SubtitleRecord | null }>(
+    'delete_history_entry',
+    { id },
+    { deleted: 0, record: null }
+  );
 
 /** 個別削除の取消：削除済みの履歴を元の id・日時で復元。音声翻訳は記録（行）も復元。 */
 export const restoreHistoryEntry = (entry: HistoryEntry, record?: SubtitleRecord | null) =>

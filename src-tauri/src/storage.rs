@@ -305,10 +305,19 @@ impl Storage {
     }
 
     pub fn delete(&self, id: i64) -> Result<usize> {
+        Ok(self.delete_keeping_record(id)?.0)
+    }
+
+    /// [`Storage::delete`], also returning the row's subtitle record as
+    /// it was at that moment, for [`Storage::restore_with_record`]. Read
+    /// and delete share one lock, so a run still recording cannot add a
+    /// line in between that an undo would then lose.
+    pub fn delete_keeping_record(&self, id: i64) -> Result<(usize, Option<SubtitleRecord>)> {
         let db = self.db.lock();
+        let record = read_record(&db, id)?;
         let n = db.execute("DELETE FROM history WHERE id = ?1", [id])?;
         Self::purge_subtitle_orphans(&db)?;
-        Ok(n)
+        Ok((n, record))
     }
 
     /// Put a deleted row back under its original id and timestamp (undo
@@ -509,26 +518,7 @@ impl Storage {
 
     /// The subtitle record of a history row, `None` when it has none.
     pub fn subtitle_record(&self, id: i64) -> Result<Option<SubtitleRecord>> {
-        let db = self.db.lock();
-        let session = db
-            .query_row(
-                "SELECT source, source_language, target_language, revision
-                 FROM subtitle_session WHERE history_id = ?1",
-                [id],
-                |r| Ok((r.get::<_, String>(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
-            )
-            .optional()?;
-        let Some((source, source_language, target_language, revision)) = session else {
-            return Ok(None);
-        };
-        Ok(Some(SubtitleRecord {
-            history_id: id,
-            source,
-            source_language,
-            target_language,
-            revision,
-            lines: read_lines(&db, id)?,
-        }))
+        read_record(&self.db.lock(), id)
     }
 
     /// Remove session and line rows whose history row is gone. Every path
@@ -548,6 +538,28 @@ impl Storage {
         Self::purge_subtitle_orphans(&db)?;
         Ok(n)
     }
+}
+
+fn read_record(db: &Connection, id: i64) -> Result<Option<SubtitleRecord>> {
+    let session = db
+        .query_row(
+            "SELECT source, source_language, target_language, revision
+             FROM subtitle_session WHERE history_id = ?1",
+            [id],
+            |r| Ok((r.get::<_, String>(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+        )
+        .optional()?;
+    let Some((source, source_language, target_language, revision)) = session else {
+        return Ok(None);
+    };
+    Ok(Some(SubtitleRecord {
+        history_id: id,
+        source,
+        source_language,
+        target_language,
+        revision,
+        lines: read_lines(db, id)?,
+    }))
 }
 
 fn revision_of(db: &Connection, id: i64) -> Result<i64> {
@@ -1103,6 +1115,25 @@ mod tests {
         // Replacing with nothing empties the record but keeps it.
         s.replace_subtitle_lines(id, written, &[]).unwrap();
         assert!(s.subtitle_record(id).unwrap().unwrap().lines.is_empty());
+    }
+
+    #[test]
+    fn deleting_hands_back_the_record_as_it_was_for_undo() {
+        let s = Storage::open_in_memory().unwrap();
+        let id = record_with_three_lines(&s);
+        let entry = s.entry(id).unwrap().unwrap();
+        let (n, record) = s.delete_keeping_record(id).unwrap();
+        assert_eq!(n, 1);
+        assert_eq!(record.as_ref().unwrap().lines.len(), 3);
+        assert!(s.subtitle_record(id).unwrap().is_none());
+        s.restore_with_record(&entry, record.as_ref()).unwrap();
+        assert_eq!(s.subtitle_record(id).unwrap(), record);
+        // A row without a record, and a missing row.
+        let plain = s
+            .append("text", Some("a"), None, None, false, None)
+            .unwrap();
+        assert_eq!(s.delete_keeping_record(plain).unwrap(), (1, None));
+        assert_eq!(s.delete_keeping_record(plain).unwrap(), (0, None));
     }
 
     #[test]

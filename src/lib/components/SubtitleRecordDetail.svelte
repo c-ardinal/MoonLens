@@ -33,8 +33,7 @@
     plain: Snippet;
     /** 記録の変更後：一覧の再読込。 */
     onchanged: () => void;
-    /** 削除（取消で記録も復元するため、取得済みの記録を引渡し）。 */
-    onremove: (record: SubtitleRecord | null) => void;
+    onremove: () => void;
   } = $props();
 
   /** undefined：読込中、null：記録なし。 */
@@ -59,10 +58,16 @@
   }
 
   // 項目の切替で、実行中の再翻訳を中止し記録を再取得
+  // 履歴の原文・訳文の変化（記録中の行追加、一覧の再読込で検出）でも再取得：
+  // 表示と改版番号を最新へ更新。同一項目の再取得中は表示を維持。
   const entryId = $derived(entry.id);
+  const texts = $derived(`${entry.source_text}\u0000${entry.result_text}`);
+  let shown = -1;
   $effect(() => {
     const id = entryId;
-    record = undefined;
+    void texts;
+    if (shown !== id) record = undefined;
+    shown = id;
     getSubtitleRecord(id)
       .then((r) => {
         if (entry.id === id) record = r;
@@ -219,7 +224,7 @@
     class="sbtn icon ml-auto"
     title="当該履歴を削除"
     aria-label="当該履歴を削除"
-    onclick={() => onremove($state.snapshot(record) ?? null)}
+    onclick={onremove}
   >
     <Trash2 class="h-3.5 w-3.5" />
   </button>

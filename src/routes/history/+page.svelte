@@ -94,7 +94,7 @@
    * 個別削除：即時に削除し、通知の「取消」で元の id・日時のまま復元。
    * 削除は実行済みのため、通知の表示中にアプリを終了しても削除結果は維持。
    */
-  async function remove(entry: HistoryEntry, record: SubtitleRecord | null = null) {
+  async function remove(entry: HistoryEntry) {
     // 選択は隣接項目へ移動（先頭への移動を回避）
     const i = visible.findIndex((e) => e.id === entry.id);
     const neighbour = visible[i + 1] ?? visible[i - 1] ?? null;
@@ -102,8 +102,9 @@
     entries = entries.filter((e) => e.id !== entry.id);
     selectedId = neighbour?.id ?? null;
     let deleted: number;
+    let record: SubtitleRecord | null;
     try {
-      deleted = await deleteHistoryEntry(entry.id);
+      ({ deleted, record } = await deleteHistoryEntry(entry.id));
     } catch (e) {
       notifyError(`削除失敗：${errorText(e)}`);
       restores += 1;
@@ -303,7 +304,7 @@
           use:replay={{ key: current.id, effect: 'open' }}
         >
           {#if current.kind === 'subtitle'}
-            <SubtitleRecordDetail entry={current} {plain} onchanged={() => refresh()} onremove={(r) => remove(current!, r)} />
+            <SubtitleRecordDetail entry={current} {plain} onchanged={() => refresh()} onremove={() => remove(current!)} />
           {:else}
             <div class="flex flex-wrap items-center gap-2 border-b border-border px-4 py-3 text-xs text-ink-faint">
               <span class="rounded-full bg-surface-muted px-2 py-0.5">{kindLabel(current.kind)}</span>

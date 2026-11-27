@@ -1001,11 +1001,25 @@ pub async fn list_history(
     .map_err(|e| e.to_string())
 }
 
+/// 個別削除の結果。`record` は音声翻訳の記録（削除時点の全行）：取消時に
+/// `restore_history_entry` へ引渡し。
+#[derive(Serialize)]
+pub struct DeletedHistoryEntry {
+    /// 削除行数（0：該当 id なし）。
+    pub deleted: usize,
+    pub record: Option<crate::storage::SubtitleRecord>,
+}
+
 #[tauri::command]
-pub async fn delete_history_entry(id: i64, state: State<'_, AppState>) -> Result<usize, String> {
-    // Return the affected row count so the UI can distinguish "no such
-    // id" (0) from an actual removal (1) without a second round-trip.
-    state.storage.delete(id).map_err(|e| e.to_string())
+pub async fn delete_history_entry(
+    id: i64,
+    state: State<'_, AppState>,
+) -> Result<DeletedHistoryEntry, String> {
+    let (deleted, record) = state
+        .storage
+        .delete_keeping_record(id)
+        .map_err(|e| e.to_string())?;
+    Ok(DeletedHistoryEntry { deleted, record })
 }
 
 /// 個別削除の取消：削除済みの行を元の id・日時で復元。
