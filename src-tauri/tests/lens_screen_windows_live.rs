@@ -37,7 +37,7 @@ use moonlens_lib::{
     capture,
     pipeline::Pipeline,
     plugins::registry::PluginRegistry,
-    providers::{Capability, TaskInput, TaskOutput},
+    providers::{ocr_windows, Capability, TaskInput, TaskOutput},
     settings::SettingsStore,
     storage::Storage,
 };
@@ -262,6 +262,14 @@ async fn screen_captures_are_recognised_and_translated() {
     unsafe {
         SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
     }
+    // Stage times of every Windows OCR call, so a stalled call shows the
+    // stage it never left.
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::new(
+            "warn,moonlens_lib::providers::ocr_windows=debug",
+        ))
+        .with_writer(std::io::stderr)
+        .try_init();
     let out = out_dir();
     let only = std::env::var("LENS_FIXTURE").ok();
     // MOONLENS_E2E_CONFIG: run the capture flow on a copy of a real
@@ -297,6 +305,35 @@ async fn screen_captures_are_recognised_and_translated() {
         }
     }
     let mut failures = Vec::new();
+
+    // Windows.Media.Ocr pages its language data in from disk as new text
+    // touches it. On a freshly started runner the first reading of each
+    // text is several times slower than a repeat, and one slow disk read
+    // there pushed a single call past the chain's 5 s limit. Read every
+    // fixture once up front, without a limit, so the checks below time
+    // the engine and not the runner's cold disk. The cold times stay in
+    // the report.
+    let _ = writeln!(report, "\n## Windows OCR, first reading (no limit)\n");
+    for case in CASES {
+        if only.as_deref().is_some_and(|o| o != case.name) {
+            continue;
+        }
+        let png = std::fs::read(fixtures_dir().join(format!("{}.png", case.name))).unwrap();
+        let t = Instant::now();
+        let read = tokio::task::spawn_blocking(move || ocr_windows::run_ocr(&png, None))
+            .await
+            .unwrap();
+        let _ = writeln!(
+            report,
+            "- {}: {} ms, {}",
+            case.name,
+            t.elapsed().as_millis(),
+            match read {
+                Ok(lines) => format!("{} lines", lines.len()),
+                Err(e) => format!("FAILED: {e}"),
+            }
+        );
+    }
 
     for case in CASES {
         if only.as_deref().is_some_and(|o| o != case.name) {
