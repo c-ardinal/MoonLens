@@ -43,7 +43,7 @@
 
 <SettingRow
   id="info:translation-cache"
-  help="保存済の訳文の件数と容量。消去後は次回の表示時に再翻訳。上限 20 万件、超過時は使用の古い順に自動削除。"
+  help="保存済の訳文の件数と容量。消去後は次回の表示時に再翻訳。上限 20 万件、超過時は最長未使用分から自動削除。"
 >
   <div class="srow">
     <span class="row-label">訳文キャッシュ使用量</span>
