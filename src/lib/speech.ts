@@ -17,7 +17,9 @@ export type SpeechEvent =
   | { kind: 'started' }
   /** 完了、または停止。 */
   | { kind: 'ended' }
-  | { kind: 'skipped'; reason: SpeechSkip; lang: string };
+  | { kind: 'skipped'; reason: SpeechSkip; lang: string }
+  /** 新規の依頼による待機分の破棄。 */
+  | { kind: 'dropped' };
 
 /** 導入済みの音声。 */
 export interface Voice {

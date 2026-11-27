@@ -51,7 +51,7 @@
   const speaker = new Speaker();
   let stopListening: (() => void) | undefined;
   function toggleSpeak(): void {
-    if (speaker.speaking) speaker.stop();
+    if (speaker.busy) speaker.stop();
     else speaker.say(resultText, resultLang);
   }
 
@@ -437,13 +437,13 @@
           type="button"
           class="sbtn icon neutral"
           data-testid="translate-speak"
-          aria-pressed={speaker.speaking}
-          title={speaker.speaking ? t('speech:stop_reading') : t('speech:read_translation_aloud')}
-          aria-label={speaker.speaking ? t('speech:stop_reading') : t('speech:read_translation_aloud')}
-          disabled={!resultText && !speaker.speaking}
+          aria-pressed={speaker.busy}
+          title={speaker.busy ? t('speech:stop_reading') : t('speech:read_translation_aloud')}
+          aria-label={speaker.busy ? t('speech:stop_reading') : t('speech:read_translation_aloud')}
+          disabled={!resultText && !speaker.busy}
           onclick={toggleSpeak}
         >
-          {#if speaker.speaking}<Square class="h-3.5 w-3.5" />{:else}<Volume2 class="h-3.5 w-3.5" />{/if}
+          {#if speaker.busy}<Square class="h-3.5 w-3.5" />{:else}<Volume2 class="h-3.5 w-3.5" />{/if}
         </button>
         <button
           type="button"

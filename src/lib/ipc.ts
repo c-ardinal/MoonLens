@@ -417,8 +417,8 @@ export type SubtitleEvent =
   | { kind: 'started'; device: string; source: AudioSource }
   | { kind: 'stopped' }
   | { kind: 'status'; phase: SubtitlePhase }
-  /** `speaker`：対面会話の話者（訳文は相手側の言語）。字幕では省略。 */
-  | { kind: 'chunk'; id: number; original: string; translated: string; speaker?: Speaker }
+  /** `speaker`：対面会話の話者（訳文は相手側の言語）。字幕では省略。`language`：訳文の言語。 */
+  | { kind: 'chunk'; id: number; original: string; translated: string; speaker?: Speaker; language?: string }
   | {
       /** 文単位の再翻訳結果。`replaces` の各行を 1 行（＋次文の冒頭 `rest`）へ置換。`original` が空の場合は遮断済みの文：行の除去のみ。 */
       kind: 'revised';

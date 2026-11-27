@@ -98,6 +98,8 @@ pub enum Event {
         reason: Skip,
         lang: String,
     },
+    /// Left the queue unspoken: newer requests took its place.
+    Dropped,
 }
 
 /// Speaks one text at a time. Runs on the worker thread only.
@@ -207,7 +209,9 @@ impl<E: Engine, H: Host> Player<E, H> {
         }
         self.pending.push_back(Utterance { text, ..utterance });
         while self.pending.len() > MAX_PENDING {
-            self.pending.pop_front();
+            if let Some(old) = self.pending.pop_front() {
+                self.host.emit(&old.owner, Event::Dropped);
+            }
         }
         self.advance();
     }

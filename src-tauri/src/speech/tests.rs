@@ -136,9 +136,13 @@ fn requests_are_spoken_one_after_another() {
 #[test]
 fn backlog_drops_what_waited_longest() {
     let (mut p, fake) = player();
-    for text in ["a1", "a2", "a3", "a4"] {
+    for text in ["a1", "a2", "a3"] {
         p.say(say("lens-1", text));
     }
+    fake.events();
+    p.say(say("lens-2", "a4"));
+    // The window that asked learns its request left the queue.
+    assert_eq!(fake.events(), [("lens-1".to_string(), Event::Dropped)]);
     for _ in 0..4 {
         fake.end();
         p.tick();
