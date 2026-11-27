@@ -12,7 +12,7 @@ use serde::Deserialize;
 use crate::settings::SettingsStore;
 use crate::storage::{Storage, SubtitleLine, SubtitleRecord};
 use crate::subtitle::SubtitleEvent;
-use crate::subtitle_revise::Revision;
+use crate::subtitle_revise::{RevisedRest, Revision};
 
 /// Saves the lines of one run. The record is created at the first chunk,
 /// so a run that recognized nothing leaves no history row.
@@ -94,12 +94,9 @@ impl Recorder {
         };
         let rest = revision.rest.as_ref();
         if found.len() < revision.replaces.len() {
-            // The start of the next sentence stays in the last line of
-            // this one: when that line was saved, the next correction
-            // finds it there.
             let last_heard = revision.replaces.last().and_then(at);
             if let (Some(line), Some(rest)) = (last_heard, rest) {
-                st.line_ids[line] = Some(rest.id);
+                self.split_off_rest(&mut st, id, line, rest);
             }
             return;
         }
@@ -132,6 +129,43 @@ impl Recorder {
                     st.forget(record.lines.len());
                 }
             }
+        }
+    }
+
+    /// The sentence of `line` stays uncorrected, but the line also
+    /// holds the start of the next one: that part becomes a line of its
+    /// own, so the next correction replaces it and nothing else. When
+    /// the line does not end with that text, it stays as it is and the
+    /// next sentence goes uncorrected too.
+    fn split_off_rest(&self, st: &mut State, id: i64, line: usize, rest: &RevisedRest) {
+        let Ok(Some(record)) = self.storage.subtitle_record(id) else {
+            return;
+        };
+        let known = st.line_ids.len();
+        if record.lines.len() != known {
+            return st.forget(record.lines.len());
+        }
+        let saved = &record.lines[line];
+        let Some(head) = saved.original.trim_end().strip_suffix(rest.original.trim()) else {
+            return;
+        };
+        let head = head.trim_end();
+        if head.is_empty() {
+            st.line_ids[line] = Some(rest.id);
+            return;
+        }
+        let texts = [
+            (head, saved.translated.as_str()),
+            (rest.original.as_str(), rest.translated.as_str()),
+        ];
+        match self
+            .storage
+            .revise_subtitle_lines(id, line as i64, line as i64, &texts, known)
+        {
+            Ok(()) => {
+                st.line_ids.splice(line..=line, [None, Some(rest.id)]);
+            }
+            Err(e) => tracing::warn!("subtitle history: splitting a line failed: {e:#}"),
         }
     }
 
@@ -695,7 +729,7 @@ mod tests {
             id,
             original: original.into(),
             translated: translated.into(),
-            rest: rest.map(|(id, original)| crate::subtitle_revise::RevisedRest {
+            rest: rest.map(|(id, original)| RevisedRest {
                 id,
                 original: original.into(),
                 translated: String::new(),
@@ -791,13 +825,14 @@ mod tests {
             "秘密",
             Some((5, "Next")),
         ));
-        assert_eq!(originals(&f.storage), ["My name", "today. Next"]);
+        // The saved end of the sentence stays, apart from the next one.
+        assert_eq!(originals(&f.storage), ["My name", "today.", "Next"]);
         // The next sentence, heard with history on, is corrected again.
         f.recorder
             .observe(&numbered(6, "one.", "一。", 8_000, 2_000));
         f.recorder
             .observe(&revised(&[5, 6], 7, "Next one.", "次の一。", None));
-        assert_eq!(originals(&f.storage), ["My name", "Next one."]);
+        assert_eq!(originals(&f.storage), ["My name", "today.", "Next one."]);
     }
 
     #[test]
