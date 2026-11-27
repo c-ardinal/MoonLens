@@ -141,7 +141,14 @@ impl Provider for LocalWhisperProvider {
             let params = self.params;
             let samples = pcm16_bytes_to_f32(&audio_pcm16_mono_16k);
             let segments = tokio::task::spawn_blocking(move || {
-                engine::transcribe(&path, params, &samples, language_hint.as_deref(), &cancel)
+                engine::transcribe(
+                    &path,
+                    params,
+                    &samples,
+                    language_hint.as_deref(),
+                    None,
+                    &cancel,
+                )
             })
             .await
             .map_err(|e| ProviderError::Other(e.to_string()))??;
@@ -161,6 +168,28 @@ impl Provider for LocalWhisperProvider {
         // model); do it when subtitles start, not at app launch.
         Ok(())
     }
+}
+
+/// Recognize `samples` (16 kHz mono) on the calling thread, with an
+/// optional vocabulary prompt: text Whisper sees as what was said just
+/// before, which biases it towards the spellings in it. Live subtitles
+/// pass no prompt; `examples/asr_bias_bench.rs` measures what one does.
+#[cfg(feature = "local-asr")]
+pub fn transcribe_with_prompt(
+    path: &Path,
+    params: DecodeParams,
+    samples: &[f32],
+    language: Option<&str>,
+    prompt: Option<&str>,
+) -> Result<Vec<TranscriptSegment>, ProviderError> {
+    engine::transcribe(
+        path,
+        params,
+        samples,
+        language,
+        prompt,
+        &AtomicBool::new(false),
+    )
 }
 
 /// Load the model in the background, e.g. right before the subtitle
@@ -329,6 +358,7 @@ mod engine {
         params: DecodeParams,
         samples: &[f32],
         language: Option<&str>,
+        prompt: Option<&str>,
         cancel: &AtomicBool,
     ) -> Result<Vec<TranscriptSegment>, ProviderError> {
         if samples.is_empty() {
@@ -347,6 +377,10 @@ mod engine {
         let lang_c = language
             .map(|l| CString::new(l).map_err(|e| ProviderError::Other(e.to_string())))
             .transpose()?;
+        let prompt_c = prompt
+            .filter(|p| !p.trim().is_empty())
+            .map(|p| CString::new(p).map_err(|e| ProviderError::Other(e.to_string())))
+            .transpose()?;
 
         let rc = unsafe {
             mlw_full(
@@ -357,7 +391,7 @@ mod engine {
                 thread_count(params.threads),
                 params.beam_size as c_int,
                 0,
-                std::ptr::null(),
+                prompt_c.as_ref().map_or(std::ptr::null(), |c| c.as_ptr()),
                 params.no_speech_thold,
                 cancel as *const AtomicBool as *mut c_void,
             )

@@ -58,7 +58,7 @@ const rec: Recommendation = {
   asr: { model: 'whisper-small', reason: '' }
 };
 
-const noOcr = { ppocr: false, ocrs: false, fast: false, dir: '' };
+const noOcr = { ppocr: false, current: false, ocrs: false, fast: false, dir: '' };
 
 describe('buildFeatures', () => {
   it('selects the recommended model of every feature', () => {
@@ -87,14 +87,25 @@ describe('buildFeatures', () => {
 
 describe('ocrChoice', () => {
   it('offers the faster runtime alone when the OCR models are already installed', () => {
-    const c = ocrChoice({ ppocr: true, ocrs: true, fast: false, dir: '' });
+    const c = ocrChoice({ ppocr: true, current: true, ocrs: true, fast: false, dir: '' });
     expect(c.installed).toBe(false);
-    expect(c.size).toBe(45_000_000);
+    expect(c.size).toBe(25_000_000);
     expect(c.note).toContain('高速実行部品');
   });
 
   it('counts as installed once the faster runtime is there too', () => {
-    expect(ocrChoice({ ppocr: true, ocrs: true, fast: true, dir: '' }).installed).toBe(true);
+    expect(ocrChoice({ ppocr: true, current: true, ocrs: true, fast: true, dir: '' }).installed).toBe(true);
+  });
+
+  it('offers the new generation alone to an install that still runs the earlier one', () => {
+    const c = ocrChoice({ ppocr: true, current: false, ocrs: true, fast: true, dir: '' });
+    expect(c.installed).toBe(false);
+    expect(c.size).toBe(31_000_000);
+    expect(c.note).toContain('PP-OCRv5');
+  });
+
+  it('asks for everything when nothing is installed', () => {
+    expect(ocrChoice(noOcr).size).toBe(68_000_000);
   });
 });
 
@@ -107,11 +118,11 @@ describe('downloadQueue', () => {
       ['llm', 'gemma-4-e2b'],
       ['asr', 'whisper-small']
     ]);
-    expect(totalBytes(q)).toBe(1_800_000_000 + 83_000_000 + 3_100_000_000 + 190_000_000);
+    expect(totalBytes(q)).toBe(1_800_000_000 + 68_000_000 + 3_100_000_000 + 190_000_000);
   });
 
   it('skips installed models and features left out', () => {
-    const f = buildFeatures(llm(['plamo-3-translate-2b']), asr, { ppocr: true, ocrs: true, fast: true, dir: '' }, rec);
+    const f = buildFeatures(llm(['plamo-3-translate-2b']), asr, { ppocr: true, current: true, ocrs: true, fast: true, dir: '' }, rec);
     f[3].enabled = false;
     expect(downloadQueue(f).map((d) => d.id)).toEqual(['gemma-4-e2b']);
   });

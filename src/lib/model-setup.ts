@@ -41,11 +41,11 @@ export interface FeaturePlan {
   enabled: boolean;
 }
 
-/** PP-OCRv5（26 MB）・予備の ocrs（12 MB）・高速実行部品（ONNX Runtime と専用モデル、約 45 MB）を一括取得。 */
+/** PP-OCRv6（31 MB）・予備の ocrs（12 MB）・高速実行部品（ONNX Runtime、約 25 MB）を一括取得。 */
 export const OCR_CHOICE_ID = 'ppocr';
-const OCR_BYTES = 83_000_000;
-/** 高速実行部品のみ未取得の場合の取得量。 */
-const OCR_FAST_BYTES = 45_000_000;
+const OCR_MODEL_BYTES = 31_000_000;
+const OCRS_BYTES = 12_000_000;
+const OCR_FAST_BYTES = 25_000_000;
 
 export const FEATURE_TITLES: Record<Feature, string> = {
   translate: '翻訳',
@@ -55,20 +55,37 @@ export const FEATURE_TITLES: Record<Feature, string> = {
 };
 
 export function ocrChoice(ocr: OcrModelsStatus): Choice {
-  // 文字認識は利用可能、高速実行部品のみ不足（旧版で取得済みの環境）。
-  const fastOnly = ocr.ppocr && ocr.ocrs && !ocr.fast;
+  // 旧版で取得済みの環境：文字認識は利用可能、不足分のみ取得。
+  const usable = ocr.ppocr && ocr.ocrs;
+  const outdated = usable && !ocr.current;
+  const fastOnly = usable && ocr.current && !ocr.fast;
   return {
     id: OCR_CHOICE_ID,
-    label: 'PP-OCRv5',
-    size: fastOnly ? OCR_FAST_BYTES : OCR_BYTES,
-    installed: ocr.ppocr && ocr.ocrs && ocr.fast,
+    label: 'PP-OCRv6',
+    size:
+      (ocr.current ? 0 : OCR_MODEL_BYTES) + (ocr.ocrs ? 0 : OCRS_BYTES) + (ocr.fast ? 0 : OCR_FAST_BYTES) ||
+      OCR_MODEL_BYTES + OCRS_BYTES + OCR_FAST_BYTES,
+    installed: usable && ocr.current && ocr.fast,
     partial: 0,
-    note: fastOnly
-      ? '高速実行部品が未取得（取得後は読取を高速化、環境別の最適構成は自動選択）'
-      : '日本語・中国語・英語に対応（予備の英語専用 ocrs を同梱）',
+    note: outdated
+      ? '旧世代モデル（PP-OCRv5）で動作中。新世代モデルが未取得（取得後は読取精度が向上、旧モデルは自動削除）'
+      : fastOnly
+        ? '高速実行部品が未取得（取得後は読取を高速化、環境別の最適構成は自動選択）'
+        : '日本語・中国語・英語に対応（予備の英語専用 ocrs を同梱）',
     consent: null
   };
 }
+
+/** 追加可能な文字体系の表示名と説明（id：バックエンドの ocr_scripts）。 */
+export const OCR_SCRIPTS: Record<string, { label: string; note: string }> = {
+  korean: { label: '韓国語', note: 'ハングルの認識モデル' },
+  cyrillic: { label: 'キリル文字', note: 'ロシア語・ウクライナ語・ブルガリア語・カザフ語等の認識モデル' },
+  arabic: { label: 'アラビア文字', note: 'アラビア語・ペルシア語・ウルドゥー語の認識モデル' },
+  thai: { label: 'タイ語', note: 'タイ文字の認識モデル' },
+  devanagari: { label: 'デーヴァナーガリー', note: 'ヒンディー語・マラーティー語・ネパール語の認識モデル' },
+  tamil: { label: 'タミル語', note: 'タミル文字の認識モデル' },
+  telugu: { label: 'テルグ語', note: 'テルグ文字の認識モデル' }
+};
 
 const pick = <
   T extends {

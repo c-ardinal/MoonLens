@@ -138,7 +138,7 @@ const imageFile = async (pg) => ({
 /**
  * メインウィンドウの全状態を巡回し、各状態で visit(page, 状態名) を実行。
  * 状態：ホーム・パレット・テキスト翻訳（結果・通知・右クリックメニュー）・画像翻訳（空・結果）・
- * 履歴（通知・確認）・初期設定（許諾確認を含む）・設定の全分類（許諾確認を含む）。
+ * 履歴（音声翻訳の記録・通知・確認）・初期設定（許諾確認を含む）・設定の全分類（許諾確認を含む）。
  */
 export async function walkMain(browser, url, { textSize = 'medium', width = 1280, height = 800, scale = 1 } = {}, visit) {
   const ctx = await browser.newContext({ viewport: { width, height }, deviceScaleFactor: scale, reducedMotion: 'reduce' });
@@ -156,6 +156,7 @@ export async function walkMain(browser, url, { textSize = 'medium', width = 1280
   await reach('image-result', async () => { await pg.locator('input[type=file]').setInputFiles(await imageFile(pg)); await pg.getByText('Phone: 555-0123').first().waitFor({ timeout: 5000 }); await wait(pg, 300); }); await visit(pg, 'image-result');
   await pg.close();
   pg = await open('/history/'); await visit(pg, 'history');
+  await reach('history-subtitle', async () => { await pg.getByRole('button', { name: /音声翻訳/ }).first().click({ timeout: 2000 }); await pg.getByText('音源：').first().waitFor({ timeout: 2000 }); await wait(pg, 300); }); await visit(pg, 'history-subtitle');
   await reach('history-toast', async () => { await pg.getByRole('button', { name: '当該履歴を削除' }).first().click({ timeout: 2000 }); await pg.locator('.toast').first().waitFor({ timeout: 2000 }); }); await visit(pg, 'history-toast');
   await reach('history-confirm', async () => { await pg.getByText('全消去').click({ timeout: 2000 }); await pg.getByRole('dialog').waitFor({ timeout: 2000 }); }); await visit(pg, 'history-confirm');
   await pg.close();

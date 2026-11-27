@@ -27,6 +27,10 @@ use crate::{
     pipeline::Pipeline,
     providers::{Capability, TaskInput, TaskOutput},
     settings::SettingsStore,
+    storage::Storage,
+    subtitle_filter::StockFilter,
+    subtitle_record::Recorder,
+    subtitle_revise::{Assembler, Languages, Reviser, Revision, Translator},
 };
 
 #[derive(Debug, Clone, Serialize)]
@@ -43,9 +47,24 @@ pub enum SubtitleEvent {
         phase: Phase,
     },
     Chunk {
+        /// Names the line for a later [`SubtitleEvent::Revised`].
+        id: u64,
         original: String,
         translated: String,
+        /// Milliseconds from the start of the loop to the end of this
+        /// chunk's audio (when its last sample was received).
+        at_ms: u64,
+        /// Length of the audio sent to recognition.
+        duration_ms: u64,
     },
+    /// A short sentence that keeps coming back: the window asks whether
+    /// to block it from now on (see `subtitle_filter`).
+    Candidate {
+        phrase: String,
+    },
+    /// A finished sentence, translated again as a whole: it replaces
+    /// the lines of the chunks it was recognized in.
+    Revised(Revision),
     Error {
         message: String,
     },
@@ -58,6 +77,8 @@ pub enum Phase {
     Waiting,
     Recognizing,
     Translating,
+    /// No sound, and finished sentences are being translated again.
+    Revising,
 }
 
 /// Label prefix of the subtitle windows (`subtitle-1`, `subtitle-2`, …).
@@ -93,6 +114,7 @@ pub struct LevelEvent {
 pub struct SubtitleService {
     settings: Arc<SettingsStore>,
     pipeline: Arc<Pipeline>,
+    storage: Arc<Storage>,
     /// By window label.
     sessions: Mutex<HashMap<String, Session>>,
     next_window: AtomicU64,
@@ -132,10 +154,15 @@ impl Running {
 }
 
 impl SubtitleService {
-    pub fn new(settings: Arc<SettingsStore>, pipeline: Arc<Pipeline>) -> Self {
+    pub fn new(
+        settings: Arc<SettingsStore>,
+        pipeline: Arc<Pipeline>,
+        storage: Arc<Storage>,
+    ) -> Self {
         Self {
             settings,
             pipeline,
+            storage,
             sessions: Mutex::new(HashMap::new()),
             next_window: AtomicU64::new(1),
             next_run: AtomicU64::new(1),
@@ -332,6 +359,7 @@ impl SubtitleService {
         let pipeline = self.pipeline.clone();
         let settings = self.settings.clone();
         let app_emit = app.clone();
+        let recorder = Recorder::new(self.storage.clone(), self.settings.clone());
         let id = label.to_string();
         let started = SubtitleEvent::Started {
             device: device.clone(),
@@ -353,9 +381,11 @@ impl SubtitleService {
                 let settings = settings.clone();
                 let id = id.clone();
                 move |event: SubtitleEvent| {
+                    recorder.observe(&event);
                     if let SubtitleEvent::Chunk {
                         original,
                         translated,
+                        ..
                     } = &event
                     {
                         let text = if translated.is_empty() {
@@ -447,6 +477,10 @@ impl SubtitleService {
         let Some(session) = self.sessions.lock().remove(label) else {
             return;
         };
+        // No longer follows a window of another app.
+        if let Some(attachments) = app.try_state::<crate::attach::Handle>() {
+            attachments.forget(label);
+        }
         if let Some(running) = session.running {
             running.halt();
         }
@@ -505,17 +539,22 @@ impl SubtitleService {
 pub const LEVEL_EVENT: &str = "moonlens://subtitle-level";
 
 /// Event name of [`SubtitleEvent`]s; the payload carries the label of
-/// the window it belongs to as `id`.
+/// the window it belongs to as `window`.
 pub const SUBTITLE_EVENT: &str = "moonlens://subtitle";
 
-fn emit_event(app: &AppHandle, id: &str, event: SubtitleEvent) {
-    #[derive(Serialize, Clone)]
-    struct Tagged<'a> {
-        id: &'a str,
-        #[serde(flatten)]
-        event: SubtitleEvent,
-    }
-    let _ = app.emit(SUBTITLE_EVENT, Tagged { id, event });
+/// A [`SubtitleEvent`] with the label of its window.
+///
+/// The key must not be one an event uses itself: `Chunk` and `Revised`
+/// carry the line's `id`, and a flattened struct writes both keys.
+#[derive(Serialize, Clone)]
+struct Tagged<'a> {
+    window: &'a str,
+    #[serde(flatten)]
+    event: SubtitleEvent,
+}
+
+fn emit_event(app: &AppHandle, window: &str, event: SubtitleEvent) {
+    let _ = app.emit(SUBTITLE_EVENT, Tagged { window, event });
 }
 
 /// The first window: bottom centre of the primary screen, where
@@ -583,8 +622,36 @@ pub async fn run_loop(
     };
     let mut heard = false;
     let mut closed = false;
+    let loop_started = std::time::Instant::now();
+    // When the newest sample in `buffer` was received. Subtitle times
+    // come from this, not from the moment a chunk is cut: a chunk cut
+    // after a pause would be dated late by the wait for that pause.
+    let mut heard_until = Duration::ZERO;
+    let mut stock = StockFilter::default();
+    let mut lines = Assembler::default();
+    let mut reviser = Reviser::new(translator(pipeline.clone()));
+    // A sentence approved for blocking after its chunks were shown must
+    // not come back as a correction: its lines go (empty text), the
+    // start of the next sentence stays.
+    let revised = |stock: &mut StockFilter, mut revision: Revision| {
+        if stock.blocks_all(&settings.snapshot().subtitle, &revision.original) {
+            revision.original.clear();
+            revision.translated.clear();
+        }
+        emit(SubtitleEvent::Revised(revision))
+    };
     loop {
         let snap = settings.snapshot();
+        let realtime = snap.subtitle.realtime_correction;
+        let correcting = realtime || snap.subtitle.batch_correction;
+        if !correcting {
+            lines.clear();
+            reviser.clear();
+        }
+        let languages = Languages {
+            source: snap.subtitle.source_language.clone(),
+            target: snap.subtitle.target_language.clone(),
+        };
         let chunk_samples = (snap.subtitle.chunk_seconds * 16_000.0) as usize;
         let overlap_samples = (snap.subtitle.overlap_seconds * 16_000.0) as usize;
         let target_lang = snap.subtitle.target_language.clone();
@@ -600,18 +667,34 @@ pub async fn run_loop(
             tokio::select! {
                 _ = stop.notified() => break,
                 maybe = rx.recv() => match maybe {
-                    Some(frame) => buffer.extend_from_slice(&frame),
+                    Some(frame) => {
+                        buffer.extend_from_slice(&frame);
+                        heard_until = loop_started.elapsed();
+                    }
                     None => {
                         closed = true;
                         flush = true;
                     }
                 },
-                _ = tokio::time::sleep(FLUSH_AFTER), if !buffer.is_empty() => flush = true,
+                // Also without buffered audio while a sentence is open:
+                // the pause is what ends it.
+                _ = tokio::time::sleep(FLUSH_AFTER), if !buffer.is_empty() || lines.is_open() => {
+                    flush = true;
+                }
+                // `None`: the work left needed no new translation.
+                revision = reviser.next(), if reviser.is_busy() => {
+                    if let Some(revision) = revision {
+                        revised(&mut stock, revision);
+                    }
+                    set_phase(idle(&reviser));
+                    continue;
+                }
             }
         }
         // Collect whatever arrived during the previous recognition.
         while let Ok(frame) = rx.try_recv() {
             buffer.extend_from_slice(&frame);
+            heard_until = loop_started.elapsed();
         }
         if !heard && !buffer.is_empty() {
             heard = true;
@@ -622,9 +705,18 @@ pub async fn run_loop(
                 // Too short to recognize on its own.
                 buffer.clear();
                 overlap.clear();
-                set_phase(Phase::Waiting);
+                if correcting {
+                    pause(&mut lines, &mut reviser, &languages);
+                }
+                set_phase(idle(&reviser));
             }
             if closed {
+                // The audio ended (stopping drops this task instead):
+                // finish what the pause above released.
+                while let Some(revision) = reviser.next().await {
+                    revised(&mut stock, revision);
+                }
+                set_phase(Phase::Waiting);
                 break;
             }
             continue;
@@ -636,8 +728,13 @@ pub async fn run_loop(
             .len()
             .min(MAX_WINDOW_SAMPLES.saturating_sub(overlap.len()));
         // Build a chunk that includes a small lookback for context.
+        let overlapped = !overlap.is_empty();
         let mut to_send = overlap.clone();
         to_send.extend_from_slice(&buffer[..take]);
+        let duration_ms = to_send.len() as u64 * 1000 / 16_000;
+        // What stays in the buffer was heard after this chunk.
+        let left_ms = (buffer.len() - take) as u64 * 1000 / 16_000;
+        let at_ms = (heard_until.as_millis() as u64).saturating_sub(left_ms);
         // Preserve the tail for the next iteration's overlap.
         if overlap_samples > 0 && take >= overlap_samples && !flush {
             overlap = buffer[take - overlap_samples..take].to_vec();
@@ -648,61 +745,83 @@ pub async fn run_loop(
         // Silence (or near-silence) makes Whisper invent stock phrases
         // such as "Thanks for watching"; skip it.
         if is_silent(&to_send) {
-            set_phase(Phase::Waiting);
+            if correcting {
+                pause(&mut lines, &mut reviser, &languages);
+            }
+            set_phase(idle(&reviser));
             continue;
         }
 
+        // One inference at a time: recognition and a sentence translation
+        // running together slow each other down far more than twofold
+        // without a GPU, until the translation runs out of time. A
+        // sentence under way finishes first; the next one starts when
+        // the loop waits for audio again.
+        if let Some(revision) = reviser.settle().await {
+            revised(&mut stock, revision);
+        }
         set_phase(Phase::Recognizing);
         let seconds = to_send.len() as f32 / 16_000.0;
         let started = std::time::Instant::now();
         let pcm_bytes = pcm16_to_bytes(&to_send);
-        match pipeline
-            .run(
-                Capability::Asr,
-                TaskInput::Asr {
-                    audio_pcm16_mono_16k: pcm_bytes,
-                    language_hint: if source_lang == "auto" {
-                        None
-                    } else {
-                        Some(source_lang.clone())
-                    },
+        let recognition = pipeline.run(
+            Capability::Asr,
+            TaskInput::Asr {
+                audio_pcm16_mono_16k: pcm_bytes,
+                language_hint: if source_lang == "auto" {
+                    None
+                } else {
+                    Some(source_lang.clone())
                 },
-            )
-            .await
-        {
+            },
+        );
+        match recognition.await {
             Ok(res) => {
                 failures = 0;
-                let original = match &res.output {
-                    TaskOutput::Transcript { segments } => segments
-                        .iter()
-                        .map(|s| s.text.trim())
-                        .collect::<Vec<_>>()
-                        .join(" "),
-                    TaskOutput::Text(t) => t.clone(),
-                    _ => String::new(),
+                let segments: Vec<&str> = match &res.output {
+                    TaskOutput::Transcript { segments } => {
+                        segments.iter().map(|s| s.text.as_str()).collect()
+                    }
+                    TaskOutput::Text(t) => vec![t.as_str()],
+                    _ => Vec::new(),
                 };
+                // Stock misrecognitions go no further: not shown, and
+                // not worth a translation.
+                let screened = stock.screen(
+                    &settings.snapshot().subtitle,
+                    &segments,
+                    std::time::Instant::now(),
+                );
+                for phrase in &screened.blocked {
+                    tracing::debug!("subtitle: stock phrase removed: {phrase}");
+                }
+                if let Some(phrase) = screened.candidate {
+                    emit(SubtitleEvent::Candidate { phrase });
+                }
+                let original = screened.text;
                 tracing::debug!(
                     "subtitle: {seconds:.1} s of audio recognized in {} ms ({} chars)",
                     started.elapsed().as_millis(),
                     original.chars().count()
                 );
                 if original.trim().is_empty() {
-                    set_phase(Phase::Waiting);
+                    if correcting {
+                        pause(&mut lines, &mut reviser, &languages);
+                    }
+                    set_phase(idle(&reviser));
                     continue;
                 }
                 set_phase(Phase::Translating);
-                let translated = match pipeline
-                    .run(
-                        Capability::Translate,
-                        TaskInput::Translate {
-                            text: original.clone(),
-                            source_language: source_lang.clone(),
-                            target_language: target_lang.clone(),
-                            context: Default::default(),
-                        },
-                    )
-                    .await
-                {
+                let translation = pipeline.run(
+                    Capability::Translate,
+                    TaskInput::Translate {
+                        text: original.clone(),
+                        source_language: source_lang.clone(),
+                        target_language: target_lang.clone(),
+                        context: Default::default(),
+                    },
+                );
+                let translated = match translation.await {
                     Ok(t) => match t.output {
                         TaskOutput::Text(s) => s,
                         _ => String::new(),
@@ -712,11 +831,33 @@ pub async fn run_loop(
                         String::new()
                     }
                 };
+                // Approved for blocking while it was being translated
+                // (the window asked before translation began): the
+                // window dropped its copies, do not bring one back.
+                if stock.blocks_all(&settings.snapshot().subtitle, &original) {
+                    if correcting {
+                        pause(&mut lines, &mut reviser, &languages);
+                    }
+                    set_phase(idle(&reviser));
+                    continue;
+                }
+                let id = lines.next_id();
+                if correcting {
+                    if let Some(sentence) = lines.push(id, &original, &translated, overlapped) {
+                        reviser.push(sentence, languages.clone(), realtime);
+                    }
+                }
                 emit(SubtitleEvent::Chunk {
+                    id,
                     original,
                     translated,
+                    at_ms,
+                    duration_ms,
                 });
-                set_phase(Phase::Waiting);
+                if correcting && flush {
+                    pause(&mut lines, &mut reviser, &languages);
+                }
+                set_phase(idle(&reviser));
                 // Avoid bursting work when chunks arrive too quickly.
                 tokio::time::sleep(Duration::from_millis(20)).await;
             }
@@ -735,10 +876,62 @@ pub async fn run_loop(
                 if gave_up {
                     return true;
                 }
+                // The chunk's words are lost: the open sentence cannot
+                // be completed, and the next chunk overlaps this audio,
+                // not the last recognized text.
+                if correcting {
+                    pause(&mut lines, &mut reviser, &languages);
+                }
+                // Recognition is over, failed or not: without this the
+                // window says "recognizing" until the next chunk.
+                set_phase(idle(&reviser));
             }
         }
     }
     false
+}
+
+/// What the loop shows between chunks.
+fn idle(reviser: &Reviser) -> Phase {
+    if reviser.is_busy() {
+        Phase::Revising
+    } else {
+        Phase::Waiting
+    }
+}
+
+/// The speech paused: the open sentence ends here, and every sentence
+/// held back for a pause may now be translated again.
+fn pause(lines: &mut Assembler, reviser: &mut Reviser, languages: &Languages) {
+    if let Some(sentence) = lines.flush() {
+        reviser.push(sentence, languages.clone(), true);
+    }
+    reviser.release();
+}
+
+/// Sentence translation for [`Reviser`] through the provider chain.
+fn translator(pipeline: Arc<Pipeline>) -> Translator {
+    Arc::new(move |text, languages: Languages, context| {
+        let pipeline = pipeline.clone();
+        Box::pin(async move {
+            let input = TaskInput::Translate {
+                text,
+                source_language: languages.source,
+                target_language: languages.target,
+                context,
+            };
+            match pipeline.run(Capability::Translate, input).await {
+                Ok(res) => match res.output {
+                    TaskOutput::Text(s) => Some(s),
+                    _ => None,
+                },
+                Err(e) => {
+                    tracing::warn!("subtitle: sentence translation failed: {e}");
+                    None
+                }
+            }
+        })
+    })
 }
 
 /// Passes captured frames on to the subtitle loop and reports their
@@ -836,6 +1029,40 @@ fn pcm16_to_bytes(samples: &[i16]) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A window key that an event also uses is written twice, and the
+    /// window then reads one value for both (JSON keeps the last).
+    #[test]
+    fn window_label_shares_no_key_with_an_event() {
+        let events = [
+            SubtitleEvent::Chunk {
+                id: 7,
+                original: "a".into(),
+                translated: "b".into(),
+                at_ms: 0,
+                duration_ms: 0,
+            },
+            SubtitleEvent::Revised(crate::subtitle_revise::Revision {
+                replaces: vec![7],
+                id: 8,
+                original: "a".into(),
+                translated: "b".into(),
+                rest: None,
+            }),
+            SubtitleEvent::Stopped,
+        ];
+        for event in events {
+            let json = serde_json::to_string(&Tagged {
+                window: "subtitle-2",
+                event,
+            })
+            .unwrap();
+            for key in [r#""id":"#, r#""window":"#, r#""kind":"#] {
+                assert!(json.matches(key).count() <= 1, "{key} twice in {json}");
+            }
+            assert!(json.contains(r#""window":"subtitle-2""#), "{json}");
+        }
+    }
 
     #[tokio::test(start_paused = true)]
     async fn meter_relay_forwards_frames_and_reports_level_then_absence() {

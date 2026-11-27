@@ -1,59 +1,144 @@
-//! Multilingual OCR with PP-OCRv5 (PaddleOCR) models running on `rten`.
+//! Multilingual OCR with PP-OCR (PaddleOCR) models.
 //!
-//! `ocrs` only recognises Latin script. PP-OCRv5's mobile models read
-//! Chinese, Japanese (kana + kanji) and English with one recognition
-//! model, so this provider is what makes Japanese / Chinese screens
-//! translatable. It runs the classic two-stage PaddleOCR pipeline:
+//! `ocrs` only recognises Latin script. PP-OCR reads Chinese, Japanese
+//! (kana + kanji) and Latin script with one recognition model, so this
+//! provider is what makes Japanese / Chinese screens translatable. It
+//! runs the classic two-stage PaddleOCR pipeline:
 //!
 //! 1. **Detection** (DB): a probability map of "text pixels" is
 //!    thresholded, connected regions become text-line boxes, and each
 //!    box is expanded ("unclipped") back to the full glyph extent.
-//! 2. **Recognition** (SVTR + CTC): every box is cropped, resized to a
-//!    fixed height and decoded greedily against the model dictionary.
+//! 2. **Recognition** (CTC): every box is cropped, resized to a fixed
+//!    height and decoded greedily against the model dictionary.
 //!
 //! The post-processing is pure Rust in [`post`] and unit tested; model
 //! I/O lives in [`engine`].
 //!
-//! Models are downloaded on demand (see [`install_models_with_progress`])
-//! from the npm registry tarball of `@rustors/model-ppocrv5-mobile`
-//! (MIT, PP-OCRv5 weights are Apache-2.0), verified against a pinned
-//! SHA-512, and stored next to the ocrs models.
+//! The models are PP-OCRv6 small (Apache-2.0), in the ONNX form
+//! PaddlePaddle publishes: downloaded on demand (see
+//! [`install_models_with_progress`]), verified against a pinned
+//! SHA-256, and stored next to the ocrs models. On the pages both
+//! generations were measured on, v6 small misread 0.56 % of the
+//! Japanese characters where v5 mobile misread 1.46 %, and read a
+//! little faster. Lines in scripts these models do not know go to the
+//! models of [`super::ocr_scripts`].
+//!
+//! An install made by an earlier version holds PP-OCRv5 mobile
+//! instead. It keeps working ([`Generation::V5`]) until the user
+//! fetches the OCR models again, which replaces it.
 
 use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
 
+use super::ocr_onnx::Remote;
 use super::{Capability, OcrLine, Provider, ProviderError, TaskInput, TaskOutput};
 
-/// Pinned model bundle. The registry tarball is immutable for a given
-/// version and the integrity hash is checked after download.
-pub const MODEL_TARBALL_URL: &str =
-    "https://registry.npmjs.org/@rustors/model-ppocrv5-mobile/-/model-ppocrv5-mobile-0.3.2.tgz";
-pub const MODEL_TARBALL_SHA512_B64: &str =
-    "MncPfV5vObh5WwfJExZZ28fkPlwcuENU9ghCLpOQUoWSwMz6J2B+VZZ3eiTkzl+EsdgezQloqd/u7n3pMVhuiw==";
+pub const DET_FILE: &str = "ppocrv6-det.onnx";
+pub const REC_FILE: &str = "ppocrv6-rec.onnx";
 
-pub const DET_FILE: &str = "ppocrv5-det.rten";
-pub const REC_FILE: &str = "ppocrv5-rec.rten";
-pub const DICT_FILE: &str = "ppocrv5-dict.txt";
-
-/// Files inside the tarball → names we store them under.
-const TARBALL_FILES: [(&str, &str); 3] = [
-    ("package/models/det.rten", DET_FILE),
-    ("package/models/rec.rten", REC_FILE),
-    ("package/models/dict.txt", DICT_FILE),
+/// The models, pinned to a commit of the publisher's repository.
+pub static MODELS: [Remote; 2] = [
+    Remote {
+        url: "https://huggingface.co/PaddlePaddle/PP-OCRv6_small_det_onnx/resolve/28fe5895c24fd108c19eb3e8479f4ab385fbfc62/inference.onnx",
+        sha256: "d73e0058b7a8086bbd57f3d10b8bcd4ff95363f67e06e2762b5e814fe9c9410e",
+        file: DET_FILE,
+    },
+    Remote {
+        url: "https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx/resolve/b8f84f0b80c529de40b4fbb3544b84fa7233a513/inference.onnx",
+        sha256: "5435fd747c9e0efe15a96d0b378d5bd157e9492ed8fd80edf08f30d02fa24634",
+        file: REC_FILE,
+    },
 ];
+
+/// The recognition model's characters, one per line in class order.
+const DICT: &str = include_str!("ocr_dicts/ppocrv6.txt");
+
+/// PP-OCRv5 mobile as earlier versions installed it: the rten bundle,
+/// its dictionary, and the ONNX pair ONNX Runtime ran.
+const V5_RTEN: (&str, &str) = ("ppocrv5-det.rten", "ppocrv5-rec.rten");
+const V5_DICT: &str = "ppocrv5-dict.txt";
+const V5_ONNX: (&str, &str) = ("ppocrv5-det.onnx", "ppocrv5-rec.onnx");
+
+/// Which generation of the models a folder holds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Generation {
+    /// PP-OCRv6 small: what this version installs.
+    V6,
+    /// PP-OCRv5 mobile, left by an earlier version.
+    V5,
+}
+
+fn present(path: &Path) -> bool {
+    std::fs::metadata(path)
+        .map(|m| m.is_file() && m.len() > 0)
+        .unwrap_or(false)
+}
+
+impl Generation {
+    /// The generation to run from `dir`: the current one when it is
+    /// there, else the earlier one.
+    pub fn on_disk(dir: &Path) -> Option<Self> {
+        if MODELS.iter().all(|m| m.present(dir)) {
+            Some(Self::V6)
+        } else if [V5_RTEN.0, V5_RTEN.1, V5_DICT]
+            .iter()
+            .all(|f| present(&dir.join(f)))
+        {
+            Some(Self::V5)
+        } else {
+            None
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::V6 => "PP-OCRv6 small",
+            Self::V5 => "PP-OCRv5 mobile",
+        }
+    }
+
+    /// `(detection, recognition)` files rten loads.
+    fn rten_files(self) -> (&'static str, &'static str) {
+        match self {
+            Self::V6 => (DET_FILE, REC_FILE),
+            Self::V5 => V5_RTEN,
+        }
+    }
+
+    /// `(detection, recognition)` files ONNX Runtime loads.
+    #[cfg(feature = "ocr-onnx")]
+    fn onnx_files(self) -> (&'static str, &'static str) {
+        match self {
+            Self::V6 => (DET_FILE, REC_FILE),
+            Self::V5 => V5_ONNX,
+        }
+    }
+
+    fn dict(self, dir: &Path) -> anyhow::Result<Vec<String>> {
+        use anyhow::Context;
+        Ok(match self {
+            Self::V6 => super::ocr_scripts::dict_lines(DICT),
+            Self::V5 => super::ocr_scripts::dict_lines(
+                &std::fs::read_to_string(dir.join(V5_DICT))
+                    .with_context(|| format!("read {V5_DICT}"))?,
+            ),
+        })
+    }
+}
 
 pub fn default_models_dir() -> Option<PathBuf> {
     super::ocr_ocrs::default_models_dir()
 }
 
-/// True when all three model files are present and non-empty.
+/// True when models of either generation are in `dir`: OCR works.
 pub fn models_installed(dir: &Path) -> bool {
-    TARBALL_FILES.iter().all(|(_, f)| {
-        std::fs::metadata(dir.join(f))
-            .map(|m| m.len() > 0)
-            .unwrap_or(false)
-    })
+    Generation::on_disk(dir).is_some()
+}
+
+/// True when the models this version installs are in `dir`.
+pub fn models_current(dir: &Path) -> bool {
+    Generation::on_disk(dir) == Some(Generation::V6)
 }
 
 /// Tunables, read from `[providers.configs.ppocr]`.
@@ -431,13 +516,14 @@ pub mod engine {
     use std::path::{Path, PathBuf};
     use std::sync::Arc;
 
-    use anyhow::{anyhow, Context, Result};
+    use anyhow::{anyhow, Result};
     use image::{imageops::FilterType, DynamicImage, RgbImage};
     use parking_lot::Mutex;
     use rten_tensor::prelude::*;
     use rten_tensor::{NdTensor, Tensor};
 
-    use super::{post, Backend, Params, DET_FILE, DICT_FILE, REC_FILE};
+    use super::{post, Backend, Generation, Params};
+    use crate::providers::ocr_scripts::{self, Script};
     use crate::providers::OcrLine;
 
     const REC_HEIGHT: u32 = 48;
@@ -510,29 +596,57 @@ pub mod engine {
         width.div_ceil(REC_WIDTH_STEP) * REC_WIDTH_STEP
     }
 
-    /// The two networks on one backend. Tensors are `f32`, row-major.
-    pub(super) trait Networks: Send + Sync {
-        fn backend(&self) -> Backend;
-        fn plan(&self) -> RecPlan;
-        /// `[1, 3, h, w]` in, the probability map and its `(h, w)` out.
-        fn det(&self, input: Vec<f32>, h: usize, w: usize) -> Result<(Vec<f32>, usize, usize)>;
+    /// A recognition network. Tensors are `f32`, row-major.
+    pub(super) trait Reader: Send + Sync {
         /// `[n, 3, REC_HEIGHT, w]` in, `[n, steps, classes]` and its
         /// `(steps, classes)` out.
         fn rec(&self, input: Vec<f32>, n: usize, w: usize) -> Result<(Vec<f32>, usize, usize)>;
     }
 
+    /// The two networks on one backend.
+    pub(super) trait Networks: Reader {
+        fn backend(&self) -> Backend;
+        fn plan(&self) -> RecPlan;
+        /// `[1, 3, h, w]` in, the probability map and its `(h, w)` out.
+        fn det(&self, input: Vec<f32>, h: usize, w: usize) -> Result<(Vec<f32>, usize, usize)>;
+        /// One more recognition network (the model `file` in `dir`) on
+        /// the same backend, called the way [`Networks::plan`] says.
+        fn reader(&self, dir: &Path, file: &str) -> Result<Box<dyn Reader>>;
+    }
+
+    struct RtenReader(rten::Model);
+
+    impl RtenReader {
+        fn load(dir: &Path, file: &str) -> Result<Self> {
+            rten::Model::load_file(dir.join(file))
+                .map(Self)
+                .map_err(|e| anyhow!("load {file}: {e}"))
+        }
+    }
+
+    impl Reader for RtenReader {
+        fn rec(&self, input: Vec<f32>, n: usize, w: usize) -> Result<(Vec<f32>, usize, usize)> {
+            let out = RtenNetworks::run(&self.0, input, [n, 3, REC_HEIGHT as usize, w])?;
+            let shape = out.shape().to_vec();
+            if shape.len() != 3 || shape[0] != n {
+                anyhow::bail!("unexpected rec output shape {shape:?}");
+            }
+            Ok((out.iter().copied().collect(), shape[1], shape[2]))
+        }
+    }
+
     struct RtenNetworks {
         det: rten::Model,
-        rec: rten::Model,
+        rec: RtenReader,
     }
 
     impl RtenNetworks {
-        fn load(dir: &Path) -> Result<Self> {
+        fn load(dir: &Path, generation: Generation) -> Result<Self> {
+            let (det, rec) = generation.rten_files();
             Ok(Self {
-                det: rten::Model::load_file(dir.join(DET_FILE))
-                    .map_err(|e| anyhow!("load {DET_FILE}: {e}"))?,
-                rec: rten::Model::load_file(dir.join(REC_FILE))
-                    .map_err(|e| anyhow!("load {REC_FILE}: {e}"))?,
+                det: rten::Model::load_file(dir.join(det))
+                    .map_err(|e| anyhow!("load {det}: {e}"))?,
+                rec: RtenReader::load(dir, rec)?,
             })
         }
 
@@ -568,19 +682,39 @@ pub mod engine {
             Ok((out.iter().copied().collect(), ph, pw))
         }
 
+        fn reader(&self, dir: &Path, file: &str) -> Result<Box<dyn Reader>> {
+            Ok(Box::new(RtenReader::load(dir, file)?))
+        }
+    }
+
+    impl Reader for RtenNetworks {
         fn rec(&self, input: Vec<f32>, n: usize, w: usize) -> Result<(Vec<f32>, usize, usize)> {
-            let out = Self::run(&self.rec, input, [n, 3, REC_HEIGHT as usize, w])?;
-            let shape = out.shape().to_vec();
+            self.rec.rec(input, n, w)
+        }
+    }
+
+    #[cfg(feature = "ocr-onnx")]
+    use crate::providers::ocr_onnx::runtime::{Detector, Device, Recognizer};
+
+    #[cfg(feature = "ocr-onnx")]
+    struct OnnxReader(Recognizer);
+
+    #[cfg(feature = "ocr-onnx")]
+    impl Reader for OnnxReader {
+        fn rec(&self, input: Vec<f32>, n: usize, w: usize) -> Result<(Vec<f32>, usize, usize)> {
+            let (data, shape) = self.0.run(input, n, REC_HEIGHT as usize, w)?;
             if shape.len() != 3 || shape[0] != n {
                 anyhow::bail!("unexpected rec output shape {shape:?}");
             }
-            Ok((out.iter().copied().collect(), shape[1], shape[2]))
+            Ok((data, shape[1], shape[2]))
         }
     }
 
     #[cfg(feature = "ocr-onnx")]
     struct OnnxNetworks {
-        models: crate::providers::ocr_onnx::runtime::Models,
+        det: Detector,
+        rec: OnnxReader,
+        device: Device,
         backend: Backend,
         plan: RecPlan,
     }
@@ -593,23 +727,27 @@ pub mod engine {
             batch: 16,
         };
 
-        fn load(dir: &Path, backend: Backend) -> Result<Self> {
-            use crate::providers::ocr_onnx::runtime::{Device, Models};
-            Ok(if backend == Backend::DirectMl {
-                Self {
-                    models: Models::load(dir, Device::DirectMl, 1)?,
-                    backend,
-                    plan: Self::GPU_PLAN,
-                }
+        /// Sessions a script model gets on the CPU. Its lines are few
+        /// (see [`PpOcr::read_other_scripts`]), and every session
+        /// holds the model in memory once more.
+        const SCRIPT_SESSIONS: usize = 2;
+
+        fn load(dir: &Path, generation: Generation, backend: Backend) -> Result<Self> {
+            let (det, rec) = generation.onnx_files();
+            let (device, plan) = if backend == Backend::DirectMl {
+                (Device::DirectMl, Self::GPU_PLAN)
             } else {
                 // Line by line: a batch gains nothing on the CPU
                 // (measured).
                 let workers = cpu_rec_workers();
-                Self {
-                    models: Models::load(dir, Device::Cpu, workers)?,
-                    backend,
-                    plan: RecPlan { workers, batch: 1 },
-                }
+                (Device::Cpu, RecPlan { workers, batch: 1 })
+            };
+            Ok(Self {
+                det: Detector::load(dir, det, device)?,
+                rec: OnnxReader(Recognizer::load(dir, rec, device, plan.workers)?),
+                device,
+                backend,
+                plan,
             })
         }
     }
@@ -625,19 +763,28 @@ pub mod engine {
         }
 
         fn det(&self, input: Vec<f32>, h: usize, w: usize) -> Result<(Vec<f32>, usize, usize)> {
-            let (data, shape) = self.models.det(input, h, w)?;
+            let (data, shape) = self.det.run(input, h, w)?;
             if shape.len() < 2 {
                 anyhow::bail!("unexpected det output shape {shape:?}");
             }
             Ok((data, shape[shape.len() - 2], shape[shape.len() - 1]))
         }
 
+        fn reader(&self, dir: &Path, file: &str) -> Result<Box<dyn Reader>> {
+            let sessions = self.plan.workers.min(Self::SCRIPT_SESSIONS);
+            Ok(Box::new(OnnxReader(Recognizer::load(
+                dir,
+                file,
+                self.device,
+                sessions,
+            )?)))
+        }
+    }
+
+    #[cfg(feature = "ocr-onnx")]
+    impl Reader for OnnxNetworks {
         fn rec(&self, input: Vec<f32>, n: usize, w: usize) -> Result<(Vec<f32>, usize, usize)> {
-            let (data, shape) = self.models.rec(input, n, REC_HEIGHT as usize, w)?;
-            if shape.len() != 3 || shape[0] != n {
-                anyhow::bail!("unexpected rec output shape {shape:?}");
-            }
-            Ok((data, shape[1], shape[2]))
+            self.rec.rec(input, n, w)
         }
     }
 
@@ -657,7 +804,10 @@ pub mod engine {
     /// error, or the error of its first reading.
     #[cfg(test)]
     pub(super) fn unavailable(dir: &Path, backend: Backend) -> String {
-        match networks(dir, backend) {
+        let Some(generation) = Generation::on_disk(dir) else {
+            return "no models".to_string();
+        };
+        match networks(dir, generation, backend) {
             Err(e) => format!("load: {e:#}"),
             Ok(n) => match n.det(vec![0.0; 3 * 320 * 480], 320, 480) {
                 Err(e) => format!("run: {e:#}"),
@@ -666,11 +816,13 @@ pub mod engine {
         }
     }
 
-    fn networks(dir: &Path, backend: Backend) -> Result<Box<dyn Networks>> {
+    fn networks(dir: &Path, generation: Generation, backend: Backend) -> Result<Box<dyn Networks>> {
         match backend {
-            Backend::Rten => Ok(Box::new(RtenNetworks::load(dir)?)),
+            Backend::Rten => Ok(Box::new(RtenNetworks::load(dir, generation)?)),
             #[cfg(feature = "ocr-onnx")]
-            Backend::DirectMl | Backend::OnnxCpu => Ok(Box::new(OnnxNetworks::load(dir, backend)?)),
+            Backend::DirectMl | Backend::OnnxCpu => {
+                Ok(Box::new(OnnxNetworks::load(dir, generation, backend)?))
+            }
             other => Err(anyhow!("{} is not part of this build", other.name())),
         }
     }
@@ -688,6 +840,15 @@ pub mod engine {
         networks: Box<dyn Networks>,
         dict: Vec<String>,
         lines: Mutex<LineCache>,
+        /// The installed models of [`ocr_scripts`].
+        scripts: Vec<ScriptReader>,
+    }
+
+    /// The recognition model of one more script, with its dictionary.
+    struct ScriptReader {
+        script: &'static Script,
+        reader: Box<dyn Reader>,
+        dict: Vec<String>,
     }
 
     /// Text already recognised from a line image, by the image's pixels.
@@ -712,6 +873,9 @@ pub mod engine {
         clock: u64,
         /// Where lines were read, newest last.
         seen: std::collections::VecDeque<Seen>,
+        /// The script models a line has been through, one bit per
+        /// installed script ([`LineCache::set_tried`]).
+        tried: std::collections::HashMap<u64, u32>,
     }
 
     /// A line as it was read: the crop (`[x, y, w, h]` in the picture),
@@ -787,6 +951,24 @@ pub mod engine {
             Some((e.0.clone(), e.1))
         }
 
+        /// The script models the line `key` has been through.
+        pub(super) fn tried(&self, key: u64) -> u32 {
+            self.tried.get(&key).copied().unwrap_or(0)
+        }
+
+        /// Note that the line `key` has been through the script models
+        /// in `scripts`. A line read while a script was not known to be
+        /// on screen is read by its model once it is.
+        pub(super) fn set_tried(&mut self, key: u64, scripts: u32) {
+            if scripts != 0 {
+                *self.tried.entry(key).or_default() |= scripts;
+            }
+            if self.tried.len() > 2 * self.map.len().max(64) {
+                let map = &self.map;
+                self.tried.retain(|k, _| map.contains_key(k));
+            }
+        }
+
         /// The line read before at the place of `rect` when `rgb` still
         /// shows the same pixels there: its record and its picture.
         pub(super) fn seen_at(&self, rgb: &RgbImage, rect: [u32; 4]) -> Option<(Seen, RgbImage)> {
@@ -827,9 +1009,10 @@ pub mod engine {
     }
 
     /// What an engine was loaded for: the models directory, the wish
-    /// and whether the ONNX Runtime parts were installed then (they can
-    /// arrive while the app runs).
-    type Loaded = (PathBuf, Want, bool);
+    /// and what was installed then (ONNX Runtime, the generation of
+    /// the models, the script models): all of these can change while
+    /// the app runs.
+    type Loaded = (PathBuf, Want, bool, Option<Generation>, Vec<&'static str>);
 
     static CACHE: Mutex<Option<(Loaded, Arc<PpOcr>)>> = Mutex::new(None);
 
@@ -843,6 +1026,8 @@ pub mod engine {
             dir.to_path_buf(),
             want,
             crate::providers::ocr_onnx::installed(dir),
+            Generation::on_disk(dir),
+            ocr_scripts::installed(dir).iter().map(|s| s.id).collect(),
         );
         let mut guard = CACHE.lock();
         if let Some((k, e)) = guard.as_ref() {
@@ -900,19 +1085,18 @@ pub mod engine {
         /// on the CPU read lines about twice as fast wherever both were
         /// measured, and loading rten only to time it costs a second.
         pub fn load(dir: &Path, want: Want) -> Result<Self> {
-            let dict: Vec<String> = std::fs::read_to_string(dir.join(DICT_FILE))
-                .with_context(|| format!("read {DICT_FILE}"))?
-                .lines()
-                .map(|l| l.trim_end_matches('\r').to_string())
-                .collect();
+            let generation = Generation::on_disk(dir)
+                .ok_or_else(|| anyhow!("no PP-OCR models in the folder"))?;
+            let dict = generation.dict(dir)?;
             let engine = |networks| Self {
                 networks,
                 dict: dict.clone(),
                 lines: Mutex::new(LineCache::default()),
+                scripts: Vec::new(),
             };
             let mut loaded: Vec<Self> = Vec::new();
             for backend in want.candidates() {
-                match networks(dir, backend) {
+                match networks(dir, generation, backend) {
                     Ok(n) => loaded.push(engine(n)),
                     Err(e) => tracing::info!("ocr backend {} unavailable: {e:#}", backend.name()),
                 }
@@ -931,27 +1115,62 @@ pub mod engine {
                 .iter()
                 .map(|(e, t)| format!("{} {} ms", e.backend().name(), t.as_millis()))
                 .collect();
-            let best = match timed.into_iter().min_by_key(|(_, t)| *t) {
+            let mut best = match timed.into_iter().min_by_key(|(_, t)| *t) {
                 Some((e, _)) => e,
-                None => engine(networks(dir, Backend::Rten)?),
+                None => engine(networks(dir, generation, Backend::Rten)?),
             };
+            best.scripts = best.load_scripts(dir);
+            let scripts: Vec<&str> = best.scripts.iter().map(|s| s.script.id).collect();
             tracing::info!(
-                "ocr backend: {} (measured: {})",
+                "ocr backend: {} (measured: {}), models: {}, scripts: {}",
                 best.backend().name(),
                 if report.is_empty() {
                     "nothing else available".to_string()
                 } else {
                     report.join(", ")
+                },
+                generation.name(),
+                if scripts.is_empty() {
+                    "none".to_string()
+                } else {
+                    scripts.join(", ")
                 }
             );
             Ok(best)
+        }
+
+        /// The installed script models, on this engine's backend. One
+        /// that does not load is left out: the rest still read.
+        fn load_scripts(&self, dir: &Path) -> Vec<ScriptReader> {
+            ocr_scripts::installed(dir)
+                .into_iter()
+                .filter_map(
+                    |script| match self.networks.reader(dir, script.model.file) {
+                        Ok(reader) => Some(ScriptReader {
+                            script,
+                            reader,
+                            dict: script.dict(),
+                        }),
+                        Err(e) => {
+                            tracing::warn!("ocr script {} unavailable: {e:#}", script.id);
+                            None
+                        }
+                    },
+                )
+                .collect()
+        }
+
+        /// The scripts read beside the standard model's.
+        pub fn scripts(&self) -> Vec<&'static str> {
+            self.scripts.iter().map(|s| s.script.id).collect()
         }
 
         /// ONNX Runtime on the CPU, cutting the work as the GPU plan
         /// does: what a GPU reads, where no GPU is at hand.
         #[cfg(all(test, feature = "ocr-onnx"))]
         pub(super) fn load_cpu_with_gpu_plan(dir: &Path) -> Result<Self> {
-            let mut networks = OnnxNetworks::load(dir, Backend::OnnxCpu)?;
+            let generation = Generation::on_disk(dir).ok_or_else(|| anyhow!("no models"))?;
+            let mut networks = OnnxNetworks::load(dir, generation, Backend::OnnxCpu)?;
             networks.plan = OnnxNetworks::GPU_PLAN;
             let mut engine = Self::load(
                 dir,
@@ -978,7 +1197,7 @@ pub mod engine {
             let pass = || -> Result<std::time::Duration> {
                 let t = std::time::Instant::now();
                 self.networks.det(vec![0.0; 3 * h * w], h, w)?;
-                self.read_lines(&lines)?;
+                self.read_lines(None, &lines)?;
                 Ok(t.elapsed())
             };
             pass()?;
@@ -1052,11 +1271,40 @@ pub mod engine {
                 crops.len() - fresh.len()
             );
             let images: Vec<&RgbImage> = fresh.iter().map(|&i| &crops[i].1).collect();
-            let texts = self.read_lines(&images)?;
+            let mut texts = self.read_lines(None, &images)?;
+            let before = known.iter().flatten().map(|(text, _)| text.as_str());
+            let (on_screen, tried) = self.read_other_scripts(&images, &mut texts, before)?;
+            // A line read before the script of another line showed up
+            // (a number in a Korean sentence, alone on screen until the
+            // next sentence appears) has not been through its model.
+            let late: Vec<usize> = {
+                let cache = self.lines.lock();
+                (0..crops.len())
+                    .filter(|&i| known[i].is_some() && on_screen & !cache.tried(keys[i]) != 0)
+                    .collect()
+            };
+            if !late.is_empty() {
+                let scripts: Vec<usize> = (0..self.scripts.len())
+                    .filter(|&s| on_screen & (1 << s) != 0)
+                    .collect();
+                let images: Vec<&RgbImage> = late.iter().map(|&i| &crops[i].1).collect();
+                let mut again: Vec<(String, f32)> =
+                    late.iter().filter_map(|&i| known[i].clone()).collect();
+                let mut on = vec![true; self.scripts.len()];
+                let all = (0..late.len()).collect();
+                self.read_with_scripts(&scripts, all, &images, &mut again, &mut on)?;
+                let mut cache = self.lines.lock();
+                for (&i, (text, conf)) in late.iter().zip(again) {
+                    cache.put(keys[i], text.clone(), conf, LINE_CACHE_SIZE);
+                    cache.set_tried(keys[i], on_screen);
+                    known[i] = Some((text, conf));
+                }
+            }
             {
                 let mut cache = self.lines.lock();
-                for (&c, (text, conf)) in fresh.iter().zip(texts) {
+                for ((&c, (text, conf)), tried) in fresh.iter().zip(texts).zip(tried) {
                     cache.put(keys[c], text.clone(), conf, LINE_CACHE_SIZE);
+                    cache.set_tried(keys[c], tried);
                     known[c] = Some((text, conf));
                 }
                 cache.remember(crops.iter().map(|c| c.0), LINE_CACHE_SIZE);
@@ -1108,9 +1356,145 @@ pub mod engine {
             )
         }
 
+        /// Replace the standard readings `texts` of the line pictures
+        /// `images` by those of the script models where these read
+        /// better ([`ocr_scripts::reads_better`]).
+        ///
+        /// A script model costs as much per line as the standard one,
+        /// so the lines are not all read by every model:
+        ///
+        /// 1. The scripts of the lines read `before` in the same
+        ///    picture are known to be on screen. Their models read the
+        ///    lines whose standard reading is in doubt.
+        /// 2. Of the doubtful lines no model took, a few of the longest
+        ///    go to the other models. A script that takes one of them
+        ///    is on screen too, and reads the rest.
+        /// 3. Doubtful lines still not taken go to the models left.
+        /// 4. The lines the standard model was sure of go to the models
+        ///    of the scripts on screen only: a number in a Korean
+        ///    sentence comes out of the standard model as the number
+        ///    alone, read with confidence.
+        ///
+        /// A screen without the installed scripts costs nothing beyond
+        /// its doubtful lines; on a Korean screen every new line is
+        /// read twice, whatever else is installed.
+        ///
+        /// Returns the scripts on screen and, per line, the scripts
+        /// whose models it has been through, one bit per script of
+        /// `self.scripts`.
+        fn read_other_scripts<'a>(
+            &self,
+            images: &[&RgbImage],
+            texts: &mut [(String, f32)],
+            before: impl Iterator<Item = &'a str>,
+        ) -> Result<(u32, Vec<u32>)> {
+            /// Lines that show which scripts are on screen (step 2).
+            const PROBE: usize = 4;
+            if self.scripts.is_empty() {
+                return Ok((0, vec![0; images.len()]));
+            }
+            let mut on_screen = vec![false; self.scripts.len()];
+            for text in before {
+                for (s, reader) in self.scripts.iter().enumerate() {
+                    on_screen[s] |= reader.script.owns(text);
+                }
+            }
+            let (mut doubtful, sure): (Vec<usize>, Vec<usize>) =
+                (0..images.len()).partition(|&i| {
+                    let (text, confidence) = &texts[i];
+                    ocr_scripts::doubtful(text, *confidence, images[i].width(), images[i].height())
+                });
+            // Longest first: the more text, the surer the script.
+            doubtful.sort_by_key(|&i| std::cmp::Reverse(images[i].width() / images[i].height()));
+            // A doubtful line goes through every model unless one takes it.
+            let every = (1u32 << self.scripts.len()) - 1;
+            let mut tried = vec![0; images.len()];
+            for &i in &doubtful {
+                tried[i] = every;
+            }
+            let those = |on: &[bool], want: bool| -> Vec<usize> {
+                (0..on.len()).filter(|&s| on[s] == want).collect()
+            };
+
+            let known = those(&on_screen, true);
+            let mut open =
+                self.read_with_scripts(&known, doubtful, images, texts, &mut on_screen)?;
+            let rest = open.split_off(open.len().min(PROBE));
+            let others = those(&on_screen, false);
+            let mut probe_on = on_screen.clone();
+            let mut open = self.read_with_scripts(&others, open, images, texts, &mut probe_on)?;
+            let found: Vec<usize> = (0..probe_on.len())
+                .filter(|&s| probe_on[s] && !on_screen[s])
+                .collect();
+            on_screen = probe_on;
+            open.extend(self.read_with_scripts(&found, rest, images, texts, &mut on_screen)?);
+            let left = those(&on_screen, false);
+            self.read_with_scripts(&left, open, images, texts, &mut on_screen)?;
+
+            let known = those(&on_screen, true);
+            let shown = known.iter().fold(0, |bits, &s| bits | 1 << s);
+            for &i in &sure {
+                tried[i] = shown;
+            }
+            self.read_with_scripts(&known, sure, images, texts, &mut on_screen)?;
+            Ok((shown, tried))
+        }
+
+        /// Read the pictures `lines` (indices into `images`) with each
+        /// of `scripts` (indices into `self.scripts`) and keep, per
+        /// line, the surest reading that is better than the standard
+        /// one in `texts`. A script that took a line is marked in
+        /// `on_screen`. Returns the lines no script took.
+        fn read_with_scripts(
+            &self,
+            scripts: &[usize],
+            lines: Vec<usize>,
+            images: &[&RgbImage],
+            texts: &mut [(String, f32)],
+            on_screen: &mut [bool],
+        ) -> Result<Vec<usize>> {
+            if scripts.is_empty() || lines.is_empty() {
+                return Ok(lines);
+            }
+            let pictures: Vec<&RgbImage> = lines.iter().map(|&i| images[i]).collect();
+            let mut best: Vec<Option<(String, f32, usize)>> = vec![None; lines.len()];
+            for &s in scripts {
+                let script = self.scripts[s].script;
+                let read = self.read_lines(Some(&self.scripts[s]), &pictures)?;
+                for (k, (text, confidence)) in read.into_iter().enumerate() {
+                    let text = script.in_writing_order(text);
+                    let standard = &texts[lines[k]];
+                    if ocr_scripts::reads_better(
+                        script,
+                        (&standard.0, standard.1),
+                        (&text, confidence),
+                    ) && best[k].as_ref().is_none_or(|b| confidence > b.1)
+                    {
+                        best[k] = Some((text, confidence, s));
+                    }
+                }
+            }
+            let mut open = Vec::new();
+            for (line, read) in lines.into_iter().zip(best) {
+                match read {
+                    Some((text, confidence, s)) => {
+                        texts[line] = (text, confidence);
+                        on_screen[s] = true;
+                    }
+                    None => open.push(line),
+                }
+            }
+            Ok(open)
+        }
+
         /// Text and confidence of each line picture, in order, read
-        /// the way the backend's [`RecPlan`] asks.
-        fn read_lines(&self, images: &[&RgbImage]) -> Result<Vec<(String, f32)>> {
+        /// the way the backend's [`RecPlan`] asks: by the standard
+        /// model, or by the model of `script`.
+        fn read_lines(
+            &self,
+            script: Option<&ScriptReader>,
+            images: &[&RgbImage],
+        ) -> Result<Vec<(String, f32)>> {
             let plan = self.networks.plan();
             let width = |i: usize| {
                 let c = images[i];
@@ -1138,7 +1522,7 @@ pub mod engine {
                 let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 let Some(chunk) = chunks.get(i) else { break };
                 let lines: Vec<&RgbImage> = chunk.iter().map(|&c| images[c]).collect();
-                let r = self.recognize_batch(&lines, width(chunk[0]));
+                let r = self.recognize_batch(script, &lines, width(chunk[0]));
                 results.lock().push((i, r));
             };
             if workers.min(chunks.len()) <= 1 {
@@ -1161,7 +1545,12 @@ pub mod engine {
 
         /// One call of the recognition network: `lines` side by side
         /// in a batch `width` wide, each padded on the right.
-        fn recognize_batch(&self, lines: &[&RgbImage], width: u32) -> Result<Vec<(String, f32)>> {
+        fn recognize_batch(
+            &self,
+            script: Option<&ScriptReader>,
+            lines: &[&RgbImage],
+            width: u32,
+        ) -> Result<Vec<(String, f32)>> {
             if lines.is_empty() {
                 return Ok(vec![]);
             }
@@ -1177,11 +1566,15 @@ pub mod engine {
                     }
                 }
             }
-            let (data, steps, classes) = self.networks.rec(input, n, w)?;
+            let (reader, dict): (&dyn Reader, &[String]) = match script {
+                Some(s) => (s.reader.as_ref(), &s.dict),
+                None => (self.networks.as_ref(), &self.dict),
+            };
+            let (data, steps, classes) = reader.rec(input, n, w)?;
             Ok((0..n)
                 .map(|i| {
                     let slice = &data[i * steps * classes..(i + 1) * steps * classes];
-                    post::ctc_greedy_decode(slice, steps, classes, &self.dict)
+                    post::ctc_greedy_decode(slice, steps, classes, dict)
                 })
                 .collect())
         }
@@ -1242,7 +1635,7 @@ impl Provider for PpOcrProvider {
             if !models_installed(&self.models_dir) {
                 // Let the chain fall through to ocrs until the user
                 // installs the multilingual models.
-                return Err(ProviderError::NotInstalled("PP-OCRv5".into()));
+                return Err(ProviderError::NotInstalled("PP-OCR".into()));
             }
             let dir = self.models_dir.clone();
             let params = self.params;
@@ -1276,133 +1669,114 @@ impl Provider for PpOcrProvider {
     }
 }
 
-/// Download, verify and unpack the PP-OCRv5 model bundle into
-/// `models_dir`. `progress(filename, downloaded, total)` is called as
-/// bytes arrive. No-op when the models are already installed.
+/// Download and verify the models into `models_dir`.
+/// `progress(filename, downloaded, total)` is called as bytes arrive.
+/// No-op when the models are already installed. The models an earlier
+/// version left there are deleted once the new ones are in place.
 #[cfg(feature = "ocrs-engine")]
 pub async fn install_models_with_progress(
     models_dir: &Path,
     progress: Option<&super::ocr_ocrs::ProgressCb>,
 ) -> anyhow::Result<()> {
-    use futures::StreamExt;
-
-    if models_installed(models_dir) {
-        return Ok(());
-    }
     std::fs::create_dir_all(models_dir)?;
-    let label = "ppocrv5-mobile";
-    let resp = reqwest::Client::new()
-        .get(MODEL_TARBALL_URL)
-        .send()
-        .await?
-        .error_for_status()?;
-    let total = resp.content_length();
-    let mut stream = resp.bytes_stream();
-    let mut buf: Vec<u8> = Vec::with_capacity(total.unwrap_or(16 << 20) as usize);
-    while let Some(chunk) = stream.next().await {
-        buf.extend_from_slice(&chunk?);
-        if let Some(cb) = progress {
-            cb(label, buf.len() as u64, total);
-        }
+    for model in &MODELS {
+        model.install(models_dir, progress).await?;
     }
-    let dir = models_dir.to_path_buf();
-    tokio::task::spawn_blocking(move || verify_and_unpack(&buf, &dir)).await??;
+    remove_earlier_generation(models_dir);
     Ok(())
 }
 
-/// Check the bundle against the pinned SHA-512, then unpack it.
-#[cfg(feature = "ocrs-engine")]
-pub fn verify_and_unpack(tgz: &[u8], dir: &Path) -> anyhow::Result<()> {
-    use base64::Engine as _;
-    use sha2::{Digest, Sha512};
-    let digest = base64::engine::general_purpose::STANDARD.encode(Sha512::digest(tgz));
-    if digest != MODEL_TARBALL_SHA512_B64 {
-        anyhow::bail!("PP-OCR model bundle failed integrity check");
+/// Delete the PP-OCRv5 files (about 43 MB) from a folder that holds
+/// the current models. Best effort: a file that stays is only unused.
+fn remove_earlier_generation(models_dir: &Path) {
+    if !models_current(models_dir) {
+        return;
     }
-    unpack(tgz, dir)
-}
-
-#[cfg(feature = "ocrs-engine")]
-fn unpack(tgz: &[u8], dir: &Path) -> anyhow::Result<()> {
-    let mut archive = tar::Archive::new(flate2::read::GzDecoder::new(tgz));
-    let mut found = 0;
-    for entry in archive.entries()? {
-        let mut entry = entry?;
-        let path = entry.path()?.to_string_lossy().to_string();
-        if let Some((_, name)) = TARBALL_FILES.iter().find(|(src, _)| *src == path) {
-            // Write to a temp name then rename so a crash never leaves a
-            // truncated model that looks installed.
-            let tmp = dir.join(format!("{name}.part"));
-            let mut f = std::fs::File::create(&tmp)?;
-            std::io::copy(&mut entry, &mut f)?;
-            drop(f);
-            std::fs::rename(&tmp, dir.join(name))?;
-            found += 1;
-        }
+    for file in [V5_RTEN.0, V5_RTEN.1, V5_DICT, V5_ONNX.0, V5_ONNX.1] {
+        let _ = std::fs::remove_file(models_dir.join(file));
     }
-    if found != TARBALL_FILES.len() {
-        anyhow::bail!("PP-OCR model bundle is missing files ({found}/3)");
-    }
-    Ok(())
 }
 
 #[cfg(all(test, feature = "ocrs-engine"))]
 mod tests {
     use super::*;
 
-    #[test]
-    fn unpack_extracts_only_known_files_and_requires_all() {
-        let mut tgz = Vec::new();
-        {
-            let enc = flate2::write::GzEncoder::new(&mut tgz, flate2::Compression::fast());
-            let mut b = tar::Builder::new(enc);
-            for (src, _) in TARBALL_FILES {
-                let data = b"model";
-                let mut h = tar::Header::new_gnu();
-                h.set_size(data.len() as u64);
-                h.set_mode(0o644);
-                h.set_cksum();
-                b.append_data(&mut h, src, &data[..]).unwrap();
-            }
-            let mut h = tar::Header::new_gnu();
-            h.set_size(1);
-            h.set_cksum();
-            b.append_data(&mut h, "package/README.md", &b"x"[..])
-                .unwrap();
-            b.into_inner().unwrap().finish().unwrap();
-        }
+    fn folder(files: &[&str]) -> tempfile::TempDir {
         let dir = tempfile::tempdir().unwrap();
-        assert!(!models_installed(dir.path()));
-        unpack(&tgz, dir.path()).unwrap();
-        assert!(models_installed(dir.path()));
-        assert!(!dir.path().join("README.md").exists());
-
-        let empty = tempfile::tempdir().unwrap();
-        let mut bad = Vec::new();
-        {
-            let enc = flate2::write::GzEncoder::new(&mut bad, flate2::Compression::fast());
-            let b = tar::Builder::new(enc);
-            b.into_inner().unwrap().finish().unwrap();
+        for f in files {
+            std::fs::write(dir.path().join(f), b"model").unwrap();
         }
-        assert!(unpack(&bad, empty.path()).is_err());
+        dir
     }
 
     #[test]
-    fn tampered_bundle_is_rejected() {
-        let dir = tempfile::tempdir().unwrap();
-        assert!(verify_and_unpack(b"not the bundle", dir.path()).is_err());
-        assert!(!models_installed(dir.path()));
+    fn the_current_generation_is_used_when_both_are_on_disk() {
+        let v5 = [V5_RTEN.0, V5_RTEN.1, V5_DICT, V5_ONNX.0, V5_ONNX.1];
+        let none = folder(&[]);
+        assert_eq!(Generation::on_disk(none.path()), None);
+        assert!(!models_installed(none.path()));
+
+        // An install by an earlier version: OCR works, on v5.
+        let earlier = folder(&v5);
+        assert_eq!(Generation::on_disk(earlier.path()), Some(Generation::V5));
+        assert!(models_installed(earlier.path()));
+        assert!(!models_current(earlier.path()));
+
+        // One of the two new files is not an install.
+        std::fs::write(earlier.path().join(DET_FILE), b"model").unwrap();
+        assert_eq!(Generation::on_disk(earlier.path()), Some(Generation::V5));
+        std::fs::write(earlier.path().join(REC_FILE), b"model").unwrap();
+        assert_eq!(Generation::on_disk(earlier.path()), Some(Generation::V6));
+        assert!(models_current(earlier.path()));
+
+        // An empty file is a download that never finished.
+        let empty = folder(&[DET_FILE]);
+        std::fs::write(empty.path().join(REC_FILE), b"").unwrap();
+        assert_eq!(Generation::on_disk(empty.path()), None);
     }
 
-    /// Needs the real bundle: download MODEL_TARBALL_URL and run
-    /// `MOONLENS_PPOCR_TGZ=/path/to.tgz cargo test -- --ignored`.
+    #[test]
+    fn the_earlier_generation_is_deleted_only_once_the_current_one_is_there() {
+        let v5 = [V5_RTEN.0, V5_RTEN.1, V5_DICT, V5_ONNX.0, V5_ONNX.1];
+        let dir = folder(&v5);
+        std::fs::write(dir.path().join(DET_FILE), b"model").unwrap();
+        remove_earlier_generation(dir.path());
+        assert_eq!(Generation::on_disk(dir.path()), Some(Generation::V5));
+
+        std::fs::write(dir.path().join(REC_FILE), b"model").unwrap();
+        std::fs::write(dir.path().join("text-detection.rten"), b"ocrs").unwrap();
+        remove_earlier_generation(dir.path());
+        for f in v5 {
+            assert!(!dir.path().join(f).exists(), "{f} is still there");
+        }
+        assert!(models_current(dir.path()));
+        assert!(dir.path().join("text-detection.rten").exists());
+    }
+
+    #[test]
+    fn the_dictionary_is_whole() {
+        let dict = Generation::V6.dict(Path::new("")).unwrap();
+        // The recognition model has 18710 classes: these, the blank
+        // and the space.
+        assert_eq!(dict.len(), 18708);
+        assert!(dict.iter().all(|l| l.chars().count() == 1));
+        // A line that is blank space must survive editors and git.
+        assert!(dict.iter().any(|l| l == "\u{3000}"));
+        assert_eq!(dict[0], "!");
+    }
+
+    /// Needs the real models in `MOONLENS_PPOCR_DIR` (the two files of
+    /// [`MODELS`], under their names there).
     #[test]
     #[ignore]
-    fn real_bundle_verifies_unpacks_and_loads() {
-        let tgz = std::fs::read(std::env::var("MOONLENS_PPOCR_TGZ").unwrap()).unwrap();
+    fn real_models_verify_and_load() {
+        let from = PathBuf::from(std::env::var("MOONLENS_PPOCR_DIR").unwrap());
         let dir = tempfile::tempdir().unwrap();
-        verify_and_unpack(&tgz, dir.path()).unwrap();
-        assert!(models_installed(dir.path()));
+        for model in &MODELS {
+            let bytes = std::fs::read(from.join(model.file)).unwrap();
+            crate::providers::ocr_onnx::verify_and_store(&bytes, model, dir.path()).unwrap();
+        }
+        assert!(models_current(dir.path()));
         let engine = engine::PpOcr::load(dir.path(), engine::Want::default()).unwrap();
         // Nothing but the base models here: rten runs them.
         assert_eq!(engine.backend(), Backend::Rten);
@@ -1414,8 +1788,8 @@ mod tests {
     }
 
     /// The backends must read the same text: speed is never bought
-    /// with reading quality. Needs the installed models (rten and
-    /// ONNX) and ONNX Runtime in the default models directory; reads
+    /// with reading quality. Needs the installed models and ONNX
+    /// Runtime in the default models directory; reads
     /// the lens fixtures plus `MOONLENS_OCR_IMAGES`. Also reports what
     /// [`Backend::Auto`] chooses here and how long each backend took.
     #[cfg(feature = "ocr-onnx")]
@@ -1499,6 +1873,184 @@ mod tests {
         assert!(differing * 100 <= total * others.len(), "backends disagree");
     }
 
+    /// Share of the characters of `page` (a fixture of
+    /// `tests/fixtures/ocr`) that `engine` did not read as written:
+    /// the edit distance between each line and what was read inside
+    /// its box, over the length of the lines. Blank space is left out
+    /// and full-width forms count as their plain ones.
+    fn misread(engine: &engine::PpOcr, page: &str) -> f32 {
+        fn distance(a: &[char], b: &[char]) -> usize {
+            let mut row: Vec<usize> = (0..=b.len()).collect();
+            for (i, ca) in a.iter().enumerate() {
+                let mut diagonal = row[0];
+                row[0] = i + 1;
+                for (j, cb) in b.iter().enumerate() {
+                    let cost = diagonal + usize::from(ca != cb);
+                    diagonal = row[j + 1];
+                    row[j + 1] = cost.min(row[j] + 1).min(diagonal + 1);
+                }
+            }
+            row[b.len()]
+        }
+        let dir = Path::new("tests/fixtures/ocr");
+        let truth: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(dir.join(format!("{page}.json"))).unwrap())
+                .unwrap();
+        let img = image::open(dir.join(format!("{page}.png"))).unwrap();
+        let read = engine.recognize(&img, &Params::default()).unwrap();
+        // A full-width form and its plain one are the same letter here
+        // (the model writes "(" for "（" and "~" for "〜").
+        let letters = |s: &str| -> Vec<char> {
+            s.chars()
+                .filter(|c| !c.is_whitespace())
+                .map(|c| match c {
+                    '\u{ff01}'..='\u{ff5e}' => char::from_u32(c as u32 - 0xfee0).unwrap(),
+                    '〜' => '~',
+                    c => c,
+                })
+                .collect()
+        };
+        let (mut wrong, mut all) = (0, 0);
+        for line in truth["lines"].as_array().unwrap() {
+            let place: Vec<f32> = line["box"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|v| v.as_f64().unwrap() as f32)
+                .collect();
+            let mut inside: Vec<&OcrLine> = read
+                .iter()
+                .filter(|l| {
+                    let middle = l.bbox[1] + l.bbox[3] / 2.0;
+                    (place[1]..=place[1] + place[3]).contains(&middle)
+                })
+                .collect();
+            inside.sort_by(|a, b| a.bbox[0].total_cmp(&b.bbox[0]));
+            let got: String = inside.iter().map(|l| l.text.as_str()).collect();
+            let want = letters(line["text"].as_str().unwrap());
+            wrong += distance(&want, &letters(&got));
+            all += want.len();
+        }
+        wrong as f32 / all as f32
+    }
+
+    /// A page in each additional script is read by that script's
+    /// model, and a Japanese page is read as it is without them.
+    /// Needs the installed models with every script model
+    /// (`cargo run --release --example fetch_models`).
+    #[test]
+    #[ignore]
+    fn other_scripts_are_read() {
+        use crate::providers::ocr_scripts::SCRIPTS;
+        use engine::{PpOcr, Want};
+        let dir = default_models_dir().unwrap();
+        let with_scripts = PpOcr::load(&dir, Want::default()).unwrap();
+        assert_eq!(
+            with_scripts.scripts().len(),
+            SCRIPTS.len(),
+            "a script model is missing or did not load"
+        );
+        // The same standard models and nothing else.
+        let bare = tempfile::tempdir().unwrap();
+        for file in [DET_FILE, REC_FILE] {
+            std::fs::copy(dir.join(file), bare.path().join(file)).unwrap();
+        }
+        let standard = PpOcr::load(bare.path(), Want::default()).unwrap();
+        assert!(standard.scripts().is_empty());
+
+        for script in &SCRIPTS {
+            let (before, after) = (
+                misread(&standard, script.id),
+                misread(&with_scripts, script.id),
+            );
+            println!(
+                "{}: {:.1} % misread, {:.1} % without its model",
+                script.id,
+                after * 100.0,
+                before * 100.0
+            );
+            assert!(
+                before > 0.5,
+                "{}: the page needs no script model",
+                script.id
+            );
+            assert!(after < 0.1, "{}: not read by its model", script.id);
+        }
+
+        // Every script model at hand takes nothing from a Japanese
+        // page. One backend for both engines, so that the readings can
+        // be compared to the letter.
+        let rten = Want {
+            backend: Backend::Rten,
+            gpu: false,
+        };
+        let img = image::open("tests/fixtures/ocr/japanese.png").unwrap();
+        let texts = |engine: &PpOcr| {
+            let mut lines = engine.recognize(&img, &Params::default()).unwrap();
+            lines.sort_by_key(|l| (l.bbox[1] as i32, l.bbox[0] as i32));
+            lines.into_iter().map(|l| l.text).collect::<Vec<_>>()
+        };
+        let want = texts(&PpOcr::load(bare.path(), rten).unwrap());
+        assert!(want.len() >= 16, "the Japanese page was not read");
+        assert_eq!(texts(&PpOcr::load(&dir, rten).unwrap()), want);
+        assert!(misread(&with_scripts, "japanese") < 0.02);
+    }
+
+    /// A line that was alone on screen and read by the standard model
+    /// with confidence (a number in a Korean sentence) is read by the
+    /// script's model once another line shows the script: the page
+    /// reads the same as with nothing read before. Needs the installed
+    /// models with the Korean one.
+    #[test]
+    #[ignore]
+    fn a_line_read_before_its_script_showed_up_is_read_again() {
+        use engine::{PpOcr, Want};
+        let dir = default_models_dir().unwrap();
+        let page = image::open("tests/fixtures/ocr/korean.png")
+            .unwrap()
+            .to_rgb8();
+        // Blank space is left out: where a model puts it depends on
+        // the lines read in one batch with the line.
+        let read = |engine: &PpOcr, img: &image::RgbImage| {
+            let img = image::DynamicImage::ImageRgb8(img.clone());
+            let mut lines = engine.recognize(&img, &Params::default()).unwrap();
+            lines.sort_by_key(|l| (l.bbox[1] as i32, l.bbox[0] as i32));
+            for line in &mut lines {
+                line.text.retain(|c| !c.is_whitespace());
+            }
+            lines
+        };
+        let whole = read(&PpOcr::load(&dir, Want::default()).unwrap(), &page);
+        let line = |has: &str| whole.iter().find(|l| l.text.contains(has)).unwrap().bbox;
+        // A page of two lines cut from the fixture: the end of a line,
+        // a syllable or two and a number, and a sentence below it.
+        let paper = *page.get_pixel(0, 0);
+        let paste = |onto: &mut image::RgbImage, [x, y, w, h]: [f32; 4], to: (u32, u32)| {
+            let pad = h * 0.4;
+            let (x, y) = ((x - pad).max(0.0) as u32, (y - pad).max(0.0) as u32);
+            let (w, h) = ((w + 2.0 * pad) as u32, (h + 2.0 * pad) as u32);
+            let piece = image::imageops::crop_imm(&page, x, y, w, h).to_image();
+            image::imageops::replace(onto, &piece, to.0 as i64, to.1 as i64);
+        };
+        let [x, y, w, h] = line("310");
+        let end = [x + w - 4.2 * h, y, 4.2 * h, h];
+        let mut alone = image::RgbImage::from_pixel(900, 240, paper);
+        paste(&mut alone, end, (40, 40));
+        let mut both = alone.clone();
+        paste(&mut both, line("비밀번호"), (40, 140));
+
+        let want: Vec<String> = read(&PpOcr::load(&dir, Want::default()).unwrap(), &both)
+            .into_iter()
+            .map(|l| l.text)
+            .collect();
+        let engine = PpOcr::load(&dir, Want::default()).unwrap();
+        let first: Vec<String> = read(&engine, &alone).into_iter().map(|l| l.text).collect();
+        println!("alone: {first:?}, with the sentence: {want:?}");
+        assert_ne!(first[..], want[..1], "the line reads the same alone");
+        let then: Vec<String> = read(&engine, &both).into_iter().map(|l| l.text).collect();
+        assert_eq!(then, want);
+    }
+
     /// An install from an earlier version has no ONNX Runtime; when it
     /// arrives while the app runs, the next load uses it. Needs the
     /// installed models and runtime; run alone (`--exact`), since the
@@ -1511,13 +2063,7 @@ mod tests {
         use engine::{PpOcr, Want};
         let installed = default_models_dir().unwrap();
         let dir = tempfile::tempdir().unwrap();
-        for file in [
-            DET_FILE,
-            REC_FILE,
-            DICT_FILE,
-            ocr_onnx::DET_FILE,
-            ocr_onnx::REC_FILE,
-        ] {
+        for file in [DET_FILE, REC_FILE] {
             std::fs::copy(installed.join(file), dir.path().join(file)).unwrap();
         }
         let want = Want {

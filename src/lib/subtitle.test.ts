@@ -5,6 +5,7 @@ import {
   inputHint,
   reduce,
   restore,
+  settle,
   sourceLabel,
   sourceOptions,
   statusLabel,
@@ -28,13 +29,14 @@ describe('音声翻訳ウィンドウの表示状態', () => {
     expect(statusLabel(v, 'ok')).toBe('認識中…');
     v = reduce(v, { kind: 'status', phase: 'translating' });
     expect(statusLabel(v)).toBe('翻訳中…');
-    v = reduce(v, { kind: 'chunk', original: 'Hello.', translated: 'こんにちは。' });
+    v = reduce(v, { kind: 'chunk', id: 1, original: 'Hello.', translated: 'こんにちは。' });
     expect(v.lines).toEqual([{ id: 1, original: 'Hello.', translated: 'こんにちは。' }]);
   });
 
   it('字幕は時系列で蓄積、上限超過分は旧字幕から破棄', () => {
     const events: SubtitleEvent[] = Array.from({ length: MAX_LINES + 5 }, (_, i) => ({
       kind: 'chunk',
+      id: i + 1,
       original: `o${i}`,
       translated: `t${i}`
     }));
@@ -52,14 +54,14 @@ describe('音声翻訳ウィンドウの表示状態', () => {
     ]);
     expect(v.error).toBe('音声認識失敗：x');
     expect(statusLabel(v)).toBe('入力未検出');
-    v = reduce(v, { kind: 'chunk', original: 'a', translated: 'b' });
+    v = reduce(v, { kind: 'chunk', id: 1, original: 'a', translated: 'b' });
     expect(v.error).toBeNull();
   });
 
   it('連続失敗による停止後もエラー表示を継続', () => {
     const v = run([
       { kind: 'started', device: '', source: { kind: 'system' } },
-      { kind: 'chunk', original: 'a', translated: 'b' },
+      { kind: 'chunk', id: 1, original: 'a', translated: 'b' },
       { kind: 'error', message: '音声認識の連続失敗により停止：x' },
       { kind: 'stopped' }
     ]);
@@ -77,7 +79,7 @@ describe('音声翻訳ウィンドウの表示状態', () => {
 
   it('音源変更・再開：字幕は保持、エラーは消去', () => {
     const v = run([
-      { kind: 'chunk', original: 'a', translated: 'b' },
+      { kind: 'chunk', id: 1, original: 'a', translated: 'b' },
       { kind: 'error', message: 'x' },
       { kind: 'stopped' },
       { kind: 'started', device: 'vlc', source: { kind: 'app', pid: 7 } }
@@ -116,5 +118,136 @@ describe('音源メニューの選択肢', () => {
     const options = sourceOptions(apps, { source: { kind: 'app', pid: 99 }, device: 'game' });
     expect(options.at(-1)).toMatchObject({ label: 'game', selected: true, playing: false });
     expect(sourceOptions([], { source: { kind: 'system' }, device: '' })).toHaveLength(1);
+  });
+
+  it('文単位の再翻訳結果で該当行を置換', () => {
+    const chunk = (id: number, original: string): SubtitleEvent => ({
+      kind: 'chunk',
+      id,
+      original,
+      translated: `<${original}>`
+    });
+    let v = run([
+      { kind: 'started', device: '', source: { kind: 'system' } },
+      chunk(1, 'ask not what'),
+      chunk(2, 'your country can do. Ask'),
+      chunk(3, 'what you can do')
+    ]);
+    v = reduce(v, { kind: 'status', phase: 'revising' });
+    expect(statusLabel(v)).toBe('補正中…');
+    // 行 1・2 → 文 1 行＋次文の冒頭。後続の行 3 は位置を維持。
+    v = reduce(v, {
+      kind: 'revised',
+      replaces: [1, 2],
+      id: 4,
+      original: 'ask not what your country can do.',
+      translated: '国に求めるな。',
+      rest: { id: 5, original: 'Ask', translated: '問え' }
+    });
+    expect(v.lines.map((l) => [l.id, l.translated, !!l.revised])).toEqual([
+      [4, '国に求めるな。', true],
+      [5, '問え', false],
+      [3, '<what you can do>', false]
+    ]);
+    // 次文：冒頭行（5）と行 3 を置換。
+    v = reduce(v, {
+      kind: 'revised',
+      replaces: [5, 3],
+      id: 6,
+      original: 'Ask what you can do',
+      translated: '可能な貢献を問え',
+      rest: null
+    });
+    expect(v.lines.map((l) => l.id)).toEqual([4, 6]);
+    // 破棄済みの行に対する補正は無視。
+    const same = reduce(v, {
+      kind: 'revised',
+      replaces: [1, 2],
+      id: 9,
+      original: 'x',
+      translated: 'y',
+      rest: null
+    });
+    expect(same.lines).toBe(v.lines);
+  });
+
+  it('音源変更・再開後も行 ID は一意、補正は新規の行のみ置換', () => {
+    const started: SubtitleEvent = { kind: 'started', device: '', source: { kind: 'system' } };
+    let v = run([
+      started,
+      { kind: 'chunk', id: 1, original: 'old', translated: '旧' },
+      // 再開：バックエンドの採番は 1 から。
+      started,
+      { kind: 'chunk', id: 1, original: 'new a', translated: '新' },
+      { kind: 'chunk', id: 2, original: 'new b.', translated: '規' }
+    ]);
+    expect(new Set(v.lines.map((l) => l.id)).size).toBe(3);
+    v = reduce(v, {
+      kind: 'revised',
+      replaces: [1, 2],
+      id: 3,
+      original: 'new a new b.',
+      translated: '新規。',
+      rest: null
+    });
+    expect(v.lines.map((l) => l.original)).toEqual(['old', 'new a new b.']);
+    expect(new Set(v.lines.map((l) => l.id)).size).toBe(2);
+  });
+});
+
+describe('遮断候補（反復検出）', () => {
+  let next = 0;
+  const heard = (original: string): SubtitleEvent => ({
+    kind: 'chunk',
+    id: ++next,
+    original,
+    translated: `訳：${original}`
+  });
+  const started: SubtitleEvent = { kind: 'started', device: 'スピーカー', source: { kind: 'system' } };
+
+  it('候補は検出順に保持、同一文の重複なし、開始時に初期化', () => {
+    let v = run([
+      started,
+      { kind: 'candidate', phrase: 'Thank you.' },
+      { kind: 'candidate', phrase: 'Bye.' },
+      { kind: 'candidate', phrase: 'Thank you.' }
+    ]);
+    expect(v.candidates).toEqual(['Thank you.', 'Bye.']);
+    v = reduce(v, started);
+    expect(v.candidates).toEqual([]);
+  });
+
+  it('遮断：候補と表示済みの同一文（表記差・反復を含む）を除去', () => {
+    const v = run([
+      heard('Thank you.'),
+      heard('Thank you for coming.'),
+      heard('thank you'),
+      heard('Thank you. Thank you.'),
+      { kind: 'candidate', phrase: 'Thank you.' }
+    ]);
+    const next = settle(v, 'Thank you.', true);
+    expect(next.candidates).toEqual([]);
+    expect(next.lines.map((l) => l.original)).toEqual(['Thank you for coming.']);
+  });
+
+  it('遮断済みの文の補正結果（原文が空）：置換対象の行を除去、次文の冒頭のみ残置', () => {
+    const v = run([heard('Thank you.'), heard('Please sit.')]);
+    const [first, second] = v.lines.map((l) => l.id);
+    const next = reduce(settle(v, 'Thank you.', true), {
+      kind: 'revised',
+      replaces: [first, second],
+      id: second + 1,
+      original: '',
+      translated: '',
+      rest: { id: second + 2, original: 'Please sit.', translated: '' }
+    });
+    expect(next.lines.map((l) => l.original)).toEqual(['Please sit.']);
+  });
+
+  it('無視：候補のみ除去、字幕は維持', () => {
+    const v = run([heard('Thank you.'), { kind: 'candidate', phrase: 'Thank you.' }]);
+    const next = settle(v, 'Thank you.', false);
+    expect(next.candidates).toEqual([]);
+    expect(next.lines).toHaveLength(1);
   });
 });

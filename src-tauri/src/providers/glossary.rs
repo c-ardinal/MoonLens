@@ -108,6 +108,20 @@ impl TranslateOptions {
         }
     }
 
+    /// Everything here that shapes the translation of `text` into
+    /// `target`, as stable strings: the style that applies and the
+    /// matching glossary pairs. Part of the translation cache's
+    /// fingerprint, so editing a term re-translates only the paragraphs
+    /// that contain it.
+    pub fn signature_for(&self, text: &str, target: &str) -> Vec<String> {
+        let mut parts = vec![self.form_for(target).unwrap_or_default().to_string()];
+        for (source, rendering) in self.terms_for(text, target) {
+            parts.push(source);
+            parts.push(rendering);
+        }
+        parts
+    }
+
     /// Extra system-prompt paragraph for chat models, or `None` when
     /// nothing applies (the prompt then stays byte-identical).
     pub fn chat_instructions(&self, text: &str, target: &str) -> Option<String> {
