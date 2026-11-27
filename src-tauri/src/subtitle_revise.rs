@@ -364,6 +364,8 @@ pub struct Reviser {
     running: Option<Pin<Box<dyn Future<Output = Done> + Send>>>,
     /// Finished sentences and their translations, oldest first.
     history: Vec<(String, String)>,
+    /// The languages `history` and `last_rest` were translated between.
+    languages: Option<Languages>,
     /// The last revision's `rest` as translated: `(line id, text, translation)`.
     last_rest: Option<(u64, String, String)>,
 }
@@ -376,6 +378,7 @@ impl Reviser {
             released: 0,
             running: None,
             history: Vec::new(),
+            languages: None,
             last_rest: None,
         }
     }
@@ -441,6 +444,12 @@ impl Reviser {
             sentence,
             languages,
         } = job;
+        // Translations into another language are no context for this one.
+        if self.languages.as_ref() != Some(&languages) {
+            self.history.clear();
+            self.last_rest = None;
+            self.languages = Some(languages.clone());
+        }
         // Already shown in full: as one chunk, or as the previous
         // revision's rest.
         let shown = sentence.draft.clone().or_else(|| {
@@ -752,6 +761,24 @@ mod tests {
             calls[1].1.history,
             vec![("first one.".to_string(), "FIRST ONE.".to_string())]
         );
+    }
+
+    #[tokio::test]
+    async fn history_starts_over_when_the_languages_change() {
+        let (translate, calls) = upper();
+        let mut r = Reviser::new(translate);
+        r.push(sentence(&[1, 2], 3, "one.", None), en_ja(), true);
+        r.push(sentence(&[4, 5], 6, "two.", None), en_ja(), true);
+        let en_fr = Languages {
+            source: "en".into(),
+            target: "fr".into(),
+        };
+        r.push(sentence(&[7, 8], 9, "three.", None), en_fr.clone(), true);
+        r.push(sentence(&[10, 11], 12, "four.", None), en_fr, true);
+        while r.next().await.is_some() {}
+        let calls = calls.lock();
+        let history: Vec<usize> = calls.iter().map(|(_, c)| c.history.len()).collect();
+        assert_eq!(history, vec![0, 1, 0, 1]);
     }
 
     #[tokio::test]
