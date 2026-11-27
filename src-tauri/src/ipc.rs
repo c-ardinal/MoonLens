@@ -1667,6 +1667,28 @@ pub async fn toggle_lens_pause(app: AppHandle, state: State<'_, AppState>) -> Re
     Ok(lens::toggle_pause(&app, &state.lenses))
 }
 
+/// Whether extra triggers (mouse buttons, double press, gamepad) work on
+/// this platform.
+#[tauri::command]
+pub async fn trigger_supported() -> Result<bool, String> {
+    Ok(crate::trigger_watch::SUPPORTED)
+}
+
+/// Wait for the user to perform a trigger and return its text form
+/// (settings screen). `None`: nothing in time, or cancelled.
+#[tauri::command]
+pub async fn capture_trigger(app: AppHandle) -> Result<Option<String>, String> {
+    Ok(crate::trigger_watch::capture(&app)
+        .await
+        .map(|t| t.to_string()))
+}
+
+#[tauri::command]
+pub async fn cancel_trigger_capture(app: AppHandle) -> Result<(), String> {
+    crate::trigger_watch::cancel_capture(&app);
+    Ok(())
+}
+
 /// State of the all-window controls, asked by a window as it opens.
 #[derive(Debug, Serialize)]
 pub struct LensControls {

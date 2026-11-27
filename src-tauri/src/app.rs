@@ -105,6 +105,9 @@ macro_rules! all_commands {
             ipc::set_lens_continuous,
             ipc::refresh_lens,
             ipc::toggle_lens_pause,
+            ipc::trigger_supported,
+            ipc::capture_trigger,
+            ipc::cancel_trigger_capture,
             ipc::lens_controls,
             ipc::fit_lens,
             ipc::restore_lens,
@@ -265,12 +268,7 @@ pub fn build() -> Result<()> {
 
             // A hotkey another app already owns must not stop MoonLens
             // from starting; the others still register.
-            if let Err(e) = hotkey::register_all(
-                &handle,
-                settings.clone(),
-                pipeline.clone(),
-                subtitle.clone(),
-            ) {
+            if let Err(e) = hotkey::register_all(&handle, settings.clone()) {
                 tracing::warn!("{e}");
             }
             if let Err(e) = build_tray(&handle) {

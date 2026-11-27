@@ -1,0 +1,1 @@
+- Extra triggers (Windows): each shortcut action can also be run with a mouse button (middle / side buttons, with modifiers), a double tap of Ctrl / Alt / Shift, or a gamepad button combination (Settings > Shortcuts > Extra triggers). Input is only observed, never taken from the app in front, and no device is watched while no trigger is set.
