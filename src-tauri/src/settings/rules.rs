@@ -64,6 +64,10 @@ pub const RULES: Rules = Rules {
             note: "pre-release lens polling, replaced by region_watcher_poll_ms",
         },
         Removed {
+            path: "performance.cache_ttl_seconds",
+            note: "cached translations no longer expire; they are replaced when the engine setup or a glossary term changes",
+        },
+        Removed {
             path: "providers.user_tier",
             note: "pre-release translation router tier",
         },

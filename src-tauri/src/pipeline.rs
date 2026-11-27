@@ -23,13 +23,14 @@ use crate::{
         translate_llama::LlamaTranslator, translate_ollama::OllamaTranslator, Capability, Intent,
         OcrLine, ProviderError, ProviderHandle, TaskInput, TaskOutput, TranslateContext,
     },
+    scan_margin::Visible,
     settings::{
         schema::{FallbackCondition, TaskChain},
         SettingsStore,
     },
     storage::Storage,
     translate_plan,
-    translation_cache::{CachedTranslation, TranslationCache},
+    translation_cache::{self, CachedTranslation, DiskCache, Lookup, TranslationCache},
 };
 
 /// Outcome reported to the UI per task attempt. `used_provider`/`via_cloud`
@@ -84,7 +85,7 @@ pub struct Pipeline {
     /// overlay webview; unset in test builds that construct a pipeline
     /// directly.
     chunk_sink: RwLock<Option<ChunkSink>>,
-    /// Per-paragraph translations, so re-selected text shows instantly.
+    /// Per-paragraph translations, so text seen before shows instantly.
     cache: TranslationCache,
 }
 
@@ -131,10 +132,21 @@ fn png_dimensions(png: &[u8]) -> Option<(u32, u32)> {
     Some((w, h))
 }
 
+/// Least time a local explain / summarize request gets. The general
+/// model (about 5 GB) is loaded on the first request, not at launch, and
+/// the answer is free text whose length does not follow the input: the
+/// chain's 10 s ran out during the load itself.
+const LOCAL_ASSIST_MIN_MS: u64 = 180_000;
+
+/// Time a local explain / summarize request gets per prompt character
+/// (reading the prompt), on top of [`LOCAL_ASSIST_MIN_MS`].
+const LOCAL_ASSIST_MS_PER_CHAR: u64 = 40;
+
 /// Timeout for one provider call. Local translation scales with the
 /// text length (generation time grows with it), local OCR with the image
-/// area; everything else, and any cloud provider, keeps the chain's
-/// fixed timeout.
+/// area, local explain / summarize get the time a model load plus a free
+/// text answer needs; everything else, and any cloud provider, keeps the
+/// chain's fixed timeout.
 pub fn effective_timeout(chain_ms: u32, input: &TaskInput, is_local: bool) -> Duration {
     let floor = u64::from(chain_ms);
     let ms = match input {
@@ -147,6 +159,9 @@ pub fn effective_timeout(chain_ms: u32, input: &TaskInput, is_local: bool) -> Du
             }
             None => floor,
         },
+        TaskInput::Explain { prompt: text, .. } | TaskInput::Summarize { text } if is_local => {
+            floor.max(LOCAL_ASSIST_MIN_MS + text.chars().count() as u64 * LOCAL_ASSIST_MS_PER_CHAR)
+        }
         _ => floor,
     };
     Duration::from_millis(ms)
@@ -158,6 +173,13 @@ impl Pipeline {
         storage: Arc<Storage>,
         plugins: Arc<PluginRegistry>,
     ) -> Self {
+        let mut cache = TranslationCache::default();
+        if !storage.data_dir.as_os_str().is_empty() {
+            match DiskCache::open(storage.data_dir.join(DiskCache::FILE_NAME)) {
+                Ok(disk) => cache = cache.with_disk(disk),
+                Err(e) => tracing::warn!("translation cache stays in memory: {e:#}"),
+            }
+        }
         let me = Self {
             settings,
             storage,
@@ -165,7 +187,7 @@ impl Pipeline {
             providers: RwLock::new(HashMap::new()),
             sticky: RwLock::new(HashMap::new()),
             chunk_sink: RwLock::new(None),
-            cache: TranslationCache::default(),
+            cache,
         };
         me.rebuild_providers();
         me
@@ -190,6 +212,13 @@ impl Pipeline {
         }
     }
 
+    /// Replace the translation cache (tests: one that also writes to
+    /// disk).
+    pub fn with_translation_cache(mut self, cache: TranslationCache) -> Self {
+        self.cache = cache;
+        self
+    }
+
     /// Install a callback that every Ollama-style streaming provider
     /// will invoke per chunk. Re-runs provider discovery so existing
     /// provider instances see the new sink.
@@ -198,19 +227,78 @@ impl Pipeline {
         self.rebuild_providers();
     }
 
-    /// Forget cached translations (provider or settings changed).
-    pub fn clear_translation_cache(&self) {
-        self.cache.clear();
+    /// Delete cached translations, on disk too: those read from one app
+    /// (`Some("")` = text that belongs to no app), or all of them.
+    pub fn clear_translation_cache(&self, app: Option<&str>) -> anyhow::Result<usize> {
+        self.cache.clear(app)
+    }
+
+    /// Size of the translation cache on disk.
+    pub fn translation_cache_usage(&self) -> anyhow::Result<translation_cache::Usage> {
+        self.cache.usage()
+    }
+
+    /// What cached translations are checked against under the current
+    /// settings. Take one per capture.
+    fn cache_stamp(&self, bundle: &CaptureFlowResult) -> CacheStamp {
+        let s = self.settings.snapshot();
+        // What the translator is shown with the text shapes the result
+        // (who "he" is, which subject was left out): the same words after
+        // other lines are another cache entry.
+        let context = if bundle.earlier.is_empty() || !self.translator_takes_context() {
+            String::new()
+        } else {
+            translation_cache::fingerprint(
+                bundle
+                    .earlier
+                    .iter()
+                    .flat_map(|(source, translation)| [source.as_str(), translation.as_str()]),
+            )
+        };
+        // A translation plugin that was updated answers differently
+        // under the same id and config.
+        let plugins: Vec<(String, String)> = self
+            .plugins
+            .iter()
+            .flat_map(|p| p.list())
+            .filter(|p| p.enabled)
+            .map(|p| (p.id, p.version))
+            .collect();
+        CacheStamp {
+            engine: engine_fingerprint(&s, &plugins),
+            options: TranslateOptions::from_settings(&s.translation),
+            context,
+            persist: s.storage.keep_translation_cache,
+        }
+    }
+
+    /// Digest of everything outside the text that shapes a translation
+    /// for `app` into `target`: engine setup, style, the whole glossary.
+    /// Translations made under one epoch may be shown again without
+    /// asking the cache; after a change each paragraph goes through the
+    /// cache, which knows what the change touched.
+    pub fn translation_epoch(&self, app: Option<&str>, target: &str) -> String {
+        let s = self.settings.snapshot();
+        let plugins: Vec<(String, String)> = self
+            .plugins
+            .iter()
+            .flat_map(|p| p.list())
+            .filter(|p| p.enabled)
+            .map(|p| (p.id, p.version))
+            .collect();
+        let options = format!("{:?}", TranslateOptions::from_settings(&s.translation));
+        translation_cache::fingerprint([
+            engine_fingerprint(&s, &plugins).as_str(),
+            options.as_str(),
+            app.unwrap_or_default(),
+            target.trim().to_ascii_lowercase().as_str(),
+        ])
     }
 
     /// Rebuild the in-memory provider map from the current settings. Called
     /// on startup and whenever settings hot-reload.
     pub fn rebuild_providers(&self) {
-        // A different model or prompt must not be masked by old output.
-        self.clear_translation_cache();
         let s = self.settings.snapshot();
-        self.cache
-            .set_ttl_secs(u64::from(s.performance.cache_ttl_seconds));
         let mut map: HashMap<String, ProviderHandle> = HashMap::new();
         let empty = serde_json::Value::Object(Default::default());
         let sink = self.chunk_sink.read().clone();
@@ -306,21 +394,48 @@ impl Pipeline {
     /// multi-second load. Set `preload = false` in its config to skip.
     pub fn preload_local_llm(&self) {
         let s = self.settings.snapshot();
-        if !pick_chain(&s, Capability::Translate)
-            .chain
-            .iter()
-            .any(|id| id == LOCAL_LLM_ID)
-        {
+        let Some((path, cfg)) = local_llm(&s) else {
             return;
-        }
-        let empty = serde_json::Value::Object(Default::default());
-        let cfg = s.providers.configs.get(LOCAL_LLM_ID).unwrap_or(&empty);
+        };
         if cfg.get("preload").and_then(|v| v.as_bool()) == Some(false) {
             return;
         }
         let use_gpu = s.performance.use_gpu_if_available;
-        let p = LlamaTranslator::new(LOCAL_LLM_ID, cfg, use_gpu);
-        crate::providers::translate_llama::preload(p.model_path().to_path_buf(), use_gpu, cfg);
+        crate::providers::translate_llama::preload(path, use_gpu, &cfg);
+    }
+
+    /// The file of the built-in translation model when the translate
+    /// chain uses it.
+    pub fn local_llm_path(&self) -> Option<std::path::PathBuf> {
+        local_llm(&self.settings.snapshot()).map(|(path, _)| path)
+    }
+
+    /// Load what reading the screen needs (the translation model and
+    /// the first installed local text recogniser) in the background: both may
+    /// have been freed while unused (see [`crate::model_idle`]), and a
+    /// window that opens should not wait for them at its first reading.
+    pub fn preload_for_reading(&self) {
+        self.preload_local_llm();
+        let s = self.settings.snapshot();
+        let providers = self.providers.read();
+        // In chain order, as `run` falls through: the first local
+        // recogniser that loads is the one a reading will use.
+        let chain: Vec<ProviderHandle> = pick_chain(&s, Capability::Ocr)
+            .chain
+            .iter()
+            .filter_map(|id| providers.get(id))
+            .filter(|p| p.is_local())
+            .cloned()
+            .collect();
+        tauri::async_runtime::spawn(async move {
+            for p in chain {
+                match p.warm_up().await {
+                    Ok(()) => break,
+                    Err(ProviderError::NotInstalled(_)) => {}
+                    Err(e) => tracing::warn!("loading {} ahead of use failed: {e}", p.id()),
+                }
+            }
+        });
     }
 
     /// Run a task through the configured chain, respecting privacy gates,
@@ -445,28 +560,46 @@ impl Pipeline {
         &self,
         image_png: Vec<u8>,
     ) -> Result<CaptureFlowResult, ProviderError> {
-        Ok(self.analyze_capture_lines(image_png).await?.0)
+        self.analyze_capture_in(image_png, None).await
     }
 
-    /// [`Self::analyze_capture`], with the OCR lines the blocks were
-    /// built from (empty for a QR code). A caller that follows a region
-    /// keeps them: after a scroll it reads only the rows that came into
-    /// view ([`Self::read_lines`]) and lays out old and new lines
-    /// together ([`Self::lay_out`]).
+    /// [`Self::analyze_capture`] of a capture taken wider than the
+    /// translation window that shows it (see [`crate::scan_margin`]):
+    /// only rows the window shows are kept, and blocks come back in
+    /// window pixels, cut to the window.
+    pub async fn analyze_capture_in(
+        &self,
+        image_png: Vec<u8>,
+        visible: Option<Visible>,
+    ) -> Result<CaptureFlowResult, ProviderError> {
+        Ok(self.analyze_capture_lines(image_png, visible).await?.0)
+    }
+
+    /// [`Self::analyze_capture_in`], with every OCR line of the capture
+    /// (in capture pixels, the margin included; empty for a QR code).
+    /// A caller that follows a region keeps them: after a scroll it
+    /// reads only the rows that came into view ([`Self::read_lines`])
+    /// and lays out old and new lines together ([`Self::lay_out`]).
     pub async fn analyze_capture_lines(
         &self,
         image_png: Vec<u8>,
+        visible: Option<Visible>,
     ) -> Result<(CaptureFlowResult, Vec<OcrLine>), ProviderError> {
         let img =
             image::load_from_memory(&image_png).map_err(|e| ProviderError::Other(e.to_string()))?;
 
         // 1) Try QR — decoding is almost free and short-circuits the rest.
+        //    Only inside the window: a code in the scan margin belongs
+        //    to whatever lies next to it.
+        let qr_png = match visible.map(|v| v.crop(&img)) {
+            Some(Some(inside)) => crate::capture::png_bytes(&inside)
+                .map_err(|e| ProviderError::Other(e.to_string()))?,
+            _ => image_png.clone(),
+        };
         if let Ok(res) = self
             .run(
                 Capability::QrHandler,
-                TaskInput::IntentClassifier {
-                    image_png: image_png.clone(),
-                },
+                TaskInput::IntentClassifier { image_png: qr_png },
             )
             .await
         {
@@ -484,9 +617,12 @@ impl Pipeline {
                     result: res,
                     source_rect: None,
                     blocks: vec![],
-                    image_size: Some([img.width(), img.height()]),
+                    image_size: Some(visible.map_or([img.width(), img.height()], |v| [v.w, v.h])),
                     source_language: None,
                     target_language: None,
+                    app: None,
+                    earlier: Vec::new(),
+                    on_screen: Vec::new(),
                 };
                 return Ok((bundle, vec![]));
             }
@@ -495,7 +631,11 @@ impl Pipeline {
         // 2) OCR → layout → translate. Always attempted for text-like or
         //    unknown regions.
         let lines = self.read_lines(image_png).await?;
-        Ok((self.lay_out(&img, &lines), lines))
+        let bundle = match visible {
+            Some(v) => self.lay_out(&img, &v.keep_lines(lines.clone()), visible),
+            None => self.lay_out(&img, &lines, None),
+        };
+        Ok((bundle, lines))
     }
 
     /// Text recognition alone: the lines of a picture, positioned in its
@@ -545,10 +685,18 @@ impl Pipeline {
     }
 
     /// Paragraph blocks of OCR `lines` positioned in `img`, without
-    /// translations. Lines may lie outside the picture (rows a scroll
-    /// took out of view, kept so their paragraph stays whole): a
-    /// paragraph with no row left in the picture is dropped.
-    pub fn lay_out(&self, img: &image::DynamicImage, lines: &[OcrLine]) -> CaptureFlowResult {
+    /// translations. `lines` are the ones to show (of a capture wider
+    /// than its window: [`Visible::keep_lines`]). They may lie outside
+    /// the window or the picture (rows a scroll took out of view, kept
+    /// so their paragraph stays whole): a paragraph with no row left in
+    /// view is dropped. With `visible`, blocks come back in window
+    /// pixels.
+    pub fn lay_out(
+        &self,
+        img: &image::DynamicImage,
+        lines: &[OcrLine],
+        visible: Option<Visible>,
+    ) -> CaptureFlowResult {
         // Cheap heuristic classifier. A plugin-provided classifier can
         // override through the `intent_classifier` chain in future work.
         let stats = intent::image_stats(img);
@@ -562,14 +710,16 @@ impl Pipeline {
         );
         let mut text_blocks = layout::group_lines(lines);
         let height = img.height() as f32;
+        let (view_top, view_bottom) =
+            visible.map_or((0.0, height), |v| (v.y as f32, v.y as f32 + v.h as f32));
         text_blocks.retain(|b| {
             b.lines
                 .iter()
                 .chain(std::iter::once(&b.bbox).filter(|_| b.lines.is_empty()))
-                .any(|r| r[1] + r[3] / 2.0 >= 0.0 && r[1] + r[3] / 2.0 <= height)
+                .any(|r| r[1] + r[3] / 2.0 >= view_top && r[1] + r[3] / 2.0 <= view_bottom)
         });
         let ocr_text = layout::join_blocks(&text_blocks);
-        let image_size = Some([img.width(), img.height()]);
+        let image_size = Some(visible.map_or([img.width(), img.height()], |v| [v.w, v.h]));
 
         if ocr_text.trim().is_empty() {
             // Nothing text-like detected. Return the intent so the UI can
@@ -582,6 +732,9 @@ impl Pipeline {
                 image_size,
                 source_language: None,
                 target_language: None,
+                app: None,
+                earlier: Vec::new(),
+                on_screen: Vec::new(),
                 result: TaskResult {
                     task: "capture".into(),
                     output: TaskOutput::Intent(intent),
@@ -594,7 +747,7 @@ impl Pipeline {
         }
 
         let rgba = img.to_rgba8();
-        let blocks: Vec<LensBlock> = text_blocks
+        let mut blocks: Vec<LensBlock> = text_blocks
             .iter()
             .map(|b| {
                 // Colours and stroke weight are read from one row: the
@@ -639,6 +792,9 @@ impl Pipeline {
                 }
             })
             .collect();
+        if let Some(v) = visible {
+            v.to_window(&mut blocks);
+        }
 
         let mut bundle = CaptureFlowResult {
             intent: Intent::Text,
@@ -649,6 +805,9 @@ impl Pipeline {
             blocks,
             image_size,
             target_language: None,
+            app: None,
+            earlier: Vec::new(),
+            on_screen: Vec::new(),
             result: TaskResult {
                 task: "ocr".into(),
                 output: TaskOutput::Empty,
@@ -681,11 +840,31 @@ impl Pipeline {
     /// (see [`LensBlock::needs_request`]) go to the translator.
     pub fn prepare_translation(&self, bundle: &mut CaptureFlowResult, target: &str) {
         Self::mark_same_language(bundle, target);
-        for b in &mut bundle.blocks {
+        let scope = bundle.app.clone().unwrap_or_default();
+        let stamp = self.cache_stamp(bundle);
+        let CaptureFlowResult {
+            blocks, on_screen, ..
+        } = bundle;
+        for b in blocks {
             if b.same_language {
                 continue;
             }
-            if let Some(hit) = self.cache.get(target, &b.source) {
+            // Still on screen from the reading before: the same
+            // occurrence keeps its translation, whatever was read since.
+            if let Some((_, kept)) = on_screen.iter().find(|(s, _)| s.trim() == b.source.trim()) {
+                b.translation = Some(kept.clone());
+                b.from_cache = true;
+                continue;
+            }
+            let fingerprint = stamp.fingerprint(&b.source, target);
+            if let Some(hit) = self.cache.get(Lookup {
+                scope: &scope,
+                target,
+                source: &b.source,
+                context: &stamp.context,
+                fingerprint: &fingerprint,
+                persist: stamp.persist,
+            }) {
                 b.translation = Some(hit.text);
                 b.from_cache = true;
             }
@@ -756,28 +935,18 @@ impl Pipeline {
         progress: Option<&ProgressSink<'_>>,
         kind: &str,
     ) -> Result<(), ProviderError> {
-        self.translate_capture_after(bundle, target_language, progress, kind, &[])
-            .await
-    }
-
-    /// [`Self::translate_capture_as`] for a capture that continues
-    /// earlier ones (the next subtitle): `earlier` holds their source
-    /// and translation, oldest first, and is history of every request
-    /// to a translator that takes a [`TranslateContext`].
-    pub async fn translate_capture_after(
-        &self,
-        bundle: &mut CaptureFlowResult,
-        target_language: &str,
-        progress: Option<&ProgressSink<'_>>,
-        kind: &str,
-        earlier: &[(String, String)],
-    ) -> Result<(), ProviderError> {
         let s = self.settings.snapshot();
         self.prepare_translation(bundle, target_language);
         let pending: Vec<usize> = (0..bundle.blocks.len())
             .filter(|&i| bundle.blocks[i].needs_request())
             .collect();
         let target_language = target_language.to_string();
+        let scope = bundle.app.clone().unwrap_or_default();
+        let chosen = pick_chain(&s, Capability::Translate)
+            .chain
+            .into_iter()
+            .next();
+        let stamp = self.cache_stamp(bundle);
 
         if pending.is_empty() {
             // Everything is already readable or cached: no round-trip.
@@ -785,7 +954,17 @@ impl Pipeline {
                 .blocks
                 .iter()
                 .filter(|b| b.from_cache)
-                .filter_map(|b| self.cache.get(&target_language, &b.source))
+                .filter_map(|b| {
+                    let fingerprint = stamp.fingerprint(&b.source, &target_language);
+                    self.cache.get(Lookup {
+                        scope: &scope,
+                        target: &target_language,
+                        source: &b.source,
+                        context: &stamp.context,
+                        fingerprint: &fingerprint,
+                        persist: stamp.persist,
+                    })
+                })
                 .collect();
             let text = bundle
                 .blocks
@@ -838,7 +1017,7 @@ impl Pipeline {
 
         let started = Instant::now();
         let mut history: Vec<(String, String)> = if in_parts {
-            earlier.to_vec()
+            bundle.earlier.clone()
         } else {
             Vec::new()
         };
@@ -880,9 +1059,21 @@ impl Pipeline {
                 TaskOutput::Text(t) => t.clone(),
                 _ => String::new(),
             };
-            let (translations, joined): (Vec<Option<String>>, String) =
+            let (translations, joined): (Vec<Option<Answer>>, String) =
                 match layout::split_translation(&whole, idx.len()) {
-                    Some(parts) => (parts.into_iter().map(Some).collect(), whole.clone()),
+                    Some(parts) => (
+                        parts
+                            .into_iter()
+                            .map(|text| {
+                                Some(Answer {
+                                    text,
+                                    provider: translate.used_provider.clone(),
+                                    via_cloud: translate.via_cloud,
+                                })
+                            })
+                            .collect(),
+                        whole.clone(),
+                    ),
                     None if in_parts => {
                         // The translator merged or split paragraphs, so
                         // the per-block mapping is ambiguous. Translate
@@ -902,15 +1093,15 @@ impl Pipeline {
                                 })
                                 .await;
                             if let Some(t) = &t {
-                                ctx.history.push((src.clone(), t.clone()));
-                                bundle.blocks[bi].translation = Some(t.clone());
+                                ctx.history.push((src.clone(), t.text.clone()));
+                                bundle.blocks[bi].translation = Some(t.text.clone());
                             }
                             out.push(t);
                         }
                         let joined = out
                             .iter()
                             .flatten()
-                            .cloned()
+                            .map(|t| t.text.clone())
                             .collect::<Vec<_>>()
                             .join(layout::BLOCK_SEPARATOR);
                         (out, joined)
@@ -928,7 +1119,7 @@ impl Pipeline {
                                 context: TranslateContext::default(),
                             })
                             .collect();
-                        let out: Vec<Option<String>> = futures::stream::iter(inputs)
+                        let out: Vec<Option<Answer>> = futures::stream::iter(inputs)
                             .map(|input| self.translate_one(input))
                             .buffered(max)
                             .collect()
@@ -937,18 +1128,32 @@ impl Pipeline {
                     }
                 };
             for (&i, t) in idx.iter().zip(translations) {
-                if let Some(text) = &t {
+                if let Some(answer) = &t {
+                    let source = &bundle.blocks[i].source;
+                    let fingerprint = stamp.fingerprint(source, &target_language);
                     self.cache.put(
-                        &target_language,
-                        &bundle.blocks[i].source,
-                        CachedTranslation {
-                            text: text.clone(),
-                            provider: translate.used_provider.clone(),
-                            via_cloud: translate.via_cloud,
+                        Lookup {
+                            scope: &scope,
+                            target: &target_language,
+                            source,
+                            context: &stamp.context,
+                            fingerprint: &fingerprint,
+                            persist: stamp.persist,
                         },
+                        CachedTranslation {
+                            text: answer.text.clone(),
+                            provider: answer.provider.clone(),
+                            via_cloud: answer.via_cloud,
+                        },
+                        // A stand-in engine's answer is not kept past
+                        // the session: the chosen engine translates the
+                        // text once it works again. Judged per paragraph:
+                        // a retry of one block can be served by another
+                        // engine than the batch was.
+                        chosen.as_deref() == Some(answer.provider.as_str()),
                     );
                 }
-                bundle.blocks[i].translation = t;
+                bundle.blocks[i].translation = t.map(|a| a.text);
             }
             if !joined.trim().is_empty() {
                 outputs.push(joined.clone());
@@ -1028,12 +1233,18 @@ impl Pipeline {
         false
     }
 
-    async fn translate_one(&self, input: TaskInput) -> Option<String> {
+    async fn translate_one(&self, input: TaskInput) -> Option<Answer> {
         match self.run(Capability::Translate, input).await {
             Ok(TaskResult {
                 output: TaskOutput::Text(t),
+                used_provider,
+                via_cloud,
                 ..
-            }) => Some(t.trim().to_string()),
+            }) => Some(Answer {
+                text: t.trim().to_string(),
+                provider: used_provider,
+                via_cloud,
+            }),
             _ => None,
         }
     }
@@ -1083,6 +1294,8 @@ pub mod history_kind {
     pub const IMAGE: &str = "image";
     /// Decoded QR code.
     pub const QR: &str = "qr";
+    /// One live-subtitle run (音声翻訳), with its timed lines.
+    pub const SUBTITLE: &str = "subtitle";
 }
 
 /// Output of [`Pipeline::run_capture_flow`]. The frontend renders `result`
@@ -1110,6 +1323,26 @@ pub struct CaptureFlowResult {
     /// Language the blocks were (or will be) translated into.
     #[serde(default)]
     pub target_language: Option<String>,
+    /// Key of the app the capture was read from (a translation window
+    /// that follows an app's window), when there is one. Cached
+    /// translations are kept per app: the same label can mean different
+    /// things in two apps.
+    #[serde(skip)]
+    pub app: Option<String>,
+    /// Source and translation of the captures this one continues (the
+    /// subtitles before this one), oldest first. A translator that takes
+    /// a [`TranslateContext`] gets them as history of every request, and
+    /// a cached translation is used only when it was made after the same
+    /// lines: the same words after other lines can mean something else.
+    /// Empty: the capture stands alone.
+    #[serde(skip)]
+    pub earlier: Vec<(String, String)>,
+    /// Source and translation of blocks that were on screen, translated,
+    /// in the reading before this one. A block that is still there keeps
+    /// that translation instead of being translated again in the context
+    /// of what was read since.
+    #[serde(skip)]
+    pub on_screen: Vec<(String, String)>,
 }
 
 /// One paragraph of recognised text, positioned in the captured image.
@@ -1269,6 +1502,101 @@ fn upgrade_llm_chain(mut chain: TaskChain, local_id: &str) -> TaskChain {
     chain
 }
 
+/// The built-in translation model (file and provider config) when the
+/// translate chain uses it.
+fn local_llm(
+    s: &crate::settings::schema::Settings,
+) -> Option<(std::path::PathBuf, serde_json::Value)> {
+    if !pick_chain(s, Capability::Translate)
+        .chain
+        .iter()
+        .any(|id| id == LOCAL_LLM_ID)
+    {
+        return None;
+    }
+    let cfg = s
+        .providers
+        .configs
+        .get(LOCAL_LLM_ID)
+        .cloned()
+        .unwrap_or_else(|| serde_json::Value::Object(Default::default()));
+    let path = LlamaTranslator::new(LOCAL_LLM_ID, &cfg, s.performance.use_gpu_if_available)
+        .model_path()
+        .to_path_buf();
+    Some((path, cfg))
+}
+
+/// One paragraph's translation and the engine that made it.
+struct Answer {
+    text: String,
+    provider: String,
+    via_cloud: bool,
+}
+
+/// Everything that shapes a translation under one settings snapshot. A
+/// cached translation is used only while its fingerprint is unchanged,
+/// so a new model, prompt or glossary term is never masked by old
+/// output.
+struct CacheStamp {
+    engine: String,
+    options: TranslateOptions,
+    /// Digest of [`CaptureFlowResult::earlier`] as the translator sees
+    /// it; empty for a capture that stands alone.
+    context: String,
+    /// Settings → storage.keep_translation_cache.
+    persist: bool,
+}
+
+impl CacheStamp {
+    /// Digest for translating `source` into `target`: the engine setup,
+    /// the style and the glossary terms that occur in `source`. Editing
+    /// a term therefore re-translates only the paragraphs that hold it.
+    fn fingerprint(&self, source: &str, target: &str) -> String {
+        let signature = self.options.signature_for(source, target);
+        translation_cache::fingerprint(
+            std::iter::once(self.engine.as_str()).chain(signature.iter().map(String::as_str)),
+        )
+    }
+}
+
+/// Digest of the translation engine setup: this build (prompts and
+/// default models change between versions) and the translate chain with
+/// the config of every engine in it. `plugins`: id and version of the
+/// enabled plugins, for the engines that come from one.
+fn engine_fingerprint(
+    s: &crate::settings::schema::Settings,
+    plugins: &[(String, String)],
+) -> String {
+    let chain = pick_chain(s, Capability::Translate).chain;
+    let engines: Vec<String> = chain
+        .iter()
+        .flat_map(|id| {
+            let config = s
+                .providers
+                .configs
+                .get(id)
+                .map(|cfg| cfg.to_string())
+                .unwrap_or_default();
+            // Chain ids of plugin engines are `plugin.<id>.<capability>`.
+            // Plugin ids may hold dots, a capability does not: the id is
+            // everything before the last one.
+            let owner = id
+                .strip_prefix("plugin.")
+                .and_then(|rest| rest.rsplit_once('.'))
+                .map(|(plugin, _)| plugin);
+            let version = plugins
+                .iter()
+                .find(|(plugin, _)| owner == Some(plugin.as_str()))
+                .map(|(_, version)| version.clone())
+                .unwrap_or_default();
+            [id.clone(), config, version]
+        })
+        .collect();
+    translation_cache::fingerprint(
+        std::iter::once(env!("CARGO_PKG_VERSION")).chain(engines.iter().map(String::as_str)),
+    )
+}
+
 fn pick_chain(s: &crate::settings::schema::Settings, cap: Capability) -> TaskChain {
     match cap {
         Capability::Translate => upgrade_llm_chain(s.providers.translate.clone(), LOCAL_LLM_ID),
@@ -1372,4 +1700,44 @@ fn apply_stickiness(
         }
     }
     chain.to_vec()
+}
+
+#[cfg(test)]
+mod cache_stamp_tests {
+    use super::*;
+
+    #[test]
+    fn a_plugin_update_changes_the_engine_fingerprint() {
+        let mut s = crate::settings::schema::Settings::default();
+        s.providers.translate.chain = vec!["plugin.acme.translate".into()];
+        let at = |version: &str| engine_fingerprint(&s, &[("acme".into(), version.into())]);
+        assert_ne!(at("1.0.0"), at("1.0.1"));
+        assert_eq!(at("1.0.0"), at("1.0.0"));
+        // A plugin that is not in the chain does not matter.
+        let other = engine_fingerprint(
+            &s,
+            &[
+                ("acme".into(), "1.0.0".into()),
+                ("acme2".into(), "9".into()),
+            ],
+        );
+        assert_eq!(other, at("1.0.0"));
+    }
+
+    #[test]
+    fn a_plugin_whose_id_starts_with_another_id_has_its_own_version() {
+        let mut s = crate::settings::schema::Settings::default();
+        s.providers.translate.chain = vec!["plugin.com.acme.tool.extra.translate".into()];
+        let at = |tool: &str, extra: &str| {
+            engine_fingerprint(
+                &s,
+                &[
+                    ("com.acme.tool".into(), tool.into()),
+                    ("com.acme.tool.extra".into(), extra.into()),
+                ],
+            )
+        };
+        assert_ne!(at("1", "1"), at("1", "2"));
+        assert_eq!(at("1", "1"), at("2", "1"));
+    }
 }

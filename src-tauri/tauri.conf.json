@@ -39,22 +39,6 @@
         "focus": false,
         "visible": false,
         "url": "/overlay"
-      },
-      {
-        "label": "subtitle",
-        "title": "MoonLens 音声翻訳",
-        "width": 900,
-        "height": 190,
-        "minWidth": 220,
-        "minHeight": 96,
-        "decorations": false,
-        "transparent": true,
-        "alwaysOnTop": true,
-        "skipTaskbar": true,
-        "resizable": true,
-        "focus": false,
-        "visible": false,
-        "url": "/subtitle"
       }
     ],
     "security": {

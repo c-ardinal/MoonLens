@@ -9,6 +9,7 @@
     Eye,
     EyeOff,
     Languages,
+    Magnet,
     Maximize2,
     Minimize2,
     MousePointerBan,
@@ -16,6 +17,7 @@
     Plus,
     Radio,
     RefreshCw,
+    ScanText,
     TextSelect,
     X
   } from 'lucide-svelte';
@@ -39,6 +41,9 @@
     maximized = false,
     operate = false,
     operateKey = '',
+    attachedTo = '',
+    attachOpen = false,
+    fit = 'idle',
     menuOpen = $bindable(false),
     lead,
     oncontinuous,
@@ -49,8 +54,10 @@
     oncopy,
     ontext,
     onexplain,
+    onfit,
     onmaximize,
     onoperate,
+    onattach,
     onadd,
     onclose
   }: {
@@ -69,6 +76,12 @@
     operate?: boolean;
     /** 操作モード切替のショートカット表記（title へ併記）。 */
     operateKey?: string;
+    /** 吸着先（他アプリのウィンドウ）の名称。空文字：吸着なし。 */
+    attachedTo?: string;
+    /** 吸着メニューの表示中。 */
+    attachOpen?: boolean;
+    /** 字幕領域への自動整形の状態（未実行・観測中・整形済）。 */
+    fit?: 'idle' | 'observing' | 'fitted';
     /** 縦メニューの表示中（表示中はウィンドウ本体でのマウス操作の受付が必要）。 */
     menuOpen?: boolean;
     /** 見出し（ウィンドウ追加ボタンの右隣）。 */
@@ -81,8 +94,11 @@
     oncopy: () => void;
     ontext: () => void;
     onexplain: () => void;
+    onfit: () => void;
     onmaximize: () => void;
     onoperate: () => void;
+    /** 吸着メニューの開閉。 */
+    onattach: () => void;
     onadd: () => void;
     onclose: () => void;
   } = $props();
@@ -121,6 +137,16 @@
         (operateKey ? ` (${operateKey})` : ''),
       pressed: operate,
       run: onoperate
+    },
+    {
+      key: 'attach',
+      icon: Magnet,
+      label: '吸着',
+      title: attachedTo
+        ? `吸着中：${attachedTo}（移動・サイズ変更へ追従）`
+        : '吸着：他アプリのウィンドウへ追従',
+      pressed: !!attachedTo || attachOpen,
+      run: onattach
     },
     {
       key: 'refresh',
@@ -166,6 +192,19 @@
       title: 'テキスト表示',
       pressed: showText,
       run: ontext
+    },
+    {
+      key: 'fit',
+      icon: ScanText,
+      label: fit === 'observing' ? '観測中止' : fit === 'fitted' ? '整形前へ復元' : '字幕領域へ整形',
+      title:
+        fit === 'observing'
+          ? '字幕領域を観測中（クリックで中止）'
+          : fit === 'fitted'
+            ? '整形前の位置・サイズへ復元'
+            : '字幕領域へ整形：文字の出現範囲を観測し、ウィンドウを自動整形',
+      pressed: fit === 'observing',
+      run: onfit
     },
     {
       key: 'explain',
@@ -259,6 +298,7 @@
         class="tb"
         class:off={i >= shown}
         data-item
+        data-action={a.key}
         aria-pressed={a.pressed}
         disabled={a.disabled}
         onclick={() => run(a, false)}
@@ -295,6 +335,7 @@
       {:else}
         <button
           class="mi"
+          data-action={a.key}
           role={a.pressed === undefined ? 'menuitem' : 'menuitemcheckbox'}
           aria-checked={a.pressed}
           disabled={a.disabled}

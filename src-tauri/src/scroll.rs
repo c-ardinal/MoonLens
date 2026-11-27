@@ -25,7 +25,7 @@ use std::collections::HashMap;
 
 use image::{DynamicImage, GrayImage};
 
-use crate::providers::OcrLine;
+use crate::{providers::OcrLine, scan_margin::Visible};
 
 /// `[x, y, w, h]` in picture pixels. `y` may lie outside the picture.
 pub type Rect = [f32; 4];
@@ -100,6 +100,10 @@ struct Known {
     line: OcrLine,
     /// Read at an edge of the picture: maybe only part of the line.
     cut: bool,
+    /// The window showed it, now or before a scroll took it out of
+    /// view. Lines read in the margin around the window only wait
+    /// here until a scroll brings them in.
+    shown: bool,
 }
 
 /// Picture and lines of the last reading of a region.
@@ -107,6 +111,9 @@ struct Known {
 pub struct Memory {
     picture: Option<GrayImage>,
     lines: Vec<Known>,
+    /// The window inside the picture (a capture wider than the window,
+    /// see [`crate::scan_margin`]). `None`: the picture is the window.
+    window: Option<Visible>,
 }
 
 impl Memory {
@@ -115,24 +122,32 @@ impl Memory {
         *self = Self::default();
     }
 
-    /// The whole of `image` was read and gave `lines`.
-    pub fn remember(&mut self, image: &DynamicImage, lines: &[OcrLine]) {
+    /// The whole of `image` was read and gave `lines`. `window`: the
+    /// part of `image` the translation window shows.
+    pub fn remember(&mut self, image: &DynamicImage, lines: &[OcrLine], window: Option<Visible>) {
         let picture = image.to_luma8();
         let height = picture.height();
         self.lines = lines
             .iter()
             .map(|line| Known {
                 cut: at_edge(line.bbox, 0, height),
+                shown: shows(window, line.bbox),
                 line: line.clone(),
             })
             .collect();
         self.picture = Some(picture);
+        self.window = window;
     }
 
-    /// All known lines, positioned in the last picture. Lines that left
-    /// it are included (their `y` lies outside).
+    /// The known lines to show, positioned in the last picture: the
+    /// ones in the window, and the ones a scroll took out of it (their
+    /// `y` lies outside).
     pub fn lines(&self) -> Vec<OcrLine> {
-        self.lines.iter().map(|k| k.line.clone()).collect()
+        self.lines
+            .iter()
+            .filter(|k| k.shown)
+            .map(|k| k.line.clone())
+            .collect()
     }
 
     /// Whether `image` is the remembered picture scrolled. If so the
@@ -195,6 +210,7 @@ impl Memory {
                                 ..known.line.clone()
                             },
                             cut: false,
+                            shown: known.shown || shows(self.window, moved),
                         });
                     }
                 }
@@ -242,10 +258,17 @@ impl Memory {
             }
             self.lines.push(Known {
                 cut: at_edge(line.bbox, top, bottom) || at_edge(line.bbox, 0, height),
+                shown: shows(self.window, line.bbox),
                 line,
             });
         }
     }
+}
+
+/// Whether `window` shows the line at `rect` (see
+/// [`Visible::keep_lines`]).
+fn shows(window: Option<Visible>, rect: Rect) -> bool {
+    window.is_none_or(|w| rect[2] <= 0.0 || rect[3] <= 0.0 || w.shows(rect))
 }
 
 /// `rect` moved down by `dy`.
@@ -572,7 +595,7 @@ mod tests {
     fn a_scroll_is_measured_and_only_the_new_rows_are_left_to_read() {
         let page = page(30);
         let mut memory = Memory::default();
-        memory.remember(&view(&page, 400), &lines_in(400, 30));
+        memory.remember(&view(&page, 400), &lines_in(400, 30), None);
         // Lines 10..=16 are in view (rows 410..690). Scroll down 100.
         let step = memory.follow(&view(&page, 500), &[]).unwrap();
         assert_eq!(step.dy, -100);
@@ -594,7 +617,7 @@ mod tests {
     fn scrolling_up_reads_the_rows_at_the_top() {
         let page = page(30);
         let mut memory = Memory::default();
-        memory.remember(&view(&page, 400), &lines_in(400, 30));
+        memory.remember(&view(&page, 400), &lines_in(400, 30), None);
         let step = memory.follow(&view(&page, 340), &[]).unwrap();
         assert_eq!(step.dy, 60);
         let (top, bottom) = step.read.unwrap();
@@ -606,7 +629,7 @@ mod tests {
     fn new_lines_join_the_known_ones_and_a_cut_line_is_not_read_twice() {
         let page = page(30);
         let mut memory = Memory::default();
-        memory.remember(&view(&page, 400), &lines_in(400, 30));
+        memory.remember(&view(&page, 400), &lines_in(400, 30), None);
         let step = memory.follow(&view(&page, 500), &[]).unwrap();
         let (top, bottom) = step.read.unwrap();
         // Line 17 showed its upper half before (rows 190..200 now): the
@@ -650,7 +673,7 @@ mod tests {
             bbox: [20.0, 290.0, 320.0, 10.0],
             confidence: 1.0,
         });
-        memory.remember(&view(&page, 400), &lines);
+        memory.remember(&view(&page, 400), &lines, None);
         let step = memory.follow(&view(&page, 440), &[]).unwrap();
         assert!(!texts(&memory).contains(&"upper half".to_string()));
         let (top, _) = step.read.unwrap();
@@ -681,7 +704,7 @@ mod tests {
             .collect();
         lines.push(header.clone());
         let mut memory = Memory::default();
-        memory.remember(&with_header(400), &lines);
+        memory.remember(&with_header(400), &lines, None);
         let step = memory
             .follow(
                 &with_header(460),
@@ -716,7 +739,7 @@ mod tests {
             DynamicImage::ImageLuma8(img)
         };
         let mut memory = Memory::default();
-        memory.remember(&with_bar(400, 100), &lines_in(400, 30));
+        memory.remember(&with_bar(400, 100), &lines_in(400, 30), None);
         let step = memory.follow(&with_bar(480, 120), &[]).unwrap();
         assert_eq!(step.dy, -80);
         assert!(texts(&memory).contains(&"line 14".to_string()));
@@ -726,7 +749,7 @@ mod tests {
     fn other_text_at_the_same_place_is_not_a_scroll() {
         let (a, b) = (page(30), page(60));
         let mut memory = Memory::default();
-        memory.remember(&view(&a, 400), &lines_in(400, 30));
+        memory.remember(&view(&a, 400), &lines_in(400, 30), None);
         // Rows 1600.. of another page: other strokes on the same rows.
         assert_eq!(memory.follow(&view(&b, 1600), &[]), None);
         // Nothing was given up: the memory still holds the reading.
@@ -737,7 +760,7 @@ mod tests {
     fn a_scroll_with_a_change_in_the_kept_part_is_read_in_full() {
         let page = page(30);
         let mut memory = Memory::default();
-        memory.remember(&view(&page, 400), &lines_in(400, 30));
+        memory.remember(&view(&page, 400), &lines_in(400, 30), None);
         // Line 13 (rows 530..550 of the page) is overwritten while the
         // page scrolls by 40.
         let mut changed = page.clone();
@@ -753,7 +776,7 @@ mod tests {
     fn an_unchanged_picture_is_no_scroll() {
         let page = page(30);
         let mut memory = Memory::default();
-        memory.remember(&view(&page, 400), &lines_in(400, 30));
+        memory.remember(&view(&page, 400), &lines_in(400, 30), None);
         assert_eq!(memory.follow(&view(&page, 400), &[]), None);
     }
 
@@ -761,7 +784,7 @@ mod tests {
     fn a_line_that_comes_back_into_view_is_read_again() {
         let page = page(30);
         let mut memory = Memory::default();
-        memory.remember(&view(&page, 400), &lines_in(400, 30));
+        memory.remember(&view(&page, 400), &lines_in(400, 30), None);
         memory.follow(&view(&page, 500), &[]).unwrap();
         assert!(texts(&memory).contains(&"line 10".to_string()));
         // Back up: line 10 is in view again, but its rows were not

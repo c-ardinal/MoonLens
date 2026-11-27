@@ -35,9 +35,11 @@
   import DataLocations from '$lib/components/DataLocations.svelte';
   import Plugins from '$lib/components/Plugins.svelte';
   import GlossaryEditor from '$lib/components/GlossaryEditor.svelte';
+  import PhraseList from '$lib/components/PhraseList.svelte';
   import { createRemovalLog, isBlankEntry, type GlossaryEntry } from '$lib/glossary';
   import { close as closeToast, undoable } from '$lib/toast.svelte';
   import InferenceDevice from '$lib/components/InferenceDevice.svelte';
+  import TranslationCacheUsage from '$lib/components/TranslationCacheUsage.svelte';
   import { replay, wheelStep, type Effect } from '$lib/pixel/transition';
 
   /** The selector remembers the language last picked in its toolbar. */
@@ -385,6 +387,13 @@
                     onChange={(v) => update(field.path, v)}
                     onRemove={(i) => removeGlossaryRow(field.path, i)}
                   />
+                {:else if field.kind === 'phrases'}
+                  <PhraseList
+                    label={field.label}
+                    placeholder={field.placeholder}
+                    value={getPath(draft, field.path)}
+                    onChange={(v) => update(field.path, v)}
+                  />
                 {:else}
                   <SettingField
                     {field}
@@ -396,6 +405,9 @@
                   />
                 {/if}
               </SettingRow>
+              {#if field.path === 'storage.keep_translation_cache'}
+                <TranslationCacheUsage />
+              {/if}
               {#if field.path === 'performance.use_gpu_if_available'}
                 <SettingRow id="info:inference-device" help={DEVICE_HELP}>
                   <InferenceDevice useGpu={!!getPath(draft, field.path)} />

@@ -251,7 +251,8 @@ pub fn build_job_with(
     }
 }
 
-/// PLaMo uses plain ISO codes; Chinese scripts are `zh` / `zh-tw`.
+/// PLaMo uses plain ISO codes; Chinese scripts are `zh` / `zh-tw`, and
+/// easy Japanese is `ja-easy` (the model's chat template names it).
 fn pfml3_lang(code: &str) -> String {
     let c = code.trim().to_ascii_lowercase().replace('_', "-");
     match c.as_str() {
@@ -495,6 +496,30 @@ pub fn preload(path: PathBuf, use_gpu: bool, cfg: &serde_json::Value) {
     let _ = (path, use_gpu, cfg);
 }
 
+/// Count `path` as used now, so [`unload_idle`] keeps it: for a model
+/// that is waiting for work (an open translation window) rather than
+/// running.
+pub fn touch(path: &Path) {
+    #[cfg(feature = "local-llm")]
+    engine::touch(path);
+    #[cfg(not(feature = "local-llm"))]
+    let _ = path;
+}
+
+/// Free every loaded model not used for `limit` and not running now.
+/// Returns the files freed; the next request loads them again.
+pub fn unload_idle(limit: std::time::Duration) -> Vec<PathBuf> {
+    #[cfg(feature = "local-llm")]
+    {
+        engine::unload_idle(limit)
+    }
+    #[cfg(not(feature = "local-llm"))]
+    {
+        let _ = limit;
+        Vec::new()
+    }
+}
+
 /// Drop the cached model if it is `path` (before deleting the file).
 pub fn unload(path: &Path) {
     #[cfg(feature = "local-llm")]
@@ -696,6 +721,35 @@ mod engine {
         }
     }
 
+    pub fn touch(path: &Path) {
+        if let Some(e) = cache().lock().iter_mut().find(|e| e.0 == path) {
+            e.2 = Instant::now();
+        }
+    }
+
+    pub fn unload_idle(limit: std::time::Duration) -> Vec<PathBuf> {
+        let mut freed = Vec::new();
+        {
+            let mut c = cache().lock();
+            let mut i = 0;
+            while i < c.len() {
+                // A cell somebody else holds is loading or generating.
+                let unused = Arc::strong_count(&c[i].1) == 1 && c[i].2.elapsed() >= limit;
+                if unused {
+                    freed.push(c.remove(i));
+                } else {
+                    i += 1;
+                }
+            }
+        }
+        // The weights go with the cells, outside the cache lock.
+        freed
+            .into_iter()
+            .filter(|(_, cell, _)| cell.lock().is_some())
+            .map(|(path, _, _)| path)
+            .collect()
+    }
+
     fn thread_count(requested: u32) -> i32 {
         if requested > 0 {
             return requested as i32;
@@ -732,6 +786,8 @@ mod engine {
             return Ok(String::new());
         }
         let res = run_session(loaded, params, &tokens, sink, cancel);
+        // Idle time counts from the end of the work, not its start.
+        touch(path);
         if res.is_err() {
             // The KV state may be half-written; start clean next time.
             loaded.session = None;
@@ -929,6 +985,45 @@ mod engine {
             .map(|d| d.subsec_nanos())
             .unwrap_or(0)
     }
+
+    #[cfg(test)]
+    mod idle_tests {
+        use super::*;
+        use std::time::Duration;
+
+        fn is_cached(path: &Path) -> bool {
+            cache().lock().iter().any(|e| e.0 == path)
+        }
+
+        #[test]
+        fn only_models_unused_for_the_limit_and_not_running_are_freed() {
+            let running = PathBuf::from("idle-test-running.gguf");
+            let unused = PathBuf::from("idle-test-unused.gguf");
+            let held = cell_for(&running);
+            drop(cell_for(&unused));
+            std::thread::sleep(Duration::from_millis(30));
+
+            // Recently used: both stay.
+            unload_idle(Duration::from_secs(60));
+            assert!(is_cached(&running) && is_cached(&unused));
+
+            // Past the limit: the one a request still holds stays.
+            unload_idle(Duration::from_millis(10));
+            assert!(is_cached(&running), "freed while a request held it");
+            assert!(!is_cached(&unused), "kept although unused");
+
+            // Waiting for work counts as use.
+            drop(held);
+            std::thread::sleep(Duration::from_millis(30));
+            touch(&running);
+            unload_idle(Duration::from_millis(20));
+            assert!(is_cached(&running), "freed right after touch");
+
+            std::thread::sleep(Duration::from_millis(30));
+            unload_idle(Duration::from_millis(20));
+            assert!(!is_cached(&running));
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1020,6 +1115,21 @@ mod tests {
         let o = opts(JaStyle::Polite, &[("管理画面", "dashboard")]);
         let job = build_job_with(PromptStyle::Pfml3, tr("会議は来週です。", "auto", "en"), &o);
         assert_eq!(rendered(job.unwrap()), plain);
+    }
+
+    #[test]
+    fn pfml3_easy_japanese_keeps_its_code_and_the_glossary() {
+        use crate::settings::schema::JaStyle;
+        let o = opts(JaStyle::Plain, &[("dashboard", "管理画面")]);
+        let job = build_job_with(
+            PromptStyle::Pfml3,
+            tr("Open the dashboard.", "auto", "ja-easy"),
+            &o,
+        );
+        let p = rendered(job.unwrap());
+        assert!(p.contains("<|plamo:index|>dashboard<|plamo:item|>管理画面"));
+        // No style attribute: the model writes easy Japanese politely.
+        assert!(p.ends_with("<|plamo:key|>lang<|plamo:val|>ja-easy<|plamo:msg|>"));
     }
 
     #[test]
@@ -1298,6 +1408,46 @@ mod tests {
             for (_, want) in g {
                 assert!(s.to_lowercase().contains(&want.to_lowercase()), "{s}");
             }
+        }
+    }
+
+    /// Easy Japanese against a real PLaMo 3 Translate GGUF:
+    /// `MOONLENS_TEST_GGUF=… cargo test --lib local_model_writes_easy_japanese
+    ///  -- --ignored --nocapture`
+    #[cfg(feature = "local-llm")]
+    #[tokio::test]
+    #[ignore]
+    async fn local_model_writes_easy_japanese() {
+        let Ok(path) = std::env::var("MOONLENS_TEST_GGUF") else {
+            return;
+        };
+        let p = LlamaTranslator::new(
+            "llamacpp",
+            &serde_json::json!({"model_path": path, "prompt_style": "pfml3"}),
+            false,
+        );
+        // (source, a hard word the ordinary translation keeps)
+        for (text, hard) in [
+            (
+                "Residents near the coast are urged to evacuate to higher ground immediately.",
+                "高台",
+            ),
+            (
+                "恐れ入りますが、本日中に必要書類をご提出いただけますよう、何卒よろしくお願い申し上げます。",
+                "何卒",
+            ),
+        ] {
+            let mut out = Vec::new();
+            for tgt in ["ja", "ja-easy"] {
+                let TaskOutput::Text(s) = p.run(tr(text, "auto", tgt)).await.unwrap() else {
+                    panic!()
+                };
+                eprintln!("{tgt}: {text:?} -> {s:?}");
+                out.push(s);
+            }
+            assert!(out[0].contains(hard), "{}", out[0]);
+            assert!(!out[1].contains(hard), "{}", out[1]);
+            assert!(crate::lang::detect(&out[1]) == Some("ja"), "{}", out[1]);
         }
     }
 }

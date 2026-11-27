@@ -80,6 +80,7 @@ impl Run {
             target_language: self.target,
             mode: ReadMode::default(),
             history_kind: "lens",
+            app: None,
             emit: &emit,
             geometry_now: &geometry_now,
         };
@@ -87,7 +88,15 @@ impl Run {
         let t = Instant::now();
         let tick = self
             .tracker
-            .tick(Frame { image, geometry }, false, &env)
+            .tick(
+                Frame {
+                    image,
+                    geometry,
+                    visible: None,
+                },
+                false,
+                &env,
+            )
             .await
             .unwrap_or_else(|e| panic!("{step}: {e}"));
         let ms = t.elapsed().as_millis();
@@ -136,6 +145,7 @@ impl Run {
             target_language: "ja",
             mode: ReadMode::default(),
             history_kind: "lens",
+            app: None,
             emit: &emit,
             geometry_now: &geometry_now,
         };

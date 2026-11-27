@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { ChevronDown, X } from 'lucide-svelte';
+  import { ChevronDown, RotateCw, X } from 'lucide-svelte';
   import { TEXT_PLACEMENTS, parsePlacement, type TextPlacement, type TextView } from '$lib/lens-text';
 
   /**
@@ -9,12 +9,15 @@
     view,
     drag = false,
     onplacement,
+    onexplain,
     onclose
   }: {
     view: TextView;
     /** 見出しのドラッグでウィンドウを移動（ウィンドウ外の自由配置）。 */
     drag?: boolean;
     onplacement: (p: TextPlacement) => void;
+    /** 内容説明の再試行。 */
+    onexplain: () => void;
     onclose: () => void;
   } = $props();
 
@@ -43,23 +46,42 @@
     <button class="close" onclick={onclose} title="閉じる"><X class="h-3.5 w-3.5" /></button>
   </header>
   <div class="content">
-    {#if view.explanation}
-      <section class="explain">{view.explanation}</section>
-    {/if}
-    {#if view.blocks.length > 0}
+    {#if view.mode === 'paused'}
+      <p class="none">一時停止中</p>
+    {:else if view.mode === 'original'}
       {#each view.blocks as b, i (i)}
-        {#if b.same_language}
-          <p class="para">{b.source}</p>
-        {:else}
-          <p class="para tight">{b.translation ?? '（翻訳中）'}</p>
-          <p class="para src">{b.source}</p>
-        {/if}
+        <p class="para">{b.source}</p>
+      {:else}
+        <p class="para">{view.source ?? ''}</p>
       {/each}
-    {:else if hasText}
-      <p class="para tight">{view.translation}</p>
-      {#if view.source}<p class="para src">{view.source}</p>{/if}
     {:else}
-      <p class="none">文字なし</p>
+      {#if view.explanation?.status === 'pending'}
+        <section class="explain" role="status">説明を生成中…</section>
+      {:else if view.explanation?.status === 'done'}
+        <section class="explain">{view.explanation.text}</section>
+      {:else if view.explanation?.status === 'failed'}
+        <section class="explain failed" role="alert">
+          <span>説明の生成に失敗：{view.explanation.message}</span>
+          <button class="retry" onclick={onexplain}>
+            <RotateCw class="h-3 w-3" />再試行
+          </button>
+        </section>
+      {/if}
+      {#if view.blocks.length > 0}
+        {#each view.blocks as b, i (i)}
+          {#if b.same_language}
+            <p class="para">{b.source}</p>
+          {:else}
+            <p class="para tight">{b.translation ?? '（翻訳中）'}</p>
+            <p class="para src">{b.source}</p>
+          {/if}
+        {/each}
+      {:else if hasText}
+        <p class="para tight">{view.translation}</p>
+        {#if view.source}<p class="para src">{view.source}</p>{/if}
+      {:else}
+        <p class="none">文字なし</p>
+      {/if}
     {/if}
   </div>
 </div>
@@ -145,6 +167,26 @@
     padding: 8px;
     white-space: pre-wrap;
     background: rgba(255, 255, 255, 0.05);
+  }
+  .explain.failed {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+  }
+  .retry {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    border-radius: 6px;
+    padding: 2px 8px;
+    font-size: 12px;
+    white-space: nowrap;
+  }
+  .retry:hover {
+    background: rgba(255, 255, 255, 0.12);
   }
   .para {
     margin: 0 0 12px;

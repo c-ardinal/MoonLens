@@ -1,0 +1,1 @@
+- Window translation: translations of a window that hangs over a monitor edge are drawn at the right place.

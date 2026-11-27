@@ -1,0 +1,1 @@
+- New setting to start MoonLens when you log in to the OS (Settings > System > Startup, off by default). It starts in the tray without opening the main window. It needs no installer and no administrator rights. If you move the program folder, the next manual start updates the login entry.

@@ -18,6 +18,7 @@ use moonlens_lib::{
         Capability, OcrLine, Provider, ProviderError, ProviderHandle, TaskInput, TaskOutput,
     },
     region_watcher::{Frame, Geometry, LiveEvent, Tick, TickEnv, Tracker},
+    scan_margin::Visible,
     settings::{
         schema::{Settings, TaskChain},
         SettingsStore,
@@ -60,10 +61,6 @@ fn page(lines: u32) -> GrayImage {
         }
     }
     img
-}
-
-fn view(page: &GrayImage, top: u32) -> DynamicImage {
-    DynamicImage::ImageLuma8(image::imageops::crop_imm(page, 0, top, W, H).to_image())
 }
 
 /// Reads the lines of [`page`] in whatever part of it the picture
@@ -159,6 +156,8 @@ struct Run {
     fail_next: Arc<Mutex<bool>>,
     requests: Arc<Mutex<Vec<String>>>,
     events: Arc<Mutex<Vec<LiveEvent>>>,
+    /// Rows read above and below the region (the scan margin).
+    margin: u32,
 }
 
 impl Run {
@@ -204,6 +203,7 @@ impl Run {
             fail_next,
             requests,
             events: Arc::default(),
+            margin: 0,
         }
     }
 
@@ -217,13 +217,23 @@ impl Run {
             pipeline: &self.pipeline,
             target_language: "ja",
             mode: Default::default(),
+            app: None,
             history_kind: "lens",
             emit: &emit,
             geometry_now: &geometry_now,
         };
+        let m = self.margin;
         let frame = Frame {
-            image: view(&self.page, top),
+            image: DynamicImage::ImageLuma8(
+                image::imageops::crop_imm(&self.page, 0, top - m, W, H + 2 * m).to_image(),
+            ),
             geometry: GEOMETRY,
+            visible: Some(Visible {
+                x: 0,
+                y: m as i32,
+                w: W,
+                h: H,
+            }),
         };
         self.tracker.tick(frame, false, &env).await
     }
@@ -414,6 +424,38 @@ async fn rows_that_could_not_be_read_are_read_again_once_the_scroll_stops() {
     assert_eq!(run.tick(60).await, Ok(Tick::Settling));
     assert_eq!(run.heights.lock().last(), Some(&H));
     assert!(matches!(run.tick(60).await, Ok(Tick::Translated { .. })));
+}
+
+#[tokio::test]
+async fn rows_read_in_the_margin_are_shown_once_a_scroll_brings_them_in() {
+    let mut run = Run::new();
+    run.margin = 32;
+    assert_eq!(run.tick(120).await, Ok(Tick::Settling));
+    // w11 lies below the region, in the margin: read, not shown.
+    let tick = run.tick(120).await.unwrap();
+    assert!(
+        matches!(&tick, Tick::Translated { source, .. }
+            if source == "w3 w4 w5\n\nw6 w7 w8\n\nw9 w10"),
+        "{tick:?}"
+    );
+    assert_eq!(run.tick(160).await, Ok(Tick::Settling));
+    // Only the rows that came into the capture were read.
+    let read = *run.heights.lock().last().unwrap();
+    assert!(read < (H + 64) / 2, "{read} rows read");
+    let (blocks, _) = run.shown();
+    // Places are the region's: the capture begins 32 rows above it.
+    assert_eq!(
+        find(&blocks, "w6 w7 w8").bbox[1],
+        (line_top(6) - 160) as f32
+    );
+    // w3 left the region and stays part of its paragraph; w11 came in.
+    let tick = run.tick(160).await.unwrap();
+    assert!(
+        matches!(&tick, Tick::Translated { source, .. }
+            if source == "w3 w4 w5\n\nw6 w7 w8\n\nw9 w10 w11"),
+        "{tick:?}"
+    );
+    assert_eq!(run.requests.lock()[1..], ["w9 w10 w11".to_string()]);
 }
 
 #[tokio::test]

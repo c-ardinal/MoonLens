@@ -18,6 +18,16 @@
 //!    for every chunk, so the English that follows the Japanese must come
 //!    out as English again (it used to be decoded as Japanese).
 //!
+//! 4. `each_window_hears_only_its_application` (Windows): two processes
+//!    play at the same time, one English and one Japanese speech. Two
+//!    captures, one per process, run their own subtitle loops, as two
+//!    subtitle windows do: each must recognize its own application only.
+//!
+//! 5. `sentence_cut_by_chunks_is_translated_again`: the recording is one
+//!    sentence spread over four chunks. Once it ends, the window must be
+//!    told to replace the chunk lines with the sentence translated as a
+//!    whole.
+//!
 //! `#[ignore]` because all need the downloaded models (about 2 GB):
 //!
 //! ```sh
@@ -75,9 +85,16 @@ async fn setup() -> Env {
     let config = tmp.path().join("config.toml");
     // A CI runner has no GPU and few cores: a chunk takes 20-45 s there
     // (one second or less on a GPU), close to the default limit of 60 s.
-    std::fs::write(&config, "[providers.asr]\ntimeout_ms = 180000\n").unwrap();
+    // With two windows, a translation shares those cores with the other
+    // window's recognition and passes its default limit of 15 s.
+    std::fs::write(
+        &config,
+        "[providers.asr]\ntimeout_ms = 180000\n\n[providers.translate]\ntimeout_ms = 120000\n",
+    )
+    .unwrap();
     let store = Arc::new(SettingsStore::load_from(config).unwrap());
     assert_eq!(store.snapshot().providers.asr.timeout_ms, 180_000);
+    assert_eq!(store.snapshot().providers.translate.timeout_ms, 120_000);
     let plugins =
         Arc::new(PluginRegistry::load_from(tmp.path().join("plugins"), store.clone()).unwrap());
     std::mem::forget(tmp);
@@ -131,15 +148,19 @@ async fn subtitles_notifying(
     let (settings, pipeline) = env;
     let events = Arc::new(Mutex::new(Vec::new()));
     let sink = events.clone();
+    let working = std::sync::atomic::AtomicBool::new(false);
     let emit = move |ev: SubtitleEvent| {
+        use std::sync::atomic::Ordering::Relaxed;
         println!("{ev:?}");
-        if matches!(
-            ev,
+        match ev {
             SubtitleEvent::Status {
-                phase: Phase::Waiting
-            }
-        ) {
-            idle.notify_one();
+                phase: Phase::Recognizing,
+            } => working.store(true, Relaxed),
+            // Once per chunk: correcting a sentence also ends in waiting.
+            SubtitleEvent::Status {
+                phase: Phase::Waiting | Phase::Revising,
+            } if working.swap(false, Relaxed) => idle.notify_one(),
+            _ => {}
         }
         sink.lock().push(ev);
     };
@@ -162,6 +183,7 @@ fn assert_subtitles(events: &[SubtitleEvent]) {
             SubtitleEvent::Chunk {
                 original: o,
                 translated: t,
+                ..
             } => {
                 original.push_str(&o.to_lowercase());
                 original.push(' ');
@@ -206,7 +228,44 @@ async fn english_speech_becomes_japanese_subtitles() {
             }
         }
     });
-    assert_subtitles(&subtitles(env, rx).await);
+    let settings = env.0.clone();
+    let events = subtitles(env, rx).await;
+    assert_subtitles(&events);
+    assert_recorded(&events, settings);
+}
+
+/// The run must be saved to history as one record whose SRT export
+/// carries the translation on a rising timeline.
+fn assert_recorded(events: &[SubtitleEvent], settings: Arc<SettingsStore>) {
+    use moonlens_lib::subtitle_record::{render, ExportContent, ExportFormat, Recorder};
+    let storage = Arc::new(Storage::open_in_memory().unwrap());
+    let recorder = Recorder::new(storage.clone(), settings);
+    recorder.observe(&SubtitleEvent::Started {
+        device: "test".into(),
+        source: moonlens_lib::audio::AudioSource::System,
+    });
+    for ev in events {
+        recorder.observe(ev);
+    }
+    let rows = storage.recent(10).unwrap();
+    assert_eq!(rows.len(), 1, "one history row per run");
+    assert_eq!(rows[0].kind, "subtitle");
+    let record = storage.subtitle_record(rows[0].id).unwrap().unwrap();
+    // Corrections merge and split lines: no fixed count.
+    assert!(!record.lines.is_empty(), "no line recorded");
+    let mut end = 0;
+    for line in &record.lines {
+        assert!(
+            line.start_ms >= end && line.end_ms > line.start_ms,
+            "timeline not rising: {:?}",
+            record.lines
+        );
+        end = line.end_ms;
+    }
+    let srt = render(&record, ExportFormat::Srt, ExportContent::Translated);
+    println!("{srt}");
+    assert!(srt.starts_with("1\n00:00:"), "not SRT: {srt:?}");
+    assert!(srt.contains('国'), "translation missing from SRT: {srt:?}");
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -251,6 +310,7 @@ async fn english_after_a_japanese_aside_stays_english() {
             SubtitleEvent::Chunk {
                 original,
                 translated,
+                ..
             } => Some((original.as_str(), translated.as_str())),
             SubtitleEvent::Error { message } => panic!("error event: {message}"),
             _ => None,
@@ -290,6 +350,136 @@ async fn english_after_a_japanese_aside_stays_english() {
         has_japanese(&translated) && translated.contains('国'),
         "English after the Japanese not translated: {translated:?}"
     );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "needs the downloaded models"]
+async fn sentence_cut_by_chunks_is_translated_again() {
+    let env = setup().await;
+    let snap = env.0.snapshot();
+    assert!(snap.subtitle.realtime_correction && snap.subtitle.batch_correction);
+    let chunk = (snap.subtitle.chunk_seconds * 16_000.0) as usize;
+    let pcm = speech();
+    let (tx, rx) = mpsc::channel::<Vec<i16>>(4096);
+    let idle = Arc::new(Notify::new());
+    let fed = idle.clone();
+    // One chunk at a time, as in the test above.
+    tokio::spawn(async move {
+        for piece in pcm.chunks(chunk) {
+            for frame in piece.chunks(160) {
+                if tx.send(frame.to_vec()).await.is_err() {
+                    return;
+                }
+            }
+            if piece.len() == chunk {
+                let _ = tokio::time::timeout(Duration::from_secs(600), fed.notified()).await;
+            }
+        }
+    });
+    let events = subtitles_notifying(env, rx, idle).await;
+
+    // What the window shows: chunk lines, replaced as revisions arrive.
+    let mut lines: Vec<(u64, String, String)> = Vec::new();
+    let mut shown = std::collections::HashMap::new();
+    let mut chunks = 0;
+    let mut revisions = Vec::new();
+    for ev in &events {
+        match ev {
+            SubtitleEvent::Chunk {
+                id,
+                original,
+                translated,
+                ..
+            } => {
+                chunks += 1;
+                shown.insert(*id, translated.clone());
+                lines.push((*id, original.clone(), translated.clone()));
+            }
+            SubtitleEvent::Revised(r) => {
+                let at = lines
+                    .iter()
+                    .position(|(id, ..)| r.replaces.contains(id))
+                    .expect("revision of lines never shown");
+                for id in &r.replaces {
+                    assert!(
+                        lines.iter().any(|(shown, ..)| shown == id),
+                        "line {id} replaced but not shown"
+                    );
+                }
+                // Not the fallback of a failed translation: the old
+                // fragments side by side.
+                let fragments: Vec<&str> = r
+                    .replaces
+                    .iter()
+                    .filter_map(|id| shown.get(id).map(String::as_str))
+                    .collect();
+                assert_ne!(
+                    r.translated,
+                    fragments.join(" "),
+                    "the sentence was not translated again"
+                );
+                lines.retain(|(id, ..)| !r.replaces.contains(id));
+                lines.insert(at, (r.id, r.original.clone(), r.translated.clone()));
+                if let Some(rest) = &r.rest {
+                    let line = (rest.id, rest.original.clone(), rest.translated.clone());
+                    lines.insert(at + 1, line);
+                }
+                revisions.push(r.clone());
+            }
+            SubtitleEvent::Error { message } => panic!("error event: {message}"),
+            _ => {}
+        }
+    }
+    println!("chunks: {chunks}\nlines after correction: {lines:#?}");
+    assert!(chunks >= 3, "the sentence was not cut: {chunks} chunk(s)");
+    assert!(!revisions.is_empty(), "no sentence was translated again");
+    let replaced: usize = revisions.iter().map(|r| r.replaces.len()).sum();
+    assert!(replaced >= chunks, "chunk lines left: {lines:?}");
+    assert!(
+        lines.len() < chunks,
+        "fragments were not joined into sentences: {lines:?}"
+    );
+    let original = lines
+        .iter()
+        .map(|(_, o, _)| o.to_lowercase())
+        .collect::<Vec<_>>()
+        .join(" ");
+    assert_eq!(
+        original.matches("country").count(),
+        2,
+        "words lost or doubled when joining the chunks: {original:?}"
+    );
+    // The first sentence, recognized in three chunks, is one line. (Its
+    // wording is the recognizer's: a chunk cut mid-phrase can be misheard,
+    // and translating again does not recognize again.)
+    assert!(
+        lines.iter().any(|(_, o, _)| {
+            let o = o.to_lowercase();
+            o.contains("fellow americans") && o.contains("can do for you")
+        }),
+        "first sentence not joined: {lines:?}"
+    );
+    for (_, o, t) in &lines {
+        assert!(has_japanese(t), "{o:?} not translated: {t:?}");
+    }
+    let translated: String = lines.iter().map(|(.., t)| t.as_str()).collect();
+    assert!(translated.contains('国'), "{translated:?}");
+    assert!(
+        events.iter().any(|e| matches!(
+            e,
+            SubtitleEvent::Status {
+                phase: Phase::Revising
+            }
+        )),
+        "no revising status"
+    );
+    // The loop ends idle, after the last correction.
+    assert!(matches!(
+        events.last(),
+        Some(SubtitleEvent::Status {
+            phase: Phase::Waiting
+        })
+    ));
 }
 
 #[cfg(all(windows, feature = "audio"))]
@@ -371,5 +561,144 @@ mod loopback {
             .await
             .unwrap();
         assert_subtitles(&run.await.unwrap());
+    }
+
+    /// A process playing a recording; killed when the test ends early.
+    struct Player(std::process::Child);
+
+    impl Drop for Player {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+
+    /// Start a process that waits `delay` seconds and then plays the
+    /// fixture `name` `times` times on the default output device.
+    fn player(name: &str, delay: u32, times: u32) -> Player {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/audio")
+            .join(name);
+        let script = format!(
+            "Start-Sleep -Seconds {delay}; \
+             $p = New-Object System.Media.SoundPlayer '{}'; \
+             1..{times} | ForEach-Object {{ $p.PlaySync() }}",
+            path.display()
+        );
+        let child = std::process::Command::new("powershell")
+            .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+            .spawn()
+            .expect("powershell did not start");
+        Player(child)
+    }
+
+    fn originals(events: &[SubtitleEvent]) -> String {
+        events
+            .iter()
+            .filter_map(|ev| match ev {
+                SubtitleEvent::Chunk { original, .. } => Some(original.to_lowercase()),
+                SubtitleEvent::Error { message } => panic!("error event: {message}"),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    #[ignore = "needs the downloaded models and an audio output device"]
+    async fn each_window_hears_only_its_application() {
+        use moonlens_lib::audio::AudioSource;
+        use moonlens_lib::audio_apps;
+
+        if cpal::default_host().default_output_device().is_none() {
+            assert!(
+                std::env::var_os("MOONLENS_REQUIRE_AUDIO").is_none(),
+                "no audio output device"
+            );
+            println!("skipped: no audio output device");
+            return;
+        }
+        let env = setup().await;
+        // Both start playing after the captures are up. The Japanese
+        // recording is shorter: repeated, it covers the English one.
+        let english = player("jfk.wav", 6, 1);
+        let japanese = player("ja-moldova.wav", 6, 3);
+        let (en_pid, ja_pid) = (english.0.id(), japanese.0.id());
+
+        let (en_tx, en_rx) = mpsc::channel::<Vec<i16>>(4096);
+        let (ja_tx, ja_rx) = mpsc::channel::<Vec<i16>>(4096);
+        let en_capture = LoopbackStream::start_with(AudioSource::App { pid: en_pid }, en_tx)
+            .expect("capture of the English player failed to start");
+        let ja_capture = LoopbackStream::start_with(AudioSource::App { pid: ja_pid }, ja_tx)
+            .expect("capture of the Japanese player failed to start");
+        println!(
+            "capturing \"{}\" (PID {en_pid}) and \"{}\" (PID {ja_pid})",
+            en_capture.device(),
+            ja_capture.device()
+        );
+        assert_eq!(en_capture.device(), "powershell");
+        let (en_lost, ja_lost) = (en_capture.lost(), ja_capture.lost());
+
+        // Two windows: two loops on the shared models.
+        let en_run = tokio::spawn(subtitles(env.clone(), en_rx));
+        let ja_run = tokio::spawn(subtitles(env, ja_rx));
+
+        // While they play, the source menu lists both as playing.
+        let mut listed = Vec::new();
+        for _ in 0..40 {
+            tokio::time::sleep(Duration::from_millis(500)).await;
+            // The players are processes of this test, which the app's
+            // own list leaves out as "itself".
+            let found = tokio::task::spawn_blocking(|| audio_apps::list_except(None))
+                .await
+                .unwrap();
+            assert!(found.supported);
+            listed = found.apps;
+            let playing = |pid| listed.iter().any(|a| a.pid == pid && a.playing);
+            if playing(en_pid) && playing(ja_pid) {
+                break;
+            }
+        }
+        println!("audio applications: {listed:?}");
+        for pid in [en_pid, ja_pid] {
+            let app = listed
+                .iter()
+                .find(|a| a.pid == pid)
+                .unwrap_or_else(|| panic!("player {pid} not listed"));
+            assert!(app.playing, "player {pid} not listed as playing");
+            assert_eq!(app.name, "powershell");
+        }
+
+        // The players exit when done; each capture notices, closes its
+        // frame channel, and the loop recognizes the rest and ends.
+        let en_events = tokio::time::timeout(Duration::from_secs(900), en_run)
+            .await
+            .expect("the English capture did not end with its application")
+            .unwrap();
+        let ja_events = tokio::time::timeout(Duration::from_secs(900), ja_run)
+            .await
+            .expect("the Japanese capture did not end with its application")
+            .unwrap();
+        use std::sync::atomic::Ordering::Relaxed;
+        assert!(en_lost.load(Relaxed) && ja_lost.load(Relaxed));
+        tokio::task::spawn_blocking(move || drop((en_capture, ja_capture)))
+            .await
+            .unwrap();
+
+        assert_subtitles(&en_events);
+        let (en, ja) = (originals(&en_events), originals(&ja_events));
+        println!("English window: {en}\nJapanese window: {ja}");
+        assert!(
+            !has_japanese(&en),
+            "the English window heard the Japanese player: {en:?}"
+        );
+        assert!(
+            ja.contains("宗教") || ja.contains("キリスト"),
+            "the Japanese window did not recognize its player: {ja:?}"
+        );
+        assert!(
+            !ja.contains("country"),
+            "the Japanese window heard the English player: {ja:?}"
+        );
     }
 }

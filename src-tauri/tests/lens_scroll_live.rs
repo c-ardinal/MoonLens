@@ -88,6 +88,7 @@ impl Run<'_> {
             pipeline: self.pipeline,
             target_language: "ja",
             mode: Default::default(),
+            app: None,
             history_kind: "lens",
             emit: &emit,
             geometry_now: &geometry_now,
@@ -95,6 +96,7 @@ impl Run<'_> {
         let frame = Frame {
             image: image.clone(),
             geometry,
+            visible: None,
         };
         let t = Instant::now();
         let tick = self.tracker.tick(frame, false, &env).await.unwrap();
