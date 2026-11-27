@@ -343,10 +343,11 @@ impl Engine for PipelineEngine {
         let input = TaskInput::Asr {
             audio_pcm16_mono_16k: crate::subtitle::pcm16_to_bytes(pcm),
             language_hint: (self.source_language != "auto").then(|| self.source_language.clone()),
+            language_candidates: Vec::new(),
         };
         match self.pipeline.run(Capability::Asr, input).await {
             Ok(res) => Ok(match res.output {
-                TaskOutput::Transcript { segments } => segments,
+                TaskOutput::Transcript { segments, .. } => segments,
                 // A provider without times: one segment for the chunk.
                 TaskOutput::Text(text) => vec![TranscriptSegment {
                     start_s: 0.0,
@@ -553,6 +554,7 @@ impl FileSubtitleService {
                             translated: cue.translated.clone(),
                             at_ms: cue.end_ms,
                             duration_ms: cue.end_ms - cue.start_ms,
+                            speaker: None,
                         });
                         Some(cue)
                     }
