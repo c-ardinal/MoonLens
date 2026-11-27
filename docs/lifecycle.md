@@ -97,6 +97,7 @@ MoonLens の導入〜削除の各段階で発生するケースと、期待動�
 | D-38 | ウィンドウ翻訳のテキスト表示位置 | 窓内（パネル）／窓外（別ウィンドウ：上・下・左・右へ隣接、または自由配置）を切替。窓外表示は本体の移動・サイズ変更へ追従。隣接側に余白なしの場合は反対側へ配置。自由配置は利用者の配置位置（本体との相対位置）とサイズを保持。選択は次回以降の新規ウィンドウへ継承 | 新規 | `lens_text::Follow` テスト（追従・反対側への配置・相対位置の保持・ウィンドウシステムの反映遅延）。Playwright（配置切替の IPC・内容の送受信）。実ウィンドウの追従は要実機 |
 | D-39 | ウィンドウ翻訳窓のドラッグ中 | 移動・サイズ変更の開始からマウスボタンの解放まで、取得・OCR・翻訳を停止（途中で静止しても不実行）。解放後、直後に再読取。ボタン状態が取得不可の環境（X サーバーなしの Wayland）は約 0.3 秒の静止で解放と判定 | 修正 | 従来は監視間隔 1 回分の静止で読取を再開（ドラッグ途中でも実行）。`lens_drag::DragGate` テスト。ボタン状態：Windows `GetAsyncKeyState`、macOS `CGEventSourceButtonState`、Linux X11 `query_pointer`。実機のドラッグは要実機 |
 | D-40 | 文字認識（PP-OCRv5）の実行構成 | 環境別に最速の構成を自動選択。候補：DirectML（Windows の GPU、`performance.use_gpu_if_available` 有効時）、ONNX Runtime の CPU 実行（Windows・Linux・macOS）。モデル読込時に同一の小規模処理で各候補を実測し、最短の構成を採用（結果はログ `ocr backend: …`）。ONNX Runtime 未取得・読込失敗・非対応環境（Intel 版 macOS 等）は従来の rten で動作。認識結果は全構成で同一（行画像の幅は全構成共通で 64 画素単位へ右余白を付加）。`[providers.configs.ppocr] backend`（`auto`／`directml`／`onnx-cpu`／`rten`）で固定可 | 新規 | `backends_read_the_same_lines`（実画像 13 件で rten と照合、Windows CI では DirectML も照合）。DirectML の実機 GPU での速度は要実機 |
+| D-44 | ウィンドウ翻訳の「内容説明」（説明用モデル未読込の初回を含む） | 説明文を表示。ローカルの制限時間は 180 秒＋入力 1 文字 40 ms（モデル読込と文章生成の所要時間）。失敗時は理由と「再試行」ボタンを表示（ウィンドウ外のテキスト表示も同様） | 修正 | 以前は固定 10 秒で、約 5 GB のモデル読込中に制限時間超過となり、再試行手段も未提供。`explain_live`（実モデル）、`LensText.svelte.test.ts`、`pipeline_tests`、`user_error` |
 
 ## 4. カスタマイズ
 

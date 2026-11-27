@@ -63,6 +63,7 @@
     {view}
     drag={view.placement === 'free'}
     onplacement={(value) => send({ kind: 'placement', value })}
+    onexplain={() => send({ kind: 'explain' })}
     onclose={() => send({ kind: 'close' })}
   />
   <div class="grip" role="presentation" title="サイズ変更" onpointerdown={startResize}></div>
