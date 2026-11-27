@@ -315,7 +315,9 @@
     // The band comes from the readings of continuous translation.
     continuous = true;
     fitNote = null;
-    fit = { kind: 'observing', started: Date.now(), elapsed: 0, samples: addSample([], blocks) };
+    // Blocks hidden by a move or a change belong to another picture.
+    const current = blocks.filter((_, i) => !hidden.has(i));
+    fit = { kind: 'observing', started: Date.now(), elapsed: 0, samples: addSample([], current) };
     fitTimer = setInterval(() => {
       if (fit.kind !== 'observing') return stopObserving();
       fit.elapsed = Date.now() - fit.started;

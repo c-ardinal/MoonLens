@@ -6,8 +6,8 @@
  *
  * 判定の要点：
  * - 全標本で同一位置・同一内容のブロックは固定表示（HUD・ロゴ等）と判定し、除外。
- * - 残余（変動ブロック）を縦方向の近接で集団化し、文字数の合計が最大の集団を採用。
- *   秒単位で変化する時計等は文字数が少数のため、字幕より優先されない。
+ * - 残余（変動ブロック）を縦方向の近接で集団化し、標本 1 件当りの文字数が最大の集団を採用。
+ *   評価は標本 1 件当りの文字数のため、秒単位で変化する時計等は字幕より優先されない。
  * - 採用集団へ隣接する固定表示（話者名の札等）は帯へ算入。
  * - 変動ブロックが皆無の場合は全ブロックの外接範囲（静的な文面への整形）。
  */
@@ -167,7 +167,18 @@ export function subtitleBand(samples: Sample[], area: { w: number; h: number }):
         groups.push({ bottom: b.bbox[1] + b.bbox[3], blocks: [b] });
       }
     }
-    const score = (g: { blocks: FitBlock[] }) => g.blocks.reduce((n, b) => n + [...b.text].length, 0);
+    // 評価値：標本 1 件当りの文字数（集団の縦範囲内の変動ブロック）。異文の累計では
+    // 更新頻度の高い計数表示（残余時間等）が字幕を上回るため、標本数で正規化。
+    const chars = (b: FitBlock) => [...b.text].length;
+    const score = (g: { blocks: FitBlock[] }) => {
+      const top = Math.min(...g.blocks.map((b) => b.bbox[1]));
+      const bottom = Math.max(...g.blocks.map((b) => b.bbox[1] + b.bbox[3]));
+      const inside = (b: FitBlock) => {
+        const mid = b.bbox[1] + b.bbox[3] / 2;
+        return mid >= top && mid <= bottom && !still.some((o) => same(o, b));
+      };
+      return samples.reduce((n, sample) => n + sample.filter(inside).reduce((m, b) => m + chars(b), 0), 0);
+    };
     chosen = groups.reduce((best, g) => (score(g) > score(best) ? g : best)).blocks;
     // 隣接する固定表示（話者名の札等）を算入
     const [x, y, w, h] = union(chosen.map((b) => b.bbox));

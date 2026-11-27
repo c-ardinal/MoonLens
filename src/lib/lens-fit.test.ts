@@ -102,6 +102,20 @@ describe('subtitleBand', () => {
     expect(band.kind === 'fit' && band.rect[1]).toBeGreaterThan(800);
   });
 
+  it('is not drawn to a counter that changes far more often than the lines', () => {
+    const samples = collect(
+      Array.from({ length: 15 }, (_, i) => [
+        block(1700, 20, 90, 30, `0:${59 - i}`, 30),
+        i < 8
+          ? block(650, 940, 620, 44, 'Where are you going?')
+          : block(700, 940, 520, 44, 'I am heading home.')
+      ])
+    );
+    expect(samples).toHaveLength(15);
+    const band = subtitleBand(samples, AREA);
+    expect(band.kind === 'fit' && band.rect[1]).toBeGreaterThan(800);
+  });
+
   it('keeps a fixed name plate next to the band', () => {
     const name = block(420, 880, 160, 40, 'Alice');
     const samples = collect([
