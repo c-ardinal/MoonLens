@@ -360,8 +360,11 @@ pub async fn run_loop(
                 _ = tokio::time::sleep(FLUSH_AFTER), if !buffer.is_empty() || lines.is_open() => {
                     flush = true;
                 }
-                Some(revision) = reviser.next() => {
-                    revised(revision);
+                // `None`: the work left needed no new translation.
+                revision = reviser.next(), if reviser.is_busy() => {
+                    if let Some(revision) = revision {
+                        revised(revision);
+                    }
                     set_phase(idle(&reviser));
                     continue;
                 }

@@ -28,6 +28,9 @@ pub struct Sentence {
     /// Translation the window already shows for exactly this text (the
     /// sentence was one whole chunk), so there is nothing to correct.
     pub draft: Option<String>,
+    /// The translations of the replaced lines, joined: what the new
+    /// line shows when translating the sentence again fails.
+    pub fragments: String,
 }
 
 struct Piece {
@@ -118,12 +121,18 @@ impl Assembler {
             ([only], None) => only.translated.clone(),
             _ => None,
         };
+        let fragments = pieces
+            .iter()
+            .filter_map(|p| p.translated.as_deref())
+            .collect::<Vec<_>>()
+            .join(" ");
         Sentence {
             replaces: pieces.iter().map(|p| p.id).collect(),
             id,
             text,
             rest,
             draft,
+            fragments,
         }
     }
 }
@@ -401,9 +410,7 @@ impl Reviser {
             }
             let done = self.running.as_mut()?.await;
             self.running = None;
-            if let Some(revision) = self.finish(done) {
-                return Some(revision);
-            }
+            return Some(self.finish(done));
         }
     }
 
@@ -475,16 +482,23 @@ impl Reviser {
         }));
     }
 
-    fn finish(&mut self, done: Done) -> Option<Revision> {
+    fn finish(&mut self, done: Done) -> Revision {
         let Done {
             sentence,
             translated,
             rest,
         } = done;
         self.last_rest = None;
-        // A failed translation leaves the lines as they are.
-        let translated = translated?;
-        self.remember(sentence.text.clone(), translated.clone());
+        // The lines are replaced even when the translation failed, then
+        // with what they showed: later sentences refer to the new line
+        // ids (`rest`), so the window has to follow every step.
+        let translated = match translated {
+            Some(translated) => {
+                self.remember(sentence.text.clone(), translated.clone());
+                translated
+            }
+            None => sentence.fragments,
+        };
         let rest = sentence.rest.map(|(id, original)| {
             let translated = rest.map(|t| t.trim().to_string()).unwrap_or_default();
             if !translated.is_empty() {
@@ -496,13 +510,13 @@ impl Reviser {
                 translated,
             }
         });
-        Some(Revision {
+        Revision {
             replaces: sentence.replaces,
             id: sentence.id,
             original: sentence.text,
             translated,
             rest,
-        })
+        }
     }
 
     fn remember(&mut self, original: String, translated: String) {
@@ -555,6 +569,9 @@ mod tests {
                     .into(),
                 rest: Some((5, "Ask what you".into())),
                 draft: None,
+                fragments: "<And so, my fellow Americans,> <ask not what your country> \
+                            <can do for you. Ask what you>"
+                    .into(),
             }]
         );
         // The pause after the speech ends the second sentence.
@@ -566,6 +583,7 @@ mod tests {
                 text: "Ask what you can do for your country.".into(),
                 rest: None,
                 draft: None,
+                fragments: "<can do for your country.>".into(),
             })
         );
         assert!(!asm.is_open());
@@ -679,6 +697,7 @@ mod tests {
             text: text.into(),
             rest: rest.map(|(id, t)| (id, t.to_string())),
             draft: None,
+            fragments: format!("<{text}>"),
         }
     }
 
@@ -767,12 +786,28 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn failed_translation_is_skipped() {
+    async fn failed_translation_keeps_what_the_lines_showed() {
         let (translate, _) = upper();
         let mut r = Reviser::new(translate);
-        r.push(sentence(&[1, 2], 3, "FAIL here.", None), en_ja(), true);
-        r.push(sentence(&[4, 5], 6, "fine.", None), en_ja(), true);
-        assert_eq!(r.next().await.unwrap().id, 6);
+        r.push(
+            sentence(&[1, 2], 3, "FAIL here.", Some((4, "and"))),
+            en_ja(),
+            true,
+        );
+        // The lines still give way to the new ids the next sentence
+        // refers to.
+        let failed = r.next().await.unwrap();
+        assert_eq!(
+            (
+                failed.replaces.as_slice(),
+                failed.id,
+                failed.translated.as_str()
+            ),
+            (&[1, 2][..], 3, "<FAIL here.>")
+        );
+        assert_eq!(failed.rest.unwrap().id, 4);
+        r.push(sentence(&[4, 5], 6, "and fine.", None), en_ja(), true);
+        assert_eq!(r.next().await.unwrap().translated, "AND FINE.");
         assert!(r.history.iter().all(|(s, _)| !s.contains("FAIL")));
     }
 
