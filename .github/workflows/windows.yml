@@ -130,9 +130,12 @@ jobs:
         with:
           # The target dir is D:/t (CARGO_TARGET_DIR above). rust-cache
           # only caches `<workspace>/target` unless told otherwise, so
-          # without the `-> D:/t` part it restores ~/.cargo alone and
-          # every dependency is compiled again.
-          workspaces: src-tauri -> D:/t
+          # without the `->` part it restores ~/.cargo alone and every
+          # dependency is compiled again. The target is joined onto the
+          # workspace path, so it must be relative: the checkout is
+          # D:\a\MoonLens\MoonLens, four levels below D:\ from src-tauri.
+          # The "Cache Paths" list in the step's log must show D:\t.
+          workspaces: src-tauri -> ../../../../t
           key: windows-t
           # Written on the PR base branches only (see `push` above); PR
           # runs restore it and never save, which keeps the 10 GB repo
@@ -210,7 +213,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: src-tauri -> D:/t
+          workspaces: src-tauri -> ../../../../t
           key: windows-e2e-t
           save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/release' }}
 
