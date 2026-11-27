@@ -665,8 +665,10 @@ mod tests {
     #[test]
     fn a_corrected_sentence_replaces_the_lines_it_was_heard_in() {
         let f = fixture();
-        f.recorder.observe(&numbered(1, "I went to", "行った", 2_000, 2_000));
-        f.recorder.observe(&numbered(2, "the shop. Then", "店。それから", 4_000, 2_000));
+        f.recorder
+            .observe(&numbered(1, "I went to", "行った", 2_000, 2_000));
+        f.recorder
+            .observe(&numbered(2, "the shop. Then", "店。それから", 4_000, 2_000));
         f.recorder.observe(&revised(
             &[1, 2],
             3,
@@ -682,9 +684,15 @@ mod tests {
         assert_eq!(rec.lines[1].original, "Then");
 
         // The rest and a new chunk become the next sentence.
-        f.recorder.observe(&numbered(5, "I came home.", "帰った", 6_000, 2_000));
         f.recorder
-            .observe(&revised(&[4, 5], 6, "Then I came home.", "帰宅した。", None));
+            .observe(&numbered(5, "I came home.", "帰った", 6_000, 2_000));
+        f.recorder.observe(&revised(
+            &[4, 5],
+            6,
+            "Then I came home.",
+            "帰宅した。",
+            None,
+        ));
         assert_eq!(
             originals(&f.storage),
             ["I went to the shop.", "Then I came home."]
@@ -696,16 +704,21 @@ mod tests {
     #[test]
     fn a_blocked_sentence_leaves_the_record_and_unsaved_lines_stay_out() {
         let f = fixture();
-        f.recorder.observe(&numbered(1, "Hello.", "こんにちは。", 2_000, 2_000));
-        f.recorder.observe(&numbered(2, "Thanks for watching.", "", 4_000, 2_000));
+        f.recorder
+            .observe(&numbered(1, "Hello.", "こんにちは。", 2_000, 2_000));
+        f.recorder
+            .observe(&numbered(2, "Thanks for watching.", "", 4_000, 2_000));
         f.recorder.observe(&revised(&[2], 3, "", "", None));
         assert_eq!(originals(&f.storage), ["Hello."]);
         // Not one of the saved lines: nothing changes.
-        f.recorder.observe(&revised(&[9], 10, "Other.", "他。", None));
+        f.recorder
+            .observe(&revised(&[9], 10, "Other.", "他。", None));
         assert_eq!(originals(&f.storage), ["Hello."]);
         // The next chunk still lands after the remaining line.
-        f.recorder.observe(&numbered(11, "Bye.", "では。", 6_000, 2_000));
-        f.recorder.observe(&revised(&[11], 12, "Goodbye.", "さようなら。", None));
+        f.recorder
+            .observe(&numbered(11, "Bye.", "では。", 6_000, 2_000));
+        f.recorder
+            .observe(&revised(&[11], 12, "Goodbye.", "さようなら。", None));
         assert_eq!(originals(&f.storage), ["Hello.", "Goodbye."]);
     }
 }

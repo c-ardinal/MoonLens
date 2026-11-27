@@ -28,8 +28,8 @@ use crate::{
     providers::{Capability, TaskInput, TaskOutput},
     settings::SettingsStore,
     storage::Storage,
-    subtitle_record::Recorder,
     subtitle_filter::StockFilter,
+    subtitle_record::Recorder,
     subtitle_revise::{Assembler, Languages, Reviser, Revision, Translator},
 };
 
