@@ -72,7 +72,7 @@ async function lensWindow() {
 async function subtitleWindow() {
   for (const [w, h] of [[900, 190], [480, 160]]) {
     const pg = await win('subtitle', '/subtitle/', w, h);
-    const emit = (p) => pg.evaluate((p) => window.__emit('moonlens://subtitle', p), p);
+    const emit = (p) => pg.evaluate((p) => window.__emit('moonlens://subtitle', { window: 'subtitle', ...p }), p);
     const m = async (n) => { await wait(pg, 200); await measure(pg, `subtitle-${w}-${n}`); };
     await m('idle');
     await emit({ kind: 'started', device: 'スピーカー (Realtek(R) Audio)' }); await m('started');
