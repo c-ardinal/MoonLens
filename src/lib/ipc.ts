@@ -340,6 +340,14 @@ export const startSubtitle = () => safeInvoke<void>('start_subtitle');
 export const onSubtitle = (handler: (event: SubtitleEvent) => void): Promise<UnlistenFn> =>
   listen<SubtitleEvent>('moonlens://subtitle', (e) => handler(e.payload));
 
+/** 音声翻訳の入力レベル（波形表示用、50 ms 間隔）。 */
+export const onSubtitleLevel = (
+  handler: (event: import('./subtitle-level').LevelEvent) => void
+): Promise<UnlistenFn> =>
+  listen<import('./subtitle-level').LevelEvent>('moonlens://subtitle-level', (e) =>
+    handler(e.payload)
+  );
+
 export type PermissionStatus = 'granted' | 'denied' | 'unknown';
 
 export interface PermissionReport {
