@@ -203,10 +203,12 @@ impl Recorder {
     /// other history write.
     fn begin(&self, st: &mut State, s: &crate::settings::Settings) -> Option<i64> {
         let languages = self.languages(s);
-        let id = match self
-            .storage
-            .begin_subtitle_record(&st.source, &languages.0, &languages.1)
-        {
+        let id = match self.storage.begin_subtitle_record_of(
+            &st.source,
+            &languages.0,
+            &languages.1,
+            self.conversation,
+        ) {
             Ok(id) => id,
             Err(e) => {
                 tracing::warn!("subtitle history: creating the record failed: {e:#}");
@@ -542,6 +544,9 @@ mod tests {
             (rec.source_language.as_str(), rec.target_language.as_str()),
             ("ko", "ja")
         );
+        // Its lines go both ways: history must not translate them again
+        // in that one direction.
+        assert!(rec.conversation);
     }
 
     #[test]

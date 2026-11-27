@@ -52,6 +52,10 @@ pub struct SubtitleRecord {
     pub source: String,
     pub source_language: String,
     pub target_language: String,
+    /// A face-to-face conversation: the lines go both ways, so the two
+    /// languages above describe only those of the other person.
+    #[serde(default)]
+    pub conversation: bool,
     /// Counts the changes to the lines. A writer that replaces all lines
     /// names the revision it read, so it cannot discard lines recorded
     /// meanwhile.
@@ -169,6 +173,18 @@ impl Storage {
                 PRIMARY KEY (history_id, seq)
              );",
         )?;
+        // Also additive: an older build leaves the column at its default.
+        let marked = db
+            .prepare(
+                "SELECT 1 FROM pragma_table_info('subtitle_session') WHERE name = 'conversation'",
+            )?
+            .exists([])?;
+        if !marked {
+            db.execute_batch(
+                "ALTER TABLE subtitle_session
+                   ADD COLUMN conversation INTEGER NOT NULL DEFAULT 0;",
+            )?;
+        }
         // An older build may have deleted history rows without knowing
         // about their subtitle records.
         Self::purge_subtitle_orphans(db)?;
@@ -356,14 +372,16 @@ impl Storage {
             if let Some(r) = record {
                 tx.execute(
                     "INSERT OR REPLACE INTO subtitle_session
-                      (history_id, source, source_language, target_language, revision)
-                      VALUES (?1, ?2, ?3, ?4, ?5)",
+                      (history_id, source, source_language, target_language, revision,
+                       conversation)
+                      VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
                     rusqlite::params![
                         entry.id,
                         r.source,
                         r.source_language,
                         r.target_language,
-                        r.revision
+                        r.revision,
+                        r.conversation
                     ],
                 )?;
                 write_lines(&tx, entry.id, &r.lines)?;
@@ -413,6 +431,18 @@ impl Storage {
         source_language: &str,
         target_language: &str,
     ) -> Result<i64> {
+        self.begin_subtitle_record_of(source, source_language, target_language, false)
+    }
+
+    /// [`Self::begin_subtitle_record`], naming whether the run is a
+    /// face-to-face conversation (lines in both directions).
+    pub fn begin_subtitle_record_of(
+        &self,
+        source: &str,
+        source_language: &str,
+        target_language: &str,
+        conversation: bool,
+    ) -> Result<i64> {
         let mut db = self.db.lock();
         let tx = db.transaction()?;
         tx.execute(
@@ -423,9 +453,10 @@ impl Storage {
         )?;
         let id = tx.last_insert_rowid();
         tx.execute(
-            "INSERT INTO subtitle_session (history_id, source, source_language, target_language)
-              VALUES (?1, ?2, ?3, ?4)",
-            rusqlite::params![id, source, source_language, target_language],
+            "INSERT INTO subtitle_session
+              (history_id, source, source_language, target_language, conversation)
+              VALUES (?1, ?2, ?3, ?4, ?5)",
+            rusqlite::params![id, source, source_language, target_language, conversation],
         )?;
         tx.commit()?;
         Ok(id)
@@ -572,13 +603,21 @@ impl Storage {
 fn read_record(db: &Connection, id: i64) -> Result<Option<SubtitleRecord>> {
     let session = db
         .query_row(
-            "SELECT source, source_language, target_language, revision
+            "SELECT source, source_language, target_language, revision, conversation
              FROM subtitle_session WHERE history_id = ?1",
             [id],
-            |r| Ok((r.get::<_, String>(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get(1)?,
+                    r.get(2)?,
+                    r.get(3)?,
+                    r.get(4)?,
+                ))
+            },
         )
         .optional()?;
-    let Some((source, source_language, target_language, revision)) = session else {
+    let Some((source, source_language, target_language, revision, conversation)) = session else {
         return Ok(None);
     };
     Ok(Some(SubtitleRecord {
@@ -586,6 +625,7 @@ fn read_record(db: &Connection, id: i64) -> Result<Option<SubtitleRecord>> {
         source,
         source_language,
         target_language,
+        conversation,
         revision,
         lines: read_lines(db, id)?,
     }))
@@ -1036,6 +1076,53 @@ mod tests {
         s.db.lock()
             .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |r| r.get(0))
             .unwrap()
+    }
+
+    #[test]
+    fn a_conversation_record_keeps_its_mark_through_delete_and_restore() {
+        let s = Storage::open_in_memory().unwrap();
+        let id = s.begin_subtitle_record_of("mic", "en", "ja", true).unwrap();
+        let entry = s.entry(id).unwrap().unwrap();
+        let (_, record) = s.delete_keeping_record(id).unwrap();
+        assert!(record.as_ref().unwrap().conversation);
+        s.restore_with_record(&entry, record.as_ref()).unwrap();
+        assert!(s.subtitle_record(id).unwrap().unwrap().conversation);
+        // Live subtitles are not marked.
+        let plain = s.begin_subtitle_record("speaker", "en", "ja").unwrap();
+        assert!(!s.subtitle_record(plain).unwrap().unwrap().conversation);
+    }
+
+    #[test]
+    fn a_database_from_before_conversations_gains_the_mark_unset() {
+        let db = Connection::open_in_memory().unwrap();
+        db.execute_batch(
+            "CREATE TABLE subtitle_session (
+                history_id INTEGER PRIMARY KEY,
+                source TEXT NOT NULL,
+                source_language TEXT NOT NULL,
+                target_language TEXT NOT NULL,
+                revision INTEGER NOT NULL DEFAULT 0
+             );
+             CREATE TABLE history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                created_at INTEGER NOT NULL,
+                kind TEXT NOT NULL,
+                source_text TEXT,
+                result_text TEXT,
+                provider TEXT,
+                via_cloud INTEGER,
+                image_path TEXT
+             );
+             INSERT INTO history (id, created_at, kind) VALUES (7, 1, 'subtitle');
+             INSERT INTO subtitle_session VALUES (7, 'speaker', 'en', 'ja', 3);",
+        )
+        .unwrap();
+        Storage::migrate(&db).unwrap();
+        // Running it again leaves the column alone.
+        Storage::migrate(&db).unwrap();
+        let rec = read_record(&db, 7).unwrap().unwrap();
+        assert!(!rec.conversation);
+        assert_eq!(rec.revision, 3);
     }
 
     #[test]

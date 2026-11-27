@@ -680,6 +680,8 @@ export interface SubtitleRecord {
   /** 実行時の設定値（auto の場合あり）。 */
   source_language: string;
   target_language: string;
+  /** 対面会話の記録：行ごとに翻訳方向が相違（上記の言語は相手側の発話のみ）。 */
+  conversation?: boolean;
   /** 行の変更回数。全行の置換時に取得時点の値を指定（記録中の行の消失防止）。 */
   revision: number;
   lines: SubtitleLine[];
