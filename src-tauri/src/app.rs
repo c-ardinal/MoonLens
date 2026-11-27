@@ -80,6 +80,10 @@ macro_rules! all_commands {
             ipc::set_lens_text_dock,
             ipc::close_lens_window,
             ipc::list_lens_windows,
+            crate::attach::list_attach_targets,
+            crate::attach::attach_window,
+            crate::attach::detach_window,
+            crate::attach::window_attachment,
             ipc::set_lens_insets,
             ipc::set_lens_continuous,
             ipc::refresh_lens,
@@ -227,6 +231,7 @@ pub fn build() -> Result<()> {
                 tracing::warn!("tray unavailable: {e}");
             }
 
+            app.manage(crate::attach::Handle::default());
             app.manage(AppState {
                 settings,
                 storage,

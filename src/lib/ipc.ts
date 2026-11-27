@@ -7,6 +7,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
+import type { AttachCandidate, AttachDock, Attachment } from './attach';
 
 export type Settings = Record<string, any>;
 
@@ -629,3 +630,14 @@ export const listOrphanLlmFiles = () =>
   safeInvoke<OrphanFile[]>('list_orphan_llm_files', undefined, []);
 export const deleteOrphanLlmFile = (name: string) =>
   safeInvoke<void>('delete_orphan_llm_file', { name });
+
+// ---- 他アプリのウィンドウへの吸着（attach.rs、型は `$lib/attach`） ----
+/** ウィンドウ `label` の吸着先候補（直下のウィンドウが先頭）。 */
+export const listAttachTargets = (label: string) =>
+  safeInvoke<AttachCandidate[]>('list_attach_targets', { label }, []);
+/** `label` を `target`（候補の `id`）へ吸着、または吸着中の配置を変更。 */
+export const attachWindow = (label: string, target: number, dock: AttachDock) =>
+  safeInvoke<void>('attach_window', { label, target, dock });
+export const detachWindow = (label: string) => safeInvoke<void>('detach_window', { label });
+export const windowAttachment = (label: string) =>
+  safeInvoke<Attachment>('window_attachment', { label }, { target: null, dock: null });

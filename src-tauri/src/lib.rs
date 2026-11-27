@@ -5,10 +5,13 @@
 
 pub mod app;
 pub mod app_identity;
+pub mod attach;
 pub mod audio;
 pub mod audio_apps;
 pub mod capture;
 pub mod clipboard;
+pub mod follow;
+pub mod foreign_window;
 pub mod gpu;
 pub mod hotkey;
 pub mod intent;

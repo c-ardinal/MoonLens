@@ -47,6 +47,7 @@ use tauri::{
 };
 
 use crate::{
+    attach,
     capture::CaptureRect,
     lens_drag::{self, DragGate},
     lens_shield,
@@ -680,6 +681,28 @@ pub fn create(
     win.show().ok();
     let _ = win.set_always_on_top(true);
     registry.track_with(id.clone(), target_language, read_mode);
+    // An outside text view goes along with every move, in the same turn
+    // of the event loop (the poll in `run_passthrough` alone left it
+    // trailing behind in jumps).
+    let (ev_app, ev_registry, ev_id) = (app.clone(), registry.clone(), id.clone());
+    win.on_window_event(move |event| {
+        if !matches!(
+            event,
+            tauri::WindowEvent::Moved(_) | tauri::WindowEvent::Resized(_)
+        ) {
+            return;
+        }
+        if let Some(win) = ev_app.get_webview_window(&ev_id) {
+            lens_text::follow(
+                &ev_app,
+                &ev_registry,
+                &ev_id,
+                &win,
+                lens_text::Cause::LensMoved,
+                false,
+            );
+        }
+    });
     tauri::async_runtime::spawn(run_passthrough(app.clone(), registry.clone(), id.clone()));
     Ok(id)
 }
@@ -839,7 +862,8 @@ async fn run_passthrough(app: AppHandle, registry: LensRegistryHandle, id: Strin
         let Some(body_interactive) = registry.interactive(&id) else {
             break;
         };
-        lens_text::follow(&app, &registry, &id, &win);
+        let hidden = app.state::<attach::Handle>().hidden(&id);
+        lens_text::follow(&app, &registry, &id, &win, lens_text::Cause::Poll, hidden);
         let take = body_interactive || pointer_on_controls(&app, &win, &registry, &id);
         since_apply += 1;
         // Re-apply now and then: hiding and showing the window for a
@@ -851,8 +875,10 @@ async fn run_passthrough(app: AppHandle, registry: LensRegistryHandle, id: Strin
             since_apply = 0;
         }
     }
-    // The lens is gone, however it was closed: so is its text view.
+    // The lens is gone, however it was closed: so are its text view and
+    // its attachment to another app's window.
     lens_text::close(&app, &id);
+    app.state::<attach::Handle>().forget(&id);
 }
 
 fn pointer_on_controls(
@@ -1226,6 +1252,11 @@ async fn run_watch(
         }
         let was_moving = gate.moving();
         if !gate.allow(moved, lens_drag::button_down()) {
+            continue;
+        }
+        // Hidden along with the minimized window it is attached to:
+        // nothing of that window is on the screen to read.
+        if app.state::<attach::Handle>().hidden(&id) {
             continue;
         }
         // Dropped: read the new spot at once, like a manual refresh.
