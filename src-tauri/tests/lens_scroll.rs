@@ -216,6 +216,7 @@ impl Run {
         let env = TickEnv {
             pipeline: &self.pipeline,
             target_language: "ja",
+            mode: Default::default(),
             history_kind: "lens",
             emit: &emit,
             geometry_now: &geometry_now,

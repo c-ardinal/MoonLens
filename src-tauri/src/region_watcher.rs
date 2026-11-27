@@ -27,16 +27,20 @@
 //! are read (see [`scroll`]). New rows are translated once the scroll
 //! has come to rest.
 //!
+//! Steps 3 and 4 depend on the window's [`ReadMode`]: subtitles wait
+//! for a line to be typed out in full and are translated with the lines
+//! before them; interface text is translated reading by reading.
+//!
 //! The capture loop and the window live in `lens`.
 
 use image::{DynamicImage, GrayImage};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::{
     capture,
     pipeline::{CaptureFlowResult, LensBlock, Pipeline, TranslationProgress},
     providers::{Capability, ProviderError, TaskOutput},
-    scroll, user_error,
+    scroll, translate_plan, user_error,
 };
 
 /// Longest side of the thumbnail used for change detection.
@@ -62,6 +66,35 @@ const SETTLE_LIMIT: u32 = 6;
 /// ([`Tracker::scrolling`]), so the translations stay close to their
 /// text.
 pub const SCROLL_POLL_MS: u64 = 80;
+
+/// Ticks a subtitle that is being typed out may keep growing before it
+/// is translated anyway (text that scrolls without an end).
+const GROW_LIMIT: u32 = 60;
+
+/// Characters at the end of a reading that may differ in the next one
+/// for it to still count as the same line growing: the last glyphs of a
+/// line being typed out are often read half-drawn.
+const GROW_SLACK: usize = 2;
+
+/// Earlier readings given to the translator with a subtitle, in
+/// [`translate_plan::cost`] units: a few lines of dialogue. Small, so
+/// the prompt stays short and an old scene does not colour a new one.
+const CARRY: usize = 800;
+
+/// How a window-translation window reads its region.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReadMode {
+    /// Running text (subtitles, dialogue): a line that is typed out is
+    /// translated once it is complete, with the lines read before it
+    /// as context.
+    #[default]
+    Subtitle,
+    /// Interface text (menus, labels): every reading is translated by
+    /// itself, nothing is carried from one to the next, and text that
+    /// keeps changing is not waited for beyond [`SETTLE_LIMIT`].
+    Ui,
+}
 
 /// Messages for a window-translation window.
 #[derive(Debug, Clone, Serialize)]
@@ -109,6 +142,7 @@ pub struct Frame {
 pub struct TickEnv<'a> {
     pub pipeline: &'a Pipeline,
     pub target_language: &'a str,
+    pub mode: ReadMode,
     /// History kind of new translations (`pipeline::history_kind`).
     pub history_kind: &'a str,
     pub emit: &'a (dyn Fn(LiveEvent) + Send + Sync),
@@ -173,6 +207,14 @@ pub struct Tracker {
     memory: scroll::Memory,
     /// The last tick followed a scroll.
     scrolling: bool,
+    /// Ticks the pending reading has been growing ([`ReadMode::Subtitle`]).
+    growing: u32,
+    /// Mode and target language of the last tick: a change drops
+    /// `carried` (its translations are in the old language).
+    carried_for: (ReadMode, String),
+    /// Source and translation of earlier readings, oldest first: the
+    /// context of the next subtitle. Empty in [`ReadMode::Ui`].
+    carried: Vec<(String, String)>,
 }
 
 /// A reading of new text, kept until the next tick confirms it.
@@ -213,6 +255,9 @@ impl Tracker {
         self.unsettled = 0;
         self.memory.clear();
         self.scrolling = false;
+        self.growing = 0;
+        // Another place may show another text.
+        self.carried.clear();
         let newly: Vec<usize> = (0..self.shown.blocks.len())
             .filter(|i| !self.shown.stale.contains(i))
             .collect();
@@ -236,6 +281,10 @@ impl Tracker {
             return Ok(Tick::Moved);
         }
         self.last_geometry = Some(frame.geometry);
+        if self.carried_for.0 != env.mode || self.carried_for.1 != env.target_language {
+            self.carried_for = (env.mode, env.target_language.to_string());
+            self.carried.clear();
+        }
         let thumb = Thumb::of(&frame.image);
         let changed = self
             .last_thumb
@@ -349,6 +398,7 @@ impl Tracker {
             // the region moved over the same text): show what was hidden
             // again, at the new positions.
             self.unsettled = 0;
+            self.growing = 0;
             self.shown.thumb = Some(thumb);
             if let (Some(text), true) = (&decoded, force) {
                 (env.emit)(LiveEvent::Decoded { text: text.clone() });
@@ -379,18 +429,30 @@ impl Tracker {
                 bundle,
             });
             self.unsettled = 0;
+            self.growing = 0;
             return Ok(Tick::Settling);
         }
-        if !settled && self.unsettled < SETTLE_LIMIT {
+        // A subtitle that is still being typed out: every reading holds
+        // more of the same line. It is not text that never settles, so
+        // it gets the time it needs.
+        let grows = env.mode == ReadMode::Subtitle
+            && self.growing < GROW_LIMIT
+            && pending_key.as_deref().is_some_and(|p| key_extends(p, &key));
+        if !settled && (grows || self.unsettled < SETTLE_LIMIT) {
             self.pending = Some(Pending {
                 key,
                 picture,
                 bundle,
             });
-            self.unsettled += 1;
+            if grows {
+                self.growing += 1;
+            } else {
+                self.unsettled += 1;
+            }
             return Ok(Tick::Settling);
         }
         self.unsettled = 0;
+        self.growing = 0;
 
         if bundle.blocks.is_empty() {
             self.shown = Shown {
@@ -444,13 +506,21 @@ impl Tracker {
                     });
                 }
             };
+            // Empty in `ReadMode::Ui`. A reading that the new one
+            // continues (or repeats) is the same line: as history it
+            // would be translated twice.
+            let earlier = match self.carried.split_last() {
+                Some(((last, _), before)) if *last == text || extends(last, &text) => before,
+                _ => &self.carried[..],
+            };
             let result = env
                 .pipeline
-                .translate_capture_as(
+                .translate_capture_after(
                     &mut bundle,
                     env.target_language,
                     Some(&progress),
                     env.history_kind,
+                    earlier,
                 )
                 .await;
             self.shown.blocks = bundle.blocks.clone();
@@ -488,6 +558,9 @@ impl Tracker {
             })
             .collect::<Vec<_>>()
             .join("\n\n");
+        if env.mode == ReadMode::Subtitle {
+            self.carry(&text, &translation);
+        }
         Ok(Tick::Translated {
             source: text,
             translation,
@@ -579,6 +652,45 @@ impl Tracker {
             }
         }
         Ok(Ok(env.pipeline.lay_out(image, &self.memory.lines())))
+    }
+
+    /// Keep a shown reading as context of the next ones.
+    fn carry(&mut self, source: &str, translation: &str) {
+        if source.trim().is_empty() || translation.trim().is_empty() {
+            return;
+        }
+        // The line shown before, now complete: only the whole line stays.
+        if self
+            .carried
+            .last()
+            .is_some_and(|(s, _)| s == source || extends(s, source))
+        {
+            self.carried.pop();
+        }
+        self.carried.push((source.into(), translation.into()));
+        translate_plan::trim_history(&mut self.carried, CARRY);
+    }
+}
+
+/// Whether `new` is `old` with more text after it (a line being typed
+/// out), allowing for [`GROW_SLACK`] misread characters at the end of
+/// `old`.
+fn extends(old: &str, new: &str) -> bool {
+    let old_len = old.chars().count();
+    let same = old
+        .chars()
+        .zip(new.chars())
+        .take_while(|(a, b)| a == b)
+        .count();
+    old_len > GROW_SLACK && same + GROW_SLACK >= old_len && new.chars().count() > old_len
+}
+
+/// [`extends`] for two reading keys (target language and text, see
+/// `key` in [`Tracker::tick`]) of the same language.
+fn key_extends(old: &str, new: &str) -> bool {
+    match (old.split_once('\u{1}'), new.split_once('\u{1}')) {
+        (Some((old_lang, old)), Some((new_lang, new))) => old_lang == new_lang && extends(old, new),
+        _ => false,
     }
 }
 
@@ -745,6 +857,50 @@ mod tests {
         let out = carry_translations(&old, new);
         assert_eq!(out[0].translation.as_deref(), Some("こんにちは"));
         assert_eq!(out[0].bbox, [10.0, 40.0, 50.0, 20.0]);
+    }
+
+    #[test]
+    fn a_line_being_typed_out_extends_the_reading_before_it() {
+        assert!(extends("The north wind", "The north wind blows"));
+        // The last glyph was read half-drawn.
+        assert!(extends("The north wi", "The north wind blows"));
+        assert!(!extends("The north wind", "The north wind"));
+        assert!(!extends("The north wind", "A warm sun"));
+        // Too short to tell a growing line from another text.
+        assert!(!extends("Th", "The north wind"));
+        assert!(key_extends("ja\u{1}The north", "ja\u{1}The north wind"));
+        assert!(!key_extends("ja\u{1}The north", "en\u{1}The north wind"));
+        assert!(!key_extends("ja\u{1}", "ja\u{1}The north wind"));
+    }
+
+    #[test]
+    fn carried_context_keeps_whole_lines_within_its_budget() {
+        let mut t = Tracker::new();
+        t.carry("The north wind", "北風が");
+        t.carry("The north wind blows.", "北風が吹く。");
+        assert_eq!(
+            t.carried,
+            vec![(
+                "The north wind blows.".to_string(),
+                "北風が吹く。".to_string()
+            )]
+        );
+        t.carry("", "x");
+        t.carry("x", " ");
+        assert_eq!(t.carried.len(), 1);
+        for i in 0..200 {
+            t.carry(&format!("Line number {i} of the dialogue."), "台詞。");
+        }
+        let total: usize = t
+            .carried
+            .iter()
+            .map(|(s, tr)| translate_plan::cost(s) + translate_plan::cost(tr))
+            .sum();
+        assert!(total <= CARRY && t.carried.len() > 1, "{total}");
+        assert_eq!(
+            t.carried.last().unwrap().0,
+            "Line number 199 of the dialogue."
+        );
     }
 
     #[test]
