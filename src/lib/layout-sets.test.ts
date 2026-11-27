@@ -32,10 +32,10 @@ describe('layout set rows', () => {
 });
 
 describe('the view state of a restored window', () => {
-  const fallback: LensView = { continuous: true, text: false, placement: 'inside' };
+  const fallback: LensView = { continuous: true, text: false, placement: 'inside', speak: false };
 
   it('is what was saved', () => {
-    const saved = { continuous: false, text: true, placement: 'bottom' };
+    const saved = { continuous: false, text: true, placement: 'bottom', speak: true };
     expect(parseView(saved, fallback)).toEqual(saved);
   });
 

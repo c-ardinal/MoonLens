@@ -13,13 +13,14 @@
   import { holdMotion } from '$lib/pixel/motion.svelte';
   import PixelTitle from '$lib/components/PixelTitle.svelte';
   import { onDestroy, onMount } from 'svelte';
-  import { ArrowLeftRight, Copy, Cpu, Cloud, Languages, Loader2, X } from 'lucide-svelte';
+  import { ArrowLeftRight, Copy, Cpu, Cloud, Languages, Loader2, Square, Volume2, X } from 'lucide-svelte';
   import { getSettings, recordTranslation, runTranslate, type TaskResult } from '$lib/ipc';
   import { extractText } from '$lib/result';
   import { copyText } from '$lib/toast.svelte';
   import { parseError, type UiError } from '$lib/errors';
   import { LANGUAGES, SOURCE_LANGUAGES, writtenLanguage } from '$lib/lens-overlay';
   import { translateLines, type LineHistory } from '$lib/translate-line';
+  import { Speaker } from '$lib/speech.svelte';
 
   /** label は文言のキー ID（表示時に `t()` で取得）。 */
   const SOURCE_LANGS = [{ code: 'auto', label: 'common:detect' }, ...SOURCE_LANGUAGES];
@@ -43,6 +44,14 @@
   let latencyMs = $state<number | null>(null);
   let autoTranslate = $state(false);
   let progress = $state<string | null>(null);
+
+  /** 訳文の読上（OS の音声合成）。 */
+  const speaker = new Speaker();
+  let stopListening: (() => void) | undefined;
+  function toggleSpeak(): void {
+    if (speaker.speaking) speaker.stop();
+    else speaker.say(resultText, targetLang);
+  }
 
   let debounceTimer: ReturnType<typeof setTimeout> | undefined;
   /** Bumped on every run and on clear, so a run whose input or language
@@ -96,14 +105,21 @@
       /* backend unreachable: keep state defaults */
     }
     readPrefs();
+    // Tauri 外（UI 監査）では受信不可。
+    speaker
+      .listen()
+      .then((stop) => (stopListening = stop))
+      .catch(() => {});
   });
 
   onDestroy(() => {
+    stopListening?.();
     runId += 1;
     if (debounceTimer) clearTimeout(debounceTimer);
   });
 
   function resetResult(): void {
+    if (speaker.speaking) speaker.stop();
     resultText = '';
     provider = null;
     viaCloud = false;
@@ -408,6 +424,21 @@
             {#if latencyMs != null}<span class="shrink-0">· {latencyMs.toLocaleString()} ms</span>{/if}
           {/if}
         </span>
+        {#if speaker.note}
+          <span class="min-w-0 truncate text-xs text-red-500" role="status" title={speaker.note}>{speaker.note}</span>
+        {/if}
+        <button
+          type="button"
+          class="sbtn icon neutral"
+          data-testid="translate-speak"
+          aria-pressed={speaker.speaking}
+          title={speaker.speaking ? t('speech:stop_reading') : t('speech:read_translation_aloud')}
+          aria-label={speaker.speaking ? t('speech:stop_reading') : t('speech:read_translation_aloud')}
+          disabled={!resultText && !speaker.speaking}
+          onclick={toggleSpeak}
+        >
+          {#if speaker.speaking}<Square class="h-3.5 w-3.5" />{:else}<Volume2 class="h-3.5 w-3.5" />{/if}
+        </button>
         <button
           type="button"
           class="sbtn icon neutral"

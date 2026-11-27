@@ -34,6 +34,8 @@ export type Field =
     }
   | { kind: 'color'; path: string; label: string; help?: string }
   | { kind: 'hotkey'; path: string; label: string; help?: string }
+  /** Installed voice for read-aloud, with a preview (rendered by VoiceSelect). */
+  | { kind: 'voice'; path: string; label: string; help?: string }
   /** Editable term list (rendered by GlossaryEditor). */
   | { kind: 'glossary'; path: string; label: string; help?: string }
   /** Editable list of phrases (rendered by PhraseList). */
@@ -295,6 +297,35 @@ export const SECTIONS: Section[] = [
     ]
   },
   {
+    id: 'speech',
+    title: 'speech:read_aloud',
+    description: 'speech:section_description',
+    fields: [
+      { kind: 'voice', path: 'speech.voice', label: 'speech:voice', help: 'speech:voice_help' },
+      {
+        kind: 'number',
+        path: 'speech.rate',
+        label: 'speech:rate',
+        help: 'speech:rate_help',
+        min: 0.5,
+        max: 2,
+        step: 0.1,
+        unit: 'speech:times',
+        slider: true
+      },
+      {
+        kind: 'number',
+        path: 'speech.volume_percent',
+        label: 'speech:volume',
+        min: 0,
+        max: 100,
+        step: 5,
+        unit: '%',
+        slider: true
+      }
+    ]
+  },
+  {
     id: 'clipboard',
     title: 'settings:auto_copy',
     description: 'settings:copies_translation_and_recognition_results',
@@ -492,7 +523,7 @@ export const SECTIONS: Section[] = [
 ];
 
 export const GROUPS: Group[] = [
-  { id: 'translation', title: 'common:translation', sections: ['translation', 'glossary', 'layout-sets', 'pin'] },
+  { id: 'translation', title: 'common:translation', sections: ['translation', 'glossary', 'layout-sets', 'pin', 'speech'] },
   // `#group`：英語表示は帯幅内の短縮名（Audio）
   { id: 'subtitle', title: 'settings:audio_group', sections: ['subtitle'] },
   { id: 'models', title: 'common:models', sections: ['models', 'model-assist', 'model-ocr', 'model-asr'] },

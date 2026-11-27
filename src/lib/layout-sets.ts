@@ -80,6 +80,8 @@ export interface LensView {
   text: boolean;
   /** テキスト表示の配置。 */
   placement: TextPlacement;
+  /** 訳文の読上。 */
+  speak: boolean;
 }
 
 const PLACEMENTS: readonly TextPlacement[] = ['inside', 'top', 'bottom', 'left', 'right', 'free'];
@@ -93,6 +95,7 @@ export function parseView(raw: unknown, fallback: LensView): LensView {
     text: flag(v.text, fallback.text),
     placement: PLACEMENTS.includes(v.placement as TextPlacement)
       ? (v.placement as TextPlacement)
-      : fallback.placement
+      : fallback.placement,
+    speak: flag(v.speak, fallback.speak)
   };
 }

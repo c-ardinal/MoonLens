@@ -3,6 +3,7 @@
   import { RotateCcw } from 'lucide-svelte';
   import type { Field } from '$lib/settings-meta';
   import HotkeyInput from './HotkeyInput.svelte';
+  import VoiceSelect from './VoiceSelect.svelte';
 
   interface Props {
     field: Field;
@@ -10,11 +11,13 @@
     defaultValue?: any;
     /** The value clashes with another field (e.g. a duplicate shortcut). */
     invalid?: boolean;
+    /** 訳文の言語（音声の試聴用）。 */
+    language?: string;
     /** 設定画面の行表示：説明文は外部の説明欄へ委譲し、1 行で表示。 */
     compact?: boolean;
     onChange: (v: any) => void;
   }
-  let { field, value, defaultValue, invalid = false, compact = false, onChange }: Props = $props();
+  let { field, value, defaultValue, invalid = false, language = 'ja', compact = false, onChange }: Props = $props();
 
   const id = $derived(`f-${field.path.replace(/\./g, '-')}`);
   // f32 defaults arrive as 0.9200000166893005; null and missing are the same.
@@ -140,6 +143,8 @@
       <code class="font-mono text-xs text-ink-muted">{value}</code>
     {:else if field.kind === 'hotkey'}
       <HotkeyInput value={value ?? ''} label={t(field.label)} {onChange} />
+    {:else if field.kind === 'voice'}
+      <VoiceSelect {id} value={value ?? ''} {language} {onChange} />
     {/if}
     <button
       type="button"

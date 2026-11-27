@@ -819,3 +819,17 @@ export const setStream = (label: string, on: boolean) =>
 /** `label` が表示中の訳文（配置済み）を配信用ウィンドウへ送信。 */
 export const setStreamPaint = (label: string, items: StreamItem[]) =>
   safeInvoke<void>('set_stream_paint', { label, items });
+
+// ---- 訳文の読上（speech/mod.rs、型は `$lib/speech`） ----
+/** 呼出元ウィンドウの依頼として読上。経過は {@link onSpeech} で受信。 */
+export const speak = (text: string, lang: string) => safeInvoke<void>('speak', { text, lang });
+/** 呼出元ウィンドウの依頼分（読上中・待機中）を停止。 */
+export const stopSpeaking = () => safeInvoke<void>('stop_speaking');
+export const listVoices = () =>
+  safeInvoke<import('./speech').Voice[]>('list_voices', undefined, []);
+export const onSpeech = (
+  handler: (event: import('./speech').SpeechEvent) => void
+): Promise<UnlistenFn> =>
+  getCurrentWebviewWindow().listen<import('./speech').SpeechEvent>('moonlens://speech', (e) =>
+    handler(e.payload)
+  );
