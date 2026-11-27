@@ -27,6 +27,8 @@ struct State {
     source: String,
     /// History id once the record exists.
     id: Option<i64>,
+    /// Source and target language the record was created with.
+    languages: (String, String),
     /// End of the previous line; the next line never starts before it.
     last_end_ms: i64,
     /// Event id of every saved line, in line order: where a later
@@ -148,6 +150,16 @@ impl Recorder {
             return;
         }
         let mut st = self.state.lock();
+        // One record holds one language pair (a later re-translation
+        // uses it for every line): a change starts the next record.
+        let languages = (
+            settings.subtitle.source_language.clone(),
+            settings.subtitle.target_language.clone(),
+        );
+        if st.id.is_some() && st.languages != languages {
+            st.id = None;
+            st.line_ids.clear();
+        }
         let Some(id) = st.id.or_else(|| self.begin(&mut st, &settings)) else {
             return;
         };
@@ -186,6 +198,10 @@ impl Recorder {
             }
         };
         st.id = Some(id);
+        st.languages = (
+            s.subtitle.source_language.clone(),
+            s.subtitle.target_language.clone(),
+        );
         if let Err(e) = self
             .storage
             .apply_retention(s.storage.retention_days, s.storage.max_entries)
@@ -818,5 +834,30 @@ mod tests {
         f.recorder.observe(&revised(&[3], 4, "see", "見る", None));
         f.recorder.observe(&revised(&[2], 5, "bee", "蜂", None));
         assert_eq!(originals(&f.storage), ["a b", "see"]);
+    }
+    #[test]
+    fn a_changed_language_pair_starts_the_next_record() {
+        let f = fixture();
+        f.recorder
+            .observe(&numbered(1, "Hello.", "こんにちは。", 2_000, 2_000));
+        let mut s = (*f.settings.snapshot()).clone();
+        let first = s.subtitle.target_language.clone();
+        s.subtitle.target_language = "ko".into();
+        f.settings.save(s).unwrap();
+        f.recorder
+            .observe(&numbered(2, "Bye.", "안녕.", 4_000, 2_000));
+        // A correction of the earlier record's line is dropped.
+        f.recorder
+            .observe(&revised(&[1], 3, "Hello!", "やあ。", None));
+
+        let rows = f.storage.recent(10).unwrap();
+        assert_eq!(rows.len(), 2);
+        let record = |id| f.storage.subtitle_record(id).unwrap().unwrap();
+        let (new, old) = (record(rows[0].id), record(rows[1].id));
+        assert_eq!((old.target_language, old.lines.len()), (first, 1));
+        assert_eq!(old.lines[0].original, "Hello.");
+        assert_eq!(new.target_language, "ko");
+        assert_eq!(new.lines[0].original, "Bye.");
+        assert_eq!(new.lines[0].start_ms, 2_000);
     }
 }
