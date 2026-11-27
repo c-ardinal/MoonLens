@@ -81,6 +81,9 @@ pub fn probe(id: u64) -> Probe {
         right: i32,
         bottom: i32,
     }
+    // `lens_shield` declares `GetWindowRect` with its own handle and
+    // rect types of the same layout.
+    #[allow(clashing_extern_declarations)]
     #[link(name = "user32")]
     extern "system" {
         fn IsWindow(hwnd: *mut c_void) -> i32;
