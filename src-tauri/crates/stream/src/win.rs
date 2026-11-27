@@ -52,7 +52,7 @@ use windows::Win32::Graphics::Dxgi::Common::{
 use windows::Win32::Graphics::Dxgi::{
     IDXGIDevice, IDXGIFactory2, IDXGISurface, IDXGISwapChain1, DXGI_PRESENT, DXGI_SCALING_STRETCH,
     DXGI_SWAP_CHAIN_DESC1, DXGI_SWAP_CHAIN_FLAG, DXGI_SWAP_EFFECT_DISCARD,
-    DXGI_USAGE_RENDER_TARGET_OUTPUT,
+    DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL, DXGI_USAGE_RENDER_TARGET_OUTPUT,
 };
 use windows::Win32::Graphics::Gdi::{
     ClientToScreen, EnumDisplayMonitors, GetMonitorInfoW, HDC, HMONITOR, MONITORINFO,
@@ -150,6 +150,21 @@ pub fn start(
     })
 }
 
+fn flip() -> bool {
+    #[cfg(test)]
+    return tests::FLIP.load(std::sync::atomic::Ordering::SeqCst);
+    #[cfg(not(test))]
+    true
+}
+
+fn buffers() -> u32 {
+    if flip() {
+        2
+    } else {
+        1
+    }
+}
+
 fn hwnd(handle: isize) -> HWND {
     HWND(handle as *mut core::ffi::c_void)
 }
@@ -219,6 +234,10 @@ fn client_rect(window: HWND) -> Option<[i32; 4]> {
 /// the monitor that reaches furthest right (the lowest of those), so
 /// that all but one pixel of a window placed there is on no monitor.
 fn parking_spot() -> (i32, i32) {
+    #[cfg(test)]
+    if !tests::PARKED.load(std::sync::atomic::Ordering::SeqCst) {
+        return (480, 380);
+    }
     unsafe extern "system" fn each(monitor: HMONITOR, _: HDC, _: *mut RECT, out: LPARAM) -> BOOL {
         let mut info = MONITORINFO {
             cbSize: std::mem::size_of::<MONITORINFO>() as u32,
@@ -358,9 +377,13 @@ impl Composite {
                     Quality: 0,
                 },
                 BufferUsage: DXGI_USAGE_RENDER_TARGET_OUTPUT,
-                BufferCount: 1,
+                BufferCount: buffers(),
                 Scaling: DXGI_SCALING_STRETCH,
-                SwapEffect: DXGI_SWAP_EFFECT_DISCARD,
+                SwapEffect: if flip() {
+                    DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL
+                } else {
+                    DXGI_SWAP_EFFECT_DISCARD
+                },
                 AlphaMode: DXGI_ALPHA_MODE_IGNORE,
                 ..Default::default()
             };
@@ -472,7 +495,7 @@ impl Composite {
             self.d2d.SetTarget(None);
             self.context.ClearState();
             self.swap_chain.ResizeBuffers(
-                1,
+                buffers(),
                 size.Width as u32,
                 size.Height as u32,
                 DXGI_FORMAT_B8G8R8A8_UNORM,

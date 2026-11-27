@@ -254,6 +254,46 @@ fn settle(window: isize, what: &str, ok: impl Fn(&Picture) -> bool) -> Picture {
     }
 }
 
+pub static FLIP: AtomicBool = AtomicBool::new(true);
+pub static PARKED: AtomicBool = AtomicBool::new(true);
+
+/// What each way of presenting and placing the composite gives the two
+/// capture methods (printed; `the_composite_shows…` asserts the one in
+/// use).
+#[test]
+fn a_probe_of_presentation_and_placement() {
+    let target = colour_window(
+        "MoonLensStreamProbeTarget",
+        BLUE,
+        false,
+        [600, 60, 300, 200],
+    );
+    std::thread::sleep(Duration::from_millis(500));
+    println!("target through WGC: {:?}", capture(target).at(10, 10));
+    println!("target through GDI: {:?}", capture_gdi(target).at(10, 10));
+    for (flip, parked) in [(true, true), (true, false), (false, true), (false, false)] {
+        FLIP.store(flip, Ordering::SeqCst);
+        PARKED.store(parked, Ordering::SeqCst);
+        let composite = Compositor::start(target, "MoonLens probe", || {}).expect("composite");
+        std::thread::sleep(Duration::from_millis(1500));
+        let wgc = capture(composite.window());
+        let gdi = capture_gdi(composite.window());
+        println!(
+            "flip {flip}, parked {parked}: WGC {}x{} {:?} / {:?}, GDI {:?} / {:?}",
+            wgc.width,
+            wgc.height,
+            wgc.at(10, 10),
+            wgc.at(280, 180),
+            gdi.at(10, 10),
+            gdi.at(280, 180)
+        );
+        composite.stop();
+        std::thread::sleep(Duration::from_millis(300));
+    }
+    FLIP.store(true, Ordering::SeqCst);
+    PARKED.store(true, Ordering::SeqCst);
+}
+
 const BLUE: [u8; 3] = [0, 0, 200];
 const GREEN: [u8; 3] = [0, 180, 0];
 const RED: [u8; 3] = [200, 0, 0];
