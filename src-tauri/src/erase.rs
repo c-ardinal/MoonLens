@@ -398,8 +398,8 @@ fn shrink(l: &Level) -> Level {
     for d in 0..w * h {
         let n = out.weight[d];
         if n > 0.0 {
-            for c in 0..3 {
-                out.color[d][c] /= n;
+            for c in &mut out.color[d] {
+                *c /= n;
             }
             out.weight[d] = 1.0;
         }
