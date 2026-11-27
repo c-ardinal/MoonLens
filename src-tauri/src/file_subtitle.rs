@@ -521,7 +521,10 @@ impl FileSubtitleService {
             run: inner.run + 1,
         };
         let run_id = inner.run;
-        let recorder = Recorder::new(self.storage.clone(), self.settings.clone());
+        // The job translates with the languages it started with; so
+        // does its record, whatever the settings become meanwhile.
+        let recorder = Recorder::new(self.storage.clone(), self.settings.clone())
+            .languages_fixed(&settings.source_language, &settings.target_language);
         recorder.observe(&SubtitleEvent::Started {
             device: name,
             source: crate::audio::AudioSource::System,

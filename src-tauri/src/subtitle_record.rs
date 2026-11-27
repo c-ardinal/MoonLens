@@ -21,6 +21,8 @@ pub struct Recorder {
     settings: Arc<SettingsStore>,
     /// The run is a face-to-face conversation (see [`Recorder::languages`]).
     conversation: bool,
+    /// Languages of a run that does not follow the settings.
+    fixed: Option<(String, String)>,
     state: Mutex<State>,
 }
 
@@ -54,6 +56,7 @@ impl Recorder {
             storage,
             settings,
             conversation: false,
+            fixed: None,
             state: Mutex::new(State::default()),
         }
     }
@@ -64,10 +67,20 @@ impl Recorder {
         self
     }
 
+    /// The run keeps the languages it started with (a file job), whatever
+    /// the settings become meanwhile.
+    pub fn languages_fixed(mut self, source: &str, target: &str) -> Self {
+        self.fixed = Some((source.to_string(), target.to_string()));
+        self
+    }
+
     /// Source and target language of the record. A conversation goes
     /// both ways; its record names the direction the user reads: from
     /// the other person's language into their own.
     fn languages(&self, s: &crate::settings::Settings) -> (String, String) {
+        if let Some(fixed) = &self.fixed {
+            return fixed.clone();
+        }
         if self.conversation {
             let pair = crate::conversation::Pair::from_settings(&s.subtitle);
             return (pair.partner, pair.own);
@@ -518,6 +531,29 @@ mod tests {
         });
         f.recorder.observe(&chunk("a", "b", 1000, 1000));
         let rec = only_record(&f.storage);
+        assert_eq!(
+            (rec.source_language.as_str(), rec.target_language.as_str()),
+            ("en", "ja")
+        );
+    }
+
+    #[test]
+    fn fixed_languages_outlast_a_change_of_the_settings() {
+        let f = fixture();
+        let recorder =
+            Recorder::new(f.storage.clone(), f.settings.clone()).languages_fixed("en", "ja");
+        recorder.observe(&SubtitleEvent::Started {
+            device: "talk.mp4".into(),
+            source: AudioSource::System,
+        });
+        recorder.observe(&chunk("a", "b", 1000, 1000));
+        let mut s = (*f.settings.snapshot()).clone();
+        s.subtitle.source_language = "ko".into();
+        s.subtitle.target_language = "en".into();
+        f.settings.save(s).unwrap();
+        recorder.observe(&chunk("c", "d", 2000, 1000));
+        let rec = only_record(&f.storage);
+        assert_eq!(rec.lines.len(), 2);
         assert_eq!(
             (rec.source_language.as_str(), rec.target_language.as_str()),
             ("en", "ja")

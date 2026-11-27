@@ -1214,15 +1214,25 @@ pub async fn start_file_subtitle(
     state: State<'_, AppState>,
 ) -> Result<crate::file_subtitle::Status, String> {
     state.subtitle.preflight().await?;
+    let on_update = app.clone();
     let notify = std::sync::Arc::new(move |update: crate::file_subtitle::Update| {
+        let app = &on_update;
         if update.status.phase != crate::file_subtitle::Phase::Running {
-            release_speech_model(&app);
+            release_speech_model(app);
         }
         let _ = app.emit(crate::file_subtitle::EVENT, update);
     });
-    state
+    let started = state
         .file_subtitle
-        .start(std::path::Path::new(&path), notify)
+        .start(std::path::Path::new(&path), notify);
+    // A file that cannot be used ends no job: the model the preflight
+    // loaded goes here, unless a job that was already running holds it.
+    if started.is_err()
+        && state.file_subtitle.status().phase != crate::file_subtitle::Phase::Running
+    {
+        release_speech_model(&app);
+    }
+    started
 }
 
 /// The file job ended: give back the ~1 GB the speech model holds,
