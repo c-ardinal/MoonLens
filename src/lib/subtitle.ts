@@ -1,4 +1,11 @@
-import type { AudioApp, AudioSource, SubtitleEvent, SubtitlePhase, SubtitleSession } from '$lib/ipc';
+import type {
+  AudioApp,
+  AudioSource,
+  Speaker,
+  SubtitleEvent,
+  SubtitlePhase,
+  SubtitleSession
+} from '$lib/ipc';
 import type { InputState } from '$lib/subtitle-level';
 import { t } from './i18n';
 
@@ -9,6 +16,8 @@ export type SubtitleLine = {
   translated: string;
   /** 文単位の再翻訳で確定済み。 */
   revised?: boolean;
+  /** 対面会話の話者。字幕では未設定。 */
+  speaker?: Speaker;
 };
 
 /** 音声翻訳ウィンドウの表示状態。 */
@@ -70,7 +79,8 @@ export function reduce(view: SubtitleView, ev: SubtitleEvent): SubtitleView {
       return { ...view, phase: ev.phase };
     case 'chunk': {
       const id = view.idBase + ev.id;
-      const line = { id, original: ev.original, translated: ev.translated };
+      const line: SubtitleLine = { id, original: ev.original, translated: ev.translated };
+      if (ev.speaker) line.speaker = ev.speaker;
       return {
         ...view,
         error: null,
@@ -85,11 +95,14 @@ export function reduce(view: SubtitleView, ev: SubtitleEvent): SubtitleView {
       // 置換対象が保持範囲外（破棄済み）の場合、行は不変。
       const at = view.lines.findIndex((l) => replaces.includes(l.id));
       if (at < 0) return lastId === view.lastId ? view : { ...view, lastId };
+      // 対面会話：文は 1 話者の発話（話者交替で文を終了）のため、置換対象の話者を継承。
+      const speaker = view.lines[at].speaker;
+      const spoken = speaker ? { speaker } : {};
       // 原文が空：補正前に遮断済みとなった文。置換対象の行は除去、次文の冒頭のみ残置。
       const next: SubtitleLine[] = ev.original
-        ? [{ id: base + ev.id, original: ev.original, translated: ev.translated, revised: true }]
+        ? [{ id: base + ev.id, original: ev.original, translated: ev.translated, revised: true, ...spoken }]
         : [];
-      if (ev.rest) next.push({ ...ev.rest, id: base + ev.rest.id });
+      if (ev.rest) next.push({ ...ev.rest, id: base + ev.rest.id, ...spoken });
       const lines = view.lines.filter((l) => !replaces.includes(l.id));
       lines.splice(at, 0, ...next);
       return { ...view, lines, lastId };
@@ -135,8 +148,16 @@ export function statusLabel(view: SubtitleView, input: InputState = 'none'): str
   return input === 'low' ? t('subtitle:below_threshold') : t('subtitle:no_input');
 }
 
-/** 字幕表示前の案内文：入力状態と対処。`app`：アプリ単位の音源名（PC 全体は null）。 */
-export function inputHint(input: InputState, app: string | null = null): string {
+/**
+ * 字幕表示前の案内文：入力状態と対処。`app`：アプリ単位の音源名（PC 全体は null）。
+ * `microphone`：対面会話（マイク入力）。
+ */
+export function inputHint(input: InputState, app: string | null = null, microphone = false): string {
+  if (microphone) {
+    return input === 'none'
+      ? t('subtitle:no_microphone_input_detected')
+      : t('subtitle:speak_in_either_language');
+  }
   if (input === 'ok') return t('subtitle:audio_detected_subtitles_will_appear_here');
   if (input === 'low') return t('subtitle:input_is_below_the_recognition_threshold');
   return app
@@ -153,11 +174,35 @@ export function restore(view: SubtitleView, session: SubtitleSession | null): Su
 /** 音源の表記（タイトルバー）。 */
 export function sourceLabel(view: Pick<SubtitleView, 'source' | 'device'>): string {
   if (view.source.kind === 'system') return t('subtitle:whole_pc');
+  if (view.source.kind === 'microphone') return t('subtitle:microphone');
   return view.device || `PID ${view.source.pid}`;
 }
 
 export const sameSource = (a: AudioSource, b: AudioSource): boolean =>
-  a.kind === 'system' ? b.kind === 'system' : b.kind === 'app' && a.pid === b.pid;
+  a.kind === 'app' ? b.kind === 'app' && a.pid === b.pid : a.kind === b.kind;
+
+/** 音源メニューの行の識別子。 */
+export const sourceKey = (source: AudioSource): string | number =>
+  source.kind === 'app' ? source.pid : source.kind;
+
+/** 対面会話の言語対：本人（音声翻訳の翻訳先言語）と相手。 */
+export type ConversationPair = { own: string; partner: string };
+
+const spoken = (code: string) => code.split(/[-_]/)[0].trim().toLowerCase();
+
+/**
+ * 設定値から言語対を決定（バックエンド `conversation::Pair::from_settings` と同一規則）。
+ * 相手の言語が未設定、または本人と同一の場合：英語（本人が英語の場合は日本語）。
+ */
+export function conversationPair(own: string, partner: string): ConversationPair {
+  const same = !partner.trim() || spoken(partner) === spoken(own);
+  return { own, partner: same ? (spoken(own) === 'en' ? 'ja' : 'en') : partner.trim() };
+}
+
+/** 相手の言語の選択肢：本人と同一の言語は対象外。 */
+export function partnerLanguages<T extends { code: string }>(languages: T[], own: string): T[] {
+  return languages.filter((l) => spoken(l.code) !== spoken(own));
+}
 
 /** 音源メニューの 1 行。 */
 export type SourceOption = {
@@ -165,12 +210,13 @@ export type SourceOption = {
   label: string;
   /** 補足（アプリのウィンドウ題名）。 */
   detail: string;
-  playing: boolean;
+  /** 音声再生中。null：再生状況の対象外（マイク）。 */
+  playing: boolean | null;
   selected: boolean;
 };
 
 /**
- * 音源メニューの選択肢：先頭は PC 全体、以降はアプリ一覧。選択中のアプリが
+ * 音源メニューの選択肢：先頭は PC 全体とマイク（対面会話）、以降はアプリ一覧。選択中のアプリが
  * 一覧に不在（音声出力を終了）でも、選択肢として残置。
  */
 export function sourceOptions(
@@ -185,6 +231,13 @@ export function sourceOptions(
       detail: t('subtitle:audio_from_all_apps'),
       playing: apps.some((a) => a.playing),
       selected: current.kind === 'system'
+    },
+    {
+      source: { kind: 'microphone' },
+      label: t('subtitle:microphone'),
+      detail: t('subtitle:face_to_face_conversation_both_ways'),
+      playing: null,
+      selected: current.kind === 'microphone'
     },
     ...apps.map((a) => ({
       source: { kind: 'app', pid: a.pid } as AudioSource,

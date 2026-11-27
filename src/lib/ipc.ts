@@ -386,8 +386,11 @@ export const onHotkey = (handler: (action: string) => void): Promise<UnlistenFn>
 /** 音声翻訳の処理段階：音声待機・音声認識・翻訳。 */
 export type SubtitlePhase = 'waiting' | 'recognizing' | 'translating' | 'revising';
 
-/** 音声翻訳ウィンドウの音源：PC 全体、またはアプリ単位（プロセスツリー）。 */
-export type AudioSource = { kind: 'system' } | { kind: 'app'; pid: number };
+/** 音声翻訳ウィンドウの音源：PC 全体、アプリ単位（プロセスツリー）、マイク（対面会話）。 */
+export type AudioSource = { kind: 'system' } | { kind: 'app'; pid: number } | { kind: 'microphone' };
+
+/** 対面会話の話者：利用者本人、または相手。 */
+export type Speaker = 'own' | 'partner';
 
 /** 音声出力ストリームを保持するアプリ。 */
 export type AudioApp = {
@@ -414,7 +417,8 @@ export type SubtitleEvent =
   | { kind: 'started'; device: string; source: AudioSource }
   | { kind: 'stopped' }
   | { kind: 'status'; phase: SubtitlePhase }
-  | { kind: 'chunk'; id: number; original: string; translated: string }
+  /** `speaker`：対面会話の話者（訳文は相手側の言語）。字幕では省略。 */
+  | { kind: 'chunk'; id: number; original: string; translated: string; speaker?: Speaker }
   | {
       /** 文単位の再翻訳結果。`replaces` の各行を 1 行（＋次文の冒頭 `rest`）へ置換。`original` が空の場合は遮断済みの文：行の除去のみ。 */
       kind: 'revised';
@@ -437,6 +441,8 @@ export const subtitleState = () => safeInvoke<boolean>('subtitle_state', undefin
 /** 音声翻訳ウィンドウを全停止・全閉鎖。 */
 export const stopSubtitle = () => safeInvoke<void>('stop_subtitle');
 export const startSubtitle = () => safeInvoke<void>('start_subtitle');
+/** 対面会話を開始：マイク入力のウィンドウを表示（表示済みの場合は前面化・再開）。 */
+export const startConversation = () => safeInvoke<void>('start_conversation');
 /** 音声翻訳の遮断リスト（`subtitle.blocked_phrases`）へ追加。 */
 export const blockSubtitlePhrase = (phrase: string) =>
   safeInvoke<void>('block_subtitle_phrase', { phrase });
