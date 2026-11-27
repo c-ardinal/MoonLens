@@ -141,16 +141,38 @@ export const pickAndInstallPlugin = () =>
 export const installOcrModels = () => safeInvoke<string>('install_ocr_models');
 
 export interface OcrModelsStatus {
-  /** PP-OCRv5 (Japanese / Chinese / English), the default engine. */
+  /** PP-OCR (Japanese / Chinese / English), the default engine. */
   ppocr: boolean;
+  /** PP-OCR が現行世代（PP-OCRv6）。false：旧版で取得した PP-OCRv5 で動作中。 */
+  current: boolean;
   /** ocrs (Latin only), the fallback engine. */
   ocrs: boolean;
-  /** PP-OCRv5 の高速実行部品（ONNX Runtime）が取得済み、または当該環境で対象外。 */
+  /** PP-OCR の高速実行部品（ONNX Runtime）が取得済み、または当該環境で対象外。 */
   fast: boolean;
   dir: string;
 }
 export const ocrModelsStatus = () =>
-  safeInvoke<OcrModelsStatus>('ocr_models_status', undefined, { ppocr: false, ocrs: false, fast: false, dir: '' });
+  safeInvoke<OcrModelsStatus>('ocr_models_status', undefined, {
+    ppocr: false,
+    current: false,
+    ocrs: false,
+    fast: false,
+    dir: ''
+  });
+
+/** 標準モデルの対象外の文字体系（韓国語・キリル文字等）と、その認識モデルの取得状態。 */
+export interface OcrScript {
+  id: string;
+  /** 取得量（バイト）。 */
+  size: number;
+  installed: boolean;
+}
+export const ocrScriptsStatus = () => safeInvoke<OcrScript[]>('ocr_scripts_status', undefined, []);
+/** 進捗は onModelProgress（filename：ocrScriptFile(id)）で通知。 */
+export const installOcrScript = (id: string) => safeInvoke<void>('install_ocr_script', { id });
+export const deleteOcrScript = (id: string) => safeInvoke<void>('delete_ocr_script', { id });
+/** 文字体系の認識モデルのファイル名（進捗通知の filename）。 */
+export const ocrScriptFile = (id: string) => `ppocrv5-rec-${id}.onnx`;
 
 /** Fired after settings are saved, so every window can apply them at once. */
 export const onSettingsChanged = (handler: (s: Settings) => void): Promise<UnlistenFn> =>

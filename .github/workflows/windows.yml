@@ -221,6 +221,13 @@ jobs:
         working-directory: src-tauri
         run: cargo test --release --locked --lib backends_read_the_same_lines -- --ignored --nocapture
 
+      # Korean, Cyrillic, Arabic, Thai, Devanagari, Tamil and Telugu
+      # pages are read by the model of their script; a Japanese page
+      # reads the same with all of them installed.
+      - name: OCR reads the additional scripts
+        working-directory: src-tauri
+        run: cargo test --release --locked --lib other_scripts_are_read -- --ignored --nocapture
+
       - name: Screen → OCR → translation
         working-directory: src-tauri
         run: cargo test --release --locked --test lens_screen_windows_live -- --ignored --nocapture

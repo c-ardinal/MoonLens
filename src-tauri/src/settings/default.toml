@@ -106,7 +106,7 @@ max_cost_per_request = 0.0
 sticky_session_ms = 30000
 
 [providers.ocr]
-# ppocr: PP-OCRv5 (Japanese / Chinese / English). Falls through to the
+# ppocr: PP-OCR (Japanese / Chinese / English, more scripts on request). Falls through to the
 # Latin-only ocrs engine until its models are installed.
 chain = ["ppocr", "ocrs"]
 parallel_race = false

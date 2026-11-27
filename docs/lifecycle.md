@@ -96,7 +96,8 @@ MoonLens の導入〜削除の各段階で発生するケースと、期待動�
 | D-37 | ウィンドウ翻訳ウィンドウのタイトルバー | 左端：ウィンドウ追加、右端：最大化・閉じる（常時表示）。中間の操作項目はウィンドウ幅へ収納可能な数のみ表示し、残余は縦メニュー（⋮）へ収納。縦メニュー表示中は本体もマウス操作を受付、Esc・ウィンドウ外クリック・フォーカス喪失で終了 | 修正 | 従来は横スクロール。`fitCount`（vitest）、Playwright（ウィンドウ幅 150〜700px での収納数・縦メニューの内容・Esc の挙動） |
 | D-38 | ウィンドウ翻訳のテキスト表示位置 | ウィンドウ内（パネル）／ウィンドウ外（別ウィンドウ：上・下・左・右へ隣接、または自由配置）を切替。ウィンドウ外表示は本体の移動・サイズ変更へ追従。隣接側に余白なしの場合は反対側へ配置。自由配置は利用者の配置位置（本体との相対位置）とサイズを保持。選択は次回以降の新規ウィンドウへ継承 | 新規 | `lens_text::Follow` テスト（追従・反対側への配置・相対位置の保持・ウィンドウシステムの反映遅延）。Playwright（配置切替の IPC・内容の送受信）。実ウィンドウの追従は要実機 |
 | D-39 | ウィンドウ翻訳ウィンドウのドラッグ中 | 移動・サイズ変更の開始からマウスボタンの解放まで、取得・OCR・翻訳を停止（途中で静止しても不実行）。解放後、直後に再読取。ボタン状態が取得不可の環境（X サーバーなしの Wayland）は約 0.3 秒の静止で解放と判定 | 修正 | 従来は監視間隔 1 回分の静止で読取を再開（ドラッグ途中でも実行）。`lens_drag::DragGate` テスト。ボタン状態：Windows `GetAsyncKeyState`、macOS `CGEventSourceButtonState`、Linux X11 `query_pointer`。実機のドラッグは要実機 |
-| D-40 | 文字認識（PP-OCRv5）の実行構成 | 環境別に最速の構成を自動選択。候補：DirectML（Windows の GPU、`performance.use_gpu_if_available` 有効時）、ONNX Runtime の CPU 実行（Windows・Linux・macOS）。モデル読込時に同一の小規模処理で各候補を実測し、最短の構成を採用（結果はログ `ocr backend: …`）。ONNX Runtime 未取得・読込失敗・非対応環境（Intel 版 macOS 等）は従来の rten で動作。認識結果は全構成で同一（行画像の幅は全構成共通で 64 画素単位へ右余白を付加）。`[providers.configs.ppocr] backend`（`auto`／`directml`／`onnx-cpu`／`rten`）で固定可 | 新規 | `backends_read_the_same_lines`（実画像 13 件で rten と照合、Windows CI では DirectML も照合）。DirectML の実機 GPU での速度は要実機 |
+| D-40 | 文字認識（PP-OCR）の実行構成 | 環境別に最速の構成を自動選択。候補：DirectML（Windows の GPU、`performance.use_gpu_if_available` 有効時）、ONNX Runtime の CPU 実行（Windows・Linux・macOS）。モデル読込時に同一の小規模処理で各候補を実測し、最短の構成を採用（結果はログ `ocr backend: …`）。ONNX Runtime 未取得・読込失敗・非対応環境（Intel 版 macOS 等）は従来の rten で動作。認識結果は全構成で同一（行画像の幅は全構成共通で 64 画素単位へ右余白を付加）。`[providers.configs.ppocr] backend`（`auto`／`directml`／`onnx-cpu`／`rten`）で固定可 | 新規 | `backends_read_the_same_lines`（実画像 13 件で rten と照合、Windows CI では DirectML も照合）。DirectML の実機 GPU での速度は要実機 |
+| D-44 | 追加の文字体系（韓国語・キリル文字・アラビア文字・タイ語・デーヴァナーガリー・タミル語・テルグ語） | 設定のモデル欄で文字体系別の認識モデル（各 8〜13 MB、SHA-256 固定）を任意取得・削除。取得・削除は次回読取から反映（再起動不要）。標準モデルの読取が不確実な行（信頼度 0.85 未満、または行長に対し文字数が過少）のみ追加モデルで再認識し、当該文字体系が画面内に存在する間は新規行を全て再認識。追加モデルの採用条件：信頼度 0.8 以上、当該文字体系の文字が過半、かつ標準側が不確実または文字数 85% 未満。日中英の行は標準モデルの結果を維持。アラビア文字は記述順へ並替。標準モデル未取得時は取得不可 | 新規 | `ocr_scripts::tests`、`other_scripts_are_read`（文字体系別の実画像、Windows CI）、`OcrScripts.svelte.test.ts` |
 
 ## 4. カスタマイズ
 
@@ -126,7 +127,8 @@ MoonLens の導入〜削除の各段階で発生するケースと、期待動�
 | U-3 | 一度だけ適用すべき移行（クラウド全体スイッチをオフ） | `config_version` で一度だけ適用。適用後にユーザーがオンにした値は維持 | 修正 | `current_files_keep_a_deliberate_cloud_switch` |
 | U-4 | 旧版のモデル保存先（`<データ>/moonlens/models`、Windows は移動プロファイルの `%APPDATA%`） | 初回起動時に新保存先へ移動（再ダウンロード不要）。別ボリュームで移動不可なら旧保存先を継続使用 | 修正 | `ocr_ocrs::tests::legacy_models_folder_is_moved_once` |
 | U-5 | カタログ外の旧モデルファイル | モデル欄に「旧モデル・不要ファイル」として容量付きで表示、個別削除可 | 修正 | `llm_models::tests::orphans_are_model_files_the_catalog_does_not_own` |
-| U-11 | 旧版で OCR モデル導入済み（高速実行部品なし） | 文字認識は従来の構成で動作を継続。設定のモデル欄で PP-OCRv5 に「高速実行部品が未取得」と表示し、取得操作で ONNX Runtime 本体（公式配布物、SHA-256 固定）と専用モデル（約 45 MB）のみ追加取得。取得後の次回読取から自動選択へ移行（再起動不要）。自動取得なし | 新規 | `model-setup.test.ts`、`ocr_onnx::tests` |
+| U-11 | 旧版で OCR モデル導入済み（高速実行部品なし） | 文字認識は従来の構成で動作を継続。設定のモデル欄で PP-OCRv5 に「高速実行部品が未取得」と表示し、取得操作で ONNX Runtime 本体（公式配布物、SHA-256 固定）（約 25 MB）のみ追加取得。取得後の次回読取から自動選択へ移行（再起動不要）。自動取得なし | 新規 | `model-setup.test.ts`、`ocr_onnx::tests` |
+| U-12 | 旧版で OCR モデル導入済み（PP-OCRv5） | 文字認識は PP-OCRv5 で動作を継続（ログ `models: PP-OCRv5 mobile`）。設定のモデル欄・ホームの状態表示へ旧世代での動作中を表示し、取得操作で PP-OCRv6（約 31 MB）のみ追加取得。取得完了後に旧モデル（約 43 MB）を自動削除し、次回読取から PP-OCRv6 へ移行（再起動不要）。自動取得なし | 新規 | `the_current_generation_is_used_when_both_are_on_disk`、`the_earlier_generation_is_deleted_only_once_the_current_one_is_there`、`model-setup.test.ts` |
 | U-6 | 履歴 DB のスキーマ変更 | `PRAGMA user_version` で版管理。新版の DB は読込せず退避・再作成（ダウングレード時） | 修正 | `storage::tests::newer_schema_is_refused` |
 | U-7 | 履歴 DB の破損 | 退避・再作成、通知。起動は継続（以前は起動失敗） | 修正 | `storage::tests::garbage_file_is_moved_aside_and_recreated` |
 | U-8 | ダウングレード（新版の設定を旧版で読む） | 旧版で未知の項目は無視、他は有効（本版以降）。未知の項目は警告に表示、修正（削除）は利用者の選択時のみ | 修正 | C-8 と同じ仕組み |
@@ -145,4 +147,4 @@ MoonLens の導入〜削除の各段階で発生するケースと、期待動�
 
 - **ライブ字幕の遅延（GPU なし）**：既定の Whisper large-v3-turbo は毎回 30 秒の区間を処理するため、CPU のみでは 1 チャンクの認識に数秒〜十数秒を要する（4 コアのクラウド VM で約 15 秒）。音声の欠落はないが、字幕は遅延する。GPU（Metal／Vulkan／CUDA）では大幅な短縮を想定（未計測）。低速 PC 向けに Whisper small（約 3 倍速、日本語の精度は低下）を用意。詳細は [asr-models.md](asr-models.md)。
 - **DirectML の実機未計測**：DirectML による文字認識は Windows CI（GPU なし、ソフトウェア描画）での動作と認識結果の一致のみ確認。実機 GPU での速度は未計測（自動選択は実測に基づくため、CPU より低速な環境では CPU を採用）。macOS の GPU（CoreML）は未対応。
-- **ocrs モデルの整合性検証なし**：PP-OCRv5 と LLM はハッシュ固定だが、ocrs（英語のみの予備エンジン）は配布元がハッシュを公開していない。
+- **ocrs モデルの整合性検証なし**：PP-OCR と LLM はハッシュ固定だが、ocrs（英語のみの予備エンジン）は配布元がハッシュを公開していない。
