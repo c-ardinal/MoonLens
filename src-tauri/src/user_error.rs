@@ -65,13 +65,13 @@ pub fn provider(e: &ProviderError, cap: Capability) -> String {
             coded(
                 "error",
                 format!(
-                    "未対応プロバイダー：{}。設定のプロバイダー見直しが必要",
+                    "未対応プロバイダー：{}。設定のプロバイダー再確認が必要",
                     ids.join("、")
                 ),
             )
         }
         ProviderError::Other(m) if m.starts_with("no provider configured") => {
-            coded("error", "この機能のプロバイダー未設定")
+            coded("error", "本機能のプロバイダー未設定")
         }
         other => coded("error", format!("処理失敗：{other}")),
     }
@@ -86,7 +86,7 @@ pub fn download(e: &anyhow::Error) -> String {
         || lower.contains("os error 112")
         || lower.contains("disk full")
     {
-        coded("disk_full", "空き容量不足")
+        coded("disk_full", "残容量不足")
     } else if lower.contains("integrity") {
         coded("integrity", "整合性検証失敗。再ダウンロードが必要")
     } else if lower.contains("error sending request")
@@ -127,7 +127,7 @@ mod tests {
         let e = ProviderError::Other("all providers failed: paddle: not registered".into());
         assert_eq!(
             provider(&e, Capability::Ocr),
-            "error|未対応プロバイダー：paddle。設定のプロバイダー見直しが必要"
+            "error|未対応プロバイダー：paddle。設定のプロバイダー再確認が必要"
         );
     }
 

@@ -117,7 +117,7 @@
 </div>
 
 <style>
-  /* タイトルバー直下の左端。窓の高さ不足時は一覧を内部スクロール。 */
+  /* タイトルバー直下の左端。ウィンドウの高さ不足時は一覧を内部スクロール。 */
   .am {
     position: absolute;
     top: calc(100% + 4px);
@@ -127,7 +127,7 @@
     flex-direction: column;
     gap: 4px;
     width: min(280px, calc(100vw - 8px));
-    /* 窓の高さ − タイトルバー（32px）− 上下の余白 */
+    /* ウィンドウの高さ − タイトルバー（32px）− 上下の余白 */
     max-height: calc(100vh - 40px);
     box-sizing: border-box;
     border-radius: 8px;
