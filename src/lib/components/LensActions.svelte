@@ -7,6 +7,7 @@
     Eye,
     EyeOff,
     Languages,
+    Magnet,
     Maximize2,
     Minimize2,
     MousePointerBan,
@@ -35,6 +36,8 @@
     maximized = false,
     operate = false,
     operateKey = '',
+    attachedTo = '',
+    attachOpen = false,
     menuOpen = $bindable(false),
     lead,
     oncontinuous,
@@ -46,6 +49,7 @@
     onexplain,
     onmaximize,
     onoperate,
+    onattach,
     onadd,
     onclose
   }: {
@@ -62,6 +66,10 @@
     operate?: boolean;
     /** 操作モード切替のショートカット表記（title へ併記）。 */
     operateKey?: string;
+    /** 吸着先（他アプリのウィンドウ）の名称。空文字：吸着なし。 */
+    attachedTo?: string;
+    /** 吸着メニューの表示中。 */
+    attachOpen?: boolean;
     /** 縦メニューの表示中（表示中は窓本体でのマウス操作の受付が必要）。 */
     menuOpen?: boolean;
     /** 見出し（ウィンドウ追加ボタンの右隣）。 */
@@ -75,6 +83,8 @@
     onexplain: () => void;
     onmaximize: () => void;
     onoperate: () => void;
+    /** 吸着メニューの開閉。 */
+    onattach: () => void;
     onadd: () => void;
     onclose: () => void;
   } = $props();
@@ -113,6 +123,16 @@
         (operateKey ? ` (${operateKey})` : ''),
       pressed: operate,
       run: onoperate
+    },
+    {
+      key: 'attach',
+      icon: Magnet,
+      label: '吸着',
+      title: attachedTo
+        ? `吸着中：${attachedTo}（移動・サイズ変更へ追従）`
+        : '吸着：他アプリのウィンドウへ追従',
+      pressed: !!attachedTo || attachOpen,
+      run: onattach
     },
     {
       key: 'refresh',
@@ -241,6 +261,7 @@
         class="tb"
         class:off={i >= shown}
         data-item
+        data-action={a.key}
         aria-pressed={a.pressed}
         disabled={a.disabled}
         onclick={() => run(a, false)}
@@ -277,6 +298,7 @@
       {:else}
         <button
           class="mi"
+          data-action={a.key}
           role={a.pressed === undefined ? 'menuitem' : 'menuitemcheckbox'}
           aria-checked={a.pressed}
           disabled={a.disabled}
