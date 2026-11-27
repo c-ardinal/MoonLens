@@ -28,7 +28,7 @@ use image::{DynamicImage, GenericImage, Rgba, RgbaImage};
 use moonlens_lib::{
     pipeline::Pipeline,
     plugins::registry::PluginRegistry,
-    region_watcher::{Frame, Geometry, LiveEvent, Tick, TickEnv, Tracker},
+    region_watcher::{Frame, Geometry, LiveEvent, ReadMode, Tick, TickEnv, Tracker},
     settings::SettingsStore,
     storage::Storage,
 };
@@ -78,6 +78,7 @@ impl Run {
         let env = TickEnv {
             pipeline: &self.pipeline,
             target_language: self.target,
+            mode: ReadMode::default(),
             history_kind: "lens",
             emit: &emit,
             geometry_now: &geometry_now,
@@ -141,6 +142,7 @@ impl Run {
         let env = TickEnv {
             pipeline: &self.pipeline,
             target_language: "ja",
+            mode: ReadMode::default(),
             history_kind: "lens",
             emit: &emit,
             geometry_now: &geometry_now,

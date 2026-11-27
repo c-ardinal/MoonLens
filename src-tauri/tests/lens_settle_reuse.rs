@@ -21,7 +21,7 @@ use moonlens_lib::{
     providers::{
         Capability, OcrLine, Provider, ProviderError, ProviderHandle, TaskInput, TaskOutput,
     },
-    region_watcher::{Frame, Geometry, LiveEvent, Tick, TickEnv, Tracker},
+    region_watcher::{Frame, Geometry, LiveEvent, ReadMode, Tick, TickEnv, Tracker},
     settings::{
         schema::{Settings, TaskChain},
         SettingsStore,
@@ -168,6 +168,7 @@ impl Run {
         let env = TickEnv {
             pipeline: &self.pipeline,
             target_language: "ja",
+            mode: ReadMode::default(),
             history_kind: "lens",
             emit: &emit,
             geometry_now: &geometry_now,

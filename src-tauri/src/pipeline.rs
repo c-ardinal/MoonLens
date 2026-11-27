@@ -733,6 +733,22 @@ impl Pipeline {
         progress: Option<&ProgressSink<'_>>,
         kind: &str,
     ) -> Result<(), ProviderError> {
+        self.translate_capture_after(bundle, target_language, progress, kind, &[])
+            .await
+    }
+
+    /// [`Self::translate_capture_as`] for a capture that continues
+    /// earlier ones (the next subtitle): `earlier` holds their source
+    /// and translation, oldest first, and is history of every request
+    /// to a translator that takes a [`TranslateContext`].
+    pub async fn translate_capture_after(
+        &self,
+        bundle: &mut CaptureFlowResult,
+        target_language: &str,
+        progress: Option<&ProgressSink<'_>>,
+        kind: &str,
+        earlier: &[(String, String)],
+    ) -> Result<(), ProviderError> {
         let s = self.settings.snapshot();
         self.prepare_translation(bundle, target_language);
         let pending: Vec<usize> = (0..bundle.blocks.len())
@@ -798,7 +814,11 @@ impl Pipeline {
         };
 
         let started = Instant::now();
-        let mut history: Vec<(String, String)> = Vec::new();
+        let mut history: Vec<(String, String)> = if in_parts {
+            earlier.to_vec()
+        } else {
+            Vec::new()
+        };
         let mut first: Option<TaskResult> = None;
         let mut reasons: Vec<String> = Vec::new();
         let mut outputs: Vec<String> = Vec::new();
