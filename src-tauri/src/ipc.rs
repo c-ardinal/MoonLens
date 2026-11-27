@@ -10,7 +10,7 @@ use crate::{
     capture::{self, CaptureRect},
     clipboard, hotkey, intent,
     lens::{self, geometry::LensInsets, LensDescriptor},
-    lens_text, overlay,
+    lens_fit, lens_text, overlay,
     pipeline::{CaptureFlowResult, TaskResult, LOCAL_ASSIST_ID, LOCAL_LLM_ID},
     plugins::PluginDescriptor,
     providers::{
@@ -1374,6 +1374,29 @@ pub async fn set_lens_continuous(
 #[tauri::command]
 pub async fn refresh_lens(id: String, state: State<'_, AppState>) -> Result<bool, String> {
     Ok(state.lenses.kick(&id))
+}
+
+/// Shrink a lens window to `band`, a rect inside the range it observes
+/// (`[x, y, w, h]`, physical pixels from the range's top-left corner).
+/// Returns where the window was, for `restore_lens`.
+#[tauri::command]
+pub async fn fit_lens(
+    id: String,
+    band: [i32; 4],
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<lens_fit::Before, String> {
+    lens_fit::fit(&app, &state.lenses, &id, band).map_err(|e| e.to_string())
+}
+
+/// Put a lens window back where it was before `fit_lens`.
+#[tauri::command]
+pub async fn restore_lens(
+    id: String,
+    before: lens_fit::Before,
+    app: AppHandle,
+) -> Result<(), String> {
+    lens_fit::restore(&app, &id, before).map_err(|e| e.to_string())
 }
 
 /// Capture the observed rect of a lens window and run the full pipeline.
