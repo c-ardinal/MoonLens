@@ -69,6 +69,15 @@ const INK: u8 = 24;
 /// as the same picture (the edge of a neighbouring box, a caret).
 const TOLERATED: f32 = 0.1;
 
+/// Pixels of a row, outside the rows to read, that neither moved along
+/// nor stayed, from which the row counts as changed otherwise: wider
+/// than a scroll bar, whose thumb moves at its own pace.
+const OTHER_WIDTH: u32 = 20;
+
+/// Rows changed otherwise from which a picture is more than a scroll
+/// (a line of small text).
+const OTHER_ROWS: u32 = 4;
+
 /// What became of a rect of the earlier picture.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Fate {
@@ -249,6 +258,11 @@ impl Memory {
             }
             None => None,
         };
+        // Something else appeared where nothing will be read: text in a
+        // part that does not scroll, content loaded late.
+        if changed_otherwise(old, &new, (&old_rows, &new_rows), dy, read) {
+            return None;
+        }
         let fates = rects.iter().map(|r| fate(old, &new, dy, *r)).collect();
         self.lines = kept;
         self.picture = Some(new);
@@ -494,6 +508,49 @@ fn unread_rows(old: &Rows, new: &Rows, dy: i32, stays: &dyn Fn(i32) -> bool) -> 
     (top < bottom).then_some((top as u32, bottom as u32))
 }
 
+/// Whether `new` shows more than `old` moved down by `dy`, outside the
+/// rows `read`: detail that neither moved along nor was there before.
+fn changed_otherwise(
+    old: &GrayImage,
+    new: &GrayImage,
+    (old_rows, new_rows): (&Rows, &Rows),
+    dy: i32,
+    read: Option<(u32, u32)>,
+) -> bool {
+    let (w, h) = (new.width() as usize, new.height() as i32);
+    let (before, now) = (old.as_raw(), new.as_raw());
+    let same = |a: u8, b: u8| a.abs_diff(b) <= SAME;
+    let bands = new_rows.bands;
+    let mut rows = 0;
+    for y in 0..h {
+        if read.is_some_and(|(top, bottom)| (top as i32..bottom as i32).contains(&y)) {
+            continue;
+        }
+        let from = (0..h).contains(&(y - dy)).then(|| (y - dy) as usize * w);
+        let here = y as usize * w;
+        let mut other = 0;
+        // Only bands whose row is neither as it was nor moved whole
+        // are looked at pixel by pixel.
+        for k in (0..bands)
+            .filter(|&k| new_rows.new_detail(old_rows, k, y))
+            .filter(|&k| new_rows.at(k, y) != old_rows.at(k, y - dy))
+        {
+            for x in k * w / bands..(k + 1) * w / bands {
+                let p = now[here + x];
+                let moved = from.is_some_and(|from| same(p, before[from + x]));
+                other += (!moved && !same(p, before[here + x])) as u32;
+            }
+        }
+        if other >= OTHER_WIDTH {
+            rows += 1;
+            if rows >= OTHER_ROWS {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 /// What became of `rect` of `old` in `new`, whose content moved down by
 /// `dy`. A rect outside both pictures counts as moved.
 fn fate(old: &GrayImage, new: &GrayImage, dy: i32, rect: Rect) -> Fate {
@@ -712,6 +769,27 @@ mod tests {
         assert!(!texts(&memory).contains(&"line 10".to_string()));
         let (top, bottom) = step.read.unwrap();
         assert!(top == 0 && bottom >= 35, "{top}..{bottom}");
+    }
+
+    #[test]
+    fn text_that_appears_beside_the_scrolled_part_is_not_a_plain_scroll() {
+        let page = page(30);
+        let mut memory = Memory::default();
+        memory.remember(&view(&page, 400), &lines_in(400, 30), None);
+        // A label appears right of the text (columns 340.. are blank)
+        // while the text scrolls 40 rows: far from the rows to read.
+        let mut scrolled = view(&page, 440).to_luma8();
+        for y in 80..96 {
+            for x in (350..390).filter(|x| (x / 3 + y / 5) % 2 == 0) {
+                scrolled.put_pixel(x, y, Luma([20]));
+            }
+        }
+        assert_eq!(
+            memory.follow(&DynamicImage::ImageLuma8(scrolled), &[]),
+            None
+        );
+        // Without the label the same picture is a scroll.
+        assert!(memory.follow(&view(&page, 440), &[]).is_some());
     }
 
     #[test]
