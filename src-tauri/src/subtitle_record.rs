@@ -43,7 +43,7 @@ impl Recorder {
     /// and never reach the caller: subtitles keep running without history.
     pub fn observe(&self, event: &SubtitleEvent) {
         match event {
-            SubtitleEvent::Started { device } => {
+            SubtitleEvent::Started { device, .. } => {
                 *self.state.lock() = State {
                     source: device.clone(),
                     ..State::default()
@@ -232,6 +232,7 @@ fn file_name_at(at: chrono::NaiveDateTime, format: ExportFormat) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::audio::AudioSource;
     use crate::subtitle::Phase;
 
     fn line(start_ms: i64, end_ms: i64, original: &str, translated: &str) -> SubtitleLine {
@@ -285,6 +286,7 @@ mod tests {
         for ev in [
             SubtitleEvent::Started {
                 device: "スピーカー (Realtek)".into(),
+                source: AudioSource::System,
             },
             SubtitleEvent::Status {
                 phase: Phase::Recognizing,
@@ -328,6 +330,7 @@ mod tests {
         for ev in [
             SubtitleEvent::Started {
                 device: "mic".into(),
+                source: AudioSource::System,
             },
             SubtitleEvent::Status {
                 phase: Phase::Waiting,
@@ -350,6 +353,7 @@ mod tests {
         f.settings.save(s).unwrap();
         f.recorder.observe(&SubtitleEvent::Started {
             device: "mic".into(),
+            source: AudioSource::System,
         });
         f.recorder.observe(&chunk("a", "b", 1000, 1000));
         assert!(f.storage.recent(10).unwrap().is_empty());
@@ -360,6 +364,7 @@ mod tests {
         let f = fixture();
         f.recorder.observe(&SubtitleEvent::Started {
             device: "mic".into(),
+            source: AudioSource::System,
         });
         f.recorder.observe(&chunk("kept", "保持", 1000, 1000));
         let mut s = (*f.settings.snapshot()).clone();
@@ -380,6 +385,7 @@ mod tests {
         f.settings.save(s).unwrap();
         f.recorder.observe(&SubtitleEvent::Started {
             device: "mic".into(),
+            source: AudioSource::System,
         });
         f.recorder.observe(&chunk("a", "b", 1000, 1000));
         let rec = only_record(&f.storage);
@@ -401,6 +407,7 @@ mod tests {
             .unwrap();
         f.recorder.observe(&SubtitleEvent::Started {
             device: "mic".into(),
+            source: AudioSource::System,
         });
         f.recorder.observe(&chunk("a", "b", 1000, 1000));
         let rows = f.storage.recent(10).unwrap();
@@ -414,6 +421,7 @@ mod tests {
         let f = fixture();
         f.recorder.observe(&SubtitleEvent::Started {
             device: "mic".into(),
+            source: AudioSource::System,
         });
         f.recorder.observe(&chunk("a", "A", 5_000, 4_000));
         // Starts before the previous end, then a zero-length one.
@@ -423,6 +431,7 @@ mod tests {
         let f2 = fixture();
         f2.recorder.observe(&SubtitleEvent::Started {
             device: "mic".into(),
+            source: AudioSource::System,
         });
         f2.recorder.observe(&chunk("x", "X", 1_000, 9_000));
         let spans = |r: SubtitleRecord| -> Vec<(i64, i64)> {
@@ -438,11 +447,16 @@ mod tests {
     #[test]
     fn a_new_run_starts_its_own_record() {
         let f = fixture();
-        f.recorder
-            .observe(&SubtitleEvent::Started { device: "A".into() });
+        f.recorder.observe(&SubtitleEvent::Started {
+            device: "A".into(),
+            source: AudioSource::System,
+        });
         f.recorder.observe(&chunk("a", "A", 1000, 1000));
         let second = Recorder::new(f.storage.clone(), f.settings.clone());
-        second.observe(&SubtitleEvent::Started { device: "B".into() });
+        second.observe(&SubtitleEvent::Started {
+            device: "B".into(),
+            source: AudioSource::System,
+        });
         second.observe(&chunk("b", "B", 1000, 1000));
         let rows = f.storage.recent(10).unwrap();
         assert_eq!(rows.len(), 2);

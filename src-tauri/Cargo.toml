@@ -148,14 +148,21 @@ wat = "1"
 # DirectML: the GPU path of ONNX Runtime on Windows.
 ort = { version = "=2.0.0-rc.15", optional = true, default-features = false, features = ["directml"] }
 libloading = "0.8"
+# Audio of one application (process loopback) and the audio sessions the
+# source menu of a subtitle window lists (audio.rs, audio_apps.rs).
+wasapi = "0.27"
 windows = { version = "0.62", features = [
+    "Win32_Foundation",
     "Win32_System_Com",
+    "Win32_UI_WindowsAndMessaging",
     "Foundation",
     "Foundation_Collections",
     "Globalization",
     "Graphics_Imaging",
     "Media_Ocr",
     "Storage_Streams",
+    # Message box when the WebView2 runtime is missing (src/webview2.rs).
+    "Win32_UI_WindowsAndMessaging",
 ] }
 windows-future = "0.3"
 

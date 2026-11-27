@@ -448,6 +448,15 @@ fn capture_on(monitor: &Monitor, x: u32, y: u32, w: u32, h: u32) -> Result<Dynam
 /// Capture from a global-coordinate rect. Automatically picks the monitor
 /// that contains most of the rect and clips to its edges.
 pub fn capture_global_rect(x: i32, y: i32, w: u32, h: u32) -> Result<DynamicImage> {
+    capture_global_rect_clipped(rect::GlobalRect { x, y, w, h }).map(|(image, _)| image)
+}
+
+/// [`capture_global_rect`], also returning the rect the image covers
+/// (`wanted` clipped to the monitor), for callers that place things by
+/// position in the image.
+pub fn capture_global_rect_clipped(
+    wanted: rect::GlobalRect,
+) -> Result<(DynamicImage, rect::GlobalRect)> {
     let monitors = Monitor::all().context("list monitors")?;
     let bounds: Vec<rect::MonitorBounds> = monitors
         .iter()
@@ -460,12 +469,21 @@ pub fn capture_global_rect(x: i32, y: i32, w: u32, h: u32) -> Result<DynamicImag
             })
         })
         .collect::<Result<_>>()?;
-    let local = rect::to_local(&bounds, rect::GlobalRect { x, y, w, h })
-        .context("rect does not intersect any monitor")?;
+    let local = rect::to_local(&bounds, wanted).context("rect does not intersect any monitor")?;
     let monitor = monitors
         .get(local.monitor_index)
         .context("monitor index out of range")?;
-    capture_on(monitor, local.x, local.y, local.w, local.h)
+    let origin = bounds[local.monitor_index];
+    let covered = rect::GlobalRect {
+        x: origin.origin_x + local.x as i32,
+        y: origin.origin_y + local.y as i32,
+        w: local.w,
+        h: local.h,
+    };
+    Ok((
+        capture_on(monitor, local.x, local.y, local.w, local.h)?,
+        covered,
+    ))
 }
 
 pub fn capture_primary_full() -> Result<DynamicImage> {
