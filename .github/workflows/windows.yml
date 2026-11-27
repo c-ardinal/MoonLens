@@ -9,6 +9,9 @@ name: windows
 # manual trigger (the "Run workflow" button only appears for workflows
 # on the default branch `main`, which holds no code). Everything else
 # stays Linux-only to keep Windows' x2 billing minutes rare.
+#
+# The `lens-e2e` job (30+ minutes) runs only on PRs into `main` /
+# `release`, on PRs labelled `lens-e2e`, and on manual runs.
 
 on:
   pull_request:
@@ -24,6 +27,7 @@ on:
       # differently on Windows (tests/lens_capture_windows.rs).
       - 'src-tauri/src/capture.rs'
       - 'src-tauri/src/lens.rs'
+      - 'src-tauri/src/lens_shield.rs'
       - 'src-tauri/tests/lens_capture_windows.rs'
       # Screen → OCR → translation on a real desktop (lens-e2e job).
       - 'src-tauri/src/selector.rs'
@@ -42,6 +46,21 @@ on:
       - 'src-tauri/vendor/whisper.cpp/**'
       - 'src-tauri/tests/fixtures/audio/**'
       - 'src-tauri/tests/subtitle_live.rs'
+      - '.github/workflows/windows.yml'
+  # Cache writer. A PR run can read caches saved on its base branch
+  # only, so the `rust` job also runs on `develop` whenever the
+  # dependency graph or the native code changes and saves the compiled
+  # dependencies and the Vulkan SDK there. Without it every PR compiles
+  # llama.cpp and ~600 crates from scratch (30 min instead of ~12).
+  push:
+    branches: [develop]
+    paths:
+      - 'src-tauri/Cargo.toml'
+      - 'src-tauri/Cargo.lock'
+      - 'src-tauri/build.rs'
+      - 'src-tauri/.cargo/**'
+      - 'src-tauri/native/**'
+      - 'src-tauri/vendor/whisper.cpp/**'
       - '.github/workflows/windows.yml'
   workflow_dispatch:
 
@@ -110,7 +129,10 @@ jobs:
         with:
           workspaces: src-tauri
           key: windows
-          save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/release' }}
+          # Written on the PR base branches only (see `push` above); PR
+          # runs restore it and never save, which keeps the 10 GB repo
+          # cache quota from being evicted by every PR.
+          save-if: ${{ github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main' || github.ref == 'refs/heads/release' }}
 
       # llama-cpp-sys-2 currently comes from git (see [patch.crates-io]
       # in Cargo.toml); its llama.cpp submodule has paths past Windows'
@@ -141,8 +163,20 @@ jobs:
   # OCR'd by each engine and translated by the built-in model; then the
   # release-mode app itself is started to check that it writes its log.
   # Captures, report and log are uploaded as the `lens-e2e` artifact.
+  #
+  # Too heavy for every PR: it runs on PRs into `main` / `release`
+  # (develop → main, release PRs), on a PR labelled `lens-e2e` (work on
+  # capture, OCR or subtitles that needs the real-desktop check before
+  # merge; the label counts from the next push) and on manual runs.
+  # Elsewhere the job is skipped, which a required check counts as
+  # passed.
   lens-e2e:
     name: lens e2e (windows)
+    if: >-
+      github.event_name == 'workflow_dispatch'
+      || github.base_ref == 'main'
+      || github.base_ref == 'release'
+      || contains(github.event.pull_request.labels.*.name, 'lens-e2e')
     runs-on: windows-latest
     timeout-minutes: 120
     env:

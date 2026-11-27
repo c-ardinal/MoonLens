@@ -1,6 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024"><defs><radialGradient id="pp" cx=".5" cy=".45" r=".75"><stop offset=".5" stop-color="#ece3ca"/><stop offset="1" stop-color="#d2c3a0"/></radialGradient>
-<clipPath id="sq"><path d="M100 285 Q100 100 285 100 H739 Q924 100 924 285 V739 Q924 924 739 924 H285 Q100 924 100 739Z"/></clipPath></defs><path d="M100 285 Q100 100 285 100 H739 Q924 100 924 285 V739 Q924 924 739 924 H285 Q100 924 100 739Z" fill="url(#pp)"/><g clip-path="url(#sq)"><circle cx="512" cy="512" r="290" fill="#ece3ca" stroke="#2a2420" stroke-width="46"/>
-<defs><clipPath id="m512512180d"><circle cx="512" cy="512" r="180"/></clipPath>
-<clipPath id="m512512180s"><circle cx="586" cy="466" r="162.0"/></clipPath>
-<clipPath id="m512512180t"><circle cx="611.9" cy="449.9" r="140.4"/></clipPath></defs>
-<g clip-path="url(#m512512180d)"><g clip-path="url(#m512512180s)"><rect width="1024" height="1024" fill="#2a2420"/></g></g><circle cx="512" cy="512" r="180" fill="none" stroke="#2a2420" stroke-width="22"/></g></svg>

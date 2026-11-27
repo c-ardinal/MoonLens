@@ -73,8 +73,14 @@ Two jobs run in parallel:
   `Cargo.toml` change was pushed without the matching `Cargo.lock`.
 
 The Rust cache (`Swatinem/rust-cache`) is only **written** by runs on
-`main` / `release`; PR runs restore from it. This keeps the 10 GB
-repo cache quota from being churned by every PR.
+`develop` / `main` / `release`; PR runs restore from it. This keeps the
+10 GB repo cache quota from being churned by every PR. A PR run can
+read caches of its base branch (and of the default branch) only, so
+the base of feature PRs, `develop`, must be one of the writers:
+`build.yml` saves the Linux cache on every push to `develop`, and
+`windows.yml` runs its `rust` job on pushes to `develop` that change
+the dependency graph or native code to save the Windows one (compiled
+dependencies and the Vulkan SDK).
 
 ### On-demand matrix expansion
 
@@ -185,8 +191,8 @@ installers from its head (no release, nothing published). They are
 kept as run artifacts for 7 days (`moonlens-windows-installers`,
 `moonlens-macos-installers` on the run's summary page). Use it for test
 builds of unreleased work and to dry-run changes to `release.yml`.
-Each new push to a labelled PR rebuilds; without a label only the
-few-second guard job runs.
+Each new push to a labelled PR rebuilds; without a label every job
+is skipped and no runner is taken.
 
 ### macOS installers
 

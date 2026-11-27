@@ -7,6 +7,7 @@ import {
   growRoom,
   joinedText,
   languageLabel,
+  maskClip,
   rgb,
   splitStreaming,
   toCssRect,
@@ -181,5 +182,32 @@ describe('growRoom', () => {
   });
   it('keeps paragraphs at their width', () => {
     expect(growRoom([b([10, 10, 300, 60], 3)], 0, 1000)).toBe(0);
+  });
+});
+
+describe('maskClip', () => {
+  const rows: [number, number, number, number][] = [
+    [10, 10, 180, 20],
+    [10, 40, 180, 20],
+    [10, 70, 380, 20]
+  ];
+  const base = block({ bbox: [10, 10, 380, 80], lines: rows });
+
+  it('leaves the mask whole when no row is limited', () => {
+    expect(maskClip(base, 1)).toBe('');
+    expect(maskClip({ ...base, row_limits: [390, 390, 390] }, 1)).toBe('');
+  });
+
+  it('ends the bands of limited rows at their limit', () => {
+    // Picture from x = 200 beside the first two rows; pad 2 px.
+    const clip = maskClip({ ...base, row_limits: [200, 200, 390] }, 1);
+    expect(clip).toBe(
+      'polygon(0px 0px, 194px 0px, 194px 27px, 194px 27px, 194px 57px, 384px 57px, 384px 84px, 0px 84px)'
+    );
+  });
+
+  it('scales with the device pixel ratio', () => {
+    const clip = maskClip({ ...base, row_limits: [200, 200, 390] }, 2);
+    expect(clip.startsWith('polygon(0px 0px, 99px 0px, 99px 14.5px')).toBe(true);
   });
 });
