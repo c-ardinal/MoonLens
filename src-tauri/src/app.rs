@@ -89,6 +89,13 @@ macro_rules! all_commands {
             crate::attach::attach_window,
             crate::attach::detach_window,
             crate::attach::window_attachment,
+            crate::layout_sets::list_layout_sets,
+            crate::layout_sets::save_layout_set,
+            crate::layout_sets::update_layout_set,
+            crate::layout_sets::delete_layout_set,
+            crate::layout_sets::put_layout_set,
+            crate::layout_sets::restore_layout_set,
+            crate::layout_sets::set_lens_view,
             crate::stream::stream_state,
             crate::stream::set_stream,
             crate::stream::set_stream_paint,
@@ -266,6 +273,8 @@ pub fn build() -> Result<()> {
             }
 
             app.manage(crate::attach::Handle::default());
+            let layout_sets = crate::layout_sets::LayoutSets::open(&storage.data_dir);
+            app.manage(layout_sets.clone());
             app.manage(crate::stream::Handle::default());
             app.manage(AppState {
                 settings,
@@ -276,6 +285,7 @@ pub fn build() -> Result<()> {
                 lenses,
                 _settings_watcher: settings_watcher,
             });
+            crate::layout_sets::watch(&handle, &layout_sets);
             if !std::env::args().any(|a| a == START_HIDDEN_FLAG) {
                 show_main_window(&handle);
             }

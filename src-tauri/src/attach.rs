@@ -174,6 +174,12 @@ pub fn attach(
     if let Some((width, height)) = own {
         follow = follow.with_size(width, height);
     }
+    if dock == Dock::Free {
+        // Free placement keeps the window where it is on its target.
+        if let Ok(at) = lens::inner_rect(&win) {
+            follow = follow.keeping(target.rect, at);
+        }
+    }
     let serial = registry.serial.fetch_add(1, Ordering::Relaxed) + 1;
     let was_hidden = registry
         .entries
