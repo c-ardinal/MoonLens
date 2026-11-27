@@ -485,9 +485,50 @@ export const listHistory = (args: { limit?: number; query?: string } = {}) =>
 export const deleteHistoryEntry = (id: number) =>
   safeInvoke<number>('delete_history_entry', { id }, 0);
 
-/** 個別削除の取消：削除済みの履歴を元の id・日時で復元。 */
-export const restoreHistoryEntry = (entry: HistoryEntry) =>
-  safeInvoke<number>('restore_history_entry', { entry }, 0);
+/** 個別削除の取消：削除済みの履歴を元の id・日時で復元。音声翻訳は記録（行）も復元。 */
+export const restoreHistoryEntry = (entry: HistoryEntry, record?: SubtitleRecord | null) =>
+  safeInvoke<number>('restore_history_entry', { entry, record: record ?? null }, 0);
+
+/** 音声翻訳の 1 行（時刻付き）。 */
+export interface SubtitleLine {
+  /** 記録内の順序（0 始まり）。 */
+  seq: number;
+  /** 実行開始からの経過時間（ms）。 */
+  start_ms: number;
+  end_ms: number;
+  original: string;
+  /** 翻訳失敗・不要の場合は空文字。 */
+  translated: string;
+}
+
+/** 音声翻訳 1 回分の記録。 */
+export interface SubtitleRecord {
+  history_id: number;
+  /** 音源（取得対象のデバイス・アプリの名称）。 */
+  source: string;
+  /** 実行時の設定値（auto の場合あり）。 */
+  source_language: string;
+  target_language: string;
+  lines: SubtitleLine[];
+}
+
+export type SubtitleExportFormat = 'srt' | 'txt';
+export type SubtitleExportContent = 'translated' | 'original' | 'both';
+
+/** 音声翻訳の記録の取得。記録のない履歴は null。 */
+export const getSubtitleRecord = (id: number) =>
+  safeInvoke<SubtitleRecord | null>('get_subtitle_record', { id }, null);
+
+/** 記録の全行の置換（再翻訳とその取消）。履歴の原文・訳文も再構築。 */
+export const replaceSubtitleLines = (id: number, lines: SubtitleLine[]) =>
+  safeInvoke<void>('replace_subtitle_lines', { id, lines });
+
+/** 記録の書出し。戻り値は保存先、保存先の選択を取消した場合は null。 */
+export const exportSubtitleRecord = (
+  id: number,
+  format: SubtitleExportFormat,
+  content: SubtitleExportContent
+) => safeInvoke<string | null>('export_subtitle_record', { id, format, content }, null);
 
 export const clearHistory = () => safeInvoke<number>('clear_history', undefined, 0);
 
