@@ -261,7 +261,7 @@ jobs:
       # reads the same with all of them installed.
       - name: OCR reads the additional scripts
         working-directory: src-tauri
-        run: cargo test --release --locked --lib other_scripts_are_read -- --ignored --nocapture
+        run: cargo test --release --locked --lib -- --ignored --nocapture other_scripts_are_read a_line_read_before_its_script_showed_up_is_read_again
 
       - name: Screen → OCR → translation
         working-directory: src-tauri

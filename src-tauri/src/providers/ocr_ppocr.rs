@@ -873,6 +873,9 @@ pub mod engine {
         clock: u64,
         /// Where lines were read, newest last.
         seen: std::collections::VecDeque<Seen>,
+        /// The script models a line has been through, one bit per
+        /// installed script ([`LineCache::set_tried`]).
+        tried: std::collections::HashMap<u64, u32>,
     }
 
     /// A line as it was read: the crop (`[x, y, w, h]` in the picture),
@@ -946,6 +949,24 @@ pub mod engine {
             let e = self.map.get_mut(&key)?;
             e.2 = self.clock;
             Some((e.0.clone(), e.1))
+        }
+
+        /// The script models the line `key` has been through.
+        pub(super) fn tried(&self, key: u64) -> u32 {
+            self.tried.get(&key).copied().unwrap_or(0)
+        }
+
+        /// Note that the line `key` has been through the script models
+        /// in `scripts`. A line read while a script was not known to be
+        /// on screen is read by its model once it is.
+        pub(super) fn set_tried(&mut self, key: u64, scripts: u32) {
+            if scripts != 0 {
+                *self.tried.entry(key).or_default() |= scripts;
+            }
+            if self.tried.len() > 2 * self.map.len().max(64) {
+                let map = &self.map;
+                self.tried.retain(|k, _| map.contains_key(k));
+            }
         }
 
         /// The line read before at the place of `rect` when `rgb` still
@@ -1252,11 +1273,38 @@ pub mod engine {
             let images: Vec<&RgbImage> = fresh.iter().map(|&i| &crops[i].1).collect();
             let mut texts = self.read_lines(None, &images)?;
             let before = known.iter().flatten().map(|(text, _)| text.as_str());
-            self.read_other_scripts(&images, &mut texts, before)?;
+            let (on_screen, tried) = self.read_other_scripts(&images, &mut texts, before)?;
+            // A line read before the script of another line showed up
+            // (a number in a Korean sentence, alone on screen until the
+            // next sentence appears) has not been through its model.
+            let late: Vec<usize> = {
+                let cache = self.lines.lock();
+                (0..crops.len())
+                    .filter(|&i| known[i].is_some() && on_screen & !cache.tried(keys[i]) != 0)
+                    .collect()
+            };
+            if !late.is_empty() {
+                let scripts: Vec<usize> = (0..self.scripts.len())
+                    .filter(|&s| on_screen & (1 << s) != 0)
+                    .collect();
+                let images: Vec<&RgbImage> = late.iter().map(|&i| &crops[i].1).collect();
+                let mut again: Vec<(String, f32)> =
+                    late.iter().filter_map(|&i| known[i].clone()).collect();
+                let mut on = vec![true; self.scripts.len()];
+                let all = (0..late.len()).collect();
+                self.read_with_scripts(&scripts, all, &images, &mut again, &mut on)?;
+                let mut cache = self.lines.lock();
+                for (&i, (text, conf)) in late.iter().zip(again) {
+                    cache.put(keys[i], text.clone(), conf, LINE_CACHE_SIZE);
+                    cache.set_tried(keys[i], on_screen);
+                    known[i] = Some((text, conf));
+                }
+            }
             {
                 let mut cache = self.lines.lock();
-                for (&c, (text, conf)) in fresh.iter().zip(texts) {
+                for ((&c, (text, conf)), tried) in fresh.iter().zip(texts).zip(tried) {
                     cache.put(keys[c], text.clone(), conf, LINE_CACHE_SIZE);
+                    cache.set_tried(keys[c], tried);
                     known[c] = Some((text, conf));
                 }
                 cache.remember(crops.iter().map(|c| c.0), LINE_CACHE_SIZE);
@@ -1330,16 +1378,20 @@ pub mod engine {
         /// A screen without the installed scripts costs nothing beyond
         /// its doubtful lines; on a Korean screen every new line is
         /// read twice, whatever else is installed.
+        ///
+        /// Returns the scripts on screen and, per line, the scripts
+        /// whose models it has been through, one bit per script of
+        /// `self.scripts`.
         fn read_other_scripts<'a>(
             &self,
             images: &[&RgbImage],
             texts: &mut [(String, f32)],
             before: impl Iterator<Item = &'a str>,
-        ) -> Result<()> {
+        ) -> Result<(u32, Vec<u32>)> {
             /// Lines that show which scripts are on screen (step 2).
             const PROBE: usize = 4;
             if self.scripts.is_empty() {
-                return Ok(());
+                return Ok((0, vec![0; images.len()]));
             }
             let mut on_screen = vec![false; self.scripts.len()];
             for text in before {
@@ -1354,6 +1406,12 @@ pub mod engine {
                 });
             // Longest first: the more text, the surer the script.
             doubtful.sort_by_key(|&i| std::cmp::Reverse(images[i].width() / images[i].height()));
+            // A doubtful line goes through every model unless one takes it.
+            let every = (1u32 << self.scripts.len()) - 1;
+            let mut tried = vec![0; images.len()];
+            for &i in &doubtful {
+                tried[i] = every;
+            }
             let those = |on: &[bool], want: bool| -> Vec<usize> {
                 (0..on.len()).filter(|&s| on[s] == want).collect()
             };
@@ -1374,8 +1432,12 @@ pub mod engine {
             self.read_with_scripts(&left, open, images, texts, &mut on_screen)?;
 
             let known = those(&on_screen, true);
+            let shown = known.iter().fold(0, |bits, &s| bits | 1 << s);
+            for &i in &sure {
+                tried[i] = shown;
+            }
             self.read_with_scripts(&known, sure, images, texts, &mut on_screen)?;
-            Ok(())
+            Ok((shown, tried))
         }
 
         /// Read the pictures `lines` (indices into `images`) with each
@@ -1932,6 +1994,61 @@ mod tests {
         assert!(want.len() >= 16, "the Japanese page was not read");
         assert_eq!(texts(&PpOcr::load(&dir, rten).unwrap()), want);
         assert!(misread(&with_scripts, "japanese") < 0.02);
+    }
+
+    /// A line that was alone on screen and read by the standard model
+    /// with confidence (a number in a Korean sentence) is read by the
+    /// script's model once another line shows the script: the page
+    /// reads the same as with nothing read before. Needs the installed
+    /// models with the Korean one.
+    #[test]
+    #[ignore]
+    fn a_line_read_before_its_script_showed_up_is_read_again() {
+        use engine::{PpOcr, Want};
+        let dir = default_models_dir().unwrap();
+        let page = image::open("tests/fixtures/ocr/korean.png")
+            .unwrap()
+            .to_rgb8();
+        // Blank space is left out: where a model puts it depends on
+        // the lines read in one batch with the line.
+        let read = |engine: &PpOcr, img: &image::RgbImage| {
+            let img = image::DynamicImage::ImageRgb8(img.clone());
+            let mut lines = engine.recognize(&img, &Params::default()).unwrap();
+            lines.sort_by_key(|l| (l.bbox[1] as i32, l.bbox[0] as i32));
+            for line in &mut lines {
+                line.text.retain(|c| !c.is_whitespace());
+            }
+            lines
+        };
+        let whole = read(&PpOcr::load(&dir, Want::default()).unwrap(), &page);
+        let line = |has: &str| whole.iter().find(|l| l.text.contains(has)).unwrap().bbox;
+        // A page of two lines cut from the fixture: the end of a line,
+        // a syllable or two and a number, and a sentence below it.
+        let paper = *page.get_pixel(0, 0);
+        let paste = |onto: &mut image::RgbImage, [x, y, w, h]: [f32; 4], to: (u32, u32)| {
+            let pad = h * 0.4;
+            let (x, y) = ((x - pad).max(0.0) as u32, (y - pad).max(0.0) as u32);
+            let (w, h) = ((w + 2.0 * pad) as u32, (h + 2.0 * pad) as u32);
+            let piece = image::imageops::crop_imm(&page, x, y, w, h).to_image();
+            image::imageops::replace(onto, &piece, to.0 as i64, to.1 as i64);
+        };
+        let [x, y, w, h] = line("310");
+        let end = [x + w - 4.2 * h, y, 4.2 * h, h];
+        let mut alone = image::RgbImage::from_pixel(900, 240, paper);
+        paste(&mut alone, end, (40, 40));
+        let mut both = alone.clone();
+        paste(&mut both, line("비밀번호"), (40, 140));
+
+        let want: Vec<String> = read(&PpOcr::load(&dir, Want::default()).unwrap(), &both)
+            .into_iter()
+            .map(|l| l.text)
+            .collect();
+        let engine = PpOcr::load(&dir, Want::default()).unwrap();
+        let first: Vec<String> = read(&engine, &alone).into_iter().map(|l| l.text).collect();
+        println!("alone: {first:?}, with the sentence: {want:?}");
+        assert_ne!(first[..], want[..1], "the line reads the same alone");
+        let then: Vec<String> = read(&engine, &both).into_iter().map(|l| l.text).collect();
+        assert_eq!(then, want);
     }
 
     /// An install from an earlier version has no ONNX Runtime; when it
