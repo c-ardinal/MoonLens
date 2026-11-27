@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onDestroy, onMount, tick } from 'svelte';
+  import { onDestroy, onMount, tick, untrack } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
   import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
   import { emitTo, type UnlistenFn } from '@tauri-apps/api/event';
@@ -17,8 +17,10 @@
   } from '$lib/attach';
   import {
     getSettings,
+    fitLens,
     listLensWindows,
     openLensBeside,
+    restoreLens,
     runExplain,
     setLensInteractive,
     setLensOperate,
@@ -27,11 +29,19 @@
     setLensTextDock,
     windowAttachment,
     type CaptureFlowResult,
+    type LensBefore,
     type LensBlock,
     type LensDescriptor,
     type LensReadMode
   } from '$lib/ipc';
   import { joinedText, languageLabel, maskClip, rgb } from '$lib/lens-overlay';
+  import {
+    addSample,
+    observed,
+    remainingSeconds,
+    subtitleBand,
+    type Sample
+  } from '$lib/lens-fit';
   import { liveBoxes, liveText, type LensLiveEvent } from '$lib/live';
   import {
     TEXT_COMMAND_EVENT,
@@ -133,6 +143,7 @@
   /** Continuous reading (`moonlens://lens-live`). */
   function applyLive(ev: LensLiveEvent) {
     if (ev.kind === 'blocks') {
+      if (fit.kind === 'observing') fit.samples = addSample(fit.samples, ev.blocks);
       const t = liveText(ev.blocks);
       blocks = ev.blocks;
       hidden = new Set();
@@ -239,6 +250,13 @@
     if (!continuous) {
       translating = false;
       reading = false;
+      // No readings to observe any more.
+      untrack(() => {
+        if (fit.kind !== 'observing') return;
+        stopObserving();
+        fit = { kind: 'idle' };
+        noteFit('常時翻訳 OFF：観測中止');
+      });
     }
   });
 
@@ -296,6 +314,97 @@
     if (!on) window.getSelection()?.removeAllRanges();
   }
 
+  /**
+   * Fitting to the subtitle band: observe the readings for a while, then
+   * shrink the window to where text appeared (`lens-fit.ts`). The window
+   * stays as fitted; the same button puts it back.
+   */
+  type Fit =
+    | { kind: 'idle' }
+    | { kind: 'observing'; started: number; elapsed: number; samples: Sample[] }
+    | { kind: 'fitted'; before: LensBefore };
+  let fit = $state<Fit>({ kind: 'idle' });
+  /** Outcome of the last observation, shown for a moment. */
+  let fitNote = $state<string | null>(null);
+  let fitNoteTimer: ReturnType<typeof setTimeout> | undefined;
+  let fitTimer: ReturnType<typeof setInterval> | undefined;
+  /** Until this time, moves and resizes are the window being fitted
+   * or put back, not the user's. */
+  let fitMoveUntil = 0;
+  const FIT_MOVE_MS = 1500;
+
+  function noteFit(text: string) {
+    fitNote = text;
+    clearTimeout(fitNoteTimer);
+    fitNoteTimer = setTimeout(() => (fitNote = null), 5000);
+  }
+
+  function stopObserving() {
+    clearInterval(fitTimer);
+    fitTimer = undefined;
+  }
+
+  function startFit() {
+    // The band comes from the readings of continuous translation.
+    continuous = true;
+    fitNote = null;
+    // Blocks hidden by a move or a change belong to another picture.
+    const current = blocks.filter((_, i) => !hidden.has(i));
+    fit = { kind: 'observing', started: Date.now(), elapsed: 0, samples: addSample([], current) };
+    fitTimer = setInterval(() => {
+      if (fit.kind !== 'observing') return stopObserving();
+      fit.elapsed = Date.now() - fit.started;
+      if (observed(fit.elapsed, fit.samples.length)) finishFit(fit.samples);
+    }, 500);
+  }
+
+  async function finishFit(samples: Sample[]) {
+    stopObserving();
+    fit = { kind: 'idle' };
+    const area = {
+      w: Math.round(window.innerWidth * dpr),
+      h: Math.round((window.innerHeight - reportedHeaderHeight) * dpr)
+    };
+    const band = subtitleBand($state.snapshot(samples) as Sample[], area);
+    if (band.kind === 'none') return noteFit('文字未検出：整形中止');
+    if (band.kind === 'fits') return noteFit('整形不要：現在の範囲が適正');
+    try {
+      fitMoveUntil = Date.now() + FIT_MOVE_MS;
+      const before = await fitLens(id, band.rect);
+      fit = { kind: 'fitted', before };
+      noteFit('字幕領域へ整形完了');
+    } catch (e) {
+      fitMoveUntil = 0;
+      lastError = errorText(e);
+    }
+  }
+
+  function toggleFit() {
+    if (fit.kind === 'observing') {
+      stopObserving();
+      fit = { kind: 'idle' };
+      noteFit('観測中止');
+    } else if (fit.kind === 'fitted') {
+      const { before } = fit;
+      fit = { kind: 'idle' };
+      fitMoveUntil = Date.now() + FIT_MOVE_MS;
+      restoreLens(id, before).catch((e) => (lastError = errorText(e)));
+    } else {
+      startFit();
+    }
+  }
+
+  /** The user moved or resized the window: boxes observed so far belong
+   * to another range, and a fitted window is the user's own again. */
+  function fitInterrupted() {
+    if (Date.now() < fitMoveUntil) return;
+    if (fit.kind === 'observing') {
+      stopObserving();
+      noteFit('移動・サイズ変更を検出：観測中止');
+    }
+    fit = { kind: 'idle' };
+  }
+
   /** Maximized: the window translates the whole screen. */
   let maximized = $state(false);
   function toggleMaximize() {
@@ -314,6 +423,7 @@
   function moved(key: string, prev: string): boolean {
     if (key === prev) return false;
     geometry++;
+    fitInterrupted();
     // Boxes no longer line up: hide them until the range is read again.
     hidden = new Set(blocks.map((_, i) => i));
     // Have the reader look now: it waits for the lens to hold still, and
@@ -425,16 +535,16 @@
 
   onDestroy(() => {
     unlisteners.forEach((u) => u?.());
+    stopObserving();
+    clearTimeout(fitNoteTimer);
     invoke('set_lens_continuous', { id, on: false }).catch(() => {});
   });
 
-  const status = $derived(
-    lastError
-      ? lastError
-      : busy || reading
-        ? '文字認識中…'
-        : translating
-          ? '翻訳中…'
+  const activity = $derived(
+    busy || reading
+      ? '文字認識中…'
+      : translating
+        ? '翻訳中…'
         : empty
           ? '範囲内に文字なし'
           : !hasText
@@ -443,6 +553,13 @@
               : '再取得で翻訳'
             : null
   );
+  /** Fitting is the user's own request just now: shown before the rest. */
+  const fitStatus = $derived(
+    fit.kind === 'observing'
+      ? `字幕領域を観測中… 残余 ${remainingSeconds(fit.elapsed, fit.samples.length)} 秒`
+      : fitNote
+  );
+  const status = $derived(fitStatus ?? lastError ?? activity);
 </script>
 
 <main class="lens">
@@ -470,6 +587,8 @@
       oncopy={copy}
       ontext={() => (showText = !showText)}
       onexplain={explain}
+      fit={fit.kind}
+      onfit={toggleFit}
       {maximized}
       onmaximize={toggleMaximize}
       onadd={() => openLensBeside(id).catch(() => {})}
@@ -528,7 +647,7 @@
     {/if}
 
     {#if status}
-      <div class="status" class:error={!!lastError}>{status}</div>
+      <div class="status" class:error={!fitStatus && !!lastError}>{status}</div>
     {/if}
     {#key snapped}
       {#if snapped}<div class="snap" aria-hidden="true"></div>{/if}

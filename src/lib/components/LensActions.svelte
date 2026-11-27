@@ -17,6 +17,7 @@
     Plus,
     Radio,
     RefreshCw,
+    ScanText,
     TextSelect,
     X
   } from 'lucide-svelte';
@@ -42,6 +43,7 @@
     operateKey = '',
     attachedTo = '',
     attachOpen = false,
+    fit = 'idle',
     menuOpen = $bindable(false),
     lead,
     oncontinuous,
@@ -52,6 +54,7 @@
     oncopy,
     ontext,
     onexplain,
+    onfit,
     onmaximize,
     onoperate,
     onattach,
@@ -77,6 +80,8 @@
     attachedTo?: string;
     /** 吸着メニューの表示中。 */
     attachOpen?: boolean;
+    /** 字幕領域への自動整形の状態（未実行・観測中・整形済）。 */
+    fit?: 'idle' | 'observing' | 'fitted';
     /** 縦メニューの表示中（表示中はウィンドウ本体でのマウス操作の受付が必要）。 */
     menuOpen?: boolean;
     /** 見出し（ウィンドウ追加ボタンの右隣）。 */
@@ -89,6 +94,7 @@
     oncopy: () => void;
     ontext: () => void;
     onexplain: () => void;
+    onfit: () => void;
     onmaximize: () => void;
     onoperate: () => void;
     /** 吸着メニューの開閉。 */
@@ -186,6 +192,19 @@
       title: 'テキスト表示',
       pressed: showText,
       run: ontext
+    },
+    {
+      key: 'fit',
+      icon: ScanText,
+      label: fit === 'observing' ? '観測中止' : fit === 'fitted' ? '整形前へ復元' : '字幕領域へ整形',
+      title:
+        fit === 'observing'
+          ? '字幕領域を観測中（クリックで中止）'
+          : fit === 'fitted'
+            ? '整形前の位置・サイズへ復元'
+            : '字幕領域へ整形：文字の出現範囲を観測し、ウィンドウを自動整形',
+      pressed: fit === 'observing',
+      run: onfit
     },
     {
       key: 'explain',
