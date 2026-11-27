@@ -191,10 +191,11 @@ fn settle(window: isize, what: &str, ok: impl Fn(&Picture) -> bool) -> Picture {
         }
         assert!(
             started.elapsed() < Duration::from_secs(15),
-            "{what}: {}x{}, corner {:?}",
+            "{what}: {}x{}, corner {:?}, far corner {:?}",
             picture.width,
             picture.height,
-            picture.at(10, 10)
+            picture.at(10, 10),
+            picture.at(picture.width - 20, picture.height - 20)
         );
         std::thread::sleep(Duration::from_millis(100));
     }

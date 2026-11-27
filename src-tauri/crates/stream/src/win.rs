@@ -17,7 +17,7 @@ use std::mem::ManuallyDrop;
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::Arc;
 use std::sync::Mutex;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use windows::core::{w, Interface, BOOL, HSTRING, PCWSTR};
 use windows::Foundation::TypedEventHandler;
@@ -87,6 +87,10 @@ impl From<windows::core::Error> for Error {
 /// How long the thread sleeps at most when nothing arrives: window
 /// messages and a moved translation window are noticed this often.
 const IDLE: Duration = Duration::from_millis(16);
+/// How long a frame of the new size is waited for after a resize before
+/// it is asked for again, and how often at most.
+const REFRESH_AFTER: Duration = Duration::from_millis(250);
+const REFRESHES: u32 = 8;
 
 /// Padding of the box colour behind text that runs past its box.
 const BACK_PAD: f32 = 2.0;
@@ -320,6 +324,9 @@ struct Composite {
     /// The last frame of the target: drawn again when only the scene
     /// changes (a window at rest sends no frames).
     held: Option<ID3D11Texture2D>,
+    /// Set while the held frame covers only a part of the new size
+    /// (see `refresh`): since when, and how often a frame was asked for.
+    partial: Option<(Instant, u32)>,
     size: SizeInt32,
     pool: Direct3D11CaptureFramePool,
     session: GraphicsCaptureSession,
@@ -429,6 +436,7 @@ impl Composite {
                 canvas: None,
                 back_buffer: None,
                 held: None,
+                partial: None,
                 size,
                 pool,
                 session,
@@ -563,8 +571,36 @@ impl Composite {
             };
             self.context
                 .CopySubresourceRegion(held, 0, 0, 0, 0, &texture, 0, Some(&area));
+            let whole =
+                desc.Width >= self.size.Width as u32 && desc.Height >= self.size.Height as u32;
+            self.partial = match (whole, self.partial) {
+                (true, _) => None,
+                (false, None) => Some((Instant::now(), 0)),
+                (false, waiting) => waiting,
+            };
         }
         Ok(true)
+    }
+
+    /// After a resize the held frame has the old size until the capture
+    /// sends one from its new buffers. A target at rest may never send
+    /// it, which would leave the new part of the composite empty: ask
+    /// for a frame again (recreating the buffers makes the capture send
+    /// one), a few times at most.
+    fn refresh(&mut self) -> WinResult<()> {
+        let Some((since, asked)) = self.partial else {
+            return Ok(());
+        };
+        if asked >= REFRESHES || since.elapsed() < REFRESH_AFTER {
+            return Ok(());
+        }
+        self.partial = Some((Instant::now(), asked + 1));
+        self.pool.Recreate(
+            &self.winrt_device,
+            DirectXPixelFormat::B8G8R8A8UIntNormalized,
+            2,
+            self.size,
+        )
     }
 
     /// Draw the held frame and the scene over it, and show the result.
@@ -722,7 +758,10 @@ impl Composite {
             if !unsafe { IsWindow(Some(self.target)) }.as_bool() {
                 return Ok(());
             }
-            self.take_frame()?;
+            if self.take_frame()? {
+                dirty = true;
+            }
+            self.refresh()?;
             let scene = scene.lock().unwrap_or_else(|e| e.into_inner()).clone();
             let now: Vec<Option<[i32; 4]>> = scene
                 .iter()
