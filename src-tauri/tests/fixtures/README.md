@@ -40,3 +40,7 @@ per image) for `tests/lens_images_live.rs`: image in, Japanese
 translation out through the real PP-OCR and built-in translator. The
 test is `#[ignore]` (needs the downloaded models); see its header for
 the command.
+
+`scroll_article.png` is a whole page (a browser picture of an English
+article written for this test) for `tests/lens_scroll_live.rs`, which
+scrolls it under a region.

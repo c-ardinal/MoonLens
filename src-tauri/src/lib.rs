@@ -38,6 +38,7 @@ pub mod plugins;
 pub mod providers;
 pub mod region_watcher;
 pub mod scan_margin;
+pub mod scroll;
 pub mod settings;
 pub mod setup;
 pub mod storage;

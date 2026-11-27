@@ -23,6 +23,11 @@
 //!    immediately; only new paragraphs go to the model. A long text is
 //!    translated in parts, each shown as soon as it is ready.
 //!
+//! A scroll is not a change of text: the shown translations move along
+//! with their source at once, and only the rows that came into view
+//! are read (see [`scroll`]). New rows are translated once the scroll
+//! has come to rest.
+//!
 //! Steps 3 and 4 depend on the window's [`ReadMode`]: subtitles wait
 //! for a line to be typed out in full and are translated with the lines
 //! before them; interface text is translated reading by reading.
@@ -35,9 +40,9 @@ use serde::{Deserialize, Serialize};
 use crate::{
     capture,
     pipeline::{CaptureFlowResult, LensBlock, Pipeline, TranslationProgress},
-    providers::{Capability, TaskOutput},
+    providers::{Capability, ProviderError, TaskOutput},
     scan_margin::Visible,
-    translate_plan, user_error,
+    scroll, translate_plan, user_error,
 };
 
 /// Longest side of the thumbnail used for change detection.
@@ -63,6 +68,11 @@ const ERASE_MOVED: f32 = 0.02;
 /// Ticks a changing text may take to settle before it is translated
 /// anyway (a clock, a counter).
 const SETTLE_LIMIT: u32 = 6;
+
+/// Pause before the next reading while the content scrolls
+/// ([`Tracker::scrolling`]), so the translations stay close to their
+/// text.
+pub const SCROLL_POLL_MS: u64 = 80;
 
 /// Ticks a subtitle that is being typed out may keep growing before it
 /// is translated anyway (text that scrolls without an end).
@@ -212,6 +222,11 @@ pub struct Tracker {
     /// The reading that waits for the text to settle.
     pending: Option<Pending>,
     unsettled: u32,
+    /// Picture and lines of the last reading: what a scroll is
+    /// measured against.
+    memory: scroll::Memory,
+    /// The last tick followed a scroll.
+    scrolling: bool,
     /// Ticks the pending reading has been growing ([`ReadMode::Subtitle`]).
     growing: u32,
     /// Mode and [`shown_for`] of the last tick: a change drops
@@ -259,6 +274,8 @@ impl Tracker {
         self.last_thumb = None;
         self.pending = None;
         self.unsettled = 0;
+        self.memory.clear();
+        self.scrolling = false;
         self.growing = 0;
         // Another place may show another text.
         self.carried.clear();
@@ -310,7 +327,34 @@ impl Tracker {
             && self.pending.is_none()
             && self.shown.stale.is_empty()
         {
+            self.scrolling = false;
             return Ok(Tick::Unchanged);
+        }
+
+        // The content scrolled: the shown translations go with it.
+        let step = match force {
+            true => None,
+            false => {
+                // Blocks are placed in the region, the picture is the
+                // whole capture.
+                let places: Vec<_> = self
+                    .shown
+                    .blocks
+                    .iter()
+                    .map(|b| frame.visible.map_or(b.bbox, |v| v.in_capture(b.bbox)))
+                    .collect();
+                self.memory.follow(&frame.image, &places)
+            }
+        };
+        self.scrolling = step.is_some();
+        if let Some(step) = &step {
+            tracing::info!(
+                "window translation: scrolled {} px, rows to read {:?} of {}",
+                step.dy,
+                step.read,
+                frame.image.height()
+            );
+            self.shift_shown(step, &thumb, env);
         }
 
         // Hide translations whose source area changed, before OCR.
@@ -341,14 +385,20 @@ impl Tracker {
             // return the same again, so that reading stands.
             Some(p) if p.picture == picture && !force => (p.bundle, Some(p.key)),
             waiting => {
-                let png = capture::png_bytes(&frame.image).map_err(|e| e.to_string())?;
-                (env.emit)(LiveEvent::Reading { on: true });
-                let analyzed = env.pipeline.analyze_capture_in(png, frame.visible).await;
-                (env.emit)(LiveEvent::Reading { on: false });
+                let analyzed = match &step {
+                    Some(step) => self.read_scrolled(&frame, step, env).await,
+                    None => self.read_all(&frame, env).await,
+                }
+                .map_err(|e| {
+                    self.last_thumb = None;
+                    e.to_string()
+                })?;
                 match analyzed {
                     Ok(bundle) => (bundle, waiting.map(|p| p.key)),
                     Err(e) => {
-                        // Still unread: the next tick tries again.
+                        // Still unread: the next tick tries again, also
+                        // when the picture holds still from here on.
+                        self.last_thumb = None;
                         self.pending = waiting;
                         return Err(user_error::provider(&e, Capability::Ocr));
                     }
@@ -401,7 +451,7 @@ impl Tracker {
                 drop_moving_erase(&mut blocks, visible, self.shown.erase_base.as_ref(), &thumb);
             }
             let erase_lost = erase_count(&blocks) < erase_count(&self.shown.blocks);
-            if !self.shown.stale.is_empty() || force || erase_lost {
+            if !self.shown.stale.is_empty() || force || erase_lost || step.is_some() {
                 self.shown.stale.clear();
                 self.shown.erase_base = Some(thumb.clone());
                 self.shown.blocks = blocks.clone();
@@ -419,6 +469,19 @@ impl Tracker {
         // New text: wait for it to read the same twice (text being typed
         // out), unless it has been changing for too long.
         let settled = force || pending_key.as_deref() == Some(key.as_str());
+        if step.is_some() {
+            // Still scrolling: more rows are on their way, and a request
+            // now would hold the next step back. The rows are translated
+            // once the picture holds still.
+            self.pending = Some(Pending {
+                key,
+                picture,
+                bundle,
+            });
+            self.unsettled = 0;
+            self.growing = 0;
+            return Ok(Tick::Settling);
+        }
         // A subtitle that is still being typed out: every reading holds
         // more of the same line. It is not text that never settles, so
         // it gets the time it needs.
@@ -582,6 +645,111 @@ impl Tracker {
 }
 
 impl Tracker {
+    /// Whether the last tick followed a scroll. The caller may read the
+    /// next frame sooner: the shown translations lag behind their text
+    /// by one tick.
+    pub fn scrolling(&self) -> bool {
+        self.scrolling
+    }
+
+    /// Move the shown blocks with the scrolled content. A block whose
+    /// place shows something else now is hidden until it is read again.
+    fn shift_shown(&mut self, step: &scroll::Step, thumb: &Thumb, env: &TickEnv<'_>) {
+        // The base for "did the source under a block change" is the
+        // picture the blocks are placed in.
+        self.shown.thumb = Some(thumb.clone());
+        if self.shown.blocks.is_empty() {
+            return;
+        }
+        for (i, (block, fate)) in self.shown.blocks.iter_mut().zip(&step.fates).enumerate() {
+            if *fate != scroll::Fate::Fixed {
+                block.bbox = scroll::shifted(block.bbox, step.dy);
+                // The erase picture is made of the pixels that moved.
+                if let Some(e) = &mut block.erase {
+                    e.rect[1] += step.dy;
+                }
+                for row in &mut block.lines {
+                    *row = scroll::shifted(*row, step.dy);
+                }
+            }
+            if matches!(fate, scroll::Fate::Covered | scroll::Fate::Changed)
+                && !self.shown.stale.contains(&i)
+            {
+                self.shown.stale.push(i);
+            }
+        }
+        (env.emit)(LiveEvent::Blocks {
+            blocks: self.shown.blocks.clone(),
+            translating: false,
+            provider: None,
+            via_cloud: false,
+        });
+        if !self.shown.stale.is_empty() {
+            (env.emit)(LiveEvent::Stale {
+                indices: self.shown.stale.clone(),
+            });
+        }
+    }
+
+    /// Read the whole picture.
+    async fn read_all(
+        &mut self,
+        frame: &Frame,
+        env: &TickEnv<'_>,
+    ) -> anyhow::Result<Result<CaptureFlowResult, ProviderError>> {
+        let png = capture::png_bytes(&frame.image)?;
+        (env.emit)(LiveEvent::Reading { on: true });
+        let analyzed = env.pipeline.analyze_capture_lines(png, frame.visible).await;
+        (env.emit)(LiveEvent::Reading { on: false });
+        Ok(analyzed.map(|(bundle, lines)| {
+            self.memory.remember(&frame.image, &lines, frame.visible);
+            bundle
+        }))
+    }
+
+    /// Read the rows a scroll brought into view and lay them out with
+    /// the lines known from before.
+    async fn read_scrolled(
+        &mut self,
+        frame: &Frame,
+        step: &scroll::Step,
+        env: &TickEnv<'_>,
+    ) -> anyhow::Result<Result<CaptureFlowResult, ProviderError>> {
+        let image = &frame.image;
+        // A code that came into view is the reading, as in a full one.
+        match env.pipeline.decode_qr(image, frame.visible).await {
+            Ok(None) => {}
+            Ok(Some(bundle)) => {
+                self.memory.clear();
+                return Ok(Ok(bundle));
+            }
+            Err(e) => {
+                self.memory.clear();
+                return Ok(Err(e));
+            }
+        }
+        if let Some((top, bottom)) = step.read {
+            let rows = image.crop_imm(0, top, image.width(), bottom - top);
+            let png = capture::png_bytes(&rows)?;
+            (env.emit)(LiveEvent::Reading { on: true });
+            let read = env.pipeline.read_lines(png).await;
+            (env.emit)(LiveEvent::Reading { on: false });
+            match read {
+                Ok(lines) => self.memory.add(lines, (top, bottom)),
+                Err(e) => {
+                    // The rows stay unread: read everything next time.
+                    self.memory.clear();
+                    return Ok(Err(e));
+                }
+            }
+        }
+        Ok(Ok(env.pipeline.lay_out(
+            image,
+            &self.memory.lines(),
+            frame.visible,
+        )))
+    }
+
     /// Keep a shown reading as context of the next ones.
     fn carry(&mut self, source: &str, translation: &str) {
         if source.trim().is_empty() || translation.trim().is_empty() {
