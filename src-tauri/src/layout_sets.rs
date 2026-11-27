@@ -426,12 +426,27 @@ pub struct LayoutSets {
 
 pub type Handle = Arc<LayoutSets>;
 
+fn settle(stored: &[LayoutSet], active: &mut HashMap<String, Instance>) {
+    for (id, instance) in active.iter_mut() {
+        if !stored.iter().any(|s| s.id == *id && s.auto_restore) {
+            instance.auto = false;
+        }
+    }
+}
+
 impl LayoutSets {
     pub fn open(dir: &Path) -> Handle {
         Arc::new(Self {
             store: LayoutStore::open(dir),
             active: Mutex::default(),
         })
+    }
+
+    /// Windows of a set that no longer restores by itself stay when
+    /// their application exits, whichever way the set was switched
+    /// (directly, or by another set of the application taking over).
+    fn settle(&self) {
+        settle(&self.store.list(), &mut self.active.lock());
     }
 
     /// Drop windows that were closed, and sets left without any.
@@ -898,6 +913,7 @@ pub async fn update_layout_set(
         }
     }
     sets.store.put(set, None)?;
+    sets.settle();
     changed(&app);
     Ok(())
 }
@@ -925,6 +941,7 @@ pub async fn put_layout_set(
     sets: State<'_, Handle>,
 ) -> Result<(), String> {
     sets.store.put(set, Some(index))?;
+    sets.settle();
     changed(&app);
     Ok(())
 }
@@ -999,6 +1016,27 @@ mod tests {
             attach: None,
             ..attached("x")
         }
+    }
+
+    #[test]
+    fn windows_of_a_set_switched_to_manual_by_another_set_stay_on_exit() {
+        let open = |auto| Instance {
+            windows: Vec::new(),
+            auto,
+        };
+        let mut active =
+            HashMap::from([("a".to_string(), open(true)), ("b".to_string(), open(true))]);
+        // Set b took over automatic restoring from set a.
+        settle(
+            &[set("a", "game", false), set("b", "game", true)],
+            &mut active,
+        );
+        assert!(!active["a"].auto);
+        assert!(active["b"].auto);
+        // A set restored by hand is not made automatic.
+        active.insert("b".to_string(), open(false));
+        settle(&[set("b", "game", true)], &mut active);
+        assert!(!active["b"].auto);
     }
 
     fn set(id: &str, name: &str, auto: bool) -> LayoutSet {
