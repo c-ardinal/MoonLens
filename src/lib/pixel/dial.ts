@@ -2,7 +2,7 @@
  * ホームの魔法陣メニュー：幾何計算（純関数）と描画。
  * 寸法は UI 第5案のモック（論理 640×368、外周ルーン環 半径 158）を基準に比例配分。
  * 選択中の項目は常に右上（-54 度）へ回転し、見出し帯と接続。
- * 描画は 3 種：静止層（drawDial）、動作層（drawDialMotion：光点・波紋・中心核）、
+ * 描画は 3 種：静止層（drawDial：中心の月を含む）、動作層（drawDialMotion：光点・波紋・中心核の円）、
  * 回転体（drawRotor：ルーン環・中心核の正方形。CSS で等速回転）。
  * 動作層・回転体は静止層の下へ重ね、再描画しても文字の 2 値化処理を伴わない軽量構成。
  */
@@ -133,6 +133,32 @@ export type RotorId = (typeof ROTORS)[number]['id'];
 
 const coreRadius = (q: number) => Math.round(34 * Math.min(1, q + 0.15));
 
+/** 中心の月の半径（論理画素）。回転体（正方形）の頂点が枠環の外側へ残る寸法。 */
+export const moonRadius = (r: number) => Math.round(coreRadius(r / 158) * 0.47);
+
+/**
+ * 月面の区分（アプリアイコンと同形）：左側が明部の三日月、残余は影。円外は null。
+ * x・y は月の中心基準。
+ */
+export function moonPart(x: number, y: number, r: number): 'lit' | 'shade' | null {
+  if (x * x + y * y > r * r + r) return null;
+  const k = 0.42;
+  return (x - r * k) ** 2 + (y + r * k * 0.55) ** 2 > (r * 0.92) ** 2 ? 'lit' : 'shade';
+}
+
+/** 中心の月：黒地の円盤と枠環、淡琥珀の三日月、網点の影。背後の星形の線は円盤で遮蔽。 */
+function drawMoon(p: Pix, cx: number, cy: number, r: number) {
+  p.fcircle(cx, cy, r + 3, 0);
+  p.circle(cx, cy, r + 3, 5);
+  for (let y = -r; y <= r; y++)
+    for (let x = -r; x <= r; x++) {
+      const part = moonPart(x, y, r);
+      if (part === 'lit') p.px(cx + x, cy + y, 6);
+      else if (part === 'shade') p.dither(cx + x, cy + y, 1, 1, 0, 3, 5 / 16);
+    }
+}
+
+
 /** 回転体の Canvas 寸法（論理画素、奇数：中心画素を回転中心と一致）。 */
 export function rotorSize(id: RotorId, r: number): number {
   const q = r / 158;
@@ -178,11 +204,10 @@ export function drawDialMotion(p: Pix, s: DialState, t: number, reserve = SIDE_W
     p.px(Math.round(cx + ro * Math.cos(a)), Math.round(cy + ro * Math.sin(a)), c);
   });
 
-  // 中心核：円と核（正方形は回転体）
+  // 中心核：円（正方形は回転体、月は静止層）
   const cr = coreRadius(q);
   p.circle(cx, cy, cr, 3);
   p.circle(cx, cy, cr - 3, 5, [1, 3]);
-  p.diamond(cx, cy, 4, 9, 5);
 
   // 選択ノードの波紋：菱形が外側へ広がり減光（回転演出中は省略）
   const sel = geo.nodes[s.selected];
@@ -193,7 +218,7 @@ export function drawDialMotion(p: Pix, s: DialState, t: number, reserve = SIDE_W
   return geo;
 }
 
-/** 静止層：目盛り・星形・ノード・名札・接続線。動作層の上へ重ねる（背景は透明）。 */
+/** 静止層：目盛り・星形・中心の月・ノード・名札・接続線。動作層の上へ重ねる（背景は透明）。 */
 export function drawDial(p: Pix, s: DialState, reserve = SIDE_WIDTH) {
   const geo = geometryOf(p, s, reserve);
   const { cx, cy, r } = geo;
@@ -226,6 +251,8 @@ export function drawDial(p: Pix, s: DialState, reserve = SIDE_WIDTH) {
   p.circle(cx, cy, ri, 5);
   p.circle(cx, cy, ri - 3, 3);
   p.circle(cx, cy, ri - 19, 3);
+  // 中心の月：星形の線と回転体（正方形）の上へ描画
+  drawMoon(p, cx, cy, moonRadius(r));
   // 星の谷間の紋章
   N.forEach((n, i) => {
     const t = ((n.angle + 180 / N.length) * Math.PI) / 180;
