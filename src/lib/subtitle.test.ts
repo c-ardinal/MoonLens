@@ -167,6 +167,29 @@ describe('音源メニューの選択肢', () => {
       translated: 'y',
       rest: null
     });
-    expect(same).toBe(v);
+    expect(same.lines).toBe(v.lines);
+  });
+
+  it('音源変更・再開後も行 ID は一意、補正は新規の行のみ置換', () => {
+    const started: SubtitleEvent = { kind: 'started', device: '', source: { kind: 'system' } };
+    let v = run([
+      started,
+      { kind: 'chunk', id: 1, original: 'old', translated: '旧' },
+      // 再開：バックエンドの採番は 1 から。
+      started,
+      { kind: 'chunk', id: 1, original: 'new a', translated: '新' },
+      { kind: 'chunk', id: 2, original: 'new b.', translated: '規' }
+    ]);
+    expect(new Set(v.lines.map((l) => l.id)).size).toBe(3);
+    v = reduce(v, {
+      kind: 'revised',
+      replaces: [1, 2],
+      id: 3,
+      original: 'new a new b.',
+      translated: '新規。',
+      rest: null
+    });
+    expect(v.lines.map((l) => l.original)).toEqual(['old', 'new a new b.']);
+    expect(new Set(v.lines.map((l) => l.id)).size).toBe(2);
   });
 });
