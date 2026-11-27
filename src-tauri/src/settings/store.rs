@@ -39,7 +39,7 @@ const USER_HEADER: &str = "\
 ";
 
 const DEFAULTS_HEADER: &str = "\
-# MoonLens 既定値（参照用。起動時に上書きのため編集不可）。
+# MoonLens 既定値（参照用。起動時に再生成、編集は無効）。
 # 変更は config.toml に該当キーのみ記述。
 ";
 
@@ -494,7 +494,7 @@ fn load_user_file(path: &Path) -> (Settings, LoadOutcome, Option<toml::Table>) {
                 let shown: Vec<&str> = ordered.into_iter().take(2).collect();
                 let more = done.len().saturating_sub(shown.len());
                 let more = if more > 0 {
-                    format!("ほか {more} 件")
+                    format!("他 {more} 件")
                 } else {
                     String::new()
                 };
