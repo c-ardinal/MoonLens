@@ -37,6 +37,25 @@ pub fn offload_devices() -> Vec<String> {
     Vec::new()
 }
 
+/// Free memory, in bytes, on the GPUs llama.cpp offloads to (it spreads
+/// a model over all of them). `None`: no GPU, or the driver does not
+/// report it.
+#[cfg(feature = "local-llm")]
+pub fn offload_memory_free() -> Option<u64> {
+    use llama_cpp_2::LlamaBackendDeviceType as T;
+    let free: u64 = llama_cpp_2::list_llama_ggml_backend_devices()
+        .into_iter()
+        .filter(|d| matches!(d.device_type, T::Gpu | T::IntegratedGpu))
+        .map(|d| d.memory_free as u64)
+        .sum();
+    (free > 0).then_some(free)
+}
+
+#[cfg(not(feature = "local-llm"))]
+pub fn offload_memory_free() -> Option<u64> {
+    None
+}
+
 /// A GPU llama.cpp (and whisper.cpp, which shares its ggml) can run on.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct GpuDevice {

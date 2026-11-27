@@ -1,0 +1,1 @@
+- **PLaMo 3 Translate 8B** as an optional translation model (5.3 GB, highest quality, about a third of the speed of 2B; for PCs with 8 GB or more of GPU memory). The default and the recommended model stay PLaMo 3 Translate 2B.

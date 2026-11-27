@@ -69,7 +69,7 @@ Windows：アプリ終了後、展開済みフォルダーを削除（レジス�
 - **UI**: Svelte 5 (runes) + Vite + Tailwind CSS v4
 - **OCR**: PP-OCRv6 small（日中英）を既定とし、韓国語・キリル文字・アラビア文字・タイ語・デーヴァナーガリー・タミル語・テルグ語は認識モデルを任意追加（選定の記録：[docs/ocr-models.md](docs/ocr-models.md)）。実行構成は環境別に自動選択（Windows は DirectML による GPU 実行、または ONNX Runtime の CPU 実行のうち実測で高速な構成。Linux・macOS は ONNX Runtime の CPU 実行。ONNX Runtime 未取得時は `rten`）。ラテン文字専用の [`ocrs`](https://github.com/robertknight/ocrs) をフォールバックに使う（追加の OCR エンジンはプラグインで差し替え可）
 - **QR**: `rqrr` crate
-- **翻訳 (local)**: 内蔵 llama.cpp（`llama-cpp-2`、静的リンク）で GGUF を実行。GPU は Windows / Linux が Vulkan（NVIDIA・AMD・Intel）、macOS が Metal。GPU がない環境では CPU で動く。翻訳の既定は PLaMo 3 Translate 2B（0.8B も選択可）、説明・要約は Gemma 4 E4B。モデルはアプリのホーム画面からダウンロード（SHA-256 検証・中断再開）。モデル選定の根拠は [docs/translation-models.md](docs/translation-models.md)
+- **翻訳 (local)**: 内蔵 llama.cpp（`llama-cpp-2`、静的リンク）で GGUF を実行。GPU は Windows / Linux が Vulkan（NVIDIA・AMD・Intel）、macOS が Metal。GPU がない環境では CPU で動く。翻訳の既定は PLaMo 3 Translate 2B（省メモリの 0.8B、高品質・低速の 8B も選択可）。GPU メモリ不足時は一部の層のみ GPU へ配分、説明・要約は Gemma 4 E4B。モデルはアプリのホーム画面からダウンロード（SHA-256 検証・中断再開）。モデル選定の根拠は [docs/translation-models.md](docs/translation-models.md)
 - **翻訳 (cloud / Ollama)**: DeepL / Gemini API、Ollama は任意のオプション（既定チェーンには入っていない）
 - **ASR**: 内蔵 whisper.cpp（`src-tauri/vendor/whisper.cpp`、llama.cpp と ggml・GPU バックエンドを共有して静的リンク）。既定モデルは Whisper large-v3-turbo（small も選択可）。モデルは設定の「モデル」からダウンロード（SHA-256 検証・中断再開）。選定の根拠は [docs/asr-models.md](docs/asr-models.md)。外部の whisper.cpp サーバーも任意のプロバイダーとして利用可
 - **画面キャプチャ**: `xcap` 0.9、**音声ループバック**: `cpal`
@@ -223,7 +223,7 @@ MoonLens 本体は [MIT License](LICENSE)。
 
 | モデル | ライセンス |
 | --- | --- |
-| PLaMo 3 Translate 2B / 0.8B | [PLaMo Community License](https://plamo.preferredai.jp/info/plamo-community-license-en) |
+| PLaMo 3 Translate 2B / 0.8B / 8B | [PLaMo Community License](https://plamo.preferredai.jp/info/plamo-community-license-en) |
 | Gemma 4 E4B / E2B | [Apache-2.0](https://ai.google.dev/gemma/apache_2) |
 | PP-OCRv6 small、PP-OCRv5 mobile（追加の文字体系） | [Apache-2.0](https://github.com/PaddlePaddle/PaddleOCR/blob/main/LICENSE) |
 
