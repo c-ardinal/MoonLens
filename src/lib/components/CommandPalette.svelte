@@ -12,13 +12,18 @@
     Mic,
     MicOff,
     Pause,
-    Power
+    Power,
+    LayoutGrid,
+    Save
   } from 'lucide-svelte';
   import {
     getSettings,
     onHotkey,
     quitApp,
     openLens,
+    listLayoutSets,
+    restoreLayoutSet,
+    saveLayoutSet,
     startSubtitle,
     stopSubtitle,
     subtitleState,
@@ -26,6 +31,8 @@
   } from '$lib/ipc';
   import { displayAccelerator } from '$lib/hotkey';
   import { errorText } from '$lib/errors';
+  import { notify } from '$lib/toast.svelte';
+  import type { LayoutSet } from '$lib/layout-sets';
 
   type Command = {
     id: string;
@@ -45,6 +52,21 @@
   async function openWindow() {
     open = false;
     await openLens();
+  }
+
+  /** 保存済みの配置セット（表示時に取得）。 */
+  let layoutSets = $state<LayoutSet[]>([]);
+
+  async function saveLayout() {
+    const saved = await saveLayoutSet();
+    open = false;
+    notify(`${saved.name}：ウィンドウ ${saved.windows.length} 個を保存`);
+  }
+
+  async function restoreLayout(set: LayoutSet) {
+    const count = await restoreLayoutSet(set.id);
+    open = false;
+    notify(`${set.name}：ウィンドウ ${count} 個を復元`);
   }
 
   async function toggleSub() {
@@ -85,6 +107,13 @@
       icon: subtitleRunning ? MicOff : Mic,
       run: toggleSub
     },
+    { id: 'layout-save', label: '配置セット 保存', icon: Save, run: saveLayout },
+    ...layoutSets.map((set) => ({
+      id: `layout-restore:${set.id}`,
+      label: `配置セット 復元：${set.name}`,
+      icon: LayoutGrid,
+      run: () => restoreLayout(set)
+    })),
     { id: 'home', label: 'ホーム', icon: Home, run: go('/') },
     { id: 'image', label: '画像翻訳', icon: ImageIcon, run: go('/image/') },
     { id: 'translate', label: 'テキスト翻訳', icon: Languages, run: go('/translate/') },
@@ -117,6 +146,9 @@
     q = '';
     getSettings()
       .then((s) => (hotkeys = s?.hotkeys ?? {}))
+      .catch(() => {});
+    listLayoutSets()
+      .then((sets) => (layoutSets = sets))
       .catch(() => {});
   }
 

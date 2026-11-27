@@ -114,6 +114,7 @@ fn bundle(texts: &[String]) -> CaptureFlowResult {
                 bold: false,
                 lines: vec![],
                 row_limits: vec![],
+                erase: None,
             })
             .collect(),
         image_size: Some([100, 100]),

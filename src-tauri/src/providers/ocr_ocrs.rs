@@ -170,19 +170,51 @@ impl OcrsProvider {
 /// milliseconds, and providers are rebuilt on every settings change, so
 /// the cache lives outside the provider and is keyed by model directory.
 #[cfg(feature = "ocrs-engine")]
-static ENGINE: Mutex<Option<(PathBuf, Arc<ocrs::OcrEngine>)>> = Mutex::new(None);
+static ENGINE: Mutex<Option<(PathBuf, Arc<ocrs::OcrEngine>, std::time::Instant)>> =
+    Mutex::new(None);
 
 #[cfg(feature = "ocrs-engine")]
 fn engine_for(dir: &Path) -> anyhow::Result<Arc<ocrs::OcrEngine>> {
     let mut guard = ENGINE.lock();
-    if let Some((cached_dir, engine)) = guard.as_ref() {
+    if let Some((cached_dir, engine, used)) = guard.as_mut() {
         if cached_dir == dir {
+            *used = std::time::Instant::now();
             return Ok(engine.clone());
         }
     }
     let engine = Arc::new(try_load_engine(dir)?);
-    *guard = Some((dir.to_path_buf(), engine.clone()));
+    *guard = Some((dir.to_path_buf(), engine.clone(), std::time::Instant::now()));
     Ok(engine)
+}
+
+/// Count the loaded engine as used now (see [`unload_idle`]).
+pub fn touch() {
+    #[cfg(feature = "ocrs-engine")]
+    if let Some((_, _, used)) = ENGINE.lock().as_mut() {
+        *used = std::time::Instant::now();
+    }
+}
+
+/// Free the engine when nobody asked for it for `limit` and no reading
+/// runs on it; the next reading loads it again. True when it was freed.
+pub fn unload_idle(limit: std::time::Duration) -> bool {
+    #[cfg(feature = "ocrs-engine")]
+    {
+        let mut guard = ENGINE.lock();
+        let unused = matches!(
+            guard.as_ref(),
+            Some((_, e, used)) if Arc::strong_count(e) == 1 && used.elapsed() >= limit
+        );
+        if unused {
+            *guard = None;
+        }
+        unused
+    }
+    #[cfg(not(feature = "ocrs-engine"))]
+    {
+        let _ = limit;
+        false
+    }
 }
 
 /// Load a fresh engine from `dir` (uncached). Exposed for the
@@ -275,6 +307,18 @@ impl Provider for OcrsProvider {
     }
     fn is_local(&self) -> bool {
         true
+    }
+
+    async fn warm_up(&self) -> Result<(), ProviderError> {
+        #[cfg(feature = "ocrs-engine")]
+        if model_paths(&self.models_dir).is_some() {
+            let dir = self.models_dir.clone();
+            return tokio::task::spawn_blocking(move || engine_for(&dir).map(|_| ()))
+                .await
+                .map_err(|e| ProviderError::Other(e.to_string()))?
+                .map_err(|e| ProviderError::Other(format!("{e:#}")));
+        }
+        Err(ProviderError::NotInstalled("ocrs".into()))
     }
 
     async fn run(&self, input: TaskInput) -> Result<TaskOutput, ProviderError> {

@@ -14,7 +14,7 @@
     type CaptureFlowResult,
     type LensBlock
   } from '$lib/ipc';
-  import { LANGUAGES, applyStreaming, blockCssRect, growRoom, joinedText, maskClip, rgb } from '$lib/lens-overlay';
+  import { LANGUAGES, applyStreaming, blockCssRect, blockPaint, growRoom, joinedText } from '$lib/lens-overlay';
   import FlowText from '$lib/components/FlowText.svelte';
   import { scanlineHole } from '$lib/pixel/scanline';
   import { parseError, type UiError } from '$lib/errors';
@@ -342,22 +342,35 @@
               {#each blocks as b, i (i)}
                 {#if b.bbox[2] > 0 && !b.same_language}
                   {@const r = blockCssRect(b, crop, scale)}
+                  {@const paint = blockPaint(b, scale)}
                   <div
                     class="block-box absolute"
                     class:pending={b.translation == null}
+                    class:erased={!!paint.erase}
                     style="left: {r.left}px; top: {r.top}px; width: {r.width}px; height: {r.height}px;
-                           background: {rgb(b.colors?.background, 'rgba(255,255,255,0.96)')};
-                           color: {rgb(b.colors?.foreground, '#111')};
-                           clip-path: {maskClip(b, scale) || 'none'};"
+                           background: {paint.background};
+                           color: {paint.color};
+                           clip-path: {paint.clip};"
                     title={b.source}
                   >
+                    {#if paint.erase}
+                      <img
+                        class="erase"
+                        src={paint.erase.src}
+                        alt=""
+                        draggable="false"
+                        style="left: {paint.erase.rect.left}px; top: {paint.erase.rect.top}px;
+                               width: {paint.erase.rect.width}px; height: {paint.erase.rect.height}px"
+                      />
+                    {/if}
                     {#if b.translation != null}
                       <FlowText
                         block={b}
                         text={b.translation}
                         {scale}
                         grow={growRoom(blocks, i, crop.w) / scale}
-                        background={rgb(b.colors?.background, 'rgba(255,255,255,0.96)')}
+                        background={paint.background}
+                        outline={paint.outline}
                       />
                     {/if}
                   </div>
@@ -454,6 +467,16 @@
     user-select: text;
     cursor: text;
     box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.04);
+  }
+  /* 写真・グラデーション上：文字画素のみの補完画像（枠の影なし） */
+  .block-box.erased {
+    box-shadow: none;
+  }
+  .block-box .erase {
+    position: absolute;
+    max-width: none;
+    pointer-events: none;
+    user-select: none;
   }
   .block-box.pending {
     background-image: linear-gradient(100deg, transparent 30%, color-mix(in srgb, var(--ml-accent) 18%, transparent) 50%, transparent 70%) !important;

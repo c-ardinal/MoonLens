@@ -41,7 +41,14 @@ export type Section =
   /** A section rendered by a dedicated component. */
   | { id: string; title: string; description?: string; component: SectionComponent };
 
-export type SectionComponent = 'llm-translate' | 'llm-assist' | 'ocr' | 'asr' | 'data' | 'plugins';
+export type SectionComponent =
+  | 'llm-translate'
+  | 'llm-assist'
+  | 'ocr'
+  | 'asr'
+  | 'data'
+  | 'plugins'
+  | 'layout-sets';
 
 /**
  * 大分類（左の一覧）。各分類は SECTIONS の小分類（右枠上部のタブ）を束ねる。
@@ -93,6 +100,12 @@ export const SECTIONS: Section[] = [
         help: '原文中の用語を指定の訳語に固定。'
       }
     ]
+  },
+  {
+    id: 'layout-sets',
+    title: '配置セット',
+    description: 'ウィンドウ翻訳の配置を保存。対象アプリの起動時に自動復元。',
+    component: 'layout-sets'
   },
   {
     id: 'models',
@@ -383,6 +396,17 @@ export const SECTIONS: Section[] = [
       },
       {
         kind: 'number',
+        path: 'performance.model_idle_unload_minutes',
+        label: '未使用モデルの自動解放',
+        help: '一定時間未使用のモデルを解放し、メモリーと VRAM を返却。翻訳ウィンドウ・音声翻訳の使用中は保持。',
+        min: 0,
+        max: 240,
+        step: 1,
+        unit: '分',
+        zeroLabel: '無効'
+      },
+      {
+        kind: 'number',
         path: 'performance.max_concurrent_tasks',
         label: '並列翻訳数',
         help: '拡張機能の翻訳エンジン使用時、段落単位の再翻訳の同時要求数。内蔵エンジンは逐次実行のため対象外。',
@@ -447,7 +471,7 @@ export const SECTIONS: Section[] = [
 ];
 
 export const GROUPS: Group[] = [
-  { id: 'translation', title: '翻訳', sections: ['translation', 'glossary', 'pin'] },
+  { id: 'translation', title: '翻訳', sections: ['translation', 'glossary', 'layout-sets', 'pin'] },
   { id: 'subtitle', title: '音声翻訳', sections: ['subtitle'] },
   { id: 'models', title: 'モデル', sections: ['models', 'model-assist', 'model-ocr', 'model-asr'] },
   { id: 'output', title: '履歴・コピー', sections: ['history', 'clipboard'] },

@@ -16,6 +16,11 @@ use moonlens_lib::{
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    // `RUST_LOG=moonlens_lib=debug` prints the pipeline's timings to stderr.
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .with_writer(std::io::stderr)
+        .try_init();
     let tmp = tempfile::tempdir()?;
     let store = Arc::new(SettingsStore::load_from(tmp.path().join("config.toml"))?);
     let plugins = Arc::new(PluginRegistry::load_from(

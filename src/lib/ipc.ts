@@ -8,6 +8,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 import type { AttachCandidate, AttachDock, Attachment } from './attach';
+import { LAYOUT_SETS_EVENT, type LayoutSet, type LensView } from './layout-sets';
 import { NO_STREAM, type StreamItem, type StreamState } from './stream';
 
 export type Settings = Record<string, any>;
@@ -71,6 +72,21 @@ export interface LensBlock {
    * when a picture stands beside some rows of the block.
    */
   row_limits?: number[];
+  /**
+   * Set when the text stands on a picture or gradient: the text pixels
+   * repainted from their surroundings, drawn instead of the box.
+   */
+  erase?: ErasePatch | null;
+}
+
+/** Text-only erase picture of a block. */
+export interface ErasePatch {
+  /** [x, y, w, h] of the picture in the pixels the block is placed in (x / y negative beyond a window frame). */
+  rect: [number, number, number, number];
+  /** PNG data URL: text pixels opaque, the rest transparent. */
+  image: string;
+  /** The background varies: the translation needs an outline. */
+  outline: boolean;
 }
 
 /** Sent before each translation request of a capture (`moonlens://image-progress`). */
@@ -567,6 +583,8 @@ export interface LensDescriptor {
   /** Language it translates into; null = the configured target. */
   target_language: string | null;
   read_mode: LensReadMode;
+  /** View state the window reported, or was opened with (`LensView`). */
+  view: unknown;
 }
 
 export const closeLensWindow = (id: string) => safeInvoke<void>('close_lens_window', { id });
@@ -763,6 +781,29 @@ export const detachWindow = (label: string) => safeInvoke<void>('detach_window',
 export const windowAttachment = (label: string) =>
   safeInvoke<Attachment>('window_attachment', { label }, { target: null, dock: null });
 
+// ---- 配置セット（layout_sets.rs、型は `$lib/layout-sets`） ----
+export const listLayoutSets = () => safeInvoke<LayoutSet[]>('list_layout_sets', undefined, []);
+/** 表示中のウィンドウ翻訳を保存。`id` 指定時は当該セットへ上書。 */
+export const saveLayoutSet = (id?: string) =>
+  safeInvoke<LayoutSet>('save_layout_set', { id: id ?? null });
+export const updateLayoutSet = (id: string, patch: { name?: string; autoRestore?: boolean }) =>
+  safeInvoke<void>('update_layout_set', {
+    id,
+    name: patch.name ?? null,
+    autoRestore: patch.autoRestore ?? null
+  });
+/** 削除。戻り値（位置とセット）は {@link putLayoutSet} による復元用。 */
+export const deleteLayoutSet = (id: string) =>
+  safeInvoke<[number, LayoutSet] | null>('delete_layout_set', { id });
+export const putLayoutSet = (set: LayoutSet, index: number) =>
+  safeInvoke<void>('put_layout_set', { set, index });
+/** セットのウィンドウを表示。戻り値：表示した個数。 */
+export const restoreLayoutSet = (id: string) => safeInvoke<number>('restore_layout_set', { id });
+export const onLayoutSets = (handler: () => void): Promise<UnlistenFn> =>
+  listen(LAYOUT_SETS_EVENT, () => handler());
+/** ウィンドウ翻訳の表示状態を報告（配置セットの保存対象）。 */
+export const setLensView = (id: string, view: LensView) =>
+  safeInvoke<void>('set_lens_view', { id, view });
 // ---- 配信用ウィンドウ（stream.rs、型は `$lib/stream`） ----
 export const streamState = (label: string) =>
   safeInvoke<StreamState>('stream_state', { label }, NO_STREAM);
