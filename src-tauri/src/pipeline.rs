@@ -23,6 +23,7 @@ use crate::{
         translate_llama::LlamaTranslator, translate_ollama::OllamaTranslator, Capability, Intent,
         OcrLine, ProviderError, ProviderHandle, TaskInput, TaskOutput, TranslateContext,
     },
+    scan_margin::Visible,
     settings::{
         schema::{FallbackCondition, TaskChain},
         SettingsStore,
@@ -131,10 +132,21 @@ fn png_dimensions(png: &[u8]) -> Option<(u32, u32)> {
     Some((w, h))
 }
 
+/// Least time a local explain / summarize request gets. The general
+/// model (about 5 GB) is loaded on the first request, not at launch, and
+/// the answer is free text whose length does not follow the input: the
+/// chain's 10 s ran out during the load itself.
+const LOCAL_ASSIST_MIN_MS: u64 = 180_000;
+
+/// Time a local explain / summarize request gets per prompt character
+/// (reading the prompt), on top of [`LOCAL_ASSIST_MIN_MS`].
+const LOCAL_ASSIST_MS_PER_CHAR: u64 = 40;
+
 /// Timeout for one provider call. Local translation scales with the
 /// text length (generation time grows with it), local OCR with the image
-/// area; everything else, and any cloud provider, keeps the chain's
-/// fixed timeout.
+/// area, local explain / summarize get the time a model load plus a free
+/// text answer needs; everything else, and any cloud provider, keeps the
+/// chain's fixed timeout.
 pub fn effective_timeout(chain_ms: u32, input: &TaskInput, is_local: bool) -> Duration {
     let floor = u64::from(chain_ms);
     let ms = match input {
@@ -147,6 +159,9 @@ pub fn effective_timeout(chain_ms: u32, input: &TaskInput, is_local: bool) -> Du
             }
             None => floor,
         },
+        TaskInput::Explain { prompt: text, .. } | TaskInput::Summarize { text } if is_local => {
+            floor.max(LOCAL_ASSIST_MIN_MS + text.chars().count() as u64 * LOCAL_ASSIST_MS_PER_CHAR)
+        }
         _ => floor,
     };
     Duration::from_millis(ms)
@@ -445,6 +460,18 @@ impl Pipeline {
         &self,
         image_png: Vec<u8>,
     ) -> Result<CaptureFlowResult, ProviderError> {
+        self.analyze_capture_in(image_png, None).await
+    }
+
+    /// [`Self::analyze_capture`] of a capture taken wider than the
+    /// translation window that shows it (see [`crate::scan_margin`]):
+    /// only rows the window shows are kept, and blocks come back in
+    /// window pixels, cut to the window.
+    pub async fn analyze_capture_in(
+        &self,
+        image_png: Vec<u8>,
+        visible: Option<Visible>,
+    ) -> Result<CaptureFlowResult, ProviderError> {
         // Cheap heuristic classifier. A plugin-provided classifier can
         // override through the `intent_classifier` chain in future work.
         let img =
@@ -460,12 +487,17 @@ impl Pipeline {
         );
 
         // 1) Try QR — decoding is almost free and short-circuits the rest.
+        //    Only inside the window: a code in the scan margin belongs
+        //    to whatever lies next to it.
+        let qr_png = match visible.map(|v| v.crop(&img)) {
+            Some(Some(inside)) => crate::capture::png_bytes(&inside)
+                .map_err(|e| ProviderError::Other(e.to_string()))?,
+            _ => image_png.clone(),
+        };
         if let Ok(res) = self
             .run(
                 Capability::QrHandler,
-                TaskInput::IntentClassifier {
-                    image_png: image_png.clone(),
-                },
+                TaskInput::IntentClassifier { image_png: qr_png },
             )
             .await
         {
@@ -483,7 +515,7 @@ impl Pipeline {
                     result: res,
                     source_rect: None,
                     blocks: vec![],
-                    image_size: Some([img.width(), img.height()]),
+                    image_size: Some(visible.map_or([img.width(), img.height()], |v| [v.w, v.h])),
                     source_language: None,
                     target_language: None,
                 });
@@ -533,9 +565,13 @@ impl Pipeline {
                 return Err(e);
             }
         };
+        let lines = match visible {
+            Some(v) => v.keep_lines(lines),
+            None => lines,
+        };
         let text_blocks = layout::group_lines(&lines);
         let ocr_text = layout::join_blocks(&text_blocks);
-        let image_size = Some([img.width(), img.height()]);
+        let image_size = Some(visible.map_or([img.width(), img.height()], |v| [v.w, v.h]));
 
         if ocr_text.trim().is_empty() {
             // Nothing text-like detected. Return the intent so the UI can
@@ -560,16 +596,22 @@ impl Pipeline {
         }
 
         let rgba = img.to_rgba8();
-        let blocks: Vec<LensBlock> = text_blocks
+        let mut blocks: Vec<LensBlock> = text_blocks
             .iter()
             .map(|b| {
-                let colors = (b.bbox[2] > 0.0).then(|| layout::estimate_colors(&rgba, b.bbox));
+                // Colours and stroke weight are read from one row: the
+                // box of a paragraph may also hold a picture beside it.
+                let sample = layout::sample_row(b);
+                let colors = (b.bbox[2] > 0.0).then(|| layout::estimate_colors(&rgba, sample));
                 let bold = colors.is_some_and(|c| {
                     layout::looks_bold(
                         &b.text,
-                        layout::stroke_ratio(&rgba, b.bbox, c, b.line_height),
+                        layout::stroke_ratio(&rgba, sample, c, b.line_height),
                     )
                 });
+                let row_limits = colors
+                    .map(|c| layout::row_limits(&rgba, b, c.background))
+                    .unwrap_or_default();
                 LensBlock {
                     bbox: b.bbox,
                     line_height: b.line_height,
@@ -581,9 +623,13 @@ impl Pipeline {
                     align: b.align,
                     bold,
                     lines: b.lines.clone(),
+                    row_limits,
                 }
             })
             .collect();
+        if let Some(v) = visible {
+            v.to_window(&mut blocks);
+        }
 
         let mut bundle = CaptureFlowResult {
             intent: Intent::Text,
@@ -701,6 +747,22 @@ impl Pipeline {
         progress: Option<&ProgressSink<'_>>,
         kind: &str,
     ) -> Result<(), ProviderError> {
+        self.translate_capture_after(bundle, target_language, progress, kind, &[])
+            .await
+    }
+
+    /// [`Self::translate_capture_as`] for a capture that continues
+    /// earlier ones (the next subtitle): `earlier` holds their source
+    /// and translation, oldest first, and is history of every request
+    /// to a translator that takes a [`TranslateContext`].
+    pub async fn translate_capture_after(
+        &self,
+        bundle: &mut CaptureFlowResult,
+        target_language: &str,
+        progress: Option<&ProgressSink<'_>>,
+        kind: &str,
+        earlier: &[(String, String)],
+    ) -> Result<(), ProviderError> {
         let s = self.settings.snapshot();
         self.prepare_translation(bundle, target_language);
         let pending: Vec<usize> = (0..bundle.blocks.len())
@@ -766,7 +828,11 @@ impl Pipeline {
         };
 
         let started = Instant::now();
-        let mut history: Vec<(String, String)> = Vec::new();
+        let mut history: Vec<(String, String)> = if in_parts {
+            earlier.to_vec()
+        } else {
+            Vec::new()
+        };
         let mut first: Option<TaskResult> = None;
         let mut reasons: Vec<String> = Vec::new();
         let mut outputs: Vec<String> = Vec::new();
@@ -1070,6 +1136,11 @@ pub struct LensBlock {
     /// pixels), top to bottom. The overlay lays the translation over them.
     #[serde(default)]
     pub lines: Vec<[f32; 4]>,
+    /// Right edge (captured-image px) the text of each row may reach.
+    /// Set only when a picture stands beside some rows of the block, so
+    /// the overlay keeps the translation and its mask off the picture.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub row_limits: Vec<f32>,
 }
 
 impl LensBlock {

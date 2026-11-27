@@ -3,6 +3,20 @@
 //! Pure resampling/downmix math lives in [`dsp`] so it can be unit tested
 //! without a cpal stream.
 
+use serde::{Deserialize, Serialize};
+
+/// What a subtitle window listens to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum AudioSource {
+    /// Everything the PC plays on its default output device.
+    #[default]
+    System,
+    /// What one application plays: the process `pid` and the processes
+    /// it started (a browser plays through a child process).
+    App { pid: u32 },
+}
+
 pub mod dsp {
     //! Pure, allocation-friendly DSP helpers for the loopback pipeline.
 
@@ -208,6 +222,97 @@ pub mod dsp {
     }
 }
 
+pub mod level {
+    //! Input level metering for the live subtitle window.
+    //!
+    //! Captured audio is reduced to one RMS level per [`BIN_SAMPLES`]
+    //! (25 ms) so the window can draw what arrives and compare it with
+    //! the silence gate of the subtitle loop.
+
+    /// Samples per level bin: 25 ms at 16 kHz (40 bins per second).
+    pub const BIN_SAMPLES: usize = 400;
+
+    /// Level reported for digital silence, in dBFS.
+    pub const FLOOR_DB: i8 = -96;
+
+    /// RMS of 16-bit samples as dBFS (full scale = 0 dB).
+    pub fn dbfs(rms: f64) -> f32 {
+        if rms <= 0.0 {
+            return FLOOR_DB as f32;
+        }
+        ((20.0 * (rms / 32768.0).log10()) as f32).clamp(FLOOR_DB as f32, 0.0)
+    }
+
+    /// Turns a stream of PCM16 frames into level bins. Frame boundaries
+    /// do not matter: a bin completes every [`BIN_SAMPLES`] samples.
+    #[derive(Default)]
+    pub struct Meter {
+        sum_squares: f64,
+        count: usize,
+        bins: Vec<i8>,
+    }
+
+    impl Meter {
+        pub fn push(&mut self, samples: &[i16]) {
+            for &s in samples {
+                self.sum_squares += (s as f64) * (s as f64);
+                self.count += 1;
+                if self.count == BIN_SAMPLES {
+                    let rms = (self.sum_squares / BIN_SAMPLES as f64).sqrt();
+                    self.bins.push(dbfs(rms).round() as i8);
+                    self.sum_squares = 0.0;
+                    self.count = 0;
+                }
+            }
+        }
+
+        /// The bins completed since the last call, oldest first.
+        pub fn take(&mut self) -> Vec<i8> {
+            std::mem::take(&mut self.bins)
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn dbfs_scale() {
+            assert_eq!(dbfs(0.0), -96.0);
+            assert!((dbfs(32768.0) - 0.0).abs() < 0.01);
+            assert!((dbfs(3276.8) + 20.0).abs() < 0.01);
+            // The subtitle loop's silence gate (RMS 100) sits near -50 dBFS.
+            assert!((dbfs(100.0) + 50.3).abs() < 0.1);
+        }
+
+        #[test]
+        fn bins_do_not_depend_on_frame_boundaries() {
+            let tone: Vec<i16> = (0..BIN_SAMPLES * 3)
+                .map(|i| if i % 2 == 0 { 1000 } else { -1000 })
+                .collect();
+            let mut whole = Meter::default();
+            whole.push(&tone);
+            let mut pieces = Meter::default();
+            for frame in tone.chunks(160) {
+                pieces.push(frame);
+            }
+            // RMS 1000 = -30.3 dBFS.
+            assert_eq!(whole.take(), vec![-30, -30, -30]);
+            assert_eq!(pieces.take(), vec![-30, -30, -30]);
+        }
+
+        #[test]
+        fn take_returns_each_bin_once_and_keeps_the_partial_bin() {
+            let mut m = Meter::default();
+            m.push(&vec![0i16; BIN_SAMPLES + 50]);
+            assert_eq!(m.take(), vec![FLOOR_DB]);
+            assert!(m.take().is_empty());
+            m.push(&vec![0i16; BIN_SAMPLES - 50]);
+            assert_eq!(m.take(), vec![FLOOR_DB]);
+        }
+    }
+}
+
 // `cpal::Stream` is `!Send`, so we cannot hand it to async code that may
 // migrate across threads. The capture lives on its own dedicated OS thread;
 // control flows through a stop-notify and the audio frames flow through an
@@ -217,13 +322,15 @@ pub mod backend {
     //! Loopback capture backend.
     //!
     //! Each platform exposes loopback differently:
-    //! - **Windows**: WASAPI loopback on the default render device.
+    //! - **Windows**: WASAPI loopback on the default render device, or a
+    //!   process loopback for one application ([`AudioSource::App`]).
     //! - **macOS**: requires a virtual loopback driver (BlackHole, Loopback).
     //! - **Linux**: PulseAudio exposes a `*.monitor` source per sink.
     //!
     //! Captured frames are downmixed to mono and resampled to 16 kHz PCM16
     //! so they can be fed straight into whisper.cpp / Whisper-compatible
     //! servers without further conversion.
+    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
     use std::thread;
 
@@ -233,19 +340,22 @@ pub mod backend {
     use parking_lot::Mutex;
     use tokio::sync::mpsc;
 
+    use super::AudioSource;
+
     /// One frame of mono PCM16 sampled at 16 kHz.
     pub type AudioFrame = Vec<i16>;
 
     /// Send-safe handle to a running loopback capture. Drop to stop.
     pub struct LoopbackStream {
-        stop: Arc<std::sync::atomic::AtomicBool>,
+        stop: Arc<AtomicBool>,
+        lost: Arc<AtomicBool>,
         thread: Option<thread::JoinHandle<()>>,
         device: String,
     }
 
     impl Drop for LoopbackStream {
         fn drop(&mut self) {
-            self.stop.store(true, std::sync::atomic::Ordering::Relaxed);
+            self.stop.store(true, Ordering::Relaxed);
             if let Some(t) = self.thread.take() {
                 let _ = t.join();
             }
@@ -253,42 +363,67 @@ pub mod backend {
     }
 
     impl LoopbackStream {
-        /// Start a dedicated audio capture thread. The thread owns the
-        /// cpal stream (which is `!Send`), so the returned handle stays
-        /// Send + Sync.
+        /// Capture everything the PC plays.
         pub fn start(sink: mpsc::Sender<AudioFrame>) -> Result<Self> {
-            let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
-            let stop_t = stop.clone();
-            // Use a oneshot for an early bail-out signal from the spawned
-            // thread so we surface device-pick errors synchronously.
+            Self::start_with(AudioSource::System, sink)
+        }
+
+        /// Start a dedicated audio capture thread for `source`. The
+        /// thread owns the stream (cpal's is `!Send`), so the returned
+        /// handle stays Send + Sync.
+        pub fn start_with(source: AudioSource, sink: mpsc::Sender<AudioFrame>) -> Result<Self> {
+            let stop = Arc::new(AtomicBool::new(false));
+            let lost = Arc::new(AtomicBool::new(false));
+            let (stop_t, lost_t) = (stop.clone(), lost.clone());
+            // An early answer from the spawned thread, so that a failure
+            // to open the source is returned from here.
             let (ready_tx, ready_rx) = std::sync::mpsc::channel::<Result<String>>();
             let thread = thread::Builder::new()
                 .name("moonlens-audio".into())
                 .spawn(move || {
-                    if let Err(e) = run_capture(sink, stop_t, ready_tx.clone()) {
+                    let run = match source {
+                        AudioSource::System => run_capture(sink, stop_t, ready_tx.clone()),
+                        AudioSource::App { pid } => {
+                            run_app_capture(pid, sink, stop_t, ready_tx.clone())
+                        }
+                    };
+                    if let Err(e) = run {
+                        tracing::warn!("audio: capture of {source:?} ended: {e:#}");
+                        lost_t.store(true, Ordering::Relaxed);
                         let _ = ready_tx.send(Err(e));
                     }
                 })?;
-            // Wait for the thread to confirm device selection or fail fast.
+            // Wait for the thread to confirm the source or fail fast.
             let device = ready_rx
-                .recv_timeout(std::time::Duration::from_millis(2000))
+                .recv_timeout(std::time::Duration::from_millis(START_TIMEOUT_MS))
                 .map_err(|e| anyhow!("音声取得スレッドの応答なし：{e}"))??;
             Ok(Self {
                 stop,
+                lost,
                 thread: Some(thread),
                 device,
             })
         }
 
-        /// Name of the device whose audio is captured.
+        /// Set when the capture ended by itself: the application it
+        /// listened to has exited, or its stream failed.
+        pub fn lost(&self) -> Arc<AtomicBool> {
+            self.lost.clone()
+        }
+
+        /// Name of the device (or application) whose audio is captured.
         pub fn device(&self) -> &str {
             &self.device
         }
     }
 
+    /// Activating a process loopback answers through a system callback;
+    /// allow for a busy PC.
+    const START_TIMEOUT_MS: u64 = 5000;
+
     fn run_capture(
         sink: mpsc::Sender<AudioFrame>,
-        stop: Arc<std::sync::atomic::AtomicBool>,
+        stop: Arc<AtomicBool>,
         ready: std::sync::mpsc::Sender<Result<String>>,
     ) -> Result<()> {
         let host = cpal::default_host();
@@ -344,11 +479,117 @@ pub mod backend {
         let _ = ready.send(Ok(name));
         // Park until told to stop; the cpal callback drives output from
         // the audio backend's own threads.
-        while !stop.load(std::sync::atomic::Ordering::Relaxed) {
+        while !stop.load(Ordering::Relaxed) {
             std::thread::sleep(std::time::Duration::from_millis(50));
         }
         drop(stream);
         Ok(())
+    }
+
+    /// Capture what the process `pid` and its child processes play
+    /// (Windows 10 2004 or later). The process loopback has no format of
+    /// its own: it converts to the one asked for.
+    #[cfg(windows)]
+    fn run_app_capture(
+        pid: u32,
+        sink: mpsc::Sender<AudioFrame>,
+        stop: Arc<AtomicBool>,
+        ready: std::sync::mpsc::Sender<Result<String>>,
+    ) -> Result<()> {
+        use wasapi::{AudioClient, Direction, SampleType, StreamMode, WaveFormat};
+
+        const RATE: u32 = 48_000;
+        const CHANNELS: u16 = 2;
+        const BYTES_PER_SAMPLE: usize = 2;
+
+        let name = crate::audio_apps::process_name(pid)
+            .ok_or_else(|| anyhow!("対象アプリ未検出（PID {pid}）"))?;
+        // S_FALSE (already initialized on this thread) is fine as well.
+        let _ = wasapi::initialize_mta();
+        let format = WaveFormat::new(
+            BYTES_PER_SAMPLE * 8,
+            BYTES_PER_SAMPLE * 8,
+            SampleType::Int,
+            RATE as usize,
+            CHANNELS as usize,
+            None,
+        );
+        let mut client = AudioClient::new_application_loopback_client(pid, true)
+            .map_err(|e| anyhow!("アプリ単位の音声取得に非対応、または開始不可：{e}"))?;
+        let mode = StreamMode::EventsShared {
+            autoconvert: true,
+            buffer_duration_hns: 0,
+        };
+        client
+            .initialize_client(&format, Direction::Capture, mode, None)
+            .map_err(|e| anyhow!("アプリ単位の音声取得を初期化不可：{e}"))?;
+        let event = client
+            .set_get_eventhandle()
+            .map_err(|e| anyhow!("音声取得イベントを設定不可：{e}"))?;
+        let capture = client
+            .get_audiocaptureclient()
+            .map_err(|e| anyhow!("音声取得クライアントを取得不可：{e}"))?;
+        client
+            .start_stream()
+            .map_err(|e| anyhow!("音声取得を開始不可：{e}"))?;
+        tracing::info!(
+            "audio: capturing application \"{name}\" (PID {pid}, {RATE} Hz, {CHANNELS} ch)"
+        );
+        let _ = ready.send(Ok(name.clone()));
+
+        let state = Arc::new(Mutex::new(ResamplerState {
+            source_rate: RATE,
+            source_channels: CHANNELS,
+            fractional: 0.0,
+        }));
+        let frame_bytes = BYTES_PER_SAMPLE * CHANNELS as usize;
+        let mut bytes = std::collections::VecDeque::<u8>::new();
+        let mut checked = std::time::Instant::now();
+        while !stop.load(Ordering::Relaxed) {
+            while capture
+                .get_next_packet_size()
+                .map_err(|e| anyhow!("音声取得失敗：{e}"))?
+                .unwrap_or(0)
+                > 0
+            {
+                capture
+                    .read_from_device_to_deque(&mut bytes)
+                    .map_err(|e| anyhow!("音声取得失敗：{e}"))?;
+            }
+            let whole = bytes.len() - bytes.len() % frame_bytes;
+            if whole > 0 {
+                let raw: Vec<u8> = bytes.drain(..whole).collect();
+                let samples: Vec<i16> = raw
+                    .as_chunks::<BYTES_PER_SAMPLE>()
+                    .0
+                    .iter()
+                    .map(|b| i16::from_le_bytes(*b))
+                    .collect();
+                forward(&samples, &sink, &state, |v| v);
+            }
+            // Nothing arrives while the application is silent: the wait
+            // then runs out, which is not an error.
+            let _ = event.wait_for_event(100);
+            if checked.elapsed() >= std::time::Duration::from_secs(1) {
+                checked = std::time::Instant::now();
+                if !crate::audio_apps::is_alive(pid) {
+                    let _ = client.stop_stream();
+                    return Err(anyhow!("対象アプリ終了：{name}"));
+                }
+            }
+        }
+        let _ = client.stop_stream();
+        Ok(())
+    }
+
+    #[cfg(not(windows))]
+    fn run_app_capture(
+        _pid: u32,
+        _sink: mpsc::Sender<AudioFrame>,
+        _stop: Arc<AtomicBool>,
+        _ready: std::sync::mpsc::Sender<Result<String>>,
+    ) -> Result<()> {
+        Err(anyhow!("アプリ単位の音声取得は Windows 限定"))
     }
 
     /// Lightweight mono / linear-interpolation resampler. Good enough for
@@ -448,13 +689,21 @@ pub mod backend {
     use anyhow::Result;
     use tokio::sync::mpsc;
 
+    use super::AudioSource;
+
     pub type AudioFrame = Vec<i16>;
     pub struct LoopbackStream;
     impl LoopbackStream {
         pub fn device(&self) -> &str {
             ""
         }
-        pub fn start(_sink: mpsc::Sender<AudioFrame>) -> Result<Self> {
+        pub fn lost(&self) -> std::sync::Arc<std::sync::atomic::AtomicBool> {
+            Default::default()
+        }
+        pub fn start(sink: mpsc::Sender<AudioFrame>) -> Result<Self> {
+            Self::start_with(AudioSource::System, sink)
+        }
+        pub fn start_with(_source: AudioSource, _sink: mpsc::Sender<AudioFrame>) -> Result<Self> {
             anyhow::bail!("audio feature disabled at compile time")
         }
     }

@@ -1,0 +1,1 @@
+- UI wording: text placement options renamed (e.g. 「窓外：右」 → 「ウィンドウ外右側」); remaining native-Japanese wording in labels, help texts and error messages replaced with kanji compounds / katakana terms.

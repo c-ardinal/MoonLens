@@ -4,7 +4,7 @@ name: build
 # Windows (×2 multiplier, ~30 min wall-clock) eat the free-tier
 # budget disproportionately, so they are reserved for:
 #
-#   * `release.yml` — runs on tag push (installer bundling path).
+#   * `release.yml` — runs on tag push (packaging path).
 #   * This workflow's `workflow_dispatch` with `all_platforms=true`
 #     — on-demand cross-platform check before cutting a release tag.
 #
@@ -76,7 +76,16 @@ jobs:
       # and every @tauri-apps npm package matches its crate's major.minor
       # (`tauri build` refuses to bundle otherwise).
       - name: Release preflight
-        run: node scripts/check-release.mjs
+        run: |
+          node scripts/check-release.mjs
+          node --test scripts/portable-zip.test.mjs
+
+      # Copy style (CLAUDE.md): no native-Japanese words in UI text and
+      # messages; banned terms are checked in comments too.
+      - name: Copy lint
+        run: |
+          node --test scripts/copy-lint.test.mjs
+          npm run lint:copy
 
       - name: Typecheck (svelte-check)
         run: npm run check
@@ -101,6 +110,11 @@ jobs:
       # the window and overlapping siblings.
       - name: UI overflow audit
         run: npm run audit:overflow
+
+      # <select> option lists are drawn by the OS / WebView: every option
+      # needs a readable text / background pair in light and dark schemes.
+      - name: UI select contrast audit
+        run: npm run audit:select
 
   rust:
     strategy:
@@ -193,10 +207,12 @@ jobs:
             plugin-sdk/examples/hello-translator
             plugin-sdk/examples/music-recognizer
           key: ${{ matrix.platform.name }}
-          # Only main/release write the cache. PR runs restore from it
-          # (base-branch caches are visible to PRs), which keeps the
-          # 10 GB repo cache quota from being evicted by every PR.
-          save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/release' }}
+          # Only develop/main/release write the cache. PR runs restore
+          # from it (base-branch caches are visible to PRs), which keeps
+          # the 10 GB repo cache quota from being evicted by every PR.
+          # `develop` is the base of feature PRs: without it in this
+          # list they would never get a cache hit.
+          save-if: ${{ github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main' || github.ref == 'refs/heads/release' }}
 
       # tauri::generate_context! embeds frontendDist (../build) at
       # compile time; an empty dir is enough for clippy/tests and saves

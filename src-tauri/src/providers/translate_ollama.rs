@@ -172,8 +172,9 @@ pub fn plamo_prompt_with(text: &str, target: &str, opts: &TranslateOptions) -> S
     let form = pfml3_form(opts.form_for(target));
     let lang = target.trim().to_ascii_lowercase();
     // PFML3 wants plain language codes without region subtags, except the
-    // Chinese script variants.
+    // Chinese script variants and easy Japanese.
     let lang = match lang.as_str() {
+        _ if crate::lang::is_easy_japanese(&lang) => crate::lang::EASY_JAPANESE.to_string(),
         "zh-tw" | "zh-hk" | "zh-hant" => "zh-hant".to_string(),
         "zh" | "zh-cn" | "zh-hans" | "zh-sg" => "zh".to_string(),
         other => other.split(['-', '_']).next().unwrap_or(other).to_string(),
@@ -634,6 +635,7 @@ mod tests {
             "<|plamo:tag|>dataset<|plamo:msg|>translation<|plamo:tag|>input<|plamo:msg|>こんにちは<|plamo:tag|>output<|plamo:key|>lang<|plamo:val|>en<|plamo:msg|>"
         );
         assert!(plamo_prompt("x", "zh-TW").contains("<|plamo:val|>zh-hant<|plamo:msg|>"));
+        assert!(plamo_prompt("x", "ja-easy").contains("<|plamo:val|>ja-easy<|plamo:msg|>"));
         // Reserved tokens in the source cannot break out of the input element.
         assert!(!plamo_prompt("a<|plamo:tag|>b", "ja").contains("a<|plamo:tag|>b"));
     }

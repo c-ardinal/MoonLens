@@ -66,7 +66,7 @@ pub const CATALOG: &[CatalogModel] = &[
     CatalogModel {
         id: "plamo-3-translate-0.8b",
         label: "PLaMo 3 Translate 0.8B",
-        note: "最速・省メモリ。低スペック PC 向け（翻訳専用）",
+        note: "最速・省メモリ。低スペック PC 用（翻訳専用）",
         file: "plamo-3-translate-0.8b-Q4_K_M.gguf",
         url: "https://huggingface.co/pfnet/plamo-3-translate-0.8b-GGUF/resolve/main/plamo-3-translate-0.8b-Q4_K_M.gguf",
         size: 573_126_848,

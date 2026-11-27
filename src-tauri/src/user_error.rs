@@ -33,6 +33,11 @@ pub fn provider(e: &ProviderError, cap: Capability) -> String {
             Capability::Asr => coded("model_missing", format!("音声認識モデル未導入：{what}")),
             _ => coded("model_missing", format!("翻訳モデル未導入：{what}")),
         },
+        // Explain / summarize read the text already on screen: there is
+        // no range to shrink, and the UI offers the retry.
+        ProviderError::Timeout(_) if matches!(cap, Capability::Explain | Capability::Summarize) => {
+            coded("timeout", "制限時間超過")
+        }
         ProviderError::Timeout(ms) if *ms > 0 => coded(
             "timeout",
             format!("制限時間（{} 秒）超過。範囲を縮小して再試行", ms / 1000),
@@ -48,6 +53,7 @@ pub fn provider(e: &ProviderError, cap: Capability) -> String {
                 "timeout",
                 match cap {
                     Capability::Ocr => "文字認識の制限時間超過。範囲を縮小して再試行",
+                    Capability::Explain | Capability::Summarize => "制限時間超過",
                     _ => "制限時間超過。範囲を縮小して再試行",
                 },
             )
@@ -65,13 +71,13 @@ pub fn provider(e: &ProviderError, cap: Capability) -> String {
             coded(
                 "error",
                 format!(
-                    "未対応プロバイダー：{}。設定のプロバイダー見直しが必要",
+                    "未対応プロバイダー：{}。設定のプロバイダー再確認が必要",
                     ids.join("、")
                 ),
             )
         }
         ProviderError::Other(m) if m.starts_with("no provider configured") => {
-            coded("error", "この機能のプロバイダー未設定")
+            coded("error", "本機能のプロバイダー未設定")
         }
         other => coded("error", format!("処理失敗：{other}")),
     }
@@ -86,7 +92,7 @@ pub fn download(e: &anyhow::Error) -> String {
         || lower.contains("os error 112")
         || lower.contains("disk full")
     {
-        coded("disk_full", "空き容量不足")
+        coded("disk_full", "残容量不足")
     } else if lower.contains("integrity") {
         coded("integrity", "整合性検証失敗。再ダウンロードが必要")
     } else if lower.contains("error sending request")
@@ -123,11 +129,25 @@ mod tests {
     }
 
     #[test]
+    fn explain_timeouts_do_not_ask_for_a_smaller_range() {
+        for e in [
+            ProviderError::Timeout(180_000),
+            ProviderError::Other("all providers failed: llamacpp.assistant: timeout".into()),
+        ] {
+            assert_eq!(provider(&e, Capability::Explain), "timeout|制限時間超過");
+        }
+        assert!(
+            provider(&ProviderError::Timeout(15_000), Capability::Translate)
+                .ends_with("範囲を縮小して再試行")
+        );
+    }
+
+    #[test]
     fn unregistered_providers_name_the_ids() {
         let e = ProviderError::Other("all providers failed: paddle: not registered".into());
         assert_eq!(
             provider(&e, Capability::Ocr),
-            "error|未対応プロバイダー：paddle。設定のプロバイダー見直しが必要"
+            "error|未対応プロバイダー：paddle。設定のプロバイダー再確認が必要"
         );
     }
 

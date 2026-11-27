@@ -145,3 +145,33 @@ describe('flowLayout overflow', () => {
     }
   });
 });
+
+describe('flowLayout beside a picture', () => {
+  it('ends the rows beside the picture at the picture', () => {
+    // Two rows beside a picture that starts at x = 200, two rows below it.
+    const r = flowLayout('あ'.repeat(50), {
+      width: 400,
+      height: 104,
+      rows: rows(4).map((row, i) => (i < 2 ? { ...row, width: 190, limit: 200 } : row)),
+      align: 'left',
+      maxFont: 20,
+      measure
+    });
+    expect(r.overflow).toBe(false);
+    expect(r.fontSize).toBe(20);
+    expect(r.lines.map((l) => l.text.length)).toEqual([10, 10, 20, 10]);
+    expect(r.lines.map((l) => l.width)).toEqual([200, 200, 400, 400]);
+  });
+
+  it('keeps spread lines clear of the picture', () => {
+    const r = flowLayout('あ'.repeat(40), {
+      width: 400,
+      height: 48,
+      rows: rows(2).map((row) => ({ ...row, width: 190, limit: 200 })),
+      align: 'left',
+      maxFont: 20,
+      measure
+    });
+    expect(r.lines.every((l) => l.textWidth <= 200.01)).toBe(true);
+  });
+});

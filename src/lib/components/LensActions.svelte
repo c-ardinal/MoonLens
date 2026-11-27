@@ -1,12 +1,15 @@
 <script lang="ts">
   import { onMount, type Snippet } from 'svelte';
   import {
+    AppWindow,
+    Captions,
     ChevronDown,
     ClipboardCopy,
     EllipsisVertical,
     Eye,
     EyeOff,
     Languages,
+    Magnet,
     Maximize2,
     Minimize2,
     MousePointerBan,
@@ -14,11 +17,13 @@
     Plus,
     Radio,
     RefreshCw,
+    ScanText,
     TextSelect,
     X
   } from 'lucide-svelte';
   import { LANGUAGES, languageLabel } from '$lib/lens-overlay';
   import { fitCount } from '$lib/lens-bar';
+  import type { LensReadMode } from '$lib/ipc';
 
   /**
    * ウィンドウ翻訳のタイトルバー。左端：ウィンドウ追加・見出し（lead）、右端：最大化・閉じる（常時表示）。
@@ -30,22 +35,29 @@
     showOriginal,
     showText,
     targetLanguage,
+    readMode = 'subtitle',
     hasText = true,
     busy = false,
     maximized = false,
     operate = false,
     operateKey = '',
+    attachedTo = '',
+    attachOpen = false,
+    fit = 'idle',
     menuOpen = $bindable(false),
     lead,
     oncontinuous,
     onrefresh,
     onoriginal,
     onlanguage,
+    onreadmode,
     oncopy,
     ontext,
     onexplain,
+    onfit,
     onmaximize,
     onoperate,
+    onattach,
     onadd,
     onclose
   }: {
@@ -53,16 +65,24 @@
     showOriginal: boolean;
     showText: boolean;
     targetLanguage: string;
+    /** 読取方式（字幕：逐次表示の完了後に前文脈付きで翻訳、UI：読取単位で翻訳し前文脈の継承なし）。 */
+    readMode?: LensReadMode;
     /** 翻訳対象の文字あり（原文切替・コピー・説明の可否）。 */
     hasText?: boolean;
     busy?: boolean;
-    /** 窓が最大化中（全画面翻訳）。 */
+    /** ウィンドウが最大化中（全画面翻訳）。 */
     maximized?: boolean;
     /** 操作モード（訳文の選択・コピー可）。false は透過モード（クリックは背面へ）。 */
     operate?: boolean;
     /** 操作モード切替のショートカット表記（title へ併記）。 */
     operateKey?: string;
-    /** 縦メニューの表示中（表示中は窓本体でのマウス操作の受付が必要）。 */
+    /** 吸着先（他アプリのウィンドウ）の名称。空文字：吸着なし。 */
+    attachedTo?: string;
+    /** 吸着メニューの表示中。 */
+    attachOpen?: boolean;
+    /** 字幕領域への自動整形の状態（未実行・観測中・整形済）。 */
+    fit?: 'idle' | 'observing' | 'fitted';
+    /** 縦メニューの表示中（表示中はウィンドウ本体でのマウス操作の受付が必要）。 */
     menuOpen?: boolean;
     /** 見出し（ウィンドウ追加ボタンの右隣）。 */
     lead?: Snippet;
@@ -70,11 +90,15 @@
     onrefresh: () => void;
     onoriginal: () => void;
     onlanguage: (code: string) => void;
+    onreadmode?: (mode: LensReadMode) => void;
     oncopy: () => void;
     ontext: () => void;
     onexplain: () => void;
+    onfit: () => void;
     onmaximize: () => void;
     onoperate: () => void;
+    /** 吸着メニューの開閉。 */
+    onattach: () => void;
     onadd: () => void;
     onclose: () => void;
   } = $props();
@@ -109,10 +133,20 @@
       title:
         (operate
           ? '操作モード：訳文の選択・コピー可（クリックで透過モードへ）'
-          : '透過モード：窓上のクリックは背面へ（クリックで操作モードへ）') +
+          : '透過モード：ウィンドウ上のクリックは背面へ（クリックで操作モードへ）') +
         (operateKey ? ` (${operateKey})` : ''),
       pressed: operate,
       run: onoperate
+    },
+    {
+      key: 'attach',
+      icon: Magnet,
+      label: '吸着',
+      title: attachedTo
+        ? `吸着中：${attachedTo}（移動・サイズ変更へ追従）`
+        : '吸着：他アプリのウィンドウへ追従',
+      pressed: !!attachedTo || attachOpen,
+      run: onattach
     },
     {
       key: 'refresh',
@@ -134,6 +168,16 @@
     },
     'language',
     {
+      key: 'readmode',
+      icon: readMode === 'ui' ? AppWindow : Captions,
+      label: readMode === 'ui' ? '読取方式：UI' : '読取方式：字幕',
+      title:
+        readMode === 'ui'
+          ? '読取方式：UI（読取単位で翻訳、前文脈の継承なし）。クリックで字幕方式へ'
+          : '読取方式：字幕（逐次表示の完了後、前文脈を継承して翻訳）。クリックでUI方式へ',
+      run: () => onreadmode?.(readMode === 'ui' ? 'subtitle' : 'ui')
+    },
+    {
       key: 'copy',
       icon: ClipboardCopy,
       label: 'コピー',
@@ -148,6 +192,19 @@
       title: 'テキスト表示',
       pressed: showText,
       run: ontext
+    },
+    {
+      key: 'fit',
+      icon: ScanText,
+      label: fit === 'observing' ? '観測中止' : fit === 'fitted' ? '整形前へ復元' : '字幕領域へ整形',
+      title:
+        fit === 'observing'
+          ? '字幕領域を観測中（クリックで中止）'
+          : fit === 'fitted'
+            ? '整形前の位置・サイズへ復元'
+            : '字幕領域へ整形：文字の出現範囲を観測し、ウィンドウを自動整形',
+      pressed: fit === 'observing',
+      run: onfit
     },
     {
       key: 'explain',
@@ -241,6 +298,7 @@
         class="tb"
         class:off={i >= shown}
         data-item
+        data-action={a.key}
         aria-pressed={a.pressed}
         disabled={a.disabled}
         onclick={() => run(a, false)}
@@ -277,6 +335,7 @@
       {:else}
         <button
           class="mi"
+          data-action={a.key}
           role={a.pressed === undefined ? 'menuitem' : 'menuitemcheckbox'}
           aria-checked={a.pressed}
           disabled={a.disabled}
@@ -331,7 +390,7 @@
   }
   .tb[aria-pressed='true'],
   .mi[aria-checked='true'] {
-    background: var(--la-pressed, rgba(139, 92, 246, 0.35));
+    background: var(--la-pressed, color-mix(in srgb, var(--ml-accent) 35%, transparent));
   }
   .tb:disabled,
   .mi:disabled {
@@ -342,7 +401,8 @@
     align-items: center;
     gap: 4px;
   }
-  /* 独自描画（WebKitGTK の既定描画は明背景で文字が不可視） */
+  /* 独自描画。選択肢は文字色・背景色を対で指定（背景色なしでは OS の配色設定の既定色となり、
+     暗色設定で文字が判読不可） */
   .lang select {
     appearance: none;
     -webkit-appearance: none;
@@ -356,8 +416,9 @@
   }
   .lang select option {
     color: #111;
+    background-color: #fff;
   }
-  /* 縦メニュー：タイトルバー直下の右端。窓の高さ不足時は内部スクロール。 */
+  /* 縦メニュー：タイトルバー直下の右端。ウィンドウの高さ不足時は内部スクロール。 */
   .menu {
     position: absolute;
     top: calc(100% + 4px);
@@ -367,7 +428,7 @@
     flex-direction: column;
     min-width: min(148px, calc(100vw - 8px));
     max-width: calc(100vw - 8px);
-    /* 窓の高さ − タイトルバー（32px）− 上下の余白 */
+    /* ウィンドウの高さ − タイトルバー（32px）− 上下の余白 */
     max-height: calc(100vh - 40px);
     box-sizing: border-box;
     overflow-y: auto;

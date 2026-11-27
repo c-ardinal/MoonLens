@@ -191,7 +191,7 @@ export function hardwareLines(r: SystemReport): HardwareLine[] {
     { label: 'GPU', value: gpus },
     { label: '推論処理', value: device }
   ];
-  if (p.disk_free != null) lines.push({ label: '空き容量', value: formatBytes(p.disk_free) });
+  if (p.disk_free != null) lines.push({ label: '残容量', value: formatBytes(p.disk_free) });
   return lines;
 }
 

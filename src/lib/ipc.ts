@@ -6,6 +6,8 @@
 
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
+import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
+import type { AttachCandidate, AttachDock, Attachment } from './attach';
 
 export type Settings = Record<string, any>;
 
@@ -63,6 +65,11 @@ export interface LensBlock {
   bold?: boolean;
   /** Source text rows `[x, y, w, h]` (captured-image px), top to bottom. */
   lines?: [number, number, number, number][];
+  /**
+   * Right edge (captured-image px) the text of each row may reach, set
+   * when a picture stands beside some rows of the block.
+   */
+  row_limits?: number[];
 }
 
 /** Sent before each translation request of a capture (`moonlens://image-progress`). */
@@ -272,10 +279,15 @@ export const openLens = (rect: CaptureFlowRect | null = null, targetLanguage?: s
 export const openLensBeside = (id: string) => safeInvoke<string>('open_lens', { beside: id });
 export const setLensLanguage = (id: string, targetLanguage: string | null) =>
   safeInvoke<void>('set_lens_language', { id, targetLanguage });
+/** ウィンドウ翻訳の読取方式。字幕：逐次表示の完了後に前文脈付きで翻訳。UI：読取単位で翻訳し、前文脈の継承なし。 */
+export type LensReadMode = 'subtitle' | 'ui';
+/** 読取方式の変更（次回の読取から適用）。 */
+export const setLensReadMode = (id: string, mode: LensReadMode) =>
+  safeInvoke<void>('set_lens_read_mode', { id, mode });
 export const setLensOperate = (id: string, on: boolean) => safeInvoke<void>('set_lens_operate', { id, on });
 export const setLensInteractive = (id: string, on: boolean) =>
   safeInvoke<void>('set_lens_interactive', { id, on });
-/** テキスト表示を窓外へ配置（`null`：窓外表示を終了）。 */
+/** テキスト表示をウィンドウ外へ配置（`null`：ウィンドウ外表示を終了）。 */
 export const setLensTextDock = (
   id: string,
   dock: 'top' | 'bottom' | 'left' | 'right' | 'free' | null
@@ -326,8 +338,32 @@ export const onHotkey = (handler: (action: string) => void): Promise<UnlistenFn>
 /** 音声翻訳の処理段階：音声待機・音声認識・翻訳。 */
 export type SubtitlePhase = 'waiting' | 'recognizing' | 'translating' | 'revising';
 
+/** 音声翻訳ウィンドウの音源：PC 全体、またはアプリ単位（プロセスツリー）。 */
+export type AudioSource = { kind: 'system' } | { kind: 'app'; pid: number };
+
+/** 音声出力ストリームを保持するアプリ。 */
+export type AudioApp = {
+  /** 取得対象プロセス（子プロセス含む）。 */
+  pid: number;
+  /** 実行ファイル名（拡張子なし）。 */
+  name: string;
+  /** アプリのウィンドウ題名。 */
+  title: string | null;
+  /** 音声再生中。 */
+  playing: boolean;
+};
+
+export type AudioApps = {
+  /** アプリ単位の音声取得に対応する OS。 */
+  supported: boolean;
+  apps: AudioApp[];
+};
+
+/** 音声翻訳ウィンドウ 1 枚の音源と稼働状態。 */
+export type SubtitleSession = { source: AudioSource; device: string; running: boolean };
+
 export type SubtitleEvent =
-  | { kind: 'started'; device: string }
+  | { kind: 'started'; device: string; source: AudioSource }
   | { kind: 'stopped' }
   | { kind: 'status'; phase: SubtitlePhase }
   | { kind: 'chunk'; id: number; original: string; translated: string }
@@ -342,12 +378,42 @@ export type SubtitleEvent =
     }
   | { kind: 'error'; message: string };
 
+/** `id`：イベントの対象ウィンドウ（ラベル）。 */
+export type SubtitleMessage = SubtitleEvent & { id: string };
+
 export const toggleSubtitle = () => safeInvoke<boolean>('toggle_subtitle');
+/** 稼働中の音声翻訳ウィンドウの有無。 */
 export const subtitleState = () => safeInvoke<boolean>('subtitle_state', undefined, false);
+/** 音声翻訳ウィンドウを全停止・全閉鎖。 */
 export const stopSubtitle = () => safeInvoke<void>('stop_subtitle');
 export const startSubtitle = () => safeInvoke<void>('start_subtitle');
-export const onSubtitle = (handler: (event: SubtitleEvent) => void): Promise<UnlistenFn> =>
-  listen<SubtitleEvent>('moonlens://subtitle', (e) => handler(e.payload));
+/** 音声翻訳ウィンドウを追加（呼出元ウィンドウの隣へ配置）。 */
+export const openSubtitleWindow = (source?: AudioSource) =>
+  safeInvoke<string>('open_subtitle_window', { source });
+/** 呼出元の音声翻訳ウィンドウを停止・閉鎖。 */
+export const closeSubtitleWindow = () => safeInvoke<void>('close_subtitle_window');
+/** 呼出元の音声翻訳ウィンドウの音源を変更（停止後は同一音源で再開）。 */
+export const setSubtitleSource = (source: AudioSource) =>
+  safeInvoke<void>('set_subtitle_source', { source });
+export const subtitleSession = () =>
+  safeInvoke<SubtitleSession | null>('subtitle_session', undefined, null);
+export const listAudioApps = () =>
+  safeInvoke<AudioApps>('list_audio_apps', undefined, { supported: false, apps: [] });
+/** 全ウィンドウ分のイベントを受信（`id` で対象を判別）。 */
+export const onSubtitle = (handler: (event: SubtitleMessage) => void): Promise<UnlistenFn> =>
+  listen<SubtitleMessage>('moonlens://subtitle', (e) => handler(e.payload));
+
+/**
+ * 音声翻訳の入力レベル（波形表示用、50 ms 間隔）。送出先は対象ウィンドウ限定のため、
+ * 呼出元ウィンドウ宛のイベントのみ受信。
+ */
+export const onSubtitleLevel = (
+  handler: (event: import('./subtitle-level').LevelEvent) => void
+): Promise<UnlistenFn> =>
+  getCurrentWebviewWindow().listen<import('./subtitle-level').LevelEvent>(
+    'moonlens://subtitle-level',
+    (e) => handler(e.payload)
+  );
 
 export type PermissionStatus = 'granted' | 'denied' | 'unknown';
 
@@ -465,6 +531,7 @@ export interface LensDescriptor {
   continuous: boolean;
   /** Language it translates into; null = the configured target. */
   target_language: string | null;
+  read_mode: LensReadMode;
 }
 
 export const closeLensWindow = (id: string) => safeInvoke<void>('close_lens_window', { id });
@@ -472,6 +539,17 @@ export const listLensWindows = () =>
   safeInvoke<LensDescriptor[]>('list_lens_windows', undefined, []);
 export const captureLensNow = (id: string) =>
   safeInvoke<CaptureFlowResult>('capture_lens_now', { id });
+
+/** Where a lens window was before `fitLens` (physical screen pixels). */
+export interface LensBefore {
+  rect: { x: number; y: number; w: number; h: number };
+  maximized: boolean;
+}
+/** Shrink a lens window to `band` ([x, y, w, h] inside its observed range, physical px). */
+export const fitLens = (id: string, band: [number, number, number, number]) =>
+  safeInvoke<LensBefore>('fit_lens', { id, band });
+export const restoreLens = (id: string, before: LensBefore) =>
+  safeInvoke<void>('restore_lens', { id, before });
 
 export interface HistoryEntry {
   id: number;
@@ -561,3 +639,14 @@ export const listOrphanLlmFiles = () =>
   safeInvoke<OrphanFile[]>('list_orphan_llm_files', undefined, []);
 export const deleteOrphanLlmFile = (name: string) =>
   safeInvoke<void>('delete_orphan_llm_file', { name });
+
+// ---- 他アプリのウィンドウへの吸着（attach.rs、型は `$lib/attach`） ----
+/** ウィンドウ `label` の吸着先候補（直下のウィンドウが先頭）。 */
+export const listAttachTargets = (label: string) =>
+  safeInvoke<AttachCandidate[]>('list_attach_targets', { label }, []);
+/** `label` を `target`（候補の `id`）へ吸着、または吸着中の配置を変更。 */
+export const attachWindow = (label: string, target: number, dock: AttachDock) =>
+  safeInvoke<void>('attach_window', { label, target, dock });
+export const detachWindow = (label: string) => safeInvoke<void>('detach_window', { label });
+export const windowAttachment = (label: string) =>
+  safeInvoke<Attachment>('window_attachment', { label }, { target: null, dock: null });

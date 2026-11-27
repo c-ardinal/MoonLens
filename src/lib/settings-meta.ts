@@ -8,7 +8,7 @@
  */
 
 import { compactGlossary } from './glossary';
-import { LANGUAGES } from './lens-overlay';
+import { LANGUAGES, SOURCE_LANGUAGES } from './lens-overlay';
 
 export type Option = { value: string; label: string };
 
@@ -48,6 +48,10 @@ export type SectionComponent = 'llm-translate' | 'llm-assist' | 'ocr' | 'asr' | 
 export type Group = { id: string; title: string; sections: string[] };
 
 const LANGUAGE_OPTIONS: Option[] = LANGUAGES.map((l) => ({ value: l.code, label: l.label }));
+const SOURCE_LANGUAGE_OPTIONS: Option[] = SOURCE_LANGUAGES.map((l) => ({
+  value: l.code,
+  label: l.label
+}));
 
 export const SECTIONS: Section[] = [
   {
@@ -66,7 +70,7 @@ export const SECTIONS: Section[] = [
         kind: 'select',
         path: 'translation.style',
         label: '文体',
-        help: '日本語への翻訳時のみ適用。',
+        help: '日本語への翻訳時のみ適用。やさしい日本語は対象外。',
         options: [
           { value: 'auto', label: '自動' },
           { value: 'polite', label: '敬体（です・ます）' },
@@ -121,19 +125,19 @@ export const SECTIONS: Section[] = [
         kind: 'hotkey',
         path: 'hotkeys.capture_region',
         label: 'ウィンドウ翻訳',
-        help: 'マウス位置へウィンドウ翻訳の窓を追加。'
+        help: 'マウス位置へウィンドウ翻訳を追加。'
       },
       {
         kind: 'hotkey',
         path: 'hotkeys.toggle_pin_overlay',
         label: 'ウィンドウ翻訳 表示／全終了',
-        help: '窓なし：窓を表示。窓あり：全窓を終了。'
+        help: 'ウィンドウなし：1 件表示。ウィンドウあり：全件終了。'
       },
       {
         kind: 'hotkey',
         path: 'hotkeys.toggle_window_operate',
         label: 'ウィンドウ翻訳 透過／操作',
-        help: '全窓の切替。透過：窓上のクリックは背面へ。操作：訳文の選択・コピー可。'
+        help: '全ウィンドウの切替。透過：ウィンドウ上のクリックは背面へ。操作：訳文の選択・コピー可。'
       },
       { kind: 'hotkey', path: 'hotkeys.toggle_subtitle', label: '音声翻訳 開始／停止' },
       { kind: 'hotkey', path: 'hotkeys.open_command_palette', label: 'コマンドパレット' },
@@ -149,7 +153,7 @@ export const SECTIONS: Section[] = [
         kind: 'select',
         path: 'subtitle.source_language',
         label: '音声言語',
-        options: [{ value: 'auto', label: '自動判定' }, ...LANGUAGE_OPTIONS]
+        options: [{ value: 'auto', label: '自動判定' }, ...SOURCE_LANGUAGE_OPTIONS]
       },
       {
         kind: 'toggle',
@@ -193,7 +197,7 @@ export const SECTIONS: Section[] = [
         kind: 'toggle',
         path: 'subtitle.realtime_correction',
         label: 'リアルタイム補正',
-        help: '文の認識完了ごとに文全体を文脈付きで再翻訳し、訳文を更新。負荷増。'
+        help: '文の認識完了時、文脈を参照して文全体を再翻訳、訳文を更新。負荷増。'
       },
       {
         kind: 'toggle',
@@ -210,6 +214,18 @@ export const SECTIONS: Section[] = [
     fields: [
       {
         kind: 'number',
+        path: 'performance.scan_margin_px',
+        label: '読取余白',
+        help: 'ウィンドウ枠の外側へ加算する読取幅。枠で分断された文字を完全な形で認識。訳文の表示はウィンドウ内に限定。',
+        min: 0,
+        max: 128,
+        step: 4,
+        unit: 'px',
+        zeroLabel: '無効',
+        slider: true
+      },
+      {
+        kind: 'number',
         path: 'performance.region_watcher_poll_ms',
         label: '監視間隔',
         help: '画面変化の検出間隔。短時間ほど応答性向上、CPU 負荷増大。',
@@ -218,6 +234,12 @@ export const SECTIONS: Section[] = [
         step: 50,
         unit: 'ミリ秒',
         slider: true
+      },
+      {
+        kind: 'toggle',
+        path: 'overlay.show_in_screenshots',
+        label: '撮影への表示',
+        help: 'スクリーンショット・録画へ翻訳ウィンドウを表示。OFF：常時除外。Windows 専用。'
       }
     ]
   },
@@ -364,7 +386,7 @@ export const SECTIONS: Section[] = [
   {
     id: 'data',
     title: 'データ',
-    description: '保存先と使用容量。完全削除：アンインストール後、各保存先を削除。',
+    description: '保存先と使用容量。完全削除：本体の削除後、各保存先を削除。',
     component: 'data'
   },
   {

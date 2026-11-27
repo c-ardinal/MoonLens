@@ -140,7 +140,7 @@ export async function walkMain(browser, url, { textSize = 'medium', width = 1280
   await reach('image-result', async () => { await pg.locator('input[type=file]').setInputFiles(await imageFile(pg)); await pg.getByText('Phone: 555-0123').first().waitFor({ timeout: 5000 }); await wait(pg, 300); }); await visit(pg, 'image-result');
   await pg.close();
   pg = await open('/history/'); await visit(pg, 'history');
-  await reach('history-toast', async () => { await pg.getByRole('button', { name: 'この履歴を削除' }).first().click({ timeout: 2000 }); await pg.locator('.toast').first().waitFor({ timeout: 2000 }); }); await visit(pg, 'history-toast');
+  await reach('history-toast', async () => { await pg.getByRole('button', { name: '当該履歴を削除' }).first().click({ timeout: 2000 }); await pg.locator('.toast').first().waitFor({ timeout: 2000 }); }); await visit(pg, 'history-toast');
   await reach('history-confirm', async () => { await pg.getByText('全消去').click({ timeout: 2000 }); await pg.getByRole('dialog').waitFor({ timeout: 2000 }); }); await visit(pg, 'history-confirm');
   await pg.close();
   pg = await open('/setup/'); await visit(pg, 'setup'); await pg.close();
