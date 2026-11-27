@@ -275,7 +275,7 @@ export const setLensLanguage = (id: string, targetLanguage: string | null) =>
 export const setLensOperate = (id: string, on: boolean) => safeInvoke<void>('set_lens_operate', { id, on });
 export const setLensInteractive = (id: string, on: boolean) =>
   safeInvoke<void>('set_lens_interactive', { id, on });
-/** テキスト表示を窓外へ配置（`null`：窓外表示を終了）。 */
+/** テキスト表示をウィンドウ外へ配置（`null`：ウィンドウ外表示を終了）。 */
 export const setLensTextDock = (
   id: string,
   dock: 'top' | 'bottom' | 'left' | 'right' | 'free' | null

@@ -130,7 +130,7 @@
       label: 'ウィンドウ',
       title: 'ウィンドウ翻訳',
       icon: 'region',
-      desc: '窓の背面を常時翻訳。複数配置・任意サイズ、最大化で全画面。',
+      desc: 'ウィンドウの背面を常時翻訳。複数配置・任意サイズ、最大化で全画面。',
       hotkey: key('capture_region'),
       run: () => openLens()
     },
@@ -285,7 +285,7 @@
   .alerts:not(:has(> *)) {
     display: none;
   }
-  /* 1 行の帯（窓の上下余白を圧縮し、魔法陣の表示寸法を維持） */
+  /* 1 行の帯（ウィンドウの上下余白を圧縮し、魔法陣の表示寸法を維持） */
   .notice {
     display: flex;
     align-items: center;

@@ -207,6 +207,7 @@
     explanation = '説明を生成中…';
     try {
       const r = await runExplain(
+        // copy-lint-ignore（LLM プロンプト）
         `次のテキストの内容を${languageLabel(targetLanguage) || '日本語'}で簡潔に説明してください:\n\n${src}`
       );
       explanation = extractText(r);
@@ -567,7 +568,7 @@
   .box.pending {
     background-image: linear-gradient(100deg, transparent 30%, rgba(139, 92, 246, 0.18) 50%, transparent 70%) !important;
   }
-  /* 動作軽減の設定時：走査を停止し、淡色の面で表示 */
+  /* 動作軽減の設定時：走査を停止し、淡色の単色で表示 */
   @media (prefers-reduced-motion: reduce) {
     .body.working::before {
       animation: none;

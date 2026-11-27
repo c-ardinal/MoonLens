@@ -103,7 +103,7 @@
       error = { code: 'error', message: '非対応形式（PNG・JPEG・WebP のみ対応）', fix: null };
       return;
     }
-    await open(new Uint8Array(await file.arrayBuffer()), file.name || '貼り付け画像');
+    await open(new Uint8Array(await file.arrayBuffer()), file.name || 'ペースト画像');
   }
 
   async function openPath(path: string | null) {
@@ -318,7 +318,7 @@
       onclick={() => fileInput?.click()}
     >
       <ImageIcon class="h-10 w-10 text-ink-faint" />
-      <span class="text-base font-medium">画像をドロップ、または Ctrl+V で貼り付け</span>
+      <span class="text-base font-medium">画像をドロップ、または Ctrl+V でペースト</span>
       <span class="text-sm text-ink-muted">PNG・JPEG・WebP（40 MB まで）。クリックでファイル選択。</span>
     </button>
   {:else}
@@ -390,7 +390,7 @@
               {:else if b.translation != null}
                 <p class="mt-1 break-words whitespace-pre-wrap select-text">{b.translation}</p>
               {:else}
-                <p class="mt-1 text-xs text-ink-faint">翻訳待ち…</p>
+                <p class="mt-1 text-xs text-ink-faint">翻訳待機中…</p>
               {/if}
             </li>
           {:else}

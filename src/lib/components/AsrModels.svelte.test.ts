@@ -101,9 +101,9 @@ describe('<AsrModels>', () => {
 
   it('shows coded backend errors as plain text', async () => {
     ipc.listAsrModels.mockResolvedValue({ selected: 'a', dir: '', models: [model('a')] });
-    ipc.installAsrModel.mockRejectedValue('disk_full|空き容量不足：必要 1.0 GB／空き 0.5 GB');
+    ipc.installAsrModel.mockRejectedValue('disk_full|残容量不足：必要 1.0 GB／残容量 0.5 GB');
     const r = render(AsrModels);
     await fireEvent.click(await r.findByRole('button', { name: '取得' }));
-    await waitFor(() => expect(r.getByText('空き容量不足：必要 1.0 GB／空き 0.5 GB')).toBeInTheDocument());
+    await waitFor(() => expect(r.getByText('残容量不足：必要 1.0 GB／残容量 0.5 GB')).toBeInTheDocument());
   });
 });
