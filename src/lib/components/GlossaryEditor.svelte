@@ -32,7 +32,7 @@
 
 <div class="flex flex-col gap-2 py-3">
   <div class="flex items-start justify-between gap-4">
-    <!-- 説明文は設定画面の説明窓へ委譲。row-label／row-value：選択帯上で黒へ反転 -->
+    <!-- 説明文は設定画面の説明欄へ委譲。row-label／row-value：選択帯上で黒へ反転 -->
     <p class="row-label min-w-0 text-sm font-medium text-ink">{label}</p>
     <button
       type="button"

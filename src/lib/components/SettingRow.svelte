@@ -5,7 +5,7 @@
   interface Props {
     /** 行の識別子（設定項目は path、モデルは model:<id> 等）。 */
     id: string;
-    /** 選択時に説明窓へ表示する説明文。 */
+    /** 選択時に説明欄へ表示する説明文。 */
     help?: string | null;
     link?: RowLink | null;
     children: Snippet;

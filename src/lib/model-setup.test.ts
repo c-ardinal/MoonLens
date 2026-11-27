@@ -172,7 +172,7 @@ describe('hardwareLines', () => {
     const l = hardwareLines(report({ gpus: [], disk_free: null }, false));
     expect(l.find((x) => x.label === 'GPU')?.value).toBe('非検出');
     expect(l.find((x) => x.label === '推論処理')?.value).toBe('CPU');
-    expect(l.some((x) => x.label === '空き容量')).toBe(false);
+    expect(l.some((x) => x.label === '残容量')).toBe(false);
   });
 });
 
