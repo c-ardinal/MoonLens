@@ -76,6 +76,10 @@ impl Mods {
         Mods(self.0 | m.bit())
     }
 
+    pub fn without(self, m: Modifier) -> Self {
+        Mods(self.0 & !m.bit())
+    }
+
     pub fn has(self, m: Modifier) -> bool {
         self.0 & m.bit() != 0
     }
@@ -309,8 +313,8 @@ struct Tap {
     down: Option<(Modifier, u64, bool)>,
     /// The finished first tap and when it was released.
     last: Option<(Modifier, u64)>,
-    /// The second press, still down.
-    held: Option<Modifier>,
+    /// Second presses still down (each one owes a release).
+    held: Mods,
 }
 
 /// Turns input events into trigger outputs. Times are milliseconds on any
@@ -323,8 +327,8 @@ pub struct Detector<A> {
     /// Mouse buttons now down, with the modifiers they went down with.
     mouse_down: Vec<(MouseButton, Mods)>,
     pads: [PadButtons; PAD_SLOTS],
-    /// Capture mode: every button seen since the gamepad was at rest.
-    pad_seen: PadButtons,
+    /// Capture mode: per gamepad, every button seen since it was at rest.
+    pad_seen: [PadButtons; PAD_SLOTS],
 }
 
 impl<A: Copy> Default for Detector<A> {
@@ -335,7 +339,7 @@ impl<A: Copy> Default for Detector<A> {
             tap: Tap::default(),
             mouse_down: Vec::new(),
             pads: [PadButtons::NONE; PAD_SLOTS],
-            pad_seen: PadButtons::NONE,
+            pad_seen: [PadButtons::NONE; PAD_SLOTS],
         }
     }
 }
@@ -412,7 +416,7 @@ impl<A: Copy> Detector<A> {
             return Vec::new();
         };
         if down {
-            if self.tap.held == Some(m) {
+            if self.tap.held.has(m) {
                 return Vec::new(); // key repeat
             }
             match self.tap.down {
@@ -430,7 +434,7 @@ impl<A: Copy> Detector<A> {
                     if self.capturing {
                         return self.captured(Trigger::Double(m));
                     }
-                    self.tap.held = Some(m);
+                    self.tap.held = self.tap.held.with(m);
                     self.fire(Trigger::Double(m), true)
                 }
                 _ => {
@@ -438,8 +442,8 @@ impl<A: Copy> Detector<A> {
                     Vec::new()
                 }
             }
-        } else if self.tap.held == Some(m) {
-            self.tap.held = None;
+        } else if self.tap.held.has(m) {
+            self.tap.held = self.tap.held.without(m);
             self.fire(Trigger::Double(m), false)
         } else {
             if let Some((d, since, clean)) = self.tap.down {
@@ -478,10 +482,11 @@ impl<A: Copy> Detector<A> {
         };
         self.pads[slot] = buttons;
         if self.capturing {
-            // The combination is complete when the buttons come up again.
-            self.pad_seen.0 |= buttons.0;
-            if buttons.is_empty() && !self.pad_seen.is_empty() {
-                let seen = self.pad_seen;
+            // The combination is complete when the buttons of that
+            // gamepad come up again; an idle second gamepad says nothing.
+            let seen = PadButtons(self.pad_seen[slot].0 | buttons.0);
+            self.pad_seen[slot] = seen;
+            if buttons.is_empty() && !seen.is_empty() {
                 return self.captured(Trigger::Pad(seen));
             }
             return Vec::new();
@@ -820,6 +825,53 @@ mod tests {
                 (10, pad(0x8020)),
                 (20, pad(0x8000)),
                 (30, pad(0)),
+            ],
+        );
+        assert_eq!(out, [Output::Captured("Pad:Back+Y".parse().unwrap())]);
+    }
+
+    #[test]
+    fn two_held_double_presses_are_each_released() {
+        let mut d = detector(&[("Double:Control", 1), ("Double:Shift", 2)]);
+        let out = run(
+            &mut d,
+            &[
+                (0, key(CTRL, true)),
+                (50, key(CTRL, false)),
+                (100, key(CTRL, true)), // held from here
+                (500, key(SHIFT, true)),
+                (550, key(SHIFT, false)),
+                (600, key(SHIFT, true)),
+                (900, key(CTRL, false)),
+                (950, key(SHIFT, false)),
+            ],
+        );
+        assert_eq!(
+            out,
+            [
+                fired(1, true),
+                fired(2, true),
+                fired(1, false),
+                fired(2, false)
+            ]
+        );
+    }
+
+    #[test]
+    fn capture_is_not_ended_by_an_idle_second_pad() {
+        let slot = |slot, bits| InputEvent::Pad {
+            slot,
+            buttons: PadButtons(bits),
+        };
+        let mut d = detector(&[]);
+        d.set_capturing(true);
+        let out = run(
+            &mut d,
+            &[
+                (0, slot(0, 0x0020)), // Back held on the first pad
+                (1, slot(1, 0)),      // the second pad reports in, idle
+                (2, slot(0, 0x8020)),
+                (3, slot(0, 0)),
             ],
         );
         assert_eq!(out, [Output::Captured("Pad:Back+Y".parse().unwrap())]);
