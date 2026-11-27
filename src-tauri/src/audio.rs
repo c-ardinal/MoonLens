@@ -469,8 +469,10 @@ pub mod backend {
             if whole > 0 {
                 let raw: Vec<u8> = bytes.drain(..whole).collect();
                 let samples: Vec<i16> = raw
-                    .chunks_exact(BYTES_PER_SAMPLE)
-                    .map(|b| i16::from_le_bytes([b[0], b[1]]))
+                    .as_chunks::<BYTES_PER_SAMPLE>()
+                    .0
+                    .iter()
+                    .map(|b| i16::from_le_bytes(*b))
                     .collect();
                 forward(&samples, &sink, &state, |v| v);
             }
