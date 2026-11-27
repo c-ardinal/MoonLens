@@ -19,6 +19,7 @@ use parking_lot::Mutex;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, EventTarget, Manager, State, WebviewWindow};
 
+use crate::app_identity::AppIdentity;
 use crate::follow::{self, Dock, Follow};
 use crate::foreign_window::{self, ForeignWindow, Probe, PROBE_IDLE_MS, PROBE_MOVING_MS};
 use crate::lens::{self, geometry::LensOuterRect as Rect};
@@ -41,6 +42,15 @@ pub struct Target {
     pub pid: u32,
     pub title: String,
     pub app: String,
+    /// The application the window belongs to, as it is remembered
+    /// across launches.
+    pub identity: Option<AppIdentity>,
+}
+
+/// The application window `window` belongs to: by its process, else by
+/// the name the window list gives.
+pub fn identity_of(window: &ForeignWindow) -> Option<AppIdentity> {
+    AppIdentity::of_pid(window.pid).or_else(|| AppIdentity::from_executable(&window.app))
 }
 
 /// What a follower is attached to and how (`target: None`: nothing).
@@ -84,6 +94,14 @@ impl Attachments {
             },
             None => Attachment::default(),
         }
+    }
+
+    /// The application `label` is attached to a window of.
+    pub fn app(&self, label: &str) -> Option<AppIdentity> {
+        self.entries
+            .lock()
+            .get(label)
+            .and_then(|e| e.target.identity.clone())
     }
 
     /// Whether `label` is hidden along with the window it follows.
@@ -155,6 +173,7 @@ pub fn attach(
                     pid: target.pid,
                     title: target.title.clone(),
                     app: target.app.clone(),
+                    identity: identity_of(target),
                 },
                 follow,
                 header_css,
