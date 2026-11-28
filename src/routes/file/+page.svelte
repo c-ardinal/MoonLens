@@ -8,13 +8,15 @@
   import { Captions, Clapperboard, FolderOpen, ImageIcon } from 'lucide-svelte';
   import {
     cancelFileSubtitle,
+    fileSubtitleCues,
+    fileSubtitleMediaUrl,
     fileSubtitleStatus,
     onFileSubtitle,
     pickInputFile,
     readImageFile,
     startFileSubtitle
   } from '$lib/ipc';
-  import { IDLE, PHASE_LABELS, isJob, withCue, type FileSubtitleCue, type FileSubtitleStatus } from '$lib/file-subtitle';
+  import { IDLE, PHASE_LABELS, applyUpdate, isJob, type FileSubtitleCue, type FileSubtitleStatus } from '$lib/file-subtitle';
   import { MAX_IMAGE_BYTES, baseName, firstImageFile } from '$lib/image-translate';
   import { fileKind, initialView, type FileView } from '$lib/file-open';
   import { parseError, type UiError } from '$lib/errors';
@@ -25,7 +27,10 @@
   /** 字幕生成のジョブ（画像の表示中も本体側で継続）。 */
   let status = $state<FileSubtitleStatus>(IDLE);
   const job = $derived(isJob(status) ? status : null);
-  let recent = $state<FileSubtitleCue[]>([]);
+  /** 生成済みの字幕の全件（再生画面の同期表示・一覧用）。 */
+  let cues = $state<FileSubtitleCue[]>([]);
+  /** 再生対象の URL（ジョブの開始時に取得）。 */
+  let media = $state<string | null>(null);
   let error = $state<UiError | null>(null);
   let dragging = $state(false);
   let opened = 0;
@@ -49,11 +54,30 @@
         showImage(new Uint8Array(await readImageFile(path)), baseName(path));
       } else {
         status = await startFileSubtitle(path);
-        recent = [];
+        cues = [];
+        await loadMedia();
         view = 'media';
       }
     } catch (e) {
       error = parseError(e);
+    }
+  }
+
+  /** 再生対象の URL を取得。失敗時は再生画面を省略（字幕の生成・保存は継続）。 */
+  async function loadMedia() {
+    try {
+      media = await fileSubtitleMediaUrl();
+    } catch {
+      media = null;
+    }
+  }
+
+  /** 取りこぼしの検知時：字幕の全件を再取得。 */
+  async function reloadCues() {
+    try {
+      cues = await fileSubtitleCues();
+    } catch {
+      /* 次の変化で再試行 */
     }
   }
 
@@ -87,13 +111,18 @@
     unlisteners.push(() => window.removeEventListener('paste', onPaste));
     try {
       status = (await fileSubtitleStatus()) ?? IDLE;
+      if (isJob(status)) await Promise.all([reloadCues(), loadMedia()]);
       if (view === 'idle') view = initialView(status);
       unlisteners.push(
         await onFileSubtitle((update) => {
+          const started = !isJob(status) && isJob(update.status);
           status = update.status;
           // ファイル未選択の表示中にジョブを検知：進行状況へ移行
           if (view === 'idle') view = initialView(status);
-          if (update.cue) recent = withCue(recent, update.cue);
+          if (started && !media) loadMedia();
+          const next = applyUpdate(cues, update);
+          if (next.cues !== cues) cues = next.cues;
+          if (next.reload) reloadCues();
         })
       );
       const { getCurrentWebview } = await import('@tauri-apps/api/webview');
@@ -128,7 +157,7 @@
     {/snippet}
   </ImageTranslate>
 {:else if view === 'media' && job}
-  <FileSubtitle status={job} {recent} notice={error} {dragging} onpick={pick} onstop={stop} />
+  <FileSubtitle status={job} {cues} {media} notice={error} {dragging} onpick={pick} onstop={stop} />
 {:else}
   <main class="px-body mx-auto flex max-w-6xl flex-col gap-4 px-4 py-6 sm:px-6">
     <header class="flex flex-wrap items-end justify-between gap-3">

@@ -23,15 +23,28 @@ export function args(argv = process.argv.slice(2)) {
   return { opt, rest };
 }
 
-const MIME = { '.js': 'text/javascript', '.css': 'text/css', '.html': 'text/html', '.woff2': 'font/woff2', '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png' };
+const MIME = { '.webm': 'video/webm', '.js': 'text/javascript', '.css': 'text/css', '.html': 'text/html', '.woff2': 'font/woff2', '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png' };
 /** ビルド出力の配信。戻り値：URL 生成関数と停止関数。 */
 export async function serve(root) {
   const srv = createServer((q, r) => {
-    let f = join(root, decodeURIComponent(q.url.split('?')[0]));
+    const path = decodeURIComponent(q.url.split('?')[0]);
+    // 監査用の素材（再生画面の動画等）：`/__fixtures/<名称>`
+    let f = path.startsWith('/__fixtures/') ? join(HERE, 'fixtures', path.slice(12)) : join(root, path);
     if (existsSync(f) && statSync(f).isDirectory()) f = join(f, 'index.html');
     if (!existsSync(f)) f = join(root, 'index.html');
-    r.writeHead(200, { 'content-type': MIME[extname(f)] ?? 'application/octet-stream' });
-    r.end(readFileSync(f));
+    const body = readFileSync(f);
+    const type = MIME[extname(f)] ?? 'application/octet-stream';
+    // 範囲要求（動画のシーク）：asset プロトコルと同様に部分応答
+    const range = /^bytes=(\d*)-(\d*)$/.exec(q.headers.range ?? '');
+    if (range) {
+      const start = Number(range[1] || 0);
+      const end = Math.min(body.length - 1, range[2] ? Number(range[2]) : body.length - 1);
+      r.writeHead(206, { 'content-type': type, 'accept-ranges': 'bytes', 'content-range': `bytes ${start}-${end}/${body.length}`, 'content-length': end - start + 1 });
+      r.end(body.subarray(start, end + 1));
+      return;
+    }
+    r.writeHead(200, { 'content-type': type, 'accept-ranges': 'bytes' });
+    r.end(body);
   }).listen(0);
   await new Promise((ok) => srv.once('listening', ok));
   return { url: (p) => `http://127.0.0.1:${srv.address().port}${p}`, close: () => srv.close() };
@@ -77,7 +90,7 @@ const mockPlamoMissing = (ts, lang) => {
   return JSON.stringify(m);
 };
 
-export const launch = () => chromium.launch();
+export const launch = (options) => chromium.launch(options);
 export const wait = (pg, ms) => pg.waitForTimeout(ms);
 /** 状態への到達操作。失敗時は監査を中断（未到達の状態を計測済みと誤認しないため）。 */
 export const reach = async (state, f) => { try { await f(); } catch (e) { throw new Error(`状態「${state}」へ未到達：${String(e.message).split('\n')[0]}`); } };
@@ -141,6 +154,8 @@ const FILE_UPDATES = Array.from({ length: 12 }, (_, i) => ({
     translated: i % 4 === 3 ? '' : 'そして、同胞であるアメリカ国民の皆さん、国が皆さんのために何を成し得るかを問うのではありません。'
   }
 }));
+/** ファイル字幕の再生画面：再生対象（監査用の動画）と字幕の全件。 */
+const FILE_MEDIA = { file_subtitle_media: '/__fixtures/player.webm', file_subtitle_cues: [] };
 /** ファイル翻訳へ画像（900×700、白地に罫線）をペースト。画像はページ内の Canvas で生成。 */
 export const pasteImage = (pg) => pg.evaluate(async () => {
   const c = Object.assign(document.createElement('canvas'), { width: 900, height: 700 });
@@ -160,7 +175,7 @@ export const pasteImage = (pg) => pg.evaluate(async () => {
 export async function walkMain(browser, url, { textSize = 'medium', width = 1280, height = 800, scale = 1, lang = 'ja' } = {}, visit) {
   const l = label(lang);
   const ctx = await browser.newContext({ viewport: { width, height }, deviceScaleFactor: scale, reducedMotion: 'reduce' });
-  await ctx.addInitScript(init('main', mockWith(textSize, lang), JSON.stringify({ ...TRANSLATED, ...IMAGE_RESULT })));
+  await ctx.addInitScript(init('main', mockWith(textSize, lang), JSON.stringify({ ...TRANSLATED, ...IMAGE_RESULT, ...FILE_MEDIA })));
   const open = async (route) => { const pg = await ctx.newPage(); await pg.goto(url(route)); await wait(pg, 1200); return pg; };
   let pg = await open('/'); await visit(pg, 'home');
   await pg.keyboard.press('Control+k'); await wait(pg, 400); await visit(pg, 'palette'); await pg.close();

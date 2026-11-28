@@ -1,10 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
   IDLE,
-  RECENT_CUES,
   positionLabel,
   progressRatio,
-  withCue,
+  applyUpdate,
   type FileSubtitleCue,
   type FileSubtitleStatus
 } from './file-subtitle';
@@ -43,14 +42,27 @@ describe('positionLabel', () => {
   });
 });
 
-describe('withCue', () => {
-  const cue = (n: number): FileSubtitleCue => ({ start_ms: n, end_ms: n + 1, original: `${n}`, translated: '' });
+describe('applyUpdate', () => {
+  const cue = (n: number): FileSubtitleCue => ({ start_ms: n * 1000, end_ms: n * 1000 + 900, original: `${n}`, translated: '' });
+  const update = (cues: number, added: FileSubtitleCue | null) => ({ status: running({ cues }), cue: added });
 
-  it('keeps only the latest cues', () => {
-    let recent: FileSubtitleCue[] = [];
-    for (let n = 0; n < RECENT_CUES + 5; n++) recent = withCue(recent, cue(n));
-    expect(recent).toHaveLength(RECENT_CUES);
-    expect(recent[0].original).toBe('5');
-    expect(recent.at(-1)!.original).toBe(`${RECENT_CUES + 4}`);
+  it('appends the subtitle the update carries', () => {
+    const next = applyUpdate([cue(0)], update(2, cue(1)));
+    expect(next).toEqual({ cues: [cue(0), cue(1)], reload: false });
+  });
+
+  it('keeps the subtitles on a progress update', () => {
+    const cues = [cue(0)];
+    expect(applyUpdate(cues, update(1, null))).toEqual({ cues, reload: false });
+    expect(applyUpdate(cues, update(1, null)).cues).toBe(cues);
+  });
+
+  it('asks for all subtitles when some were missed', () => {
+    expect(applyUpdate([], update(3, cue(2))).reload).toBe(true);
+    expect(applyUpdate([cue(0)], update(3, null)).reload).toBe(true);
+  });
+
+  it('asks for all subtitles when a new file started', () => {
+    expect(applyUpdate([cue(0), cue(1)], update(0, null)).reload).toBe(true);
   });
 });

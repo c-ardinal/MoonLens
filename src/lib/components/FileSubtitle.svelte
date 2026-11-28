@@ -2,6 +2,7 @@
   import { t } from '$lib/i18n';
   import { holdMotion } from '$lib/pixel/motion.svelte';
   import PixelTitle from '$lib/components/PixelTitle.svelte';
+  import MediaPlayer from '$lib/components/MediaPlayer.svelte';
   import { goto } from '$app/navigation';
   import { Captions, FileText, FolderOpen, Square } from 'lucide-svelte';
   import { exportFileSubtitle, type SubtitleExportContent, type SubtitleExportFormat } from '$lib/ipc';
@@ -13,20 +14,24 @@
     type FileSubtitleJob
   } from '$lib/file-subtitle';
   import { timeLabel } from '$lib/subtitle-record';
+  import { cueLines } from '$lib/media-player';
   import { errorText, type UiError } from '$lib/errors';
   import { notify, notifyError } from '$lib/toast.svelte';
 
   let {
     status,
-    recent,
+    cues,
+    media = null,
     notice = null,
     dragging = false,
     onpick,
     onstop
   }: {
     status: FileSubtitleJob;
-    /** 直近の字幕（全件は本体側で保持）。 */
-    recent: FileSubtitleCue[];
+    /** 生成済みの字幕の全件（開始時刻の昇順）。 */
+    cues: FileSubtitleCue[];
+    /** 再生対象の URL。取得不可の場合は null（再生画面を省略）。 */
+    media?: string | null;
     /** ファイル選択側の通知（開始失敗等）。 */
     notice?: UiError | null;
     dragging?: boolean;
@@ -36,22 +41,40 @@
 
   let content = $state<SubtitleExportContent>('translated');
   let list = $state<HTMLOListElement | null>(null);
+  let player = $state<ReturnType<typeof MediaPlayer> | null>(null);
+  /** 再生位置の字幕の番号（該当無しは -1）。 */
+  let active = $state(-1);
+  /** 再生中：一覧は末尾でなく再生位置の字幕へ追従。 */
+  let playing = false;
 
   const running = $derived(status.phase === 'running');
   const ratio = $derived(progressRatio(status));
   // 推論中は演出を停止（翻訳性能を優先）
   $effect(() => (running ? holdMotion() : undefined));
 
-  // 末尾を表示中の場合のみ、追加分へ追従
+  // 末尾を表示中の場合のみ、追加分へ追従（再生中は再生位置の字幕へ追従）
   let follow = true;
   $effect.pre(() => {
-    void recent;
+    void cues.length;
     follow = !list || list.scrollHeight - list.scrollTop - list.clientHeight < 48;
   });
   $effect(() => {
-    void recent;
-    if (list && follow) list.scrollTop = list.scrollHeight;
+    void cues.length;
+    if (list && follow && !playing) list.scrollTop = list.scrollHeight;
   });
+
+  // 表示内容の変更：行数の増減後も再生位置の字幕を表示範囲内へ維持
+  $effect(() => {
+    void content;
+    if (active >= 0) list?.children[active]?.scrollIntoView({ block: 'nearest' });
+  });
+
+  function onactive(index: number, isPlaying: boolean) {
+    active = index;
+    playing = isPlaying;
+    if (index < 0 || !list) return;
+    list.children[index]?.scrollIntoView({ block: 'nearest' });
+  }
 
   const CONTENT_LABELS: [SubtitleExportContent, string][] = [
     ['translated', 'common:translated_text'],
@@ -103,19 +126,19 @@
         {t(PHASE_LABELS[status.phase])}・{positionLabel(status)}・{t('file-subtitle:cues_n', { n: status.cues })}
       </p>
       <div class="ml-auto flex flex-wrap items-center gap-2">
+        <select
+          class="rounded-ml-sm border border-border bg-surface px-2 py-1.5 text-sm text-ink"
+          title={t('file-subtitle:subtitle_content')}
+          aria-label={t('file-subtitle:subtitle_content')}
+          bind:value={content}
+        >
+          {#each CONTENT_LABELS as [value, label] (value)}
+            <option {value}>{t(label)}</option>
+          {/each}
+        </select>
         {#if running}
           <button class="sbtn" onclick={onstop}><Square class="h-3.5 w-3.5" />{t('common:cancel')}</button>
         {:else}
-          <select
-            class="rounded-ml-sm border border-border bg-surface px-2 py-1.5 text-sm text-ink"
-            title={t('subtitle-record-detail:export_content')}
-            aria-label={t('subtitle-record-detail:export_content')}
-            bind:value={content}
-          >
-            {#each CONTENT_LABELS as [value, label] (value)}
-              <option {value}>{t(label)}</option>
-            {/each}
-          </select>
           <button class="sbtn" onclick={() => save('srt')} disabled={status.cues === 0}>
             <Captions class="h-3.5 w-3.5" />{t('file-subtitle:save_srt')}
           </button>
@@ -141,28 +164,42 @@
     {/if}
   </section>
 
-  <section class="cues rounded-ml border border-border bg-surface-elevated" aria-label={t('file-subtitle:latest_subtitles')}>
-    <h2 class="border-b border-border px-4 py-2 text-sm text-ink-muted">{t('file-subtitle:latest_subtitles')}</h2>
-    {#if recent.length === 0}
-      <p class="px-4 py-3 text-sm text-ink-faint">
-        {running ? t('file-subtitle:waiting_for_first_subtitle') : t('file-subtitle:no_subtitles_shown')}
-      </p>
-    {:else}
-      <ol bind:this={list}>
-        {#each recent as cue (cue.start_ms)}
-          <li>
-            <span class="time tabular-nums text-ink-faint">{timeLabel(cue.start_ms)}</span>
-            <span class="min-w-0">
-              <span class="block break-words">{cue.translated || cue.original}</span>
-              {#if cue.translated}
-                <span class="block break-words text-sm text-ink-muted">{cue.original}</span>
-              {/if}
-            </span>
-          </li>
-        {/each}
-      </ol>
+  <div class="body" class:with-player={media}>
+    {#if media}
+      {#key media}
+        <MediaPlayer bind:this={player} url={media} {cues} {status} {content} {onactive} />
+      {/key}
     {/if}
-  </section>
+    <section class="cues rounded-ml border border-border bg-surface-elevated" aria-label={t('file-subtitle:subtitles')}>
+      <h2 class="border-b border-border px-4 py-2 text-sm text-ink-muted">{t('file-subtitle:subtitles')}</h2>
+      {#if cues.length === 0}
+        <p class="px-4 py-3 text-sm text-ink-faint">
+          {running ? t('file-subtitle:waiting_for_first_subtitle') : t('file-subtitle:no_subtitles')}
+        </p>
+      {:else}
+        <ol bind:this={list}>
+          {#each cues as cue, i (cue.start_ms)}
+            <li class:active={i === active}>
+              <button
+                class="cue"
+                disabled={!media}
+                title={media ? t('file-subtitle:jump_to_cue') : undefined}
+                aria-current={i === active ? 'true' : undefined}
+                onclick={() => player?.seek(cue.start_ms)}
+              >
+                <span class="time tabular-nums text-ink-faint">{timeLabel(cue.start_ms)}</span>
+                <span class="min-w-0">
+                  {#each cueLines(cue, content) as line, n (n)}
+                    <span class="block break-words {n > 0 ? 'text-sm text-ink-muted' : ''}">{line}</span>
+                  {/each}
+                </span>
+              </button>
+            </li>
+          {/each}
+        </ol>
+      {/if}
+    </section>
+  </div>
 </main>
 
 <style>
@@ -189,24 +226,45 @@
     width: 100% !important;
     background: repeating-linear-gradient(90deg, var(--ml-accent) 0 8px, transparent 8px 16px);
   }
+  /* 再生画面と字幕一覧：残余の高さを配分 */
+  .body {
+    display: grid;
+    flex: 1 1 0;
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--ml-sp-4);
+    min-height: 0;
+  }
+  .body.with-player {
+    grid-template-columns: minmax(0, 1fr) minmax(16rem, 34%);
+  }
   .cues {
     display: flex;
-    flex: 1 1 0;
     flex-direction: column;
+    min-width: 0;
     min-height: 0;
   }
   ol {
     flex: 1 1 0;
     min-height: 0;
     margin: 0;
-    padding: var(--ml-sp-2) var(--ml-sp-4);
+    padding: var(--ml-sp-2) var(--ml-sp-2);
     overflow-y: auto;
     list-style: none;
   }
-  li {
+  .cue {
     display: grid;
     grid-template-columns: max-content minmax(0, 1fr);
     gap: var(--ml-sp-3);
-    padding: var(--ml-sp-1) 0;
+    width: 100%;
+    padding: var(--ml-sp-1) var(--ml-sp-2);
+    text-align: left;
+    border-left: 2px solid transparent;
+  }
+  .cue:not(:disabled):hover {
+    background: var(--ml-surface-muted);
+  }
+  li.active .cue {
+    border-left-color: var(--ml-accent);
+    background: var(--ml-accent-soft);
   }
 </style>

@@ -127,6 +127,8 @@ macro_rules! all_commands {
             ipc::cancel_file_subtitle,
             ipc::file_subtitle_status,
             ipc::export_file_subtitle,
+            ipc::file_subtitle_cues,
+            ipc::file_subtitle_media,
             ipc::clear_history,
             ipc::translation_cache_usage,
             ipc::clear_translation_cache,

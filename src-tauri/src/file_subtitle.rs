@@ -636,6 +636,28 @@ impl FileSubtitleService {
         inner.status.clone()
     }
 
+    /// The subtitles so far, oldest first: the page's player shows the
+    /// one under the playback position.
+    pub fn cues(&self) -> Vec<Cue> {
+        self.inner
+            .lock()
+            .lines
+            .iter()
+            .map(|l| Cue {
+                start_ms: l.start_ms as u64,
+                end_ms: l.end_ms as u64,
+                original: l.original.clone(),
+                translated: l.translated.clone(),
+            })
+            .collect()
+    }
+
+    /// The media file of the job, for the player. `None` before a file.
+    pub fn media(&self) -> Option<PathBuf> {
+        let inner = self.inner.lock();
+        (inner.status.phase != Phase::Idle).then(|| inner.path.clone())
+    }
+
     /// The subtitles so far as a file: its text, the folder of the
     /// media file and the name offered for it (`talk.ja.srt` for
     /// `talk.mp4`, as players look for a subtitle file).

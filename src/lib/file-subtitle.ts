@@ -47,9 +47,6 @@ export const IDLE: FileSubtitleStatus = {
   error: null
 };
 
-/** 画面に保持する直近の字幕数（全件は本体側で保持、保存は全件が対象）。 */
-export const RECENT_CUES = 100;
-
 /** 進行率（0〜1）。再生時間不明の場合は null、完了時は 1。 */
 export function progressRatio(status: FileSubtitleStatus): number | null {
   if (status.phase === 'done') return 1;
@@ -63,9 +60,18 @@ export function positionLabel(status: FileSubtitleStatus): string {
   return status.duration_ms ? `${done} / ${timeLabel(status.duration_ms)}` : done;
 }
 
-/** 直近の字幕へ 1 件追加（上限超過分は先頭から削除）。 */
-export function withCue(recent: readonly FileSubtitleCue[], cue: FileSubtitleCue): FileSubtitleCue[] {
-  return [...recent, cue].slice(-RECENT_CUES);
+/**
+ * 状態の変化を字幕の全件へ反映。取りこぼし（購読の開始前の追加等）は件数の不一致で検知し、
+ * 全件の再取得（`reload`）を要求。
+ */
+export function applyUpdate(
+  cues: FileSubtitleCue[],
+  update: FileSubtitleUpdate
+): { cues: FileSubtitleCue[]; reload: boolean } {
+  const expected = update.status.cues;
+  if (update.cue && cues.length + 1 === expected) return { cues: [...cues, update.cue], reload: false };
+  // 変化無しは同一の配列（再描画の抑止）
+  return { cues, reload: cues.length !== expected };
 }
 
 /** 状態の文言のキー ID。 */

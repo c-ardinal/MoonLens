@@ -209,6 +209,10 @@ async fn a_video_becomes_a_saved_record_and_an_srt_file() {
     assert_eq!((cue.start_ms, cue.end_ms), (500, 2500));
     assert_eq!(cue.translated, "訳：Sentence 0.");
 
+    // The player gets every subtitle and the file to play.
+    assert_eq!(job.service.cues(), vec![cue.clone()]);
+    assert_eq!(job.service.media(), Some(fixture("jfk-1080p.mp4")));
+
     let export = job.service.export(ExportFormat::Srt, ExportContent::Both);
     assert_eq!(export.name, "jfk-1080p.ja.srt");
     assert_eq!(export.folder.as_deref(), fixture("jfk-1080p.mp4").parent());
