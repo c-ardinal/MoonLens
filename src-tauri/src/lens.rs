@@ -80,10 +80,10 @@ pub const HEADER_CSS: u32 = 32;
 
 /// Width in CSS pixels of the band along the window edges that stays
 /// clickable for resizing while the body lets the mouse through.
-const EDGE_CSS: f64 = 6.0;
+pub(crate) const EDGE_CSS: f64 = 6.0;
 
 /// Size in CSS pixels of the resize grip in the bottom-right corner.
-const GRIP_CSS: f64 = 18.0;
+pub(crate) const GRIP_CSS: f64 = 18.0;
 
 /// How often the pointer position is checked for click-through.
 const PASSTHROUGH_POLL_MS: u64 = 40;
@@ -1107,7 +1107,7 @@ fn pointer_on_controls(
 
 /// Pointer position on the screen (physical pixels).
 #[cfg(not(target_os = "linux"))]
-fn pointer_position(app: &AppHandle) -> Option<(i32, i32)> {
+pub(crate) fn pointer_position(app: &AppHandle) -> Option<(i32, i32)> {
     let p = app.cursor_position().ok()?;
     Some((p.x.floor() as i32, p.y.floor() as i32))
 }
@@ -1117,7 +1117,7 @@ fn pointer_position(app: &AppHandle) -> Option<(i32, i32)> {
 /// window lets the mouse through, so ask the X server (Wayland sessions
 /// without X fall back to tao).
 #[cfg(target_os = "linux")]
-fn pointer_position(app: &AppHandle) -> Option<(i32, i32)> {
+pub(crate) fn pointer_position(app: &AppHandle) -> Option<(i32, i32)> {
     use x11rb::connection::Connection;
     use x11rb::protocol::xproto::ConnectionExt;
     use x11rb::rust_connection::RustConnection;

@@ -1451,6 +1451,26 @@ pub async fn subtitle_session(
     Ok(state.subtitle.session(window.label()))
 }
 
+/// Mouse handling of the calling subtitle window: operate mode as the
+/// user set it, and whether its popups cover the body (see
+/// [`crate::subtitle_mouse`]).
+#[tauri::command]
+pub async fn set_subtitle_mouse(
+    window: tauri::WebviewWindow,
+    state: State<'_, AppState>,
+    operate: bool,
+    interactive: bool,
+) -> Result<(), String> {
+    state.subtitle_mouse.set(
+        window.label(),
+        crate::subtitle_mouse::Mouse {
+            operate,
+            interactive,
+        },
+    );
+    Ok(())
+}
+
 /// The applications a subtitle window can listen to.
 #[tauri::command]
 pub async fn list_audio_apps() -> Result<crate::audio_apps::AudioApps, String> {

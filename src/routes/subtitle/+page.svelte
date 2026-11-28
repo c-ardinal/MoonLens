@@ -3,7 +3,8 @@
   import { onDestroy, onMount, tick } from 'svelte';
   import { type UnlistenFn } from '@tauri-apps/api/event';
   import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
-  import { AppWindow, ArrowLeftRight, Check, ChevronDown, Eye, EyeOff, Magnet, Mic, Monitor, Plus, RotateCw, Volume2, VolumeX, X } from 'lucide-svelte';
+  import { AppWindow, ArrowLeftRight, Check, ChevronDown, Eraser, Eye, EyeOff, Magnet, Mic, Monitor, MousePointerBan, MousePointerClick, Plus, RotateCw, Volume2, VolumeX, X } from 'lucide-svelte';
+  import { displayAccelerator } from '$lib/hotkey';
   import {
     blockSubtitlePhrase,
     closeSubtitleWindow,
@@ -14,6 +15,7 @@
     onSubtitleLevel,
     openSubtitleWindow,
     setSettings,
+    setSubtitleMouse,
     setSubtitleSource,
     subtitleSession,
     windowAttachment,
@@ -30,6 +32,7 @@
   } from '$lib/subtitle-attach';
   import { languageLabel, SOURCE_LANGUAGES } from '$lib/lens-overlay';
   import {
+    clear,
     conversationPair,
     initialView,
     inputHint,
@@ -52,6 +55,9 @@
   // ウィンドウ単位で選択。字幕は時系列で蓄積し、最新行へ自動スクロール。
   // 吸着：他アプリのウィンドウへ割当て、移動・サイズ変更へ追従（音源も当該アプリへ連動）。
   // 背景：入力波形と認識閾値。入力の有無・音量の過不足を常時表示。
+  // 操作透過：透過モード（既定）では字幕上のクリックを背面のアプリへ透過。タイトルバー・縁・右下隅は
+  // 常時操作可能（ボタンで操作モードへ復帰）。ショートカットで全ウィンドウを一括切替。
+  // クリア：表示中の字幕を消去（履歴の記録は維持）。
   // 対面会話（音源：マイク）：発話単位で言語を判定し、相手側の言語へ翻訳。本人の発話は左、
   // 相手の発話は右へ配置。相手の言語はタイトルバーで選択。
 
@@ -120,7 +126,22 @@
     if (attachOpen) menuOpen = false;
   }
 
+  /** 操作モード：本体がマウスを受付（字幕の選択・コピー、スクロール）。既定は透過モード
+   * （ウィンドウ翻訳と同一）。メニュー・候補・再開ボタンの表示中は本体も受付。 */
+  let operate = $state(false);
+  let operateKey = $state('');
+  $effect(() => {
+    const interactive = menuOpen || attachOpen || !!candidate || !view.running;
+    setSubtitleMouse(operate, interactive).catch(() => {});
+  });
+  function setOperate(on: boolean) {
+    operate = on;
+    if (!on) window.getSelection()?.removeAllRanges();
+  }
+
   function applySettings(s: Settings) {
+    const k = s?.hotkeys?.toggle_subtitle_operate;
+    operateKey = k ? displayAccelerator(k) : '';
     showOriginal = s?.subtitle?.show_original ?? true;
     fontSize = s?.subtitle?.font_size_px ?? 22;
     targetLanguage = s?.subtitle?.target_language ?? 'ja';
@@ -374,6 +395,8 @@
       if (!view.running) view = restore(view, await subtitleSession());
       unlisteners.push(await speaker.listen());
       unlisteners.push(await win.listen<Attachment>(ATTACH_EVENT, (e) => applyAttachment(e.payload)));
+      // 操作透過のショートカット（全ウィンドウ一括）。
+      unlisteners.push(await win.listen<boolean>('moonlens://subtitle-operate', (e) => setOperate(e.payload)));
       applyAttachment(await windowAttachment(label));
     } catch {
       /* not running inside Tauri */
@@ -382,7 +405,7 @@
   onDestroy(() => unlisteners.forEach((u) => u?.()));
 </script>
 
-<main class="sub">
+<main class="sub" class:operate>
   <header class="bar" data-tauri-drag-region>
     <!-- 対面会話は言語対の分だけ項目が多数：省略の開始幅を拡大（.conv） -->
     <button class="btn" title={t('subtitle:add_audio_translation_window')} aria-label={t('subtitle:add_audio_translation_window')} onclick={addWindow}>
@@ -407,6 +430,20 @@
       {/if}
       <span class="source-name">{source}</span>
       <ChevronDown class="chevron h-3 w-3 flex-none" />
+    </button>
+    <!-- 操作透過：ウィンドウ翻訳と同一の表示・文言 -->
+    <button
+      class="btn"
+      class:on={operate}
+      data-action="operate"
+      aria-pressed={operate}
+      aria-label={operate ? t('lens-actions:interact_mode') : t('lens-actions:click_through_mode')}
+      title={(operate
+        ? t('lens-actions:interact_mode_select_and_copy_translations')
+        : t('lens-actions:click_through_mode_clicks_pass_to_what')) + (operateKey ? ` (${operateKey})` : '')}
+      onclick={() => setOperate(!operate)}
+    >
+      {#if operate}<MousePointerClick class="h-4 w-4" />{:else}<MousePointerBan class="h-4 w-4" />{/if}
     </button>
     <button
       class="btn"
@@ -465,6 +502,16 @@
     {:else}
       <span class="lang" title={t('common:target_language')} data-tauri-drag-region>{languageLabel(targetLanguage)}</span>
     {/if}
+    <button
+      class="btn"
+      data-action="clear"
+      aria-label={t('subtitle:clear_subtitles')}
+      title={t('subtitle:clear_subtitles_history_is_kept')}
+      disabled={view.lines.length === 0}
+      onclick={() => (view = clear(view))}
+    >
+      <Eraser class="h-4 w-4" />
+    </button>
     <button
       class="btn"
       class:on={speakOn && speakable}
@@ -634,6 +681,12 @@
     box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ml-accent) 60%, transparent);
   }
   /* ウィンドウ翻訳のタイトルバーと同一寸法・配色 */
+  /* 操作モード：枠を破線へ変更（ウィンドウ翻訳と同一の識別）、字幕を選択可能化 */
+  .sub.operate {
+    box-shadow: none;
+    outline: 2px dashed color-mix(in srgb, var(--ml-accent) 70%, white);
+    outline-offset: -2px;
+  }
   .bar {
     box-sizing: border-box;
     height: 32px;
@@ -686,8 +739,12 @@
   .source.open :global(.chevron) {
     transform: rotate(180deg);
   }
+  /* 状態表記：幅不足時は省略表記（右端の操作ボタンを優先） */
   .state {
-    flex: none;
+    flex: 0 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
     margin-left: 4px;
     border-radius: 6px;
     padding: 4px 8px;
@@ -778,15 +835,16 @@
     display: flex;
     opacity: 0.7;
   }
-  /* 狭幅：見出し・翻訳先言語を省略し、音源・状態表記と操作を優先 */
-  @container (max-width: 500px) {
+  /* 狭幅：見出し・翻訳先言語を省略し、音源・状態表記と操作を優先
+     （境界値はタイトルバーの操作ボタン 7 個の収容幅） */
+  @container (max-width: 580px) {
     .title.conv,
     .meter.conv,
     .swap {
       display: none;
     }
   }
-  @container (max-width: 400px) {
+  @container (max-width: 480px) {
     .title,
     .lang,
     .swap,
@@ -794,7 +852,7 @@
       display: none;
     }
   }
-  @container (max-width: 260px) {
+  @container (max-width: 340px) {
     .state,
     .their {
       display: none;
@@ -810,9 +868,13 @@
   .btn.on {
     opacity: 1;
   }
-  .btn:hover {
+  .btn:hover:not(:disabled) {
     opacity: 1;
     background: rgba(255, 255, 255, 0.12);
+  }
+  .btn:disabled {
+    opacity: 0.35;
+    cursor: default;
   }
   .btn.attached {
     color: var(--ml-accent);
