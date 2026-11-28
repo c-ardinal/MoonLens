@@ -1,4 +1,7 @@
-@import 'tailwindcss';
+/* クラス名の走査対象は src/ 限定（既定：作業ディレクトリ全体のうち .gitignore 対象外の全ファイル）。
+   作業ディレクトリ内の未追跡の大容量ファイル（llama.cpp の複製、ビルド出力等）を開発起動時に
+   全て読込み、本体ウィンドウの初回表示が数分遅延した実例への対策（`src/lib/design/app-css.test.ts`）。 */
+@import 'tailwindcss' source('.');
 @import './lib/design/tokens.css';
 @import './lib/design/pixel.css';
 @import './lib/design/pixel-motion.css';
