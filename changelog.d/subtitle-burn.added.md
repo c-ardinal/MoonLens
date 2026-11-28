@@ -1,1 +1,1 @@
-- ファイル翻訳の字幕生成後、訳文字幕を映像下部へ合成した新規動画の出力に対応（試作、ffmpeg が必要）。
+- File translation (prototype): after subtitles are made for a video, export a new copy of it with the translated subtitles drawn at the bottom. Needs ffmpeg next to MoonLens or on the PATH; picks a GPU encoder when one works, and keeps memory flat whatever the length.
