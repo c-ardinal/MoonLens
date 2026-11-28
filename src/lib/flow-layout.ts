@@ -296,9 +296,12 @@ export function flowLayout(text: string, o: FlowOptions): FlowResult {
         if (lines.length > n) continue;
         // The last line sits on the last row only when every slot is used.
         const reaches = n > 1 && lines.length === n && pitch + 0.01 >= (c1 - c0) / (n - 1);
-        if (reaches) best = { fs, lines, n };
-        else short ??= { fs, lines, n };
-        break;
+        if (reaches) {
+          best = { fs, lines, n };
+          break;
+        }
+        // More lines may still reach the last row at this size.
+        short ??= { fs, lines, n };
       }
     }
     best ??= short;

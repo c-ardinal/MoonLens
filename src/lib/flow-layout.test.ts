@@ -288,4 +288,19 @@ describe('flowLayout fill', () => {
     });
     expect(performance.now() - r0).toBeLessThan(300);
   });
+
+  it('tries more lines before settling for a short layout', () => {
+    // 2 rows beside a picture at x = 120, then 6 full-width rows.
+    const src = rows(8, 22, 16).map((row, i) => (i < 2 ? { ...row, width: 110, limit: 120 } : row));
+    const r = flowLayout('あ'.repeat(58), {
+      width: 400,
+      height: 7 * 22 + 16,
+      rows: src,
+      align: 'left',
+      maxFont: 14,
+      measure
+    });
+    expect(r.lines.map((l) => l.text).join('')).toBe('あ'.repeat(58));
+    expect(centre(r.lines[r.lines.length - 1])).toBeCloseTo(7 * 22 + 8);
+  });
 });
