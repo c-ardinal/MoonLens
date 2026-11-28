@@ -484,9 +484,6 @@ pub fn burn(
     if same_file(&input, &output) {
         return Err(BurnError::SameAsSource);
     }
-    // ffmpeg writes a file of its own next to the output; it replaces the
-    // output only once complete, so a failure never touches what is there.
-    let partial = partial_path(&output);
     let probe = probe(job.ffmpeg, &input)?;
     let encoder = match job.encoder {
         Some(e) => e,
@@ -519,6 +516,12 @@ pub fn burn(
         filter.push_str(":fontsdir=fonts");
     }
 
+    // ffmpeg writes a file of its own next to the output; it replaces the
+    // output only once complete, so a failure never touches what is there.
+    // The file is newly created here, so it is never the source or a file
+    // of the user's, and only it is removed on failure.
+    let partial = Staging::reserve(&output)?;
+
     let mut cmd = command(job.ffmpeg);
     cmd.current_dir(&work)
         .args(["-hide_banner", "-nostats", "-loglevel", "error", "-y"])
@@ -530,7 +533,7 @@ pub fn burn(
         ])
         .args(encoder.args(target_kbps(&probe)))
         .args(["-c:a", "copy"])
-        .arg(&partial)
+        .arg(&partial.0)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     let mut child = cmd.spawn().map_err(BurnError::Spawn)?;
@@ -559,11 +562,9 @@ pub fn burn(
     let status = child.wait()?;
     let errors = errors.join().unwrap_or_default();
     if cancelled || cancel.load(Ordering::Relaxed) {
-        let _ = std::fs::remove_file(&partial);
         return Err(BurnError::Cancelled);
     }
     if !status.success() {
-        let _ = std::fs::remove_file(&partial);
         let tail: String = errors
             .lines()
             .rev()
@@ -575,10 +576,8 @@ pub fn burn(
             .join("\n");
         return Err(BurnError::Failed(tail));
     }
-    if let Err(e) = std::fs::rename(&partial, &output) {
-        let _ = std::fs::remove_file(&partial);
-        return Err(e.into());
-    }
+    std::fs::rename(&partial.0, &output)?;
+    std::mem::forget(partial);
     Ok(Report {
         encoder,
         width: probe.width,
@@ -597,16 +596,49 @@ fn same_file(a: &Path, b: &Path) -> bool {
     }
 }
 
-/// `talk.ja-subtitled.mp4` → `talk.ja-subtitled.partial.mp4`: same folder
-/// (the rename stays on one drive), same extension (ffmpeg picks the
-/// container by it).
-fn partial_path(output: &Path) -> PathBuf {
+/// `talk.ja-subtitled.mp4` → `talk.ja-subtitled.partial.mp4` (`n` > 0:
+/// `.partial-n`): same folder (the rename stays on one drive), same
+/// extension (ffmpeg picks the container by it).
+fn partial_path(output: &Path, n: u32) -> PathBuf {
     let stem = output.file_stem().unwrap_or_default().to_string_lossy();
+    let tag = if n == 0 {
+        "partial".to_string()
+    } else {
+        format!("partial-{n}")
+    };
     let name = match output.extension() {
-        Some(ext) => format!("{stem}.partial.{}", ext.to_string_lossy()),
-        None => format!("{stem}.partial"),
+        Some(ext) => format!("{stem}.{tag}.{}", ext.to_string_lossy()),
+        None => format!("{stem}.{tag}"),
     };
     output.with_file_name(name)
+}
+
+/// A file this run created for ffmpeg to write; removed when dropped.
+struct Staging(PathBuf);
+
+impl Staging {
+    /// Creates the first free `partial_path` (never an existing file).
+    fn reserve(output: &Path) -> std::io::Result<Self> {
+        for n in 0..1000 {
+            let path = partial_path(output, n);
+            match std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&path)
+            {
+                Ok(_) => return Ok(Self(path)),
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(e) => return Err(e),
+            }
+        }
+        Err(std::io::ErrorKind::AlreadyExists.into())
+    }
+}
+
+impl Drop for Staging {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
 }
 
 struct RemoveOnDrop(PathBuf);
@@ -726,9 +758,26 @@ mod tests {
     #[test]
     fn partial_file_sits_next_to_the_output_with_its_extension() {
         assert_eq!(
-            partial_path(Path::new("/v/talk.ja-subtitled.mp4")),
+            partial_path(Path::new("/v/talk.ja-subtitled.mp4"), 0),
             Path::new("/v/talk.ja-subtitled.partial.mp4")
         );
+    }
+
+    /// A file already named like the staging file (here the source itself)
+    /// is skipped and left alone; the reserved one goes away when dropped.
+    #[test]
+    fn staging_never_takes_an_existing_file() {
+        let dir = std::env::temp_dir().join(format!("moonlens-staging-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let source = dir.join("clip.partial.mp4");
+        std::fs::write(&source, b"source").unwrap();
+        let staging = Staging::reserve(&dir.join("clip.mp4")).unwrap();
+        assert_eq!(staging.0, dir.join("clip.partial-1.mp4"));
+        let reserved = staging.0.clone();
+        drop(staging);
+        assert!(!reserved.exists());
+        assert_eq!(std::fs::read(&source).unwrap(), b"source");
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     /// The source reached through a link is still the source: it is
