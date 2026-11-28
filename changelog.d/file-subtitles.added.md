@@ -1,0 +1,1 @@
+- File subtitles: open or drop a video or audio file (MP4, MKV, MOV, MP3, M4A, WAV, FLAC, OGG) to recognize and translate its speech into subtitles, saved as SRT or text next to the file and kept in history. Only the audio track is read, piece by piece, so memory use does not grow with the length or resolution of the file.

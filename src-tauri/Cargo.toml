@@ -106,6 +106,9 @@ wasmtime-wasi = "36"
 # Total RAM / CPU model for the first-run model recommendation (setup.rs).
 sysinfo = { version = "0.36.1", default-features = false, features = ["system"] }
 sys-locale = "0.3.2"
+# File subtitles: demuxes media files and decodes their audio track only
+# (pure Rust; no video decoding, no FFmpeg). No Opus decoder upstream.
+symphonia = { version = "0.6.1", default-features = false, features = ["aac", "isomp4", "mkv", "mp3", "flac", "wav", "ogg", "vorbis", "pcm", "adpcm", "alac", "aiff", "caf"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 llama-cpp-2 = { version = "0.1.161", default-features = false, optional = true, features = ["metal"] }
