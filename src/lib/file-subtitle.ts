@@ -14,6 +14,8 @@ export interface FileSubtitleStatus {
   duration_ms: number | null;
   /** 処理済みの位置。 */
   done_ms: number;
+  /** 字幕の確定済みの位置（未完の文は開始位置で保留）。再生画面の待機の基準。 */
+  ready_ms: number;
   /** 生成済みの字幕数。 */
   cues: number;
   error: string | null;
@@ -43,6 +45,7 @@ export const IDLE: FileSubtitleStatus = {
   name: '',
   duration_ms: null,
   done_ms: 0,
+  ready_ms: 0,
   cues: 0,
   error: null
 };

@@ -32,22 +32,22 @@ export function cueLines(cue: FileSubtitleCue, content: CueContent): string[] {
   return [cue.translated, cue.original];
 }
 
-/** 生成位置の直前で待機を開始する余裕（文の途中は字幕の確定前）。 */
+/** 字幕の確定位置の直前で待機を開始する余裕。 */
 export const WAIT_LEAD_MS = 1500;
 /** 待機の解除に必要な生成済みの先行量（再開直後の再待機を抑止）。 */
 export const RESUME_AHEAD_MS = 10_000;
 
-/** 生成中の字幕の未到達位置へ再生が接近：再生を一時停止し、字幕の生成を待機。 */
+/** 字幕の確定位置（`ready_ms`）へ再生が接近：再生を一時停止し、字幕の生成を待機。 */
 export function mustWait(status: FileSubtitleStatus, positionMs: number): boolean {
-  return status.phase === 'running' && positionMs + WAIT_LEAD_MS > status.done_ms;
+  return status.phase === 'running' && positionMs + WAIT_LEAD_MS > status.ready_ms;
 }
 
 /** 待機の解除：生成が十分に先行、または生成の終了（完了・中止・失敗）。 */
 export function mayResume(status: FileSubtitleStatus, positionMs: number): boolean {
-  return status.phase !== 'running' || status.done_ms - positionMs >= RESUME_AHEAD_MS;
+  return status.phase !== 'running' || status.ready_ms - positionMs >= RESUME_AHEAD_MS;
 }
 
-/** 再生位置の字幕が生成前（生成中のみ）。 */
+/** 再生位置の字幕が確定前（生成中のみ）。 */
 export function isAhead(status: FileSubtitleStatus, positionMs: number): boolean {
-  return status.phase === 'running' && positionMs > status.done_ms;
+  return status.phase === 'running' && positionMs > status.ready_ms;
 }

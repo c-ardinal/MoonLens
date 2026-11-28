@@ -15,7 +15,7 @@ const failures = [];
 const expect = (ok, what) => { console.log(`${ok ? 'OK  ' : 'NG  '}${what}`); if (!ok) failures.push(what); };
 
 const NAME = 'keynote.webm';
-const status = (over) => ({ phase: 'running', name: NAME, duration_ms: 12_000, done_ms: 0, cues: 0, error: null, ...over });
+const status = (over) => ({ phase: 'running', name: NAME, duration_ms: 12_000, done_ms: 0, ready_ms: 0, cues: 0, error: null, ...over });
 const CUES = [
   { start_ms: 500, end_ms: 2500, original: 'Good evening, everyone.', translated: '皆さん、こんばんは。' },
   { start_ms: 3000, end_ms: 5200, original: 'Tonight we open the new hall.', translated: '今夜、新しいホールを開館します。' },
@@ -36,8 +36,8 @@ for (const [w, h] of [[1280, 800], [1120, 700]]) {
   // 生成中：字幕 2 件、生成位置 6 秒
   await emit(pg, { status: status({}), cue: null });
   await pg.locator('video').waitFor({ timeout: 3000 });
-  await emit(pg, { status: status({ cues: 1, done_ms: 2600 }), cue: CUES[0] });
-  await emit(pg, { status: status({ cues: 2, done_ms: 6000 }), cue: CUES[1] });
+  await emit(pg, { status: status({ cues: 1, done_ms: 2600, ready_ms: 2600 }), cue: CUES[0] });
+  await emit(pg, { status: status({ cues: 2, done_ms: 6000, ready_ms: 6000 }), cue: CUES[1] });
   await pg.evaluate(() => document.querySelector('video').play());
   await pg.waitForFunction(() => document.querySelector('video').currentTime > 1, null, { timeout: 5000 });
   let v = await video(pg);
@@ -52,9 +52,21 @@ for (const [w, h] of [[1280, 800], [1120, 700]]) {
   expect(await pg.getByRole('status').filter({ hasText: l('file-subtitle:waiting_for_subtitles') }).count() === 1, `${w}x${h} 待機中の表示`);
   if (out) await pg.screenshot({ path: `${out}/waiting-${w}x${h}.png` });
 
+  // 待機中の巻戻し：移動先の字幕が確定済み（10 秒先行）で再開
+  await emit(pg, { status: status({ cues: 2, done_ms: 12_000, ready_ms: 11_500 }), cue: null });
+  await wait(pg, 300);
+  expect((await video(pg)).paused, `${w}x${h} 先行不足の間は待機を継続`);
+  await pg.evaluate(() => { document.querySelector('video').currentTime = 1; });
+  await pg.waitForFunction(() => !document.querySelector('video').paused, null, { timeout: 3000 }).catch(() => {});
+  v = await video(pg);
+  expect(!v.paused, `${w}x${h} 待機中の巻戻しで再生を再開（${v.t.toFixed(2)} 秒）`);
+  await pg.waitForFunction(() => document.querySelector('video').paused, null, { timeout: 15_000 });
+  v = await video(pg);
+  expect(v.t > 9 && v.t < 11.5, `${w}x${h} 確定位置の手前で再度待機（${v.t.toFixed(2)} 秒）`);
+
   // 生成の完了で再開
-  await emit(pg, { status: status({ cues: 3, done_ms: 12_000 }), cue: CUES[2] });
-  await emit(pg, { status: status({ phase: 'done', cues: 3, done_ms: 12_000 }), cue: null });
+  await emit(pg, { status: status({ cues: 3, done_ms: 12_000, ready_ms: 12_000 }), cue: CUES[2] });
+  await emit(pg, { status: status({ phase: 'done', cues: 3, done_ms: 12_000, ready_ms: 12_000 }), cue: null });
   await wait(pg, 600);
   v = await video(pg);
   expect(!v.paused, `${w}x${h} 生成の完了で再生を再開`);
@@ -78,7 +90,7 @@ for (const [w, h] of [[1280, 800], [1120, 700]]) {
 // 再生不可の形式：理由を表示し、字幕の一覧は継続
 {
   const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, reducedMotion: 'reduce' });
-  await ctx.addInitScript(init('main', MOCK, JSON.stringify({ file_subtitle_media: '/__fixtures/missing.mkv', file_subtitle_cues: CUES, file_subtitle_status: status({ phase: 'done', cues: 3, done_ms: 12_000 }) })));
+  await ctx.addInitScript(init('main', MOCK, JSON.stringify({ file_subtitle_media: '/__fixtures/missing.mkv', file_subtitle_cues: CUES, file_subtitle_status: status({ phase: 'done', cues: 3, done_ms: 12_000, ready_ms: 12_000 }) })));
   const pg = await ctx.newPage();
   await pg.goto(srv.url('/file/')); await wait(pg, 1500);
   expect(await pg.getByRole('alert').filter({ hasText: l('file-subtitle:cannot_play') }).count() === 1, '再生不可の形式で理由を表示');

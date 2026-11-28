@@ -145,7 +145,7 @@ const IMAGE_RESULT = {
   }
 };
 /** ファイル字幕の進行通知：長時間・長名称のファイル、字幕 12 件（長文を含む）。 */
-const FILE_STATUS = { phase: 'running', name: 'conference-keynote-2026-11-27-full-recording-1080p.mp4', duration_ms: 3 * 3600_000 + 754_000, done_ms: 3600_000 + 125_000, cues: 12, error: null };
+const FILE_STATUS = { phase: 'running', name: 'conference-keynote-2026-11-27-full-recording-1080p.mp4', duration_ms: 3 * 3600_000 + 754_000, done_ms: 3600_000 + 125_000, ready_ms: 3600_000 + 120_000, cues: 12, error: null };
 const FILE_UPDATES = Array.from({ length: 12 }, (_, i) => ({
   status: { ...FILE_STATUS, cues: i + 1 },
   cue: {
@@ -190,7 +190,7 @@ export async function walkMain(browser, url, { textSize = 'medium', width = 1280
   await pg.close();
   pg = await open('/file/');
   await reach('file-running', async () => { await pg.evaluate((updates) => updates.forEach((u) => window.__emit('moonlens://file-subtitle', u)), FILE_UPDATES); await pg.locator('ol li').nth(FILE_UPDATES.length - 1).waitFor({ timeout: 2000 }); }); await visit(pg, 'file-running');
-  await reach('file-done', async () => { await pg.evaluate((u) => window.__emit('moonlens://file-subtitle', u), { status: { ...FILE_STATUS, phase: 'done', done_ms: FILE_STATUS.duration_ms }, cue: null }); await pg.getByRole('button', { name: l('file-subtitle:save_srt') }).waitFor({ timeout: 2000 }); }); await visit(pg, 'file-done');
+  await reach('file-done', async () => { await pg.evaluate((u) => window.__emit('moonlens://file-subtitle', u), { status: { ...FILE_STATUS, phase: 'done', done_ms: FILE_STATUS.duration_ms, ready_ms: FILE_STATUS.duration_ms }, cue: null }); await pg.getByRole('button', { name: l('file-subtitle:save_srt') }).waitFor({ timeout: 2000 }); }); await visit(pg, 'file-done');
   await reach('file-failed', async () => { await pg.evaluate((u) => window.__emit('moonlens://file-subtitle', u), { status: { ...FILE_STATUS, phase: 'failed', error: l('subtitle:speech_recognition_model_not_downloaded') }, cue: null }); await pg.getByRole('alert').waitFor({ timeout: 2000 }); }); await visit(pg, 'file-failed');
   await pg.close();
   pg = await open('/history/'); await visit(pg, 'history');

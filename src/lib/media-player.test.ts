@@ -54,31 +54,38 @@ describe('cueLines', () => {
 
 describe('waiting for subtitles', () => {
   it('waits shortly before the position the generation reached', () => {
-    const s = status({ done_ms: 60_000 });
+    const s = status({ ready_ms: 60_000 });
     expect(mustWait(s, 60_000 - WAIT_LEAD_MS - 1)).toBe(false);
     expect(mustWait(s, 60_000 - WAIT_LEAD_MS + 1)).toBe(true);
   });
 
   it('never waits once the generation ended', () => {
     for (const phase of ['done', 'cancelled', 'failed'] as const) {
-      expect(mustWait(status({ phase, done_ms: 10_000 }), 50_000)).toBe(false);
-      expect(mayResume(status({ phase, done_ms: 10_000 }), 50_000)).toBe(true);
+      expect(mustWait(status({ phase, ready_ms: 10_000 }), 50_000)).toBe(false);
+      expect(mayResume(status({ phase, ready_ms: 10_000 }), 50_000)).toBe(true);
     }
   });
 
   it('resumes once the generation is well ahead', () => {
-    expect(mayResume(status({ done_ms: 60_000 }), 59_000)).toBe(false);
-    expect(mayResume(status({ done_ms: 59_000 + RESUME_AHEAD_MS }), 59_000)).toBe(true);
+    expect(mayResume(status({ ready_ms: 60_000 }), 59_000)).toBe(false);
+    expect(mayResume(status({ ready_ms: 59_000 + RESUME_AHEAD_MS }), 59_000)).toBe(true);
   });
 
   it('a resumed playback does not wait again at once', () => {
     const pos = 59_000;
-    expect(mustWait(status({ done_ms: pos + RESUME_AHEAD_MS }), pos)).toBe(false);
+    expect(mustWait(status({ ready_ms: pos + RESUME_AHEAD_MS }), pos)).toBe(false);
+  });
+
+  it('waits at an open sentence, not at the recognized position', () => {
+    // 認識済み 60 秒、ただし 52 秒開始の文が未完
+    const s = status({ done_ms: 60_000, ready_ms: 52_000 });
+    expect(mustWait(s, 51_000)).toBe(true);
+    expect(isAhead(s, 55_000)).toBe(true);
   });
 
   it('tells a position past the generation', () => {
-    expect(isAhead(status({ done_ms: 10_000 }), 12_000)).toBe(true);
-    expect(isAhead(status({ done_ms: 10_000 }), 8_000)).toBe(false);
+    expect(isAhead(status({ ready_ms: 10_000 }), 12_000)).toBe(true);
+    expect(isAhead(status({ ready_ms: 10_000 }), 8_000)).toBe(false);
     expect(isAhead(status({ phase: 'done', done_ms: 10_000 }), 12_000)).toBe(false);
   });
 });

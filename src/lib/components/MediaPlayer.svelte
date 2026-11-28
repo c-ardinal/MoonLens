@@ -72,14 +72,19 @@
     update();
   });
 
-  /** 生成の進行：待機の解除を判定。 */
-  $effect(() => {
-    void status.done_ms;
-    void status.phase;
+  /** 自動の一時停止の解除：字幕の確定が十分に先行した時点で再開（利用者の一時停止は対象外）。 */
+  function resumeIfReady() {
     if (waiting && video && mayResume(status, positionMs())) {
       waiting = false;
       video.play().catch(() => {});
     }
+  }
+
+  /** 生成の進行：待機の解除を判定。 */
+  $effect(() => {
+    void status.ready_ms;
+    void status.phase;
+    resumeIfReady();
     update();
   });
 
@@ -109,7 +114,8 @@
 
   function onseeked() {
     manual = false;
-    if (waiting && video && mayResume(status, positionMs())) waiting = false;
+    // 待機中の巻戻し等：移動先の字幕が確定済みなら再開、未確定なら待機を継続
+    resumeIfReady();
     update();
   }
 
