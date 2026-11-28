@@ -1,5 +1,6 @@
 use std::cell::RefCell;
 use std::rc::Rc;
+use std::time::{Duration, Instant};
 
 use super::*;
 
@@ -15,6 +16,13 @@ struct Shared {
     voice: String,
     events: Vec<(String, Event)>,
     listed: usize,
+    /// Speed given to the engine for each text.
+    rates: Vec<f32>,
+    /// Speed of the settings (0: 1.0).
+    rate: f32,
+    /// Time since `epoch`.
+    clock: Duration,
+    epoch: Option<Instant>,
 }
 
 #[derive(Clone, Default)]
@@ -26,12 +34,13 @@ impl Engine for Fake {
         s.listed += 1;
         s.voices.clone()
     }
-    fn start(&mut self, text: &str, voice: &Voice, _: &Tuning) -> Result<()> {
+    fn start(&mut self, text: &str, voice: &Voice, tuning: &Tuning) -> Result<()> {
         let mut s = self.0.borrow_mut();
         if s.fail {
             anyhow::bail!("engine failure");
         }
         s.spoken.push((text.to_string(), voice.id.clone()));
+        s.rates.push(tuning.rate);
         s.playing = true;
         Ok(())
     }
@@ -49,7 +58,10 @@ impl Host for Fake {
     fn tuning(&self) -> Tuning {
         Tuning {
             voice: self.0.borrow().voice.clone(),
-            rate: 1.0,
+            rate: match self.0.borrow().rate {
+                r if r > 0.0 => r,
+                _ => 1.0,
+            },
             volume: 1.0,
         }
     }
@@ -58,6 +70,11 @@ impl Host for Fake {
     }
     fn emit(&self, owner: &str, event: Event) {
         self.0.borrow_mut().events.push((owner.to_string(), event));
+    }
+    fn now(&self) -> Instant {
+        let mut s = self.0.borrow_mut();
+        let epoch = *s.epoch.get_or_insert_with(Instant::now);
+        epoch + s.clock
     }
 }
 
@@ -74,6 +91,15 @@ fn say(owner: &str, text: &str) -> Utterance {
         owner: owner.into(),
         text: text.into(),
         lang: "ja".into(),
+        source_ms: None,
+    }
+}
+
+/// A subtitle request: `text` translates speech of `source_ms`.
+fn heard(owner: &str, text: &str, source_ms: u64) -> Utterance {
+    Utterance {
+        source_ms: Some(source_ms),
+        ..say(owner, text)
     }
 }
 
@@ -98,6 +124,12 @@ impl Fake {
     /// The engine reaches the end of what it speaks.
     fn end(&self) {
         self.0.borrow_mut().playing = false;
+    }
+    fn wait(&self, ms: u64) {
+        self.0.borrow_mut().clock += Duration::from_millis(ms);
+    }
+    fn rates(&self) -> Vec<f32> {
+        self.0.borrow().rates.clone()
     }
 }
 
@@ -311,4 +343,119 @@ fn the_preferred_voice_is_used_only_for_its_language() {
     assert_eq!(id("zh-TW", ""), Some("hanhan"));
     assert_eq!(id("zh", ""), Some("hanhan"));
     assert_eq!(id("ko", "haruka"), None);
+}
+
+/* --------------------------------- pacing --------------------------------- */
+
+/// 15 kana: 2 s at the default 7.5 per second.
+const FIFTEEN: &str = "あいうえおかきくけこさしすせそ";
+
+#[test]
+fn speech_without_an_original_keeps_the_speed_of_the_settings() {
+    let (mut p, fake) = player();
+    fake.0.borrow_mut().rate = 1.2;
+    p.say(say("lens-1", FIFTEEN));
+    assert_eq!(fake.rates(), [1.2]);
+}
+
+#[test]
+fn a_translation_longer_than_its_original_is_spoken_faster() {
+    let (mut p, fake) = player();
+    // 2 s of speech for 1.6 s of original.
+    p.say(heard("subtitle-1", FIFTEEN, 1600));
+    assert!((fake.rates()[0] - 1.25).abs() < 0.01, "{:?}", fake.rates());
+}
+
+#[test]
+fn a_translation_shorter_than_its_original_is_not_slowed_down() {
+    let (mut p, fake) = player();
+    p.say(heard("subtitle-1", FIFTEEN, 6000));
+    assert_eq!(fake.rates(), [1.0]);
+}
+
+#[test]
+fn pacing_never_goes_past_an_audible_speed() {
+    let (mut p, fake) = player();
+    p.say(heard("subtitle-1", FIFTEEN, 300));
+    assert_eq!(fake.rates(), [pace::MAX_RATE]);
+    // A faster speed chosen in the settings is kept.
+    let (mut p, fake) = player();
+    fake.0.borrow_mut().rate = 2.0;
+    p.say(heard("subtitle-1", FIFTEEN, 300));
+    assert_eq!(fake.rates(), [2.0]);
+}
+
+#[test]
+fn speech_that_trails_catches_up() {
+    let (mut p, fake) = player();
+    p.say(heard("subtitle-1", FIFTEEN, 2400));
+    p.say(heard("subtitle-1", FIFTEEN, 2400));
+    // The first takes 5 s: the second waited well past LAG_OK.
+    fake.wait(5000);
+    fake.end();
+    p.tick();
+    let rates = fake.rates();
+    assert_eq!(rates[0], 1.0, "on time: own speed");
+    assert!(rates[1] > 1.0, "behind: faster ({rates:?})");
+}
+
+#[test]
+fn a_stale_request_gives_way_to_a_newer_one_of_its_window() {
+    let (mut p, fake) = player();
+    p.say(heard("subtitle-1", "第一文", 2000));
+    p.say(heard("subtitle-1", "第二文", 2000));
+    fake.wait(pace::STALE.as_millis() as u64 + 1000);
+    p.say(heard("subtitle-1", "第三文", 2000));
+    fake.events();
+    fake.end();
+    p.tick();
+    assert_eq!(fake.spoken(), ["第一文", "第三文"]);
+    assert!(fake
+        .events()
+        .contains(&("subtitle-1".to_string(), Event::Dropped)));
+}
+
+#[test]
+fn the_last_request_is_spoken_however_late() {
+    let (mut p, fake) = player();
+    p.say(heard("subtitle-1", "第一文", 2000));
+    p.say(heard("subtitle-1", "第二文", 2000));
+    fake.wait(pace::STALE.as_millis() as u64 + 1000);
+    fake.end();
+    p.tick();
+    assert_eq!(fake.spoken(), ["第一文", "第二文"]);
+}
+
+#[test]
+fn the_speed_of_a_voice_is_learnt_from_what_it_spoke() {
+    let (mut p, fake) = player();
+    // This voice is slower than the guess: 15 kana took 3 s at 1.0.
+    p.say(heard("subtitle-1", FIFTEEN, 6000));
+    fake.wait(3000);
+    fake.end();
+    p.tick();
+    // Next: 3 s of speech for 2 s of original = 1.5.
+    p.say(heard("subtitle-1", FIFTEEN, 2000));
+    let rates = fake.rates();
+    assert!((rates[1] - 1.5).abs() < 0.01, "{rates:?}");
+}
+
+#[test]
+fn pace_rate_gives_up_to_half_of_the_original_to_catch_up() {
+    let lag = Duration::from_millis;
+    // On time: natural / source.
+    assert!((pace::rate(1.0, 3000.0, 2000, lag(0)) - 1.5).abs() < 0.001);
+    // 2 s behind: 0.5 s beyond LAG_OK, half of it made up now.
+    assert!((pace::rate(1.0, 2800.0, 2000, lag(2000)) - 1.6).abs() < 0.001);
+    // Far behind: the budget stops at half of the original.
+    assert!((pace::rate(1.0, 1500.0, 2000, lag(60_000)) - 1.5).abs() < 0.001);
+}
+
+#[test]
+fn a_measurement_that_makes_no_sense_is_ignored() {
+    let mut speeds = pace::Speeds::default();
+    // Too short to measure, and an engine that stalled for a minute.
+    speeds.learn("haruka", "ja", 15, 1.0, Duration::from_millis(100));
+    speeds.learn("haruka", "ja", 15, 1.0, Duration::from_secs(60));
+    assert_eq!(speeds.speed("haruka", "ja"), pace::default_speed("ja"));
 }

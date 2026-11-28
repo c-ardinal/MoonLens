@@ -9,6 +9,8 @@
 //! thread, started on first use, speaks the requests in turn
 //! ([`Player`]). The backlog is short: speech that falls behind the
 //! screen drops what waited longest instead of trailing further.
+//! Requests that translate speech are spoken at the pace of their
+//! original and catch up when speech trails ([`pace`]).
 //!
 //! Speech is never played into a capture that would hear it: while a
 //! subtitle window listens to the whole PC or the microphone, requests are refused
@@ -16,12 +18,13 @@
 //! translate what MoonLens says, and read that aloud in turn.
 
 mod command;
+pub mod pace;
 #[cfg(windows)]
 mod winrt;
 
 use std::collections::VecDeque;
 use std::sync::mpsc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use parking_lot::Mutex;
@@ -73,6 +76,10 @@ pub struct Utterance {
     pub text: String,
     /// Language of `text` ("ja", "zh-TW").
     pub lang: String,
+    /// Milliseconds the original speech of `text` lasted (subtitle
+    /// windows): the speed follows it ([`pace`]). `None`: the speed of
+    /// the settings.
+    pub source_ms: Option<u64>,
 }
 
 /// Why a request was not spoken.
@@ -119,6 +126,7 @@ pub trait Host {
     /// Speech would be heard by a capture of MoonLens' own.
     fn blocked(&self) -> bool;
     fn emit(&self, owner: &str, event: Event);
+    fn now(&self) -> Instant;
 }
 
 /// Text as it is spoken: one line, at most [`MAX_CHARS`] characters.
@@ -131,7 +139,7 @@ pub fn prepare(text: &str) -> Option<String> {
     Some(line.chars().take(MAX_CHARS).collect())
 }
 
-fn primary(tag: &str) -> String {
+pub(crate) fn primary(tag: &str) -> String {
     tag.split(['-', '_'])
         .next()
         .unwrap_or_default()
@@ -165,12 +173,29 @@ pub fn pick_voice<'a>(voices: &'a [Voice], lang: &str, preferred: &str) -> Optio
         .or_else(|| voices.iter().find(same_language))
 }
 
+/// A request waiting to be spoken.
+struct Queued {
+    utterance: Utterance,
+    /// When it was asked for.
+    asked: Instant,
+}
+
+/// The request being spoken.
+struct Current {
+    utterance: Utterance,
+    voice: String,
+    rate: f32,
+    started: Instant,
+}
+
 /// The queue of requests and the one being spoken.
 pub struct Player<E, H> {
     engine: E,
     host: H,
-    pending: VecDeque<Utterance>,
-    current: Option<Utterance>,
+    pending: VecDeque<Queued>,
+    current: Option<Current>,
+    /// How fast each voice speaks, learnt from what it spoke.
+    speeds: pace::Speeds,
     /// Asked of the engine once: installed voices rarely change, and
     /// listing them may start a process.
     voices: Option<Vec<Voice>>,
@@ -183,6 +208,7 @@ impl<E: Engine, H: Host> Player<E, H> {
             host,
             pending: VecDeque::new(),
             current: None,
+            speeds: pace::Speeds::default(),
             voices: None,
         }
     }
@@ -210,10 +236,13 @@ impl<E: Engine, H: Host> Player<E, H> {
             self.skip(&utterance, Skip::Blocked);
             return;
         }
-        self.pending.push_back(Utterance { text, ..utterance });
+        self.pending.push_back(Queued {
+            utterance: Utterance { text, ..utterance },
+            asked: self.host.now(),
+        });
         while self.pending.len() > MAX_PENDING {
             if let Some(old) = self.pending.pop_front() {
-                self.host.emit(&old.owner, Event::Dropped);
+                self.host.emit(&old.utterance.owner, Event::Dropped);
             }
         }
         self.advance();
@@ -221,8 +250,12 @@ impl<E: Engine, H: Host> Player<E, H> {
 
     /// Drop what `owner` asked for, spoken or waiting.
     pub fn cancel(&mut self, owner: &str) {
-        self.pending.retain(|u| u.owner != owner);
-        if self.current.as_ref().is_some_and(|u| u.owner == owner) {
+        self.pending.retain(|q| q.utterance.owner != owner);
+        if self
+            .current
+            .as_ref()
+            .is_some_and(|c| c.utterance.owner == owner)
+        {
             self.halt();
             self.advance();
         }
@@ -231,8 +264,8 @@ impl<E: Engine, H: Host> Player<E, H> {
     /// Called every [`POLL`] while not idle.
     pub fn tick(&mut self) {
         if self.host.blocked() {
-            let waiting: Vec<Utterance> = self.pending.drain(..).collect();
-            let spoken = self.current.clone();
+            let waiting: Vec<Utterance> = self.pending.drain(..).map(|q| q.utterance).collect();
+            let spoken = self.current.as_ref().map(|c| c.utterance.clone());
             self.halt();
             let mut told: Vec<&str> = Vec::new();
             for u in spoken.iter().chain(&waiting) {
@@ -244,6 +277,7 @@ impl<E: Engine, H: Host> Player<E, H> {
             return;
         }
         if self.current.is_some() && !self.engine.playing() {
+            self.learn();
             self.finish();
         }
         self.advance();
@@ -254,10 +288,46 @@ impl<E: Engine, H: Host> Player<E, H> {
         self.host.emit(&u.owner, Event::Skipped { reason, lang });
     }
 
-    fn finish(&mut self) {
-        if let Some(u) = self.current.take() {
-            self.host.emit(&u.owner, Event::Ended);
+    /// The current request was spoken to its end: how long it took
+    /// tells how fast its voice speaks.
+    fn learn(&mut self) {
+        let Some(c) = &self.current else { return };
+        if c.utterance.source_ms.is_none() {
+            return;
         }
+        let took = self.host.now().saturating_duration_since(c.started);
+        let units = pace::units(&c.utterance.text);
+        self.speeds
+            .learn(&c.voice, &c.utterance.lang, units, c.rate, took);
+    }
+
+    fn finish(&mut self) {
+        if let Some(c) = self.current.take() {
+            self.host.emit(&c.utterance.owner, Event::Ended);
+        }
+    }
+
+    /// Speed for `u`, spoken by `voice` after waiting since `asked`.
+    fn rate_for(&self, u: &Utterance, voice: &Voice, base: f32, asked: Instant) -> f32 {
+        let Some(source_ms) = u.source_ms else {
+            return base;
+        };
+        let natural = self
+            .speeds
+            .natural_ms(&voice.id, &u.lang, pace::units(&u.text));
+        let lag = self.host.now().saturating_duration_since(asked);
+        pace::rate(base, natural, source_ms, lag)
+    }
+
+    /// `q` waited so long that a newer request of its window should be
+    /// spoken instead.
+    fn stale(&self, q: &Queued) -> bool {
+        q.utterance.source_ms.is_some()
+            && self.host.now().saturating_duration_since(q.asked) > pace::STALE
+            && self
+                .pending
+                .iter()
+                .any(|n| n.utterance.owner == q.utterance.owner)
     }
 
     fn halt(&mut self) {
@@ -269,10 +339,18 @@ impl<E: Engine, H: Host> Player<E, H> {
 
     fn advance(&mut self) {
         while self.current.is_none() {
-            let Some(u) = self.pending.pop_front() else {
+            let Some(q) = self.pending.pop_front() else {
                 return;
             };
-            let tuning = self.host.tuning();
+            if self.stale(&q) {
+                self.host.emit(&q.utterance.owner, Event::Dropped);
+                continue;
+            }
+            let Queued {
+                utterance: u,
+                asked,
+            } = q;
+            let mut tuning = self.host.tuning();
             if self.voices.is_none() {
                 self.voices = Some(self.engine.voices());
             }
@@ -283,10 +361,16 @@ impl<E: Engine, H: Host> Player<E, H> {
                 self.skip(&u, Skip::NoVoice);
                 continue;
             };
+            tuning.rate = self.rate_for(&u, &voice, tuning.rate, asked);
             match self.engine.start(&u.text, &voice, &tuning) {
                 Ok(()) => {
                     self.host.emit(&u.owner, Event::Started);
-                    self.current = Some(u);
+                    self.current = Some(Current {
+                        utterance: u,
+                        voice: voice.id,
+                        rate: tuning.rate,
+                        started: self.host.now(),
+                    });
                 }
                 Err(e) => {
                     tracing::warn!("speech: {} ({}) failed: {e:#}", voice.name, voice.lang);
@@ -327,6 +411,10 @@ impl Host for AppHost {
 
     fn emit(&self, owner: &str, event: Event) {
         let _ = self.0.emit_to(owner, EVENT, event);
+    }
+
+    fn now(&self) -> Instant {
+        Instant::now()
     }
 }
 
@@ -416,11 +504,13 @@ fn run<E: Engine, H: Host>(mut player: Player<E, H>, rx: mpsc::Receiver<Command>
 }
 
 /// Speak `text` (in the language `lang`) for the calling window. What
-/// becomes of it arrives as [`EVENT`].
+/// becomes of it arrives as [`EVENT`]. `source_ms`: length of the
+/// original speech `text` translates (see [`Utterance::source_ms`]).
 #[tauri::command]
 pub async fn speak(
     text: String,
     lang: String,
+    source_ms: Option<u64>,
     window: WebviewWindow,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
@@ -428,6 +518,7 @@ pub async fn speak(
         owner: window.label().to_string(),
         text,
         lang,
+        source_ms,
     });
     Ok(())
 }

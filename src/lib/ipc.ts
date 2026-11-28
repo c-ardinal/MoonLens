@@ -418,7 +418,16 @@ export type SubtitleEvent =
   | { kind: 'stopped' }
   | { kind: 'status'; phase: SubtitlePhase }
   /** `speaker`：対面会話の話者（訳文は相手側の言語）。字幕では省略。`language`：訳文の言語。 */
-  | { kind: 'chunk'; id: number; original: string; translated: string; speaker?: Speaker; language?: string }
+  /** `duration_ms`：認識した音声の長さ。 */
+  | {
+      kind: 'chunk';
+      id: number;
+      original: string;
+      translated: string;
+      duration_ms?: number;
+      speaker?: Speaker;
+      language?: string;
+    }
   | {
       /** 文単位の再翻訳結果。`replaces` の各行を 1 行（＋次文の冒頭 `rest`）へ置換。`original` が空の場合は遮断済みの文：行の除去のみ。 */
       kind: 'revised';
@@ -861,7 +870,9 @@ export const setStreamPaint = (label: string, items: StreamItem[]) =>
 
 // ---- 訳文の読上（speech/mod.rs、型は `$lib/speech`） ----
 /** 呼出元ウィンドウの依頼として読上。経過は {@link onSpeech} で受信。 */
-export const speak = (text: string, lang: string) => safeInvoke<void>('speak', { text, lang });
+/** `sourceMs`：訳文の元の発話の長さ（音声翻訳）。指定時は話速へ追随（`speech/pace.rs`）。 */
+export const speak = (text: string, lang: string, sourceMs?: number) =>
+  safeInvoke<void>('speak', { text, lang, sourceMs: sourceMs ?? null });
 /** 呼出元ウィンドウの依頼分（読上中・待機中）を停止。 */
 export const stopSpeaking = () => safeInvoke<void>('stop_speaking');
 export const listVoices = () =>
