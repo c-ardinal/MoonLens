@@ -53,6 +53,7 @@ export async function serve(root) {
 /** IPC モック：invoke は表引き、listen は window.__emit で発火可能。 */
 export const init = (label, mock, extra = '{}') => `(() => {
   const M = Object.assign(${mock}, ${extra});
+  window.__mock = M;
   const cbs = {}; let n = 1; const listeners = [];
   window.__TAURI_INTERNALS__ = {
     metadata: { currentWindow: { label: '${label}' }, currentWebview: { label: '${label}', windowLabel: '${label}' } },
@@ -191,6 +192,8 @@ export async function walkMain(browser, url, { textSize = 'medium', width = 1280
   pg = await open('/file/');
   await reach('file-running', async () => { await pg.evaluate((updates) => updates.forEach((u) => window.__emit('moonlens://file-subtitle', u)), FILE_UPDATES); await pg.locator('ol li').nth(FILE_UPDATES.length - 1).waitFor({ timeout: 2000 }); }); await visit(pg, 'file-running');
   await reach('file-done', async () => { await pg.evaluate((u) => window.__emit('moonlens://file-subtitle', u), { status: { ...FILE_STATUS, phase: 'done', done_ms: FILE_STATUS.duration_ms, ready_ms: FILE_STATUS.duration_ms }, cue: null }); await pg.getByRole('button', { name: l('file-subtitle:save_srt') }).waitFor({ timeout: 2000 }); }); await visit(pg, 'file-done');
+  await reach('file-ffmpeg', async () => { await pg.evaluate(() => { window.__mock.ffmpeg_status = { path: null, check: null }; }); await pg.getByRole('button', { name: l('file-burn:start') }).click({ timeout: 2000 }); await pg.getByText(l('file-burn:guide_place')).waitFor({ timeout: 2000 }); }); await visit(pg, 'file-ffmpeg');
+  await pg.mouse.move(0, 0); await pg.evaluate(() => { window.__mock.ffmpeg_status = { path: 'C:\\Tools\\ffmpeg\\bin\\ffmpeg.exe', check: 'ok' }; });
   await reach('file-failed', async () => { await pg.evaluate((u) => window.__emit('moonlens://file-subtitle', u), { status: { ...FILE_STATUS, phase: 'failed', error: l('subtitle:speech_recognition_model_not_downloaded') }, cue: null }); await pg.getByRole('alert').waitFor({ timeout: 2000 }); }); await visit(pg, 'file-failed');
   await pg.close();
   pg = await open('/history/'); await visit(pg, 'history');

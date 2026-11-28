@@ -8,6 +8,7 @@
 //! and translated. What it keeps of a window afterwards is its text.
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -24,6 +25,7 @@ use crate::settings::schema::SubtitleSettings;
 use crate::settings::SettingsStore;
 use crate::storage::{Storage, SubtitleLine};
 use crate::subtitle::{is_silent, SubtitleEvent};
+use crate::subtitle_burn::{self, BurnError};
 use crate::subtitle_filter::StockFilter;
 use crate::subtitle_record::{self, ExportContent, ExportFormat, Recorder};
 use crate::tr;
@@ -491,6 +493,8 @@ pub struct FileSubtitleService {
     pipeline: Arc<Pipeline>,
     storage: Arc<Storage>,
     inner: Arc<Mutex<Inner>>,
+    /// Stop flag of the running burn-in, if one runs.
+    burn: Arc<Mutex<Option<Arc<AtomicBool>>>>,
 }
 
 #[derive(Default)]
@@ -517,6 +521,7 @@ impl FileSubtitleService {
             pipeline,
             storage,
             inner: Default::default(),
+            burn: Default::default(),
         }
     }
 
@@ -699,6 +704,138 @@ impl FileSubtitleService {
         }
     }
 }
+
+impl FileSubtitleService {
+    /// Name offered for the burnt-in copy of the media file and its
+    /// folder (`talk.ja-subtitled.mp4` for `talk.mp4`).
+    pub fn burn_target(&self) -> (Option<PathBuf>, String) {
+        let inner = self.inner.lock();
+        let stem = inner
+            .path
+            .file_stem()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_default();
+        let ext = subtitle_burn::output_extension(&inner.path);
+        (
+            inner.path.parent().map(Path::to_path_buf),
+            format!("{stem}.{}-subtitled.{ext}", inner.target_language),
+        )
+    }
+
+    /// Burn the subtitles so far into a copy of the media file at
+    /// `output`, on a thread of its own. `notify` hears the progress and
+    /// the end.
+    pub fn start_burn(
+        &self,
+        ffmpeg: PathBuf,
+        output: PathBuf,
+        content: ExportContent,
+        notify: impl Fn(BurnUpdate) + Send + 'static,
+    ) -> Result<(), String> {
+        let (input, lines, language) = {
+            let inner = self.inner.lock();
+            if inner.status.phase == Phase::Running {
+                return Err(tr!("file-subtitle:already_running"));
+            }
+            (
+                inner.path.clone(),
+                inner.lines.clone(),
+                inner.target_language.clone(),
+            )
+        };
+        let cancel = Arc::new(AtomicBool::new(false));
+        {
+            let mut burn = self.burn.lock();
+            if burn.is_some() {
+                return Err(tr!("file-burn:already_running"));
+            }
+            *burn = Some(cancel.clone());
+        }
+        let slot = self.burn.clone();
+        let file = output
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_default();
+        std::thread::spawn(move || {
+            let update = |phase, done_ms, error| BurnUpdate {
+                phase,
+                done_ms,
+                file: file.clone(),
+                error,
+            };
+            notify(update(BurnPhase::Running, 0, None));
+            let job = subtitle_burn::Job {
+                ffmpeg: &ffmpeg,
+                input: &input,
+                output: &output,
+                lines: &lines,
+                content,
+                language: &language,
+                encoder: None,
+            };
+            let result = subtitle_burn::burn(
+                &job,
+                |ms| notify(update(BurnPhase::Running, ms, None)),
+                &cancel,
+            );
+            *slot.lock() = None;
+            notify(match result {
+                Ok(report) => {
+                    tracing::info!(
+                        "burn-in: {}x{} with {} in {} ms",
+                        report.width,
+                        report.height,
+                        report.encoder.codec(),
+                        report.elapsed_ms
+                    );
+                    update(BurnPhase::Done, report.duration_ms.unwrap_or(0), None)
+                }
+                Err(BurnError::Cancelled) => update(BurnPhase::Cancelled, 0, None),
+                Err(e) => {
+                    tracing::warn!("burn-in failed: {e}");
+                    let message = match e {
+                        BurnError::NoVideo => tr!("file-burn:no_video"),
+                        BurnError::NoEncoder => tr!("file-burn:no_encoder"),
+                        BurnError::SameAsSource => tr!("file-burn:same_as_source"),
+                        e => tr!("file-burn:failed", e = e),
+                    };
+                    update(BurnPhase::Failed, 0, Some(message))
+                }
+            });
+        });
+        Ok(())
+    }
+
+    /// Stop the running burn-in; its partial file is removed.
+    pub fn cancel_burn(&self) {
+        if let Some(cancel) = self.burn.lock().as_ref() {
+            cancel.store(true, Ordering::Relaxed);
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BurnPhase {
+    Running,
+    Done,
+    Cancelled,
+    Failed,
+}
+
+/// Progress of a burn-in, as the page shows it.
+#[derive(Debug, Clone, Serialize)]
+pub struct BurnUpdate {
+    pub phase: BurnPhase,
+    /// Video time done so far.
+    pub done_ms: u64,
+    /// Name of the output file.
+    pub file: String,
+    pub error: Option<String>,
+}
+
+/// Event that carries a [`BurnUpdate`] to the main window.
+pub const BURN_EVENT: &str = "moonlens://file-burn";
 
 pub struct Export {
     pub text: String,

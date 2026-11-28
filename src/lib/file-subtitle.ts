@@ -84,3 +84,13 @@ export const PHASE_LABELS: Record<Exclude<FileSubtitlePhase, 'idle'>, string> = 
   cancelled: 'file-subtitle:phase_cancelled',
   failed: 'file-subtitle:phase_failed'
 };
+
+/** 字幕合成の進行（`file_subtitle::BurnUpdate`）。 */
+export interface FileBurnUpdate {
+  phase: 'running' | 'done' | 'cancelled' | 'failed';
+  /** 処理済みの映像の位置。 */
+  done_ms: number;
+  /** 出力ファイル名。 */
+  file: string;
+  error: string | null;
+}

@@ -43,7 +43,9 @@ export type Field =
   /** Editable list of phrases (rendered by PhraseList). */
   | { kind: 'phrases'; path: string; label: string; help?: string; placeholder?: string }
   /** Glossaries of single applications (rendered by AppGlossaries). */
-  | { kind: 'app-glossaries'; path: string; label: string; help?: string };
+  | { kind: 'app-glossaries'; path: string; label: string; help?: string }
+  /** ffmpeg executable chosen by the user (rendered by FfmpegPathInput). */
+  | { kind: 'ffmpeg'; path: string; label: string; help?: string };
 
 export type Section =
   | { id: string; title: string; description?: string; fields: Field[] }
@@ -285,6 +287,12 @@ export const SECTIONS: Section[] = [
         label: 'settings:blocked_phrases_additions',
         help: 'settings:additions_to_the_bundled_list_blocks_on',
         placeholder: 'settings:e_g_thank_you'
+      },
+      {
+        kind: 'ffmpeg',
+        path: 'subtitle.ffmpeg_path',
+        label: 'settings:ffmpeg_path',
+        help: 'settings:ffmpeg_path_help'
       }
     ]
   },

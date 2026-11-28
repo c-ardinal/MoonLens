@@ -5,6 +5,7 @@
   import HotkeyInput from './HotkeyInput.svelte';
   import TriggerInput from './TriggerInput.svelte';
   import VoiceSelect from './VoiceSelect.svelte';
+  import FfmpegPathInput from './FfmpegPathInput.svelte';
 
   interface Props {
     field: Field;
@@ -148,6 +149,8 @@
       <TriggerInput value={value ?? ''} label={t(field.label)} {onChange} />
     {:else if field.kind === 'voice'}
       <VoiceSelect {id} value={value ?? ''} {language} {onChange} />
+    {:else if field.kind === 'ffmpeg'}
+      <FfmpegPathInput {id} value={value ?? ''} {onChange} />
     {/if}
     <button
       type="button"

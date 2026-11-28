@@ -1,0 +1,1 @@
+- File translation: after subtitles are made for a video, export a new copy of it with the subtitles (translation, original or both) drawn at the bottom. Needs ffmpeg with libass on the PATH, or chosen under Settings → 音声翻訳 → ffmpeg の場所. Uses a GPU encoder when one works, and memory stays flat whatever the length.

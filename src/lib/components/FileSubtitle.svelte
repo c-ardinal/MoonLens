@@ -5,11 +5,19 @@
   import MediaPlayer from '$lib/components/MediaPlayer.svelte';
   import { goto } from '$app/navigation';
   import { Captions, FileText, FolderOpen, Square } from 'lucide-svelte';
-  import { exportFileSubtitle, type SubtitleExportContent, type SubtitleExportFormat } from '$lib/ipc';
+  import {
+    burnFileSubtitle,
+    cancelBurnFileSubtitle,
+    exportFileSubtitle,
+    onFileBurn,
+    type SubtitleExportContent,
+    type SubtitleExportFormat
+  } from '$lib/ipc';
   import {
     PHASE_LABELS,
     positionLabel,
     progressRatio,
+    type FileBurnUpdate,
     type FileSubtitleCue,
     type FileSubtitleJob
   } from '$lib/file-subtitle';
@@ -17,6 +25,7 @@
   import { cueLines } from '$lib/media-player';
   import { errorText, type UiError } from '$lib/errors';
   import { notify, notifyError } from '$lib/toast.svelte';
+  import BurnButton from '$lib/components/BurnButton.svelte';
 
   let {
     status,
@@ -82,6 +91,29 @@
     ['both', 'subtitle-record-detail:both']
   ];
 
+  // 字幕合成：保存先の選択後、本体側で逐次処理
+  let burn = $state<FileBurnUpdate | null>(null);
+  const burning = $derived(burn?.phase === 'running');
+  $effect(() => {
+    const off = onFileBurn((update) => {
+      burn = update;
+      if (update.phase === 'done') notify(t('file-subtitle:saved_file', { file: update.file }));
+      if (update.phase === 'failed') notifyError(update.error ?? '');
+    });
+    return () => void off.then((f) => f());
+  });
+  const burnPercent = $derived(
+    burn && status.duration_ms ? Math.min(100, Math.round((burn.done_ms / status.duration_ms) * 100)) : null
+  );
+
+  async function startBurn() {
+    try {
+      await burnFileSubtitle(content);
+    } catch (e) {
+      notifyError(t('file-burn:failed', { e: errorText(e) }));
+    }
+  }
+
   async function save(format: SubtitleExportFormat) {
     try {
       const path = await exportFileSubtitle(format, content);
@@ -145,6 +177,13 @@
           <button class="sbtn" onclick={() => save('txt')} disabled={status.cues === 0}>
             <FileText class="h-3.5 w-3.5" />{t('file-subtitle:save_text')}
           </button>
+          {#if burning}
+            <button class="sbtn" onclick={() => cancelBurnFileSubtitle()}>
+              <Square class="h-3.5 w-3.5" />{t('file-burn:cancel', { n: burnPercent ?? 0 })}
+            </button>
+          {:else}
+            <BurnButton disabled={status.cues === 0} onstart={startBurn} />
+          {/if}
         {/if}
       </div>
     </div>
