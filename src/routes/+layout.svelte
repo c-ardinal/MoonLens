@@ -21,7 +21,7 @@
 
   // Overlay-type windows (selector, overlay, subtitle, lens) draw their own
   // chrome; only the main window's pages get the menu and palette.
-  const MAIN_ROUTES = ['/', '/translate/', '/image/', '/file/', '/settings/', '/history/', '/setup/'];
+  const MAIN_ROUTES = ['/', '/translate/', '/file/', '/settings/', '/history/', '/setup/'];
   const isMain = $derived(MAIN_ROUTES.includes(page.url.pathname));
   // ドット絵外観はメインウィンドウ限定。訳文表示のウィンドウは原文準拠。
   $effect(() => applyPixelSkin(isMain));

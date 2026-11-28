@@ -181,6 +181,17 @@ export function sourceLabel(view: Pick<SubtitleView, 'source' | 'device'>): stri
 export const sameSource = (a: AudioSource, b: AudioSource): boolean =>
   a.kind === 'app' ? b.kind === 'app' && a.pid === b.pid : a.kind === b.kind;
 
+/**
+ * 音源変更に伴う画面切替の案内文。対面会話（マイク）と字幕表示の間の変更のみ対象、
+ * 同一画面内の変更（PC 全体とアプリの間）は null。
+ */
+export function modeSwitchNotice(from: AudioSource, to: AudioSource): string | null {
+  const before = from.kind === 'microphone';
+  const after = to.kind === 'microphone';
+  if (before === after) return null;
+  return after ? t('subtitle:switched_to_conversation_view') : t('subtitle:switched_to_subtitle_view');
+}
+
 /** 音源メニューの行の識別子。 */
 export const sourceKey = (source: AudioSource): string | number =>
   source.kind === 'app' ? source.pid : source.kind;
@@ -234,8 +245,8 @@ export function sourceOptions(
     },
     {
       source: { kind: 'microphone' },
-      label: t('subtitle:microphone'),
-      detail: t('subtitle:face_to_face_conversation_both_ways'),
+      label: t('subtitle:conversation'),
+      detail: t('subtitle:microphone_switches_to_conversation_view'),
       playing: null,
       selected: current.kind === 'microphone'
     },

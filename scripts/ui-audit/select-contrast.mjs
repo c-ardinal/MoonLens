@@ -3,7 +3,7 @@
 //
 // 選択肢の一覧は OS・WebView が描画し、背景色の指定なしでは配色設定（明／暗）の既定色を使用。
 // 文字色のみの指定は暗色設定で判読不可となるため、明・暗の両設定で比 4.5 以上を要求。
-import { MOCK, args, init, launch, serve, wait } from './harness.mjs';
+import { MOCK, args, init, launch, pasteImage, serve, wait } from './harness.mjs';
 
 const { rest } = args();
 const site = await serve(rest[0] ?? 'build');
@@ -14,7 +14,8 @@ const PAGES = [
   { label: 'lens-1', path: '/lens/?id=lens-1', width: 700, height: 320 },
   { label: 'lens-1-text', path: '/lens/text/?id=lens-1', width: 420, height: 300 },
   { label: 'main', path: '/translate/', width: 1280, height: 800 },
-  { label: 'main', path: '/image/', width: 1280, height: 800 },
+  // ファイル翻訳：訳文言語の選択欄は画像の表示中のみ
+  { label: 'main', path: '/file/', width: 1280, height: 800, prepare: async (pg) => { await pasteImage(pg); await wait(pg, 600); } },
   { label: 'main', path: '/settings/', width: 1280, height: 800 }
 ];
 const EXTRA = JSON.stringify({ list_lens_windows: [{ id: 'lens-1', target_language: 'ja' }], refresh_lens: true });
@@ -65,6 +66,7 @@ for (const scheme of ['dark', 'light']) {
     const pg = await ctx.newPage();
     await pg.goto(site.url(p.path));
     await wait(pg, 600);
+    await p.prepare?.(pg);
     const rows = await pg.evaluate(measure);
     if (rows.length === 0) { console.log(`選択欄なし（状態へ未到達）：${p.path}`); bad += 1; }
     total += rows.length;

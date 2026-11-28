@@ -45,7 +45,7 @@
   onDestroy(() => unlisten?.());
 
   /** 翻訳・画像翻訳はホーム配下の機能画面：ホームを選択状態で表示。 */
-  const HOME_PATHS = ['/', '/translate/', '/image/', '/file/'];
+  const HOME_PATHS = ['/', '/translate/', '/file/'];
   const active = (href: string) =>
     href === '/' ? HOME_PATHS.includes(page.url.pathname) : page.url.pathname.startsWith(href);
   /** 選択中タブの位置（該当なしは -1）：括弧カーソルの移動先。 */

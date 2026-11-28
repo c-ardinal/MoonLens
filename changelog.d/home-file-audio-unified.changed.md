@@ -1,0 +1,2 @@
+- Home now has four entries (Window, File, Text, Audio). "File" is one entry for image translation and file subtitles: the file type decides (PNG, JPEG and WebP are translated as images; video and audio get subtitles). Pasting an image with Ctrl+V works on the same screen, and image translation stays available while subtitles are being made.
+- Face-to-face conversation is chosen in the audio source menu of the audio translation window ("Conversation"), which now says that the view changes and shows where each speaker's lines appear after the switch.

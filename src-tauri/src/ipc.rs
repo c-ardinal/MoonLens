@@ -1180,23 +1180,25 @@ pub async fn export_subtitle_record(
     Ok(Some(path.to_string_lossy().to_string()))
 }
 
-/// Extensions offered by the file dialog of file subtitles. Other
-/// files can still be dropped: the content decides, not the name.
-const MEDIA_EXTENSIONS: &[&str] = &[
-    "mp4", "m4v", "mov", "mkv", "webm", "mp3", "m4a", "aac", "wav", "flac", "ogg", "oga", "aiff",
-    "aif", "caf",
+/// Extensions offered by the file dialog of file translation: images
+/// (image translation) first, then video and audio (file subtitles).
+/// Other files can still be dropped: a non-image goes to the subtitle
+/// decoder, where the content decides, not the name.
+const INPUT_EXTENSIONS: &[&str] = &[
+    "png", "jpg", "jpeg", "webp", "mp4", "m4v", "mov", "mkv", "webm", "mp3", "m4a", "aac", "wav",
+    "flac", "ogg", "oga", "aiff", "aif", "caf",
 ];
 
-/// 字幕生成の対象ファイルを選択。取消は `None`。
+/// ファイル翻訳の対象ファイル（画像・動画・音声）を選択。取消は `None`。
 #[tauri::command]
-pub async fn pick_media_file(app: AppHandle) -> Result<Option<String>, String> {
+pub async fn pick_input_file(app: AppHandle) -> Result<Option<String>, String> {
     use tauri_plugin_dialog::DialogExt;
     let dialog = app.dialog().clone();
-    let label = crate::tr!("file-subtitle:video_and_audio_files");
+    let label = crate::tr!("file:image_video_and_audio_files");
     let chosen = tokio::task::spawn_blocking(move || {
         dialog
             .file()
-            .add_filter(label, MEDIA_EXTENSIONS)
+            .add_filter(label, INPUT_EXTENSIONS)
             .blocking_pick_file()
     })
     .await

@@ -126,7 +126,7 @@
     }
   }
 
-  /** 魔法陣の 5 機能。順序は数字キー（1〜5）と一致。 */
+  /** 魔法陣の 4 機能。順序は数字キー（1〜4）と一致。 */
   const functions = $derived([
     {
       label: t('common:window'),
@@ -137,12 +137,12 @@
       run: () => openLens()
     },
     {
-      label: t('common:image'),
-      title: t('common:image_translation'),
-      icon: 'image',
-      desc: t('home:translates_text_in_images_drop_or_paste'),
+      label: t('common:file'),
+      title: t('common:file_translation'),
+      icon: 'file',
+      desc: t('home:translates_image_video_and_audio_files'),
       hotkey: '',
-      run: () => goto('/image/')
+      run: () => goto('/file/')
     },
     {
       label: t('common:text'),
@@ -153,18 +153,10 @@
       run: () => goto('/translate/')
     },
     {
-      label: t('common:file'),
-      title: t('common:file_subtitles'),
-      icon: 'film',
-      desc: t('home:subtitles_for_video_and_audio_files'),
-      hotkey: '',
-      run: () => goto('/file/')
-    },
-    {
       label: t('common:audio'),
       title: t('common:audio_translation'),
       icon: 'mic',
-      desc: subtitleRunning ? t('home:showing_subtitles_enter_to_stop') : t('common:subtitles_for_system_audio_translated_live'),
+      desc: subtitleRunning ? t('home:showing_subtitles_enter_to_stop') : t('home:subtitles_for_pc_audio_and_conversation'),
       hotkey: key('toggle_subtitle'),
       // 施錠なし：外部 whisper.cpp サーバー・ASR プラグインも有効なため、可否判定は本体側
       run: toggleSubtitle
