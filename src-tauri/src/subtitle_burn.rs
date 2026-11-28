@@ -1,4 +1,4 @@
-//! Subtitles burnt into a copy of the video (prototype).
+//! Subtitles burnt into a copy of the video.
 //!
 //! MoonLens hands the work to an `ffmpeg` executable: it decodes the
 //! video, draws the subtitles with libass and encodes the result frame
@@ -138,9 +138,15 @@ fn target_kbps(probe: &Probe) -> u32 {
     probe.video_kbps.unwrap_or(guess).clamp(1_000, 80_000)
 }
 
-/// Where the ffmpeg executable is: `MOONLENS_FFMPEG`, next to
-/// MoonLens (also in `tools/`), then the `PATH`.
-pub fn locate_ffmpeg() -> Option<PathBuf> {
+/// Where the ffmpeg executable is: `configured` (the setting) when it
+/// names a file, else `MOONLENS_FFMPEG`, next to MoonLens (also in
+/// `tools/`), then the `PATH`. MoonLens does not ship ffmpeg: the user
+/// places it.
+pub fn locate_ffmpeg(configured: &str) -> Option<PathBuf> {
+    let configured = configured.trim();
+    if !configured.is_empty() && Path::new(configured).is_file() {
+        return Some(PathBuf::from(configured));
+    }
     let name = if cfg!(windows) {
         "ffmpeg.exe"
     } else {
@@ -163,6 +169,38 @@ pub fn locate_ffmpeg() -> Option<PathBuf> {
     std::env::split_paths(&path)
         .map(|d| d.join(name))
         .find(|p| p.is_file())
+}
+
+/// Whether `path` is an ffmpeg that can burn subtitles.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FfmpegCheck {
+    Ok,
+    /// Does not run, or is not ffmpeg.
+    NotFfmpeg,
+    /// ffmpeg built without libass (no `subtitles` filter).
+    NoLibass,
+}
+
+pub fn check_ffmpeg(path: &Path) -> FfmpegCheck {
+    let Ok(out) = command(path)
+        .args(["-hide_banner", "-filters"])
+        .stderr(Stdio::null())
+        .output()
+    else {
+        return FfmpegCheck::NotFfmpeg;
+    };
+    let list = String::from_utf8_lossy(&out.stdout);
+    if !out.status.success() || !list.contains("Filters:") {
+        FfmpegCheck::NotFfmpeg
+    } else if list
+        .lines()
+        .any(|l| l.split_whitespace().nth(1) == Some("subtitles"))
+    {
+        FfmpegCheck::Ok
+    } else {
+        FfmpegCheck::NoLibass
+    }
 }
 
 fn command(ffmpeg: &Path) -> Command {
@@ -659,7 +697,7 @@ mod tests {
     /// a short clip comes out with the subtitles drawn on its lower part.
     #[test]
     fn burns_subtitles_with_real_ffmpeg() {
-        let Some(ffmpeg) = locate_ffmpeg() else {
+        let Some(ffmpeg) = locate_ffmpeg("") else {
             eprintln!("no ffmpeg: skipped");
             return;
         };
@@ -729,6 +767,8 @@ mod tests {
         };
         assert!(gray(0) < 40, "top {}", gray(0));
         assert!(gray(130) > 200, "bottom {}", gray(130));
+        assert_eq!(check_ffmpeg(&ffmpeg), FfmpegCheck::Ok);
+        assert_eq!(check_ffmpeg(&input), FfmpegCheck::NotFfmpeg);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }

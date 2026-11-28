@@ -1,5 +1,5 @@
 //! Burn subtitles into a copy of a video, as the app does, and print
-//! how long it took (prototype measurement tool).
+//! how long it took (measurement tool).
 //!
 //! ```sh
 //! cargo run --release --example burn_subtitle -- in.mp4 --srt in.ja.srt [--out out.mp4]
@@ -106,7 +106,7 @@ fn main() -> anyhow::Result<()> {
         }
     }
     let input = input.expect("usage: burn_subtitle <video> (--srt <file> | --synthetic)");
-    let ffmpeg = subtitle_burn::locate_ffmpeg().ok_or_else(|| anyhow::anyhow!("no ffmpeg"))?;
+    let ffmpeg = subtitle_burn::locate_ffmpeg("").ok_or_else(|| anyhow::anyhow!("no ffmpeg"))?;
     let probe = subtitle_burn::probe(&ffmpeg, &input)?;
     let lines = match (&srt, synth) {
         (Some(p), _) => parse_srt(&std::fs::read_to_string(p)?),

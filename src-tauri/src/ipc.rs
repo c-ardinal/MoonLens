@@ -1297,7 +1297,73 @@ pub async fn export_file_subtitle(
     Ok(Some(path.to_string_lossy().to_string()))
 }
 
-/// 生成済みの字幕を動画へ焼込み、新規ファイルとして保存（試作）。
+/// 字幕合成用の ffmpeg の状態（利用者が配置、MoonLens は同梱・取得しない）。
+#[derive(serde::Serialize)]
+pub struct FfmpegStatus {
+    /// 検出した ffmpeg。未検出は `None`。
+    pub path: Option<String>,
+    /// 検出した ffmpeg の判定。未検出は `None`。
+    pub check: Option<crate::subtitle_burn::FfmpegCheck>,
+}
+
+fn ffmpeg_status_of(configured: &str) -> FfmpegStatus {
+    let path = crate::subtitle_burn::locate_ffmpeg(configured);
+    FfmpegStatus {
+        check: path.as_deref().map(crate::subtitle_burn::check_ffmpeg),
+        path: path.map(|p| p.to_string_lossy().to_string()),
+    }
+}
+
+/// 設定値（空は自動検出）で ffmpeg を検出・判定。
+#[tauri::command]
+pub async fn ffmpeg_status(
+    configured: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<FfmpegStatus, String> {
+    let configured =
+        configured.unwrap_or_else(|| state.settings.snapshot().subtitle.ffmpeg_path.clone());
+    tokio::task::spawn_blocking(move || ffmpeg_status_of(&configured))
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// ffmpeg の実行ファイルを選択・判定（保存は呼出し側）。取消は `None`。
+#[tauri::command]
+pub async fn pick_ffmpeg(app: AppHandle) -> Result<Option<FfmpegStatus>, String> {
+    use tauri_plugin_dialog::DialogExt;
+    let dialog = app.dialog().clone();
+    let chosen = tokio::task::spawn_blocking(move || {
+        let mut dialog = dialog.file().set_title(crate::tr!("file-burn:pick_ffmpeg"));
+        if cfg!(windows) {
+            dialog = dialog.add_filter("ffmpeg", &["exe"]);
+        }
+        dialog.blocking_pick_file()
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+    let Some(file) = chosen else { return Ok(None) };
+    let path = file.into_path().map_err(|e| e.to_string())?;
+    let status = tokio::task::spawn_blocking(move || {
+        let check = crate::subtitle_burn::check_ffmpeg(&path);
+        FfmpegStatus {
+            path: Some(path.to_string_lossy().to_string()),
+            check: Some(check),
+        }
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+    Ok(Some(status))
+}
+
+/// ffmpeg の場所を設定へ保存（空は自動検出）。
+#[tauri::command]
+pub async fn set_ffmpeg_path(path: String, state: State<'_, AppState>) -> Result<(), String> {
+    let mut next = (*state.settings.snapshot()).clone();
+    next.subtitle.ffmpeg_path = path;
+    state.settings.save(next).map_err(|e| e.to_string())
+}
+
+/// 生成済みの字幕を動画へ合成し、新規ファイルとして保存。
 /// 保存先ダイアログの取消は `None`。進行は `moonlens://file-burn` で通知。
 #[tauri::command]
 pub async fn burn_file_subtitle(
@@ -1306,8 +1372,17 @@ pub async fn burn_file_subtitle(
     state: State<'_, AppState>,
 ) -> Result<Option<String>, String> {
     use tauri_plugin_dialog::DialogExt;
-    let ffmpeg =
-        crate::subtitle_burn::locate_ffmpeg().ok_or_else(|| crate::tr!("file-burn:no_ffmpeg"))?;
+    let configured = state.settings.snapshot().subtitle.ffmpeg_path.clone();
+    let status = tokio::task::spawn_blocking(move || ffmpeg_status_of(&configured))
+        .await
+        .map_err(|e| e.to_string())?;
+    let ffmpeg = match (status.path, status.check) {
+        (Some(path), Some(crate::subtitle_burn::FfmpegCheck::Ok)) => std::path::PathBuf::from(path),
+        (Some(_), Some(crate::subtitle_burn::FfmpegCheck::NoLibass)) => {
+            return Err(crate::tr!("file-burn:no_libass"))
+        }
+        _ => return Err(crate::tr!("file-burn:no_ffmpeg")),
+    };
     let (folder, name) = state.file_subtitle.burn_target();
     let ext = std::path::Path::new(&name)
         .extension()

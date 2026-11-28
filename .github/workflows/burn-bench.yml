@@ -1,17 +1,11 @@
 name: burn-bench
 
-# 字幕合成（焼込み）の試作の計測：Windows の CI ランナー（4 vCPU、GPU 無し）で
+# 字幕合成（焼込み）の計測：Windows の CI ランナー（4 vCPU、GPU 無し）で
 # 1080p・4K の動画へ字幕を合成し、処理時間・ffmpeg のピークメモリー・
 # 配布サイズ（LGPL 版 ffmpeg）を記録。結果はジョブの Summary へ出力。
-# 長時間のため、ラベル `burn-bench` の付与時と試作ブランチへの push 時のみ実行。
+# 長時間のため、PR へラベル `burn-bench` の付与時のみ実行。
 
 on:
-  push:
-    branches: ['claude/project-thread-dc7rqu']
-    paths:
-      - 'src-tauri/src/subtitle_burn.rs'
-      - 'src-tauri/examples/burn_subtitle.rs'
-      - '.github/workflows/burn-bench.yml'
   pull_request:
     types: [labeled]
 
@@ -29,7 +23,7 @@ env:
 
 jobs:
   windows:
-    if: github.event_name == 'push' || github.event.label.name == 'burn-bench'
+    if: github.event.label.name == 'burn-bench'
     runs-on: windows-latest
     timeout-minutes: 180
     steps:

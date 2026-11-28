@@ -278,6 +278,10 @@ pub struct SubtitleSettings {
     /// ever changed by the user (settings screen, or approving a
     /// suggestion in the subtitle window).
     pub blocked_phrases: Vec<String>,
+    /// ffmpeg executable for burning subtitles into a video (the user
+    /// provides it; MoonLens does not ship or download it). Empty: look
+    /// next to MoonLens, then on the `PATH`.
+    pub ffmpeg_path: String,
 }
 
 impl Default for SubtitleSettings {
@@ -297,6 +301,7 @@ impl Default for SubtitleSettings {
             batch_correction: true,
             block_stock_phrases: true,
             blocked_phrases: Vec::new(),
+            ffmpeg_path: String::new(),
         }
     }
 }

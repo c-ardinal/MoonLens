@@ -870,9 +870,27 @@ export const exportFileSubtitle = (
 ) =>
   safeInvoke<string | null>("export_file_subtitle", { format, content }, null);
 
-/** 生成済みの字幕を動画へ焼込み（試作）。戻り値は保存先、取消は null。進行は `onFileBurn` で受信。 */
+/** 生成済みの字幕を動画へ焼込み。戻り値は保存先、取消は null。進行は `onFileBurn` で受信。 */
 export const burnFileSubtitle = (content: SubtitleExportContent) =>
   safeInvoke<string | null>("burn_file_subtitle", { content }, null);
+
+/** 字幕合成用の ffmpeg（利用者が配置）の判定。 */
+export type FfmpegCheck = 'ok' | 'not_ffmpeg' | 'no_libass';
+export interface FfmpegStatus {
+  /** 検出した ffmpeg。未検出は null。 */
+  path: string | null;
+  check: FfmpegCheck | null;
+}
+
+/** ffmpeg の検出・判定。`configured` 省略時は保存済みの設定値（空は自動検出）。 */
+export const ffmpegStatus = (configured?: string) =>
+  safeInvoke<FfmpegStatus>('ffmpeg_status', { configured: configured ?? null });
+
+/** ffmpeg の実行ファイルを選択・判定（保存は別途）。取消は null。 */
+export const pickFfmpeg = () => safeInvoke<FfmpegStatus | null>('pick_ffmpeg', undefined, null);
+
+/** ffmpeg の場所を設定へ保存（空は自動検出）。 */
+export const setFfmpegPath = (path: string) => safeInvoke<void>('set_ffmpeg_path', { path });
 
 export const cancelBurnFileSubtitle = () =>
   safeInvoke<void>("cancel_burn_file_subtitle");

@@ -7,6 +7,9 @@
   import {
     burnFileSubtitle,
     cancelBurnFileSubtitle,
+    ffmpegStatus,
+    setFfmpegPath,
+    type FfmpegStatus,
     exportFileSubtitle,
     onFileBurn,
     type SubtitleExportContent,
@@ -23,6 +26,8 @@
   import { timeLabel } from '$lib/subtitle-record';
   import { errorText, type UiError } from '$lib/errors';
   import { notify, notifyError } from '$lib/toast.svelte';
+  import { ffmpegProblem } from '$lib/ffmpeg';
+  import FfmpegGuide from '$lib/components/FfmpegGuide.svelte';
 
   let {
     status,
@@ -67,7 +72,7 @@
     ['both', 'subtitle-record-detail:both']
   ];
 
-  // 字幕焼込み（試作）：保存先の選択後、本体側で逐次処理
+  // 字幕合成：保存先の選択後、本体側で逐次処理
   let burn = $state<FileBurnUpdate | null>(null);
   const burning = $derived(burn?.phase === 'running');
   $effect(() => {
@@ -82,12 +87,31 @@
     burn && status.duration_ms ? Math.min(100, Math.round((burn.done_ms / status.duration_ms) * 100)) : null
   );
 
+  /** ffmpeg 未検出・利用不可時の案内。 */
+  let guide = $state<FfmpegStatus | null>(null);
+
   async function startBurn() {
     try {
+      const ffmpeg = await ffmpegStatus();
+      if (ffmpegProblem(ffmpeg)) {
+        guide = ffmpeg;
+        return;
+      }
+      guide = null;
       await burnFileSubtitle(content);
     } catch (e) {
       notifyError(t('file-burn:failed', { e: errorText(e) }));
     }
+  }
+
+  async function usePicked(path: string) {
+    try {
+      await setFfmpegPath(path);
+    } catch (e) {
+      notifyError(t('file-burn:failed', { e: errorText(e) }));
+      return;
+    }
+    await startBurn();
   }
 
   async function save(format: SubtitleExportFormat) {
@@ -188,6 +212,12 @@
     {/if}
   </section>
 
+  {#if guide}
+    <!-- 1 画面収容：案内は字幕一覧の位置へ表示（超過分は欄内でスクロール） -->
+    <div class="guide-slot">
+      <FfmpegGuide status={guide} onpicked={usePicked} onclose={() => (guide = null)} />
+    </div>
+  {:else}
   <section class="cues rounded-ml border border-border bg-surface-elevated" aria-label={t('file-subtitle:latest_subtitles')}>
     <h2 class="border-b border-border px-4 py-2 text-sm text-ink-muted">{t('file-subtitle:latest_subtitles')}</h2>
     {#if recent.length === 0}
@@ -210,6 +240,7 @@
       </ol>
     {/if}
   </section>
+  {/if}
 </main>
 
 <style>
@@ -235,6 +266,11 @@
   .bar.unknown .fill {
     width: 100% !important;
     background: repeating-linear-gradient(90deg, var(--ml-accent) 0 8px, transparent 8px 16px);
+  }
+  .guide-slot {
+    flex: 1 1 0;
+    min-height: 0;
+    overflow-y: auto;
   }
   .cues {
     display: flex;
