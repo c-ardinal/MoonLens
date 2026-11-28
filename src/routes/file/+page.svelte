@@ -54,6 +54,7 @@
         showImage(new Uint8Array(await readImageFile(path)), baseName(path));
       } else {
         status = await startFileSubtitle(path);
+        reloads++;
         cues = [];
         await loadMedia();
         view = 'media';
@@ -72,10 +73,18 @@
     }
   }
 
+  /** 再取得の世代：古い応答（後発の再取得・新規ジョブの開始より前）の適用を抑止。 */
+  let reloads = 0;
+
   /** 取りこぼしの検知時：字幕の全件を再取得。 */
   async function reloadCues() {
+    const seq = ++reloads;
     try {
-      cues = await fileSubtitleCues();
+      const got = await fileSubtitleCues();
+      if (seq !== reloads) return;
+      cues = got;
+      // 応答が最新の件数より過少（通知との順序の逆転）：再度取得
+      if (got.length < status.cues) reloadCues();
     } catch {
       /* 次の変化で再試行 */
     }

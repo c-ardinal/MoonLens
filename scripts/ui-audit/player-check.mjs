@@ -99,6 +99,31 @@ for (const [w, h] of [[1280, 800], [1120, 700]]) {
   await ctx.close();
 }
 
+// 取りこぼしの再取得：遅延した古い応答（字幕 1 件）が新しい応答（3 件）を上書きしない
+{
+  const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, reducedMotion: 'reduce' });
+  await ctx.addInitScript(init('main', MOCK, JSON.stringify({ file_subtitle_media: '/__fixtures/player.webm' })));
+  await ctx.addInitScript(`(() => { const o = window.__TAURI_INTERNALS__.invoke; let n = 0;
+    const cues = ${JSON.stringify(CUES)};
+    window.__TAURI_INTERNALS__.invoke = async (cmd, a) => {
+      if (cmd !== 'file_subtitle_cues') return o(cmd, a);
+      n++;
+      if (n === 1) return [];
+      if (n === 2) { await new Promise((r) => setTimeout(r, 800)); return cues.slice(0, 1); }
+      return cues;
+    }; })();`);
+  const pg = await ctx.newPage();
+  await pg.goto(srv.url('/file/')); await wait(pg, 1000);
+  await emit(pg, { status: status({}), cue: null });
+  // 件数の不一致 2 回：1 回目の再取得は遅延（古い内容）、2 回目は即時（最新）
+  await emit(pg, { status: status({ cues: 1, done_ms: 3000, ready_ms: 3000 }), cue: null });
+  await wait(pg, 50);
+  await emit(pg, { status: status({ cues: 3, done_ms: 12_000, ready_ms: 12_000 }), cue: null });
+  await wait(pg, 1500);
+  expect(await pg.locator('ol li').count() === 3, `古い再取得の応答を破棄（${await pg.locator('ol li').count()} 件）`);
+  await ctx.close();
+}
+
 await browser.close(); srv.close();
 if (failures.length) { console.error(`違反 ${failures.length} 件`); process.exit(1); }
 console.log('違反なし');
