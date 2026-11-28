@@ -14,6 +14,13 @@
 
 import type { LensBlock } from './ipc';
 
+/**
+ * 機能の有効・無効。現在は無効（UI から呼出不可）。
+ * 理由：確定までの観測が長く、観測中の字幕変化へ翻訳が追随しないため（2026-11-28 利用者判断）。
+ * 実装・テストは将来の再利用に備えて保持。
+ */
+export const FIT_TO_SUBTITLES_ENABLED = false;
+
 export type Box = [number, number, number, number];
 
 export interface FitBlock {

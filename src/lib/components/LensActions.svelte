@@ -26,6 +26,7 @@
   } from 'lucide-svelte';
   import { LANGUAGES, languageLabel } from '$lib/lens-overlay';
   import { fitCount } from '$lib/lens-bar';
+  import { FIT_TO_SUBTITLES_ENABLED } from '$lib/lens-fit';
   import type { LensReadMode } from '$lib/ipc';
 
   /**
@@ -209,7 +210,8 @@
       pressed: showText,
       run: ontext
     },
-    {
+    // 字幕領域へ整形：無効化中は項目自体を非表示（FIT_TO_SUBTITLES_ENABLED）
+    ...(!FIT_TO_SUBTITLES_ENABLED ? [] : [{
       key: 'fit',
       icon: ScanText,
       label: fit === 'observing' ? t('lens-actions:stop_observing_action') : fit === 'fitted' ? t('lens-actions:restore_before_reflow') : t('lens-actions:fit_to_subtitles'),
@@ -221,7 +223,7 @@
             : t('lens-actions:fit_to_subtitles_observes_where_text_appears'),
       pressed: fit === 'observing',
       run: onfit
-    },
+    } satisfies Action]),
     {
       key: 'explain',
       icon: Languages,
