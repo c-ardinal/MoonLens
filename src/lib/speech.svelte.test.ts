@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { speak } from './ipc';
 import { NOTE_MS, Speaker } from './speech.svelte';
 
 vi.mock('./ipc', () => ({
@@ -63,5 +64,10 @@ describe('Speaker', () => {
     const s = new Speaker();
     s.say('  ', 'ja');
     expect(s.busy).toBe(false);
+  });
+
+  it('元の発話の長さを読上の依頼へ添付（話速への追随）', () => {
+    new Speaker().say('駅はどこですか', 'ja', 2400);
+    expect(speak).toHaveBeenLastCalledWith('駅はどこですか', 'ja', 2400);
   });
 });

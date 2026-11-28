@@ -708,7 +708,7 @@
   "speech:no_voice_for_language": "読上不可：{language}の音声が未導入（OS の設定で追加）",
   "speech:preview": "試聴",
   "speech:rate": "速度",
-  "speech:rate_help": "1.0：音声の標準速度。",
+  "speech:rate_help": "1.0：音声の標準速度。音声翻訳では最低速度。原文の話速へ追随し、最大1.8倍まで自動加速。",
   "speech:read_aloud": "読上",
   "speech:read_aloud_off_subtitle": "読上：OFF。クリックで字幕の訳文を音声で読上",
   "speech:read_aloud_off_window": "読上：OFF。クリックで新規の訳文を音声で読上",
