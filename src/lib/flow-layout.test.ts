@@ -42,7 +42,8 @@ describe('breakLines', () => {
 
 describe('flowLayout', () => {
   it('puts the translation on the source rows at the largest fitting size', () => {
-    const r = flowLayout('あ'.repeat(60), {
+    // 400 / 18 = 22 chars per row: 110 chars fill the 5 rows exactly.
+    const r = flowLayout('あ'.repeat(110), {
       width: 400,
       height: 132,
       rows: rows(5),
@@ -52,8 +53,7 @@ describe('flowLayout', () => {
     });
     expect(r.overflow).toBe(false);
     expect(r.fontSize).toBe(18);
-    // 400 / 18 = 22 chars per row → 3 rows, at the source row positions.
-    expect(r.lines.map((l) => l.top)).toEqual([0, 28, 56]);
+    expect(r.lines.map((l) => l.top)).toEqual([0, 28, 56, 84, 112]);
     expect(r.lines.every((l) => l.height === 20)).toBe(true);
   });
 
@@ -173,5 +173,73 @@ describe('flowLayout beside a picture', () => {
       measure
     });
     expect(r.lines.every((l) => l.textWidth <= 200.01)).toBe(true);
+  });
+});
+
+describe('flowLayout fill', () => {
+  const centre = (l: { top: number; height: number }) => l.top + l.height / 2;
+
+  it('fills the whole source block with a shorter translation', () => {
+    // 60 chars would take 3 of the 5 rows at 18 px.
+    const r = flowLayout('あ'.repeat(60), {
+      width: 400,
+      height: 132,
+      rows: rows(5),
+      align: 'left',
+      maxFont: 18,
+      measure
+    });
+    expect(r.overflow).toBe(false);
+    expect(r.fontSize).toBeGreaterThan(18);
+    expect(r.fontSize).toBeLessThanOrEqual(18 * 1.25);
+    expect(r.lines.map((l) => l.text).join('')).toBe('あ'.repeat(60));
+    // First line on the first row, last line on the last row.
+    expect(centre(r.lines[0])).toBeCloseTo(10);
+    expect(centre(r.lines[r.lines.length - 1])).toBeCloseTo(4 * 28 + 10);
+    // Even pitch, never tighter than 1.4 × the font.
+    const pitch = r.lines.slice(1).map((l, i) => l.top - r.lines[i].top);
+    for (const p of pitch) {
+      expect(p).toBeCloseTo(pitch[0]);
+      expect(p).toBeGreaterThanOrEqual(r.fontSize * 1.4 - 1e-6);
+    }
+  });
+
+  it('does not spread a much shorter translation further than 2.5 × the font', () => {
+    // 20 chars at 22.5 px take 2 lines; spreading them over 5 rows would
+    // leave 112 px between them.
+    const r = flowLayout('あ'.repeat(20), {
+      width: 400,
+      height: 132,
+      rows: rows(5),
+      align: 'left',
+      maxFont: 18,
+      measure
+    });
+    expect(r.fontSize).toBe(22.5);
+    expect(r.lines.length).toBe(2);
+    expect(centre(r.lines[0])).toBeCloseTo(10);
+    expect(r.lines[1].top - r.lines[0].top).toBeCloseTo(56.25);
+  });
+
+  it('keeps a filled paragraph beside a picture clear of it and running to the last row', () => {
+    // 10 rows: 6 beside a picture from x = 200, 4 full width below it
+    // (the article with a floated picture). The translation needs fewer
+    // lines than the source.
+    const src = rows(10, 22, 16).map((row, i) => (i < 6 ? { ...row, width: 190, limit: 200 } : row));
+    const r = flowLayout('あ'.repeat(130), {
+      width: 400,
+      height: 9 * 22 + 16,
+      rows: src,
+      align: 'left',
+      maxFont: 14,
+      measure
+    });
+    expect(r.overflow).toBe(false);
+    expect(r.lines.map((l) => l.text).join('')).toBe('あ'.repeat(130));
+    expect(centre(r.lines[r.lines.length - 1])).toBeCloseTo(9 * 22 + 8);
+    for (const l of r.lines) {
+      // Lines whose text reaches up to the picture's rows end at the picture.
+      if (centre(l) - r.fontSize * 0.6 < 5 * 22 + 16 + 3) expect(l.textWidth).toBeLessThanOrEqual(200.01);
+    }
   });
 });

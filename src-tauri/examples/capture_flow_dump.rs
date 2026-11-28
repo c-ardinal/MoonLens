@@ -22,6 +22,13 @@ async fn main() -> anyhow::Result<()> {
         .with_writer(std::io::stderr)
         .try_init();
     let tmp = tempfile::tempdir()?;
+    // `MOONLENS_TARGET=fr` translates into another language than the default.
+    if let Ok(lang) = std::env::var("MOONLENS_TARGET") {
+        std::fs::write(
+            tmp.path().join("config.toml"),
+            format!("[subtitle]\ntarget_language = \"{lang}\"\n"),
+        )?;
+    }
     let store = Arc::new(SettingsStore::load_from(tmp.path().join("config.toml"))?);
     let plugins = Arc::new(PluginRegistry::load_from(
         tmp.path().join("plugins"),

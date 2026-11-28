@@ -1,0 +1,1 @@
+- Window translation: a translation shorter than its source paragraph now fills the paragraph down to its last line (evenly spaced, font up to 1.25× larger) instead of leaving the last lines empty, so paragraph gaps and lines beside pictures match the original.
