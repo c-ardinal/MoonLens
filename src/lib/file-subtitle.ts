@@ -92,7 +92,7 @@ export const PHASE_LABELS: Record<
   failed: "file-subtitle:phase_failed",
 };
 
-/** 字幕合成の進行（`file_subtitle::BurnUpdate`、試作）。 */
+/** 字幕合成の進行（`file_subtitle::BurnUpdate`）。 */
 export interface FileBurnUpdate {
   phase: "running" | "done" | "cancelled" | "failed";
   /** 処理済みの映像の位置。 */
