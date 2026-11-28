@@ -710,7 +710,7 @@
   "speech:no_voice_for_language": "Read aloud unavailable: no {language} voice installed (add one in the OS settings)",
   "speech:preview": "Preview",
   "speech:rate": "Speed",
-  "speech:rate_help": "1.0: the voice's own speed.",
+  "speech:rate_help": "1.0: the voice's own speed. In live subtitles, the slowest speed: speech speeds up to 1.8x to keep pace with the original.",
   "speech:read_aloud": "Read aloud",
   "speech:read_aloud_off_subtitle": "Read aloud: off. Click to speak translated subtitles",
   "speech:read_aloud_off_window": "Read aloud: off. Click to speak new translations",
