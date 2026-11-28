@@ -1,0 +1,127 @@
+name: burn-bench
+
+# 字幕合成（焼込み）の試作の計測：Windows の CI ランナー（4 vCPU、GPU 無し）で
+# 1080p・4K の動画へ字幕を合成し、処理時間・ffmpeg のピークメモリー・
+# 配布サイズ（LGPL 版 ffmpeg）を記録。結果はジョブの Summary へ出力。
+# 長時間のため、ラベル `burn-bench` の付与時と試作ブランチへの push 時のみ実行。
+
+on:
+  push:
+    branches: ['claude/project-thread-dc7rqu']
+    paths:
+      - 'src-tauri/src/subtitle_burn.rs'
+      - 'src-tauri/examples/burn_subtitle.rs'
+      - '.github/workflows/burn-bench.yml'
+  pull_request:
+    types: [labeled]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: burn-bench-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  CARGO_NET_GIT_FETCH_WITH_CLI: 'true'
+
+jobs:
+  windows:
+    if: github.event_name == 'push' || github.event.label.name == 'burn-bench'
+    runs-on: windows-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: ffmpeg (BtbN, LGPL and GPL)
+        shell: pwsh
+        run: |
+          $base = 'https://github.com/BtbN/FFmpeg-Builds/releases/download/latest'
+          New-Item -ItemType Directory -Force D:\ff | Out-Null
+          foreach ($v in 'lgpl', 'gpl', 'lgpl-shared') {
+            $zip = "D:\ff\$v.zip"
+            Invoke-WebRequest "$base/ffmpeg-master-latest-win64-$v.zip" -OutFile $zip
+            Expand-Archive $zip -DestinationPath "D:\ff\$v"
+          }
+          $lgpl = (Get-ChildItem D:\ff\lgpl -Recurse -Filter ffmpeg.exe | Select-Object -First 1).FullName
+          $gpl = (Get-ChildItem D:\ff\gpl -Recurse -Filter ffmpeg.exe | Select-Object -First 1).FullName
+          "LGPL_FFMPEG=$lgpl" >> $env:GITHUB_ENV
+          "GPL_FFMPEG=$gpl" >> $env:GITHUB_ENV
+          $sharedBin = Split-Path (Get-ChildItem D:\ff\lgpl-shared -Recurse -Filter ffmpeg.exe | Select-Object -First 1).FullName
+          $mb = { param($b) [math]::Round($b / 1MB, 1) }
+          $shared = (Get-ChildItem $sharedBin -Include ffmpeg.exe, *.dll -Recurse | Measure-Object Length -Sum).Sum
+          @(
+            '## 配布サイズ（BtbN master win64）'
+            ''
+            '| 版 | zip | ffmpeg.exe（+DLL） |'
+            '|---|---|---|'
+            "| LGPL 静的 | $(& $mb (Get-Item D:\ff\lgpl.zip).Length) MB | $(& $mb (Get-Item $lgpl).Length) MB |"
+            "| LGPL 共有 | $(& $mb (Get-Item D:\ff\lgpl-shared.zip).Length) MB | $(& $mb $shared) MB |"
+            "| GPL 静的（参考） | $(& $mb (Get-Item D:\ff\gpl.zip).Length) MB | $(& $mb (Get-Item $gpl).Length) MB |"
+            ''
+          ) | Out-File -Append -Encoding utf8 $env:GITHUB_STEP_SUMMARY
+          & $lgpl -hide_banner -encoders 2>$null | Select-String 'h264|openh264|_mf'
+          & $lgpl -hide_banner -filters 2>$null | Select-String ' subtitles '
+
+      - name: Test videos (H.264, noise to resemble real footage)
+        shell: pwsh
+        run: |
+          $src = 'testsrc2=s={0}:r=30,noise=alls=10:allf=t+u'
+          & $env:GPL_FFMPEG -hide_banner -loglevel error -y -f lavfi -i ($src -f '1920x1080') -f lavfi -i 'sine=f=440:r=48000' -t 600 -c:v libx264 -preset ultrafast -b:v 8M -maxrate 8M -bufsize 16M -c:a aac -b:a 128k D:\in1080.mp4
+          & $env:GPL_FFMPEG -hide_banner -loglevel error -y -f lavfi -i ($src -f '3840x2160') -f lavfi -i 'sine=f=440:r=48000' -t 180 -c:v libx264 -preset ultrafast -b:v 30M -maxrate 30M -bufsize 60M -c:a aac -b:a 128k D:\in2160.mp4
+          Get-Item D:\in*.mp4 | Format-Table Name, Length
+
+      - name: Build the measurement tool
+        shell: pwsh
+        working-directory: src-tauri
+        run: |
+          New-Item -ItemType Directory -Force ..\build | Out-Null
+          $env:CARGO_TARGET_DIR = 'D:\t'
+          cargo build --release --no-default-features --example burn_subtitle
+
+      - name: Burn in and measure
+        shell: pwsh
+        run: |
+          $tool = 'D:\t\release\examples\burn_subtitle.exe'
+          $cases = @(
+            @{ name = '1080p 10 分・自動選択'; file = 'D:\in1080.mp4'; args = @() },
+            @{ name = '1080p 10 分・原文+訳文'; file = 'D:\in1080.mp4'; args = @('--both') },
+            @{ name = '4K 3 分・自動選択'; file = 'D:\in2160.mp4'; args = @() },
+            @{ name = '4K 3 分・libopenh264'; file = 'D:\in2160.mp4'; args = @('--encoder', 'libopenh264') }
+          )
+          $rows = @()
+          foreach ($c in $cases) {
+            $env:MOONLENS_FFMPEG = $env:LGPL_FFMPEG
+            $out = 'D:\out.mp4'
+            $argList = @($c.file, '--synthetic', '--out', $out) + $c.args
+            $p = Start-Process $tool -ArgumentList $argList -PassThru -NoNewWindow `
+              -RedirectStandardOutput D:\result.json -RedirectStandardError D:\log.txt
+            $peak = 0; $toolPeak = 0; $samples = @(); $t0 = Get-Date
+            while (-not $p.HasExited) {
+              $ff = Get-Process ffmpeg -ErrorAction SilentlyContinue
+              foreach ($f in $ff) { try { $peak = [math]::Max($peak, $f.PeakWorkingSet64) } catch {} }
+              try { $p.Refresh(); $toolPeak = [math]::Max($toolPeak, $p.PeakWorkingSet64) } catch {}
+              $ws = ($ff | Measure-Object WorkingSet64 -Sum).Sum
+              if ($ws) { $samples += [math]::Round($ws / 1MB) }
+              Start-Sleep -Milliseconds 500
+            }
+            $p.WaitForExit()
+            Get-Content D:\log.txt | Select-Object -Last 25
+            $r = Get-Content D:\result.json -Raw | ConvertFrom-Json
+            if (-not $r) { throw "failed: $($c.name)" }
+            # Working set over the run (first, middle, last thirds): flat = no growth with length.
+            $n = $samples.Count; $third = [math]::Max(1, [math]::Floor($n / 3))
+            $avg = { param($a) [math]::Round(($a | Measure-Object -Average).Average) }
+            $trend = "$(& $avg $samples[0..($third-1)]) / $(& $avg $samples[$third..(2*$third-1)]) / $(& $avg $samples[(2*$third)..($n-1)])"
+            $rows += "| $($c.name) | $($r.encoder) | $($r.media_s) s | $($r.elapsed_s) s | $($r.speed)x | $([math]::Round($peak / 1MB)) MB | $trend MB | $([math]::Round($toolPeak / 1MB)) MB | $($r.input_mb) → $($r.output_mb) MB |"
+            Remove-Item $out
+          }
+          @(
+            '## 処理時間・メモリー（windows-latest、4 vCPU、GPU 無し）'
+            ''
+            '| 条件 | エンコーダー | 動画長 | 処理時間 | 速度 | ffmpeg ピーク | 推移（前・中・後） | MoonLens 側ピーク | サイズ |'
+            '|---|---|---|---|---|---|---|---|---|'
+          ) + $rows | Out-File -Append -Encoding utf8 $env:GITHUB_STEP_SUMMARY
+          $rows

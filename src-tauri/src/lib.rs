@@ -49,6 +49,7 @@ pub mod speech;
 pub mod storage;
 pub mod stream;
 pub mod subtitle;
+pub mod subtitle_burn;
 pub mod subtitle_filter;
 pub mod subtitle_record;
 pub mod subtitle_revise;

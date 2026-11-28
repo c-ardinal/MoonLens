@@ -1297,6 +1297,51 @@ pub async fn export_file_subtitle(
     Ok(Some(path.to_string_lossy().to_string()))
 }
 
+/// 生成済みの字幕を動画へ焼込み、新規ファイルとして保存（試作）。
+/// 保存先ダイアログの取消は `None`。進行は `moonlens://file-burn` で通知。
+#[tauri::command]
+pub async fn burn_file_subtitle(
+    content: crate::subtitle_record::ExportContent,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<Option<String>, String> {
+    use tauri_plugin_dialog::DialogExt;
+    let ffmpeg =
+        crate::subtitle_burn::locate_ffmpeg().ok_or_else(|| crate::tr!("file-burn:no_ffmpeg"))?;
+    let (folder, name) = state.file_subtitle.burn_target();
+    let ext = std::path::Path::new(&name)
+        .extension()
+        .map(|e| e.to_string_lossy().to_string())
+        .unwrap_or_default();
+    let dialog = app.dialog().clone();
+    let chosen = tokio::task::spawn_blocking(move || {
+        let mut dialog = dialog
+            .file()
+            .set_file_name(name)
+            .add_filter(crate::tr!("file-burn:video_file"), &[ext.as_str()]);
+        if let Some(folder) = folder {
+            dialog = dialog.set_directory(folder);
+        }
+        dialog.blocking_save_file()
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+    let Some(file) = chosen else { return Ok(None) };
+    let path = file.into_path().map_err(|e| e.to_string())?;
+    state
+        .file_subtitle
+        .start_burn(ffmpeg, path.clone(), content, move |update| {
+            let _ = app.emit(crate::file_subtitle::BURN_EVENT, update);
+        })?;
+    Ok(Some(path.to_string_lossy().to_string()))
+}
+
+#[tauri::command]
+pub async fn cancel_burn_file_subtitle(state: State<'_, AppState>) -> Result<(), String> {
+    state.file_subtitle.cancel_burn();
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn clear_history(state: State<'_, AppState>) -> Result<usize, String> {
     state.storage.clear_all().map_err(|e| e.to_string())
