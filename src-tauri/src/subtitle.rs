@@ -429,7 +429,7 @@ impl SubtitleService {
                 _ => window_title(),
             })
             .inner_size(width, height)
-            .min_inner_size(220.0, 96.0)
+            .min_inner_size(260.0, 96.0)
             .decorations(false)
             .transparent(true)
             .always_on_top(true)
@@ -452,6 +452,7 @@ impl SubtitleService {
             None => place_first(&win),
         }
         win.show().ok();
+        tauri::async_runtime::spawn(crate::subtitle_mouse::run(app.clone(), label.clone()));
         Ok(label)
     }
 

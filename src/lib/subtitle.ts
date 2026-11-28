@@ -117,6 +117,14 @@ export function reduce(view: SubtitleView, ev: SubtitleEvent): SubtitleView {
 }
 
 /**
+ * 表示中の字幕を消去（クリア）。履歴の記録は維持。消去済みの行への補正は
+ * 置換対象の不在として無視（`reduce` の `revised`）。
+ */
+export function clear(view: SubtitleView): SubtitleView {
+  return view.lines.length ? { ...view, lines: [] } : view;
+}
+
+/**
  * 候補への判断を反映。遮断（`blocked`）の場合、表示済みの同一文の字幕も除去
  * （誤認識と判断済みのため）。無視の場合、字幕は維持。
  */

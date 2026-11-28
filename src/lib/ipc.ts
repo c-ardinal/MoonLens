@@ -456,6 +456,9 @@ export const setSubtitleSource = (source: AudioSource) =>
   safeInvoke<void>('set_subtitle_source', { source });
 export const subtitleSession = () =>
   safeInvoke<SubtitleSession | null>('subtitle_session', undefined, null);
+/** 呼出元の音声翻訳ウィンドウのマウス処理：操作モード、本体を覆うメニュー等の有無。 */
+export const setSubtitleMouse = (operate: boolean, interactive: boolean) =>
+  safeInvoke<void>('set_subtitle_mouse', { operate, interactive });
 export const listAudioApps = () =>
   safeInvoke<AudioApps>('list_audio_apps', undefined, { supported: false, apps: [] });
 /** 全ウィンドウ分のイベントを受信（`id` で対象を判別）。 */

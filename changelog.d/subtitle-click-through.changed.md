@@ -1,0 +1,1 @@
+- Audio Translation windows can no longer be made narrower than 260 px, so every title-bar button stays visible.

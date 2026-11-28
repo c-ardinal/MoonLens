@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   MAX_LINES,
+  clear,
   conversationPair,
   partnerLanguages,
   sameSource,
@@ -335,5 +336,40 @@ describe('遮断候補（反復検出）', () => {
     const next = settle(v, 'Thank you.', false);
     expect(next.candidates).toEqual([]);
     expect(next.lines).toHaveLength(1);
+  });
+});
+
+describe('字幕のクリア', () => {
+  const started: SubtitleEvent = { kind: 'started', device: 'スピーカー', source: { kind: 'system' } };
+
+  it('表示中の字幕のみ消去し、動作状態・エラーは維持', () => {
+    let v = run([
+      started,
+      { kind: 'chunk', id: 1, original: 'Hello.', translated: 'こんにちは。' },
+      { kind: 'status', phase: 'recognizing' }
+    ]);
+    v = clear(v);
+    expect(v.lines).toEqual([]);
+    expect(v.running).toBe(true);
+    expect(v.phase).toBe('recognizing');
+    // 空の状態：同一オブジェクトを返却（再描画なし）。
+    expect(clear(v)).toBe(v);
+  });
+
+  it('消去済みの行への補正は無視、消去後の字幕は継続表示', () => {
+    let v = run([
+      started,
+      { kind: 'chunk', id: 1, original: 'Where is', translated: 'どこ' },
+      { kind: 'chunk', id: 2, original: 'the station?', translated: '駅は' }
+    ]);
+    v = clear(v);
+    v = run(
+      [
+        { kind: 'revised', replaces: [1, 2], id: 3, original: 'Where is the station?', translated: '駅はどこですか。', rest: null },
+        { kind: 'chunk', id: 4, original: 'Thanks.', translated: 'ありがとう。' }
+      ],
+      v
+    );
+    expect(v.lines).toEqual([{ id: 4, original: 'Thanks.', translated: 'ありがとう。' }]);
   });
 });

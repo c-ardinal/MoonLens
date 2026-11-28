@@ -1,0 +1,2 @@
+- Audio Translation windows: click-through mode, as in Window Translation. Clicks on the subtitles pass to the app underneath; the title bar, edges and grip stay clickable, so the button there (or the new shortcut, default Ctrl+Shift+Y) switches back to interact mode to select, copy and scroll the subtitles.
+- Audio Translation windows: a clear button removes the shown subtitles (the history record is kept).

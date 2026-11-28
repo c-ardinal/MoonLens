@@ -50,6 +50,7 @@ pub mod storage;
 pub mod stream;
 pub mod subtitle;
 pub mod subtitle_filter;
+pub mod subtitle_mouse;
 pub mod subtitle_record;
 pub mod subtitle_revise;
 pub mod translate_plan;
