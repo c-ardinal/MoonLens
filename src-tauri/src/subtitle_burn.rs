@@ -392,10 +392,14 @@ pub fn render_ass(
     for line in lines {
         let translated = line.translated.trim();
         let original = line.original.trim();
+        // Line breaks in the text stay line breaks: one ASS event must
+        // stay on one line of the script.
         let body = |text: &str, em: f32| {
-            wrap(text, em)
-                .iter()
-                .map(|l| ass_escape(l))
+            text.lines()
+                .map(str::trim)
+                .filter(|l| !l.is_empty())
+                .flat_map(|l| wrap(l, em))
+                .map(|l| ass_escape(&l))
                 .collect::<Vec<_>>()
                 .join("\\N")
         };
@@ -441,6 +445,8 @@ pub enum BurnError {
     Failed(String),
     #[error("cancelled")]
     Cancelled,
+    #[error("the output is the source file")]
+    SameAsSource,
 }
 
 pub struct Job<'a> {
@@ -484,7 +490,16 @@ pub fn burn(
     cancel: &AtomicBool,
 ) -> Result<Report, BurnError> {
     let started = Instant::now();
-    let probe = probe(job.ffmpeg, job.input)?;
+    // ffmpeg runs in the work folder: relative paths would point there.
+    let input = std::path::absolute(job.input)?;
+    let output = std::path::absolute(job.output)?;
+    if same_file(&input, &output) {
+        return Err(BurnError::SameAsSource);
+    }
+    // ffmpeg writes a file of its own next to the output; it replaces the
+    // output only once complete, so a failure never touches what is there.
+    let partial = partial_path(&output);
+    let probe = probe(job.ffmpeg, &input)?;
     let encoder = match job.encoder {
         Some(e) => e,
         None => pick_encoder(job.ffmpeg, probe.width, probe.height).ok_or(BurnError::NoEncoder)?,
@@ -516,9 +531,6 @@ pub fn burn(
         filter.push_str(":fontsdir=fonts");
     }
 
-    // ffmpeg runs in the work folder: relative paths would point there.
-    let input = std::path::absolute(job.input)?;
-    let output = std::path::absolute(job.output)?;
     let mut cmd = command(job.ffmpeg);
     cmd.current_dir(&work)
         .args(["-hide_banner", "-nostats", "-loglevel", "error", "-y"])
@@ -526,11 +538,11 @@ pub fn burn(
         .args(["-hwaccel", "auto", "-i"])
         .arg(&input)
         .args([
-            "-map", "0:v:0", "-map", "0:a?", "-vf", &filter, "-pix_fmt", "yuv420p",
+            "-map", "0:V:0", "-map", "0:a?", "-vf", &filter, "-pix_fmt", "yuv420p",
         ])
         .args(encoder.args(target_kbps(&probe)))
         .args(["-c:a", "copy"])
-        .arg(&output)
+        .arg(&partial)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     let mut child = cmd.spawn().map_err(BurnError::Spawn)?;
@@ -559,11 +571,11 @@ pub fn burn(
     let status = child.wait()?;
     let errors = errors.join().unwrap_or_default();
     if cancelled || cancel.load(Ordering::Relaxed) {
-        let _ = std::fs::remove_file(&output);
+        let _ = std::fs::remove_file(&partial);
         return Err(BurnError::Cancelled);
     }
     if !status.success() {
-        let _ = std::fs::remove_file(&output);
+        let _ = std::fs::remove_file(&partial);
         let tail: String = errors
             .lines()
             .rev()
@@ -575,6 +587,10 @@ pub fn burn(
             .join("\n");
         return Err(BurnError::Failed(tail));
     }
+    if let Err(e) = std::fs::rename(&partial, &output) {
+        let _ = std::fs::remove_file(&partial);
+        return Err(e.into());
+    }
     Ok(Report {
         encoder,
         width: probe.width,
@@ -582,6 +598,27 @@ pub fn burn(
         duration_ms: probe.duration_ms,
         elapsed_ms: started.elapsed().as_millis() as u64,
     })
+}
+
+/// Whether `a` and `b` are one file, also through links, junctions or
+/// another spelling of the path.
+fn same_file(a: &Path, b: &Path) -> bool {
+    match (a.canonicalize(), b.canonicalize()) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => a == b,
+    }
+}
+
+/// `talk.ja-subtitled.mp4` → `talk.ja-subtitled.partial.mp4`: same folder
+/// (the rename stays on one drive), same extension (ffmpeg picks the
+/// container by it).
+fn partial_path(output: &Path) -> PathBuf {
+    let stem = output.file_stem().unwrap_or_default().to_string_lossy();
+    let name = match output.extension() {
+        Some(ext) => format!("{stem}.partial.{}", ext.to_string_lossy()),
+        None => format!("{stem}.partial"),
+    };
+    output.with_file_name(name)
 }
 
 struct RemoveOnDrop(PathBuf);
@@ -684,6 +721,56 @@ mod tests {
         assert!(ass.contains("Dialogue: 0,1:00:00.00,1:00:01.23,Main,,0,0,0,,Bye\n"));
         let both = render_ass(&lines, ExportContent::Both, 1920, 1080, "Meiryo");
         assert!(both.contains(",,{\\fs44}Hello ｛world｝\\N{\\r}こんにちは＼世界\n"));
+    }
+
+    #[test]
+    fn line_breaks_in_the_text_stay_inside_one_event() {
+        let lines = [line(0, 1_000, "a", "First line\nSecond line\r\n")];
+        let ass = render_ass(&lines, ExportContent::Translated, 1920, 1080, "Meiryo");
+        assert!(
+            ass.ends_with(
+                "Dialogue: 0,0:00:00.00,0:00:01.00,Main,,0,0,0,,First line\\NSecond line\n"
+            ),
+            "{ass}"
+        );
+    }
+
+    #[test]
+    fn partial_file_sits_next_to_the_output_with_its_extension() {
+        assert_eq!(
+            partial_path(Path::new("/v/talk.ja-subtitled.mp4")),
+            Path::new("/v/talk.ja-subtitled.partial.mp4")
+        );
+    }
+
+    /// The source reached through a link is still the source: it is
+    /// refused before ffmpeg runs, and the file stays as it was.
+    #[cfg(unix)]
+    #[test]
+    fn output_aliasing_the_source_is_refused() {
+        let dir = std::env::temp_dir().join(format!("moonlens-burn-alias-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let source = dir.join("in.mp4");
+        std::fs::write(&source, b"video").unwrap();
+        let link = dir.join("link.mp4");
+        let _ = std::fs::remove_file(&link);
+        std::os::unix::fs::symlink(&source, &link).unwrap();
+        let job = Job {
+            ffmpeg: Path::new("/nonexistent/ffmpeg"),
+            input: &link,
+            output: &source,
+            lines: &[],
+            content: ExportContent::Translated,
+            language: "ja",
+            encoder: Some(Encoder::X264),
+        };
+        // Refused before probing: the missing ffmpeg is never run.
+        assert!(matches!(
+            burn(&job, |_| {}, &AtomicBool::new(false)),
+            Err(BurnError::SameAsSource)
+        ));
+        assert_eq!(std::fs::read(&source).unwrap(), b"video");
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

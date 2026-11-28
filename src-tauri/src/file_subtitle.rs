@@ -705,9 +705,6 @@ impl FileSubtitleService {
                 inner.target_language.clone(),
             )
         };
-        if output == input {
-            return Err(tr!("file-burn:same_as_source"));
-        }
         let cancel = Arc::new(AtomicBool::new(false));
         {
             let mut burn = self.burn.lock();
@@ -761,6 +758,7 @@ impl FileSubtitleService {
                     let message = match e {
                         BurnError::NoVideo => tr!("file-burn:no_video"),
                         BurnError::NoEncoder => tr!("file-burn:no_encoder"),
+                        BurnError::SameAsSource => tr!("file-burn:same_as_source"),
                         e => tr!("file-burn:failed", e = e),
                     };
                     update(BurnPhase::Failed, 0, Some(message))
