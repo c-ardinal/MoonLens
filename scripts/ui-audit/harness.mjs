@@ -141,21 +141,20 @@ const FILE_UPDATES = Array.from({ length: 12 }, (_, i) => ({
     translated: i % 4 === 3 ? '' : 'そして、同胞であるアメリカ国民の皆さん、国が皆さんのために何を成し得るかを問うのではありません。'
   }
 }));
-/** 画像翻訳の入力画像（900×700、白地に罫線）。ページ内の Canvas で生成。 */
-const imageFile = async (pg) => ({
-  name: 'image.png', mimeType: 'image/png',
-  buffer: Buffer.from((await pg.evaluate(() => {
-    const c = Object.assign(document.createElement('canvas'), { width: 900, height: 700 });
-    const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, 900, 700);
-    g.fillStyle = '#222'; for (let i = 0; i < 7; i++) { g.fillRect(40, 52 + i * 90, 820, 3); g.fillRect(40, 86 + i * 90, 600, 3); }
-    return c.toDataURL('image/png').split(',')[1];
-  })), 'base64')
+/** ファイル翻訳へ画像（900×700、白地に罫線）をペースト。画像はページ内の Canvas で生成。 */
+export const pasteImage = (pg) => pg.evaluate(async () => {
+  const c = Object.assign(document.createElement('canvas'), { width: 900, height: 700 });
+  const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, 900, 700);
+  g.fillStyle = '#222'; for (let i = 0; i < 7; i++) { g.fillRect(40, 52 + i * 90, 820, 3); g.fillRect(40, 86 + i * 90, 600, 3); }
+  const blob = await new Promise((done) => c.toBlob(done, 'image/png'));
+  const data = new DataTransfer(); data.items.add(new File([blob], 'image.png', { type: 'image/png' }));
+  document.body.dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true }));
 });
 
 /**
  * メインウィンドウの全状態を巡回し、各状態で visit(page, 状態名) を実行。
- * 状態：ホーム・パレット・テキスト翻訳（結果・通知・右クリックメニュー）・画像翻訳（空・結果）・
- * ファイル字幕（空・生成中・完了・失敗）・
+ * 状態：ホーム・パレット・テキスト翻訳（結果・通知・右クリックメニュー）・
+ * ファイル翻訳（空・画像の結果・字幕の生成中・完了・失敗）・
  * 履歴（音声翻訳の記録・通知・確認）・初期設定（許諾確認を含む）・設定の全分類（許諾確認を含む）。
  */
 export async function walkMain(browser, url, { textSize = 'medium', width = 1280, height = 800, scale = 1, lang = 'ja' } = {}, visit) {
@@ -171,10 +170,10 @@ export async function walkMain(browser, url, { textSize = 'medium', width = 1280
   await reach('translate-toast', async () => { await pg.getByRole('button', { name: l('common:copy_translation') }).click({ timeout: 2000 }); await pg.locator('.toast').first().waitFor({ timeout: 2000 }); }); await visit(pg, 'translate-toast');
   await reach('context-menu', async () => { await pg.locator('textarea').first().click({ button: 'right', timeout: 2000 }); await pg.locator('.ctx-menu').waitFor({ timeout: 2000 }); }); await visit(pg, 'context-menu');
   await pg.close();
-  pg = await open('/image/'); await visit(pg, 'image');
-  await reach('image-result', async () => { await pg.locator('input[type=file]').setInputFiles(await imageFile(pg)); await pg.getByText('Phone: 555-0123').first().waitFor({ timeout: 5000 }); await wait(pg, 300); }); await visit(pg, 'image-result');
-  await pg.close();
   pg = await open('/file/'); await visit(pg, 'file');
+  await reach('image-result', async () => { await pasteImage(pg); await pg.getByText('Phone: 555-0123').first().waitFor({ timeout: 5000 }); await wait(pg, 300); }); await visit(pg, 'image-result');
+  await pg.close();
+  pg = await open('/file/');
   await reach('file-running', async () => { await pg.evaluate((updates) => updates.forEach((u) => window.__emit('moonlens://file-subtitle', u)), FILE_UPDATES); await pg.locator('ol li').nth(FILE_UPDATES.length - 1).waitFor({ timeout: 2000 }); }); await visit(pg, 'file-running');
   await reach('file-done', async () => { await pg.evaluate((u) => window.__emit('moonlens://file-subtitle', u), { status: { ...FILE_STATUS, phase: 'done', done_ms: FILE_STATUS.duration_ms }, cue: null }); await pg.getByRole('button', { name: l('file-subtitle:save_srt') }).waitFor({ timeout: 2000 }); }); await visit(pg, 'file-done');
   await reach('file-failed', async () => { await pg.evaluate((u) => window.__emit('moonlens://file-subtitle', u), { status: { ...FILE_STATUS, phase: 'failed', error: l('subtitle:speech_recognition_model_not_downloaded') }, cue: null }); await pg.getByRole('alert').waitFor({ timeout: 2000 }); }); await visit(pg, 'file-failed');

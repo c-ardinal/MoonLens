@@ -19,6 +19,11 @@ export interface FileSubtitleStatus {
   error: string | null;
 }
 
+/** 開始済みのジョブ（生成中・完了・中止・失敗）。 */
+export type FileSubtitleJob = FileSubtitleStatus & { phase: Exclude<FileSubtitlePhase, 'idle'> };
+
+export const isJob = (status: FileSubtitleStatus): status is FileSubtitleJob => status.phase !== 'idle';
+
 export interface FileSubtitleCue {
   start_ms: number;
   end_ms: number;

@@ -708,8 +708,8 @@ export const exportSubtitleRecord = (
   content: SubtitleExportContent
 ) => safeInvoke<string | null>('export_subtitle_record', { id, format, content }, null);
 
-/** 字幕生成の対象ファイルを選択。取消は null。 */
-export const pickMediaFile = () => safeInvoke<string | null>('pick_media_file', undefined, null);
+/** ファイル翻訳の対象ファイル（画像・動画・音声）を選択。取消は null。 */
+export const pickInputFile = () => safeInvoke<string | null>('pick_input_file', undefined, null);
 
 /** ファイルの字幕生成を開始。進行は `onFileSubtitle` で受信。 */
 export const startFileSubtitle = (path: string) =>

@@ -11,6 +11,7 @@ import {
   restore,
   settle,
   sourceLabel,
+  modeSwitchNotice,
   sourceOptions,
   statusLabel,
   type SubtitleView
@@ -118,6 +119,23 @@ describe('対面会話（音源：マイク）', () => {
     expect(new Set(options.map((o) => sourceKey(o.source))).size).toBe(options.length);
   });
 
+  it('音源メニュー：対面会話の行は画面切替を明記', () => {
+    const [, option] = sourceOptions([], { source: { kind: 'system' }, device: '' });
+    expect(option.source).toEqual(mic);
+    expect(option.label).toBe('対面会話');
+    expect(option.detail).toContain('会話画面へ切替');
+  });
+
+  it('画面切替の案内：対面会話と字幕表示の間の変更のみ', () => {
+    const system = { kind: 'system' } as const;
+    const app = { kind: 'app', pid: 7 } as const;
+    expect(modeSwitchNotice(system, mic)).toContain('対面会話へ切替');
+    expect(modeSwitchNotice(app, mic)).toContain('対面会話へ切替');
+    expect(modeSwitchNotice(mic, system)).toContain('字幕表示へ切替');
+    expect(modeSwitchNotice(system, app)).toBeNull();
+    expect(modeSwitchNotice(mic, mic)).toBeNull();
+  });
+
   it('発話の話者を行へ保持、文単位の補正後も継承', () => {
     const v = run([
       { kind: 'started', device: 'mic', source: mic },
@@ -175,9 +193,9 @@ describe('音源メニューの選択肢', () => {
 
   it('先頭は PC 全体、以降はアプリ一覧。選択中の音源を明示', () => {
     const options = sourceOptions(apps, { source: { kind: 'app', pid: 20 }, device: 'vlc' });
-    expect(options.map((o) => o.label)).toEqual(['PC 全体', 'マイク', 'chrome', 'vlc']);
+    expect(options.map((o) => o.label)).toEqual(['PC 全体', '対面会話', 'chrome', 'vlc']);
     expect(options.map((o) => o.selected)).toEqual([false, false, false, true]);
-    // マイク：再生状況の対象外
+    // 対面会話（マイク）：再生状況の対象外
     expect(options.map((o) => o.playing)).toEqual([true, null, true, false]);
     expect(options[2].detail).toBe('動画 - Google Chrome');
   });

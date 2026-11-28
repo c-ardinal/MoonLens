@@ -33,6 +33,7 @@
     conversationPair,
     initialView,
     inputHint,
+    modeSwitchNotice,
     partnerLanguages,
     reduce,
     restore,
@@ -258,14 +259,26 @@
     sourceButton?.focus();
   }
 
+  /** 画面切替の案内（対面会話と字幕表示の間の変更時、一定時間のみ表示）。 */
+  let modeNote = $state<string | null>(null);
+  let modeTimer: ReturnType<typeof setTimeout> | undefined;
+  function announceMode(note: string | null) {
+    clearTimeout(modeTimer);
+    modeNote = note;
+    if (note) modeTimer = setTimeout(() => (modeNote = null), 8000);
+  }
+  onDestroy(() => clearTimeout(modeTimer));
+
   /** 音源を変更。失敗時は従来の音源を継続し、理由をメニュー内へ表示。 */
   async function choose(next: AudioSource) {
     if (switching) return;
     switching = next;
     menuError = null;
+    const before = view.source;
     try {
       await setSubtitleSource(next);
       closeMenu();
+      announceMode(modeSwitchNotice(before, next));
     } catch (e) {
       menuError = errorText(e);
       refreshApps();
@@ -523,6 +536,9 @@
       <button class="restart" onclick={restart}><RotateCw class="h-3.5 w-3.5" />{t('subtitle:resume')}</button>
     {/if}
   </section>
+  {#if modeNote}
+    <p class="mode-note" role="status">{modeNote}</p>
+  {/if}
   {#if candidate}
     <aside class="cand" aria-label={t('subtitle:block_suggestion')}>
       <span class="cand-label" title={t('subtitle:the_same_sentence_keeps_repeating_choose')}>{t('subtitle:repetition_detected')}</span>
@@ -1080,6 +1096,21 @@
     }
   }
   /* 遮断候補：字幕の下端へ固定（字幕のスクロール対象外） */
+  /* 画面切替の案内：字幕領域の下端へ 1 行（字幕の表示位置は不変） */
+  .mode-note {
+    flex: none;
+    margin: 0;
+    padding: 4px 16px 4px 12px;
+    font-size: 12px;
+    line-height: 16px;
+    overflow-wrap: anywhere;
+    color: var(--ml-accent);
+    /* 不透過・前面：下端の閾値表記との重畳を回避 */
+    position: relative;
+    z-index: 1;
+    background: rgb(24, 24, 28);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12);
+  }
   .cand {
     flex: none;
     display: flex;

@@ -122,7 +122,7 @@ macro_rules! all_commands {
             ipc::get_subtitle_record,
             ipc::replace_subtitle_lines,
             ipc::export_subtitle_record,
-            ipc::pick_media_file,
+            ipc::pick_input_file,
             ipc::start_file_subtitle,
             ipc::cancel_file_subtitle,
             ipc::file_subtitle_status,
