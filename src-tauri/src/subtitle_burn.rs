@@ -34,7 +34,12 @@ pub struct Probe {
 pub fn parse_probe(banner: &str) -> Option<Probe> {
     let mut probe = Probe::default();
     let mut file_kbps = None;
+    // Side data lines (rotation) belong to the stream line above them.
+    let mut in_video = false;
     for line in banner.lines().map(str::trim) {
+        if line.starts_with("Stream #") {
+            in_video = false;
+        }
         if let Some(rest) = line.strip_prefix("Duration: ") {
             probe.duration_ms = rest.split(',').next().and_then(parse_clock);
             file_kbps = rest
@@ -58,6 +63,19 @@ pub fn parse_probe(banner: &str) -> Option<Probe> {
                 if let Some(kbps) = field.strip_suffix(" kb/s") {
                     probe.video_kbps = kbps.trim().parse().ok();
                 }
+            }
+            in_video = probe.width > 0;
+        } else if let Some(rest) = line.strip_prefix("displaymatrix: rotation of ") {
+            // ffmpeg rotates such video before filtering: a quarter turn
+            // swaps the frame the subtitles are laid out on.
+            let quarter = rest
+                .split_whitespace()
+                .next()
+                .and_then(|d| d.parse::<f64>().ok())
+                .is_some_and(|d| (d.abs().round() as i64) % 180 == 90);
+            if in_video && quarter {
+                std::mem::swap(&mut probe.width, &mut probe.height);
+                in_video = false;
             }
         } else if line.starts_with("Stream #") && line.contains(": Audio: ") {
             probe.has_audio = true;
@@ -543,20 +561,32 @@ pub fn burn(
         let _ = stderr.read_to_string(&mut buf);
         buf
     });
+    // Progress is read on its own thread: ffmpeg can stay silent (stalled
+    // input, slow start), and cancelling must not wait for its next line.
     let stdout = child.stdout.take().expect("piped");
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        for line in BufReader::new(stdout).lines() {
+            let Ok(line) = line else { break };
+            if let Some(us) = line
+                .strip_prefix("out_time_us=")
+                .and_then(|v| v.parse::<u64>().ok())
+            {
+                if tx.send(us / 1000).is_err() {
+                    break;
+                }
+            }
+        }
+    });
     let mut cancelled = false;
-    for line in BufReader::new(stdout).lines() {
-        let Ok(line) = line else { break };
+    while child.try_wait()?.is_none() {
         if cancel.load(Ordering::Relaxed) {
             let _ = child.kill();
             cancelled = true;
             break;
         }
-        if let Some(us) = line
-            .strip_prefix("out_time_us=")
-            .and_then(|v| v.parse::<u64>().ok())
-        {
-            progress(us / 1000);
+        if let Ok(ms) = rx.recv_timeout(std::time::Duration::from_millis(100)) {
+            progress(ms);
         }
     }
     let status = child.wait()?;
@@ -679,6 +709,20 @@ mod tests {
                 has_audio: true,
             })
         );
+    }
+
+    #[test]
+    fn probe_swaps_size_for_a_quarter_turned_video() {
+        let banner = "  Duration: 00:00:10.00, start: 0.000000, bitrate: 2000 kb/s\n  \
+            Stream #0:0[0x1](und): Video: h264 (High), yuv420p(progressive), 1920x1080, 1900 kb/s, 30 fps (default)\n    \
+            Side data:\n      \
+            displaymatrix: rotation of -90.00 degrees\n  \
+            Stream #0:1[0x2](und): Audio: aac (LC), 48000 Hz, stereo, fltp, 128 kb/s (default)\n";
+        let p = parse_probe(banner).unwrap();
+        assert_eq!((p.width, p.height), (1080, 1920));
+        let upside_down = banner.replace("-90.00", "180.00");
+        let p = parse_probe(&upside_down).unwrap();
+        assert_eq!((p.width, p.height), (1920, 1080));
     }
 
     #[test]
@@ -893,6 +937,50 @@ mod tests {
         assert!(gray(130) > 200, "bottom {}", gray(130));
         assert_eq!(check_ffmpeg(&ffmpeg), FfmpegCheck::Ok);
         assert_eq!(check_ffmpeg(&input), FfmpegCheck::NotFfmpeg);
+
+        // A quarter-turned video is laid out on its upright frame.
+        let turned = dir.join("turned.mp4");
+        let tagged = command(&ffmpeg)
+            .args([
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-y",
+                "-display_rotation",
+                "90",
+                "-i",
+            ])
+            .arg(&input)
+            .args(["-c", "copy"])
+            .arg(&turned)
+            .status()
+            .is_ok_and(|s| s.success());
+        if tagged {
+            let p = probe(&ffmpeg, &turned).unwrap();
+            assert_eq!((p.width, p.height), (180, 320));
+        }
+
+        // Cancelling stops ffmpeg without waiting for its output and
+        // leaves no file behind.
+        let cancelled = burn(
+            &Job {
+                ffmpeg: &ffmpeg,
+                input: &input,
+                output: &dir.join("cancelled.mp4"),
+                lines: &lines,
+                content: ExportContent::Translated,
+                language: "ja",
+                encoder: Some(report.encoder),
+            },
+            |_| {},
+            &AtomicBool::new(true),
+        );
+        assert!(matches!(cancelled, Err(BurnError::Cancelled)));
+        assert!(std::fs::read_dir(&dir).unwrap().all(|e| !e
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .contains("cancelled")));
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }
