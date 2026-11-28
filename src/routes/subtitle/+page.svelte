@@ -739,8 +739,12 @@
   .source.open :global(.chevron) {
     transform: rotate(180deg);
   }
+  /* 状態表記：幅不足時は省略表記（右端の操作ボタンを優先） */
   .state {
-    flex: none;
+    flex: 0 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
     margin-left: 4px;
     border-radius: 6px;
     padding: 4px 8px;
@@ -831,15 +835,16 @@
     display: flex;
     opacity: 0.7;
   }
-  /* 狭幅：見出し・翻訳先言語を省略し、音源・状態表記と操作を優先 */
-  @container (max-width: 500px) {
+  /* 狭幅：見出し・翻訳先言語を省略し、音源・状態表記と操作を優先
+     （境界値はタイトルバーの操作ボタン 7 個の収容幅） */
+  @container (max-width: 580px) {
     .title.conv,
     .meter.conv,
     .swap {
       display: none;
     }
   }
-  @container (max-width: 400px) {
+  @container (max-width: 480px) {
     .title,
     .lang,
     .swap,
@@ -847,7 +852,7 @@
       display: none;
     }
   }
-  @container (max-width: 260px) {
+  @container (max-width: 340px) {
     .state,
     .their {
       display: none;
