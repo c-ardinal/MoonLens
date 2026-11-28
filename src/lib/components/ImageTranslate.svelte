@@ -1,3 +1,11 @@
+<script module lang="ts">
+  /**
+   * 翻訳の実行番号。画面の再生成後も一意（本体側は破棄済みの画面の翻訳を継続し、
+   * 進行通知へ実行番号を付与するため、再生成後の画面での誤受信を回避）。
+   */
+  let lastRun = 0;
+</script>
+
 <script lang="ts">
   import { t } from '$lib/i18n';
   import { holdMotion } from '$lib/pixel/motion.svelte';
@@ -118,7 +126,7 @@
 
   async function start() {
     if (!imageBytes) return;
-    const id = ++run;
+    const id = (run = ++lastRun);
     busy = true;
     phase = 'ocr';
     error = null;
@@ -202,7 +210,7 @@
   });
 
   onDestroy(() => {
-    run++;
+    run = 0;
     unlisteners.forEach((u) => u());
     if (imageUrl) URL.revokeObjectURL(imageUrl);
   });
