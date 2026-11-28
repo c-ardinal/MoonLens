@@ -70,6 +70,13 @@ const NO_START = new Set(
 // i18n-ignore
 const NO_END = new Set(Array.from('（([｛{「『【〔〈《〘〖‘“'));
 
+/** How much a shorter translation may enlarge its font to fill its block. */
+const FILL_GROW = 1.25;
+/** Tightest line pitch (× font size) of a filled block, unless the source is tighter. */
+const FILL_LINE_HEIGHT = 1.4;
+/** Widest line pitch (× font size) a filled block spreads to, unless the source is wider. */
+const FILL_MAX_LINE_HEIGHT = 2.5;
+
 const isSpace = (s: string) => /^\s+$/.test(s);
 const isCjk = (c: string) =>
   /[　-ヿ㐀-䶿一-鿿豈-﫿＀-￯가-힯]/.test(c);
@@ -223,6 +230,98 @@ export function flowLayout(text: string, o: FlowOptions): FlowResult {
     };
   };
 
+  /**
+   * Spread `n` lines over the source rows: the first line sits on the
+   * first row, the last on the last row, the rest evenly between. Each
+   * line gets the room of the source rows its text overlaps, so a line
+   * beside a picture still ends at the picture.
+   */
+  const first = rows[0];
+  const last = rows[rows.length - 1];
+  const c0 = first.top + first.height / 2;
+  const c1 = last.top + last.height / 2;
+  const srcPitch = (c1 - c0) / Math.max(1, rows.length - 1);
+  // Band of each row, split halfway between neighbours.
+  const bandTop = rows.map((r, i) => (i === 0 ? -Infinity : (rows[i - 1].top + rows[i - 1].height + r.top) / 2));
+  const bandBottom = rows.map((r, i) =>
+    i === rows.length - 1 ? Infinity : (r.top + r.height + rows[i + 1].top) / 2
+  );
+  // Pitch of `n` filled lines; a very short translation stops spreading
+  // at FILL_MAX_LINE_HEIGHT and leaves the last rows empty instead.
+  const fillPitch = (n: number, fs: number) =>
+    n > 1 ? Math.min((c1 - c0) / (n - 1), Math.max(srcPitch, fs * FILL_MAX_LINE_HEIGHT)) : 0;
+  const slot = (i: number, n: number, fs: number) => {
+    const pitch = fillPitch(n, fs);
+    const c = n > 1 ? c0 + i * pitch : c0;
+    const half = (fs * 1.2) / 2;
+    // Right edge: the nearest one of every row the text overlaps.
+    let edge = Infinity;
+    let at = 0;
+    rows.forEach((r, j) => {
+      if (bandTop[j] <= c + half && bandBottom[j] >= c - half) edge = Math.min(edge, rowRight(r));
+      if (bandTop[j] <= c && bandBottom[j] >= c) at = j;
+    });
+    const left = rowLeft(rows[at]);
+    const height = n > 1 ? pitch : first.height;
+    return { left, room: Math.min(edge, rowRight(rows[at])) - left, top: c - height / 2, height };
+  };
+  // Room of each slot, computed once per line count and font size:
+  // breakLines asks for it once per token.
+  const fillLines = (fs: number, n: number) => {
+    const rooms: number[] = [];
+    const room = (i: number) => (rooms[i] ??= slot(i, n, fs).room);
+    const lines = breakLines(tokens, room, (t) => unitW(t) * fs);
+    // breakLines lets a single character overflow a too narrow line;
+    // an enlarged font must not run into a picture that way.
+    const fits = lines.every((t, i) => textWidth(t, fs) <= room(i) + 0.01);
+    return { lines, fits };
+  };
+  const widest = Math.max(...rows.map((_, i) => rowRoom(i)));
+  const total = tokens.reduce((w, t) => w + (isSpace(t) ? 0 : unitW(t)), 0);
+  /**
+   * Largest font (up to FILL_GROW × the source size) whose lines, spread
+   * over the source rows, reach the last row and keep a comfortable
+   * pitch. A translation too short to reach it at any size gets the
+   * largest font and the widest pitch instead.
+   */
+  const fill = (fs0: number, base: string[]): FlowResult => {
+    const top = Math.max(fs0, Math.floor(fs0 * FILL_GROW * 2) / 2);
+    type Fill = { fs: number; lines: string[]; n: number };
+    let best: Fill | null = null;
+    let short: Fill | null = null;
+    for (let fs = top; fs >= fs0 && !best; fs -= 0.5) {
+      // Fewest lines the text needs at this size along the spread slots.
+      // No line holds more than the widest row, so fewer lines never fit.
+      for (let n = Math.max(1, Math.ceil((total * fs) / widest)); n <= rows.length * 2; n++) {
+        const pitch = n > 1 ? fillPitch(n, fs) : Infinity;
+        // More lines only get tighter.
+        if (pitch + 0.01 < Math.min(fs * FILL_LINE_HEIGHT, srcPitch)) break;
+        const { lines, fits } = fillLines(fs, n);
+        if (lines.length > n || !fits) continue;
+        // The last line sits on the last row only when every slot is used.
+        const reaches = n > 1 && lines.length === n && pitch + 0.01 >= (c1 - c0) / (n - 1);
+        if (reaches) {
+          best = { fs, lines, n };
+          break;
+        }
+        // More lines may still reach the last row at this size.
+        short ??= { fs, lines, n };
+      }
+    }
+    best ??= short;
+    if (!best) return place(base, fs0, false);
+    const { fs, lines, n } = best;
+    return {
+      fontSize: fs,
+      overflow: false,
+      lines: lines.map((t, i) => {
+        const s = slot(i, n, fs);
+        const width = Math.min(s.left + s.room, o.width) - s.left;
+        return { text: t, left: s.left, top: s.top, width, height: s.height, textWidth: textWidth(t, fs) };
+      })
+    };
+  };
+
   const start = Math.max(minFont, Math.floor(o.maxFont * 2) / 2);
   const along = (fs: number) => breakLines(tokens, rowRoom, (t) => unitW(t) * fs);
   const spread = (fs: number) => breakLines(tokens, () => spreadWidth, (t) => unitW(t) * fs);
@@ -233,7 +332,13 @@ export function flowLayout(text: string, o: FlowOptions): FlowResult {
       break;
     }
   }
-  if (rowsFs === start) return place(along(start), start, false);
+  if (rowsFs === start) {
+    const lines = along(start);
+    // A shorter translation fills the source block instead of leaving
+    // its last rows empty (Lens style): larger font, wider pitch.
+    if (lines.length < rows.length && rows.length > 1) return fill(start, lines);
+    return place(lines, start, false);
+  }
   let spreadFs: number | null = null;
   for (let fs = start; fs > (rowsFs ?? minFont - 0.5); fs -= 0.5) {
     if (fs * lh * spread(fs).length <= o.height + 0.5) {
