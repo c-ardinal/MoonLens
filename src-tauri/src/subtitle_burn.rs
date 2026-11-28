@@ -139,32 +139,20 @@ fn target_kbps(probe: &Probe) -> u32 {
 }
 
 /// Where the ffmpeg executable is: `configured` (the setting) when it
-/// names a file, else `MOONLENS_FFMPEG`, next to MoonLens (also in
-/// `tools/`), then the `PATH`. MoonLens does not ship ffmpeg: the user
-/// places it.
+/// names a file, else `MOONLENS_FFMPEG`, else the `PATH`.
 pub fn locate_ffmpeg(configured: &str) -> Option<PathBuf> {
     let configured = configured.trim();
     if !configured.is_empty() && Path::new(configured).is_file() {
         return Some(PathBuf::from(configured));
+    }
+    if let Some(p) = std::env::var_os("MOONLENS_FFMPEG") {
+        return Some(PathBuf::from(p));
     }
     let name = if cfg!(windows) {
         "ffmpeg.exe"
     } else {
         "ffmpeg"
     };
-    if let Some(p) = std::env::var_os("MOONLENS_FFMPEG") {
-        return Some(PathBuf::from(p));
-    }
-    if let Some(dir) = std::env::current_exe()
-        .ok()
-        .and_then(|e| e.parent().map(Path::to_path_buf))
-    {
-        for p in [dir.join(name), dir.join("tools").join(name)] {
-            if p.is_file() {
-                return Some(p);
-            }
-        }
-    }
     let path = std::env::var_os("PATH")?;
     std::env::split_paths(&path)
         .map(|d| d.join(name))

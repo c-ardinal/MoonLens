@@ -3,9 +3,6 @@
  */
 import type { FfmpegStatus } from './ipc';
 
-/** 入手先の案内ページ（利用者の操作時のみ既定のブラウザーで表示）。 */
-export const FFMPEG_DOWNLOAD_URL = 'https://ffmpeg.org/download.html';
-
 /** 利用不可の理由のキー ID。利用可能な場合は null。 */
 export function ffmpegProblem(status: FfmpegStatus): string | null {
   if (!status.path) return 'file-burn:no_ffmpeg';

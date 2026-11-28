@@ -279,8 +279,7 @@ pub struct SubtitleSettings {
     /// suggestion in the subtitle window).
     pub blocked_phrases: Vec<String>,
     /// ffmpeg executable for burning subtitles into a video (the user
-    /// provides it; MoonLens does not ship or download it). Empty: look
-    /// next to MoonLens, then on the `PATH`.
+    /// provides it). Empty: the one on the `PATH`.
     pub ffmpeg_path: String,
 }
 

@@ -68,7 +68,7 @@ block_stock_phrases = true
 # Phrases to remove in addition to the bundled list.
 blocked_phrases = []
 # ffmpeg executable for burning subtitles into a video (provided by the
-# user). Empty: next to MoonLens, then the PATH.
+# user). Empty: the one on the PATH.
 ffmpeg_path = ""
 
 [clipboard]
