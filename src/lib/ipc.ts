@@ -4,7 +4,7 @@
  * in tests and audit what the backend can be asked to do.
  */
 
-import { invoke } from '@tauri-apps/api/core';
+import { convertFileSrc, invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 import type { AttachCandidate, AttachDock, Attachment } from './attach';
@@ -732,6 +732,16 @@ export const cancelFileSubtitle = () =>
 
 export const fileSubtitleStatus = () =>
   safeInvoke<import('./file-subtitle').FileSubtitleStatus | null>('file_subtitle_status', undefined, null);
+
+/** 生成済みの字幕の全件（再生画面の同期表示用）。 */
+export const fileSubtitleCues = () =>
+  safeInvoke<import('./file-subtitle').FileSubtitleCue[]>('file_subtitle_cues', undefined, []);
+
+/** 字幕生成の対象ファイルの再生用 URL。ファイル未選択時は null。 */
+export async function fileSubtitleMediaUrl(): Promise<string | null> {
+  const path = await safeInvoke<string | null>('file_subtitle_media', undefined, null);
+  return path ? convertFileSrc(path) : null;
+}
 
 /** 生成済みの字幕の書出し。戻り値は保存先、保存先の選択を取消した場合は null。 */
 export const exportFileSubtitle = (format: SubtitleExportFormat, content: SubtitleExportContent) =>

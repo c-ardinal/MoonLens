@@ -14,6 +14,8 @@ export interface FileSubtitleStatus {
   duration_ms: number | null;
   /** 処理済みの位置。 */
   done_ms: number;
+  /** 字幕の確定済みの位置（未完の文は開始位置で保留）。再生画面の待機の基準。 */
+  ready_ms: number;
   /** 生成済みの字幕数。 */
   cues: number;
   error: string | null;
@@ -43,12 +45,10 @@ export const IDLE: FileSubtitleStatus = {
   name: '',
   duration_ms: null,
   done_ms: 0,
+  ready_ms: 0,
   cues: 0,
   error: null
 };
-
-/** 画面に保持する直近の字幕数（全件は本体側で保持、保存は全件が対象）。 */
-export const RECENT_CUES = 100;
 
 /** 進行率（0〜1）。再生時間不明の場合は null、完了時は 1。 */
 export function progressRatio(status: FileSubtitleStatus): number | null {
@@ -63,9 +63,18 @@ export function positionLabel(status: FileSubtitleStatus): string {
   return status.duration_ms ? `${done} / ${timeLabel(status.duration_ms)}` : done;
 }
 
-/** 直近の字幕へ 1 件追加（上限超過分は先頭から削除）。 */
-export function withCue(recent: readonly FileSubtitleCue[], cue: FileSubtitleCue): FileSubtitleCue[] {
-  return [...recent, cue].slice(-RECENT_CUES);
+/**
+ * 状態の変化を字幕の全件へ反映。取りこぼし（購読の開始前の追加等）は件数の不一致で検知し、
+ * 全件の再取得（`reload`）を要求。
+ */
+export function applyUpdate(
+  cues: FileSubtitleCue[],
+  update: FileSubtitleUpdate
+): { cues: FileSubtitleCue[]; reload: boolean } {
+  const expected = update.status.cues;
+  if (update.cue && cues.length + 1 === expected) return { cues: [...cues, update.cue], reload: false };
+  // 変化無しは同一の配列（再描画の抑止）
+  return { cues, reload: cues.length !== expected };
 }
 
 /** 状態の文言のキー ID。 */

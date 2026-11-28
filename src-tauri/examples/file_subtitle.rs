@@ -82,7 +82,7 @@ async fn main() -> anyhow::Result<()> {
                 translated: cue.translated,
             });
         }
-        Event::Progress { done_ms } => eprintln!(
+        Event::Progress { done_ms, .. } => eprintln!(
             "{:>8.1} s done after {:>6.1} s, peak memory {} MB",
             done_ms as f64 / 1000.0,
             started.elapsed().as_secs_f64(),

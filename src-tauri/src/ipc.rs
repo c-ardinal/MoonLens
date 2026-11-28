@@ -1263,6 +1263,30 @@ pub async fn file_subtitle_status(
     Ok(state.file_subtitle.status())
 }
 
+/// 生成済みの字幕の全件（再生画面の同期表示用）。
+#[tauri::command]
+pub async fn file_subtitle_cues(
+    state: State<'_, AppState>,
+) -> Result<Vec<crate::file_subtitle::Cue>, String> {
+    Ok(state.file_subtitle.cues())
+}
+
+/// 字幕生成の対象ファイル（再生画面用）。当該ファイルのみ asset
+/// プロトコルでの読込を許可。ファイル未選択時は `None`。
+#[tauri::command]
+pub async fn file_subtitle_media(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<Option<String>, String> {
+    let Some(path) = state.file_subtitle.media() else {
+        return Ok(None);
+    };
+    app.asset_protocol_scope()
+        .allow_file(&path)
+        .map_err(|e| e.to_string())?;
+    Ok(Some(path.to_string_lossy().to_string()))
+}
+
 /// 生成済みの字幕を SRT・テキストで保存（中止・失敗時は途中まで）。
 /// 保存先ダイアログの取消は `None`。
 #[tauri::command]

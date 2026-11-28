@@ -16,6 +16,7 @@
     "audit:overflow": "node scripts/ui-audit/overflow-audit.mjs build",
     "audit:overflow:en": "node scripts/ui-audit/overflow-audit.mjs build --langs en --sizes medium,xlarge",
     "audit:select": "node scripts/ui-audit/select-contrast.mjs build",
+    "audit:player": "node scripts/ui-audit/player-check.mjs build",
     "audit:i18n": "node scripts/ui-audit/i18n-audit.mjs build --lang en && node scripts/ui-audit/i18n-audit.mjs build --lang ja",
     "lint:copy": "node scripts/copy-lint.mjs",
     "lint:i18n": "node scripts/i18n-lint.mjs",
