@@ -260,4 +260,32 @@ describe('flowLayout fill', () => {
       if (centre(l) + r.fontSize * 0.6 > 3 * 22 - 3) expect(l.left + l.textWidth).toBeLessThanOrEqual(200.01);
     }
   });
+
+  it('puts the last line on the last row when rows differ in width', () => {
+    // 2 full-width rows, then 8 rows beside a picture at x = 200.
+    const src = rows(10, 22, 16).map((row, i) => (i < 2 ? row : { ...row, width: 190, limit: 200 }));
+    const r = flowLayout('あ'.repeat(111), {
+      width: 400,
+      height: 9 * 22 + 16,
+      rows: src,
+      align: 'left',
+      maxFont: 14,
+      measure
+    });
+    expect(r.lines.map((l) => l.text).join('')).toBe('あ'.repeat(111));
+    expect(centre(r.lines[r.lines.length - 1])).toBeCloseTo(9 * 22 + 8);
+  });
+
+  it('lays out a long paragraph quickly', () => {
+    const r0 = performance.now();
+    flowLayout('あ'.repeat(2700), {
+      width: 400,
+      height: 99 * 22 + 16,
+      rows: rows(100, 22, 16),
+      align: 'left',
+      maxFont: 14,
+      measure
+    });
+    expect(performance.now() - r0).toBeLessThan(300);
+  });
 });

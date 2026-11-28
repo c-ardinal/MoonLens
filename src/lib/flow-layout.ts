@@ -242,9 +242,10 @@ export function flowLayout(text: string, o: FlowOptions): FlowResult {
   const c1 = last.top + last.height / 2;
   const srcPitch = (c1 - c0) / Math.max(1, rows.length - 1);
   // Band of each row, split halfway between neighbours.
-  const bandTop = (i: number) => (i === 0 ? -Infinity : (rows[i - 1].top + rows[i - 1].height + rows[i].top) / 2);
-  const bandBottom = (i: number) =>
-    i === rows.length - 1 ? Infinity : (rows[i].top + rows[i].height + rows[i + 1].top) / 2;
+  const bandTop = rows.map((r, i) => (i === 0 ? -Infinity : (rows[i - 1].top + rows[i - 1].height + r.top) / 2));
+  const bandBottom = rows.map((r, i) =>
+    i === rows.length - 1 ? Infinity : (r.top + r.height + rows[i + 1].top) / 2
+  );
   // Pitch of `n` filled lines; a very short translation stops spreading
   // at FILL_MAX_LINE_HEIGHT and leaves the last rows empty instead.
   const fillPitch = (n: number, fs: number) =>
@@ -257,15 +258,22 @@ export function flowLayout(text: string, o: FlowOptions): FlowResult {
     let edge = Infinity;
     let at = 0;
     rows.forEach((r, j) => {
-      if (bandTop(j) <= c + half && bandBottom(j) >= c - half) edge = Math.min(edge, rowRight(r));
-      if (bandTop(j) <= c && bandBottom(j) >= c) at = j;
+      if (bandTop[j] <= c + half && bandBottom[j] >= c - half) edge = Math.min(edge, rowRight(r));
+      if (bandTop[j] <= c && bandBottom[j] >= c) at = j;
     });
     const left = rowLeft(rows[at]);
     const height = n > 1 ? pitch : first.height;
     return { left, room: Math.min(edge, rowRight(rows[at])) - left, top: c - height / 2, height };
   };
-  const fillLines = (fs: number, n: number) =>
-    breakLines(tokens, (i) => slot(i, n, fs).room, (t) => unitW(t) * fs);
+  // Room of each slot, computed once per line count and font size:
+  // breakLines asks for it once per token.
+  const fillLines = (fs: number, n: number) => {
+    const rooms: number[] = [];
+    const room = (i: number) => (rooms[i] ??= slot(i, n, fs).room);
+    return breakLines(tokens, room, (t) => unitW(t) * fs);
+  };
+  const widest = Math.max(...rows.map((_, i) => rowRoom(i)));
+  const total = tokens.reduce((w, t) => w + (isSpace(t) ? 0 : unitW(t)), 0);
   /**
    * Largest font (up to FILL_GROW × the source size) whose lines, spread
    * over the source rows, reach the last row and keep a comfortable
@@ -279,12 +287,15 @@ export function flowLayout(text: string, o: FlowOptions): FlowResult {
     let short: Fill | null = null;
     for (let fs = top; fs >= fs0 && !best; fs -= 0.5) {
       // Fewest lines the text needs at this size along the spread slots.
-      for (let n = 1; n <= rows.length * 2; n++) {
+      // No line holds more than the widest row, so fewer lines never fit.
+      for (let n = Math.max(1, Math.ceil((total * fs) / widest)); n <= rows.length * 2; n++) {
+        const pitch = n > 1 ? fillPitch(n, fs) : Infinity;
+        // More lines only get tighter.
+        if (pitch + 0.01 < Math.min(fs * FILL_LINE_HEIGHT, srcPitch)) break;
         const lines = fillLines(fs, n);
         if (lines.length > n) continue;
-        const pitch = n > 1 ? fillPitch(n, fs) : Infinity;
-        if (pitch + 0.01 < Math.min(fs * FILL_LINE_HEIGHT, srcPitch)) break;
-        const reaches = n > 1 && pitch + 0.01 >= (c1 - c0) / (n - 1);
+        // The last line sits on the last row only when every slot is used.
+        const reaches = n > 1 && lines.length === n && pitch + 0.01 >= (c1 - c0) / (n - 1);
         if (reaches) best = { fs, lines, n };
         else short ??= { fs, lines, n };
         break;
