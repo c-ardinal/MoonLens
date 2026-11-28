@@ -98,6 +98,9 @@ pub enum Event {
         reason: Skip,
         lang: String,
     },
+    /// Left unspoken without a notice: newer requests took its place,
+    /// or the text holds nothing to pronounce.
+    Dropped,
 }
 
 /// Speaks one text at a time. Runs on the worker thread only.
@@ -199,6 +202,8 @@ impl<E: Engine, H: Host> Player<E, H> {
 
     pub fn say(&mut self, utterance: Utterance) {
         let Some(text) = prepare(&utterance.text) else {
+            // Nothing to pronounce: the window stops waiting for it.
+            self.host.emit(&utterance.owner, Event::Dropped);
             return;
         };
         if self.host.blocked() {
@@ -207,7 +212,9 @@ impl<E: Engine, H: Host> Player<E, H> {
         }
         self.pending.push_back(Utterance { text, ..utterance });
         while self.pending.len() > MAX_PENDING {
-            self.pending.pop_front();
+            if let Some(old) = self.pending.pop_front() {
+                self.host.emit(&old.owner, Event::Dropped);
+            }
         }
         self.advance();
     }

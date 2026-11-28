@@ -136,9 +136,13 @@ fn requests_are_spoken_one_after_another() {
 #[test]
 fn backlog_drops_what_waited_longest() {
     let (mut p, fake) = player();
-    for text in ["a1", "a2", "a3", "a4"] {
+    for text in ["a1", "a2", "a3"] {
         p.say(say("lens-1", text));
     }
+    fake.events();
+    p.say(say("lens-2", "a4"));
+    // The window that asked learns its request left the queue.
+    assert_eq!(fake.events(), [("lens-1".to_string(), Event::Dropped)]);
     for _ in 0..4 {
         fake.end();
         p.tick();
@@ -269,11 +273,13 @@ fn an_engine_failure_is_reported_and_does_not_stall_the_queue() {
 }
 
 #[test]
-fn text_without_anything_to_pronounce_is_ignored() {
+fn text_without_anything_to_pronounce_is_not_spoken() {
     let (mut p, fake) = player();
     p.say(say("lens-1", " … \n—"));
     assert!(p.idle());
-    assert!(fake.events().is_empty());
+    assert!(fake.spoken().is_empty());
+    // Answered, so the window stops waiting for it.
+    assert_eq!(fake.events(), [("lens-1".to_string(), Event::Dropped)]);
 }
 
 #[test]

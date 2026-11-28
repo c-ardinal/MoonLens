@@ -393,6 +393,7 @@ mod tests {
             at_ms,
             duration_ms,
             speaker: None,
+            language: "ja".into(),
         }
     }
 

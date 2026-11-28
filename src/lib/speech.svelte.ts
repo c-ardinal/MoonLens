@@ -12,6 +12,8 @@ export const NOTE_MS = 6000;
 export class Speaker {
   /** 当該ウィンドウの依頼分を読上中。 */
   speaking = $state(false);
+  /** 依頼済みで読上の開始前（他ウィンドウの読上中）。 */
+  waiting = $state(false);
   /** 見送り理由の案内（一定時間で消去）。 */
   note = $state<string | null>(null);
   #timer: ReturnType<typeof setTimeout> | undefined;
@@ -22,6 +24,8 @@ export class Speaker {
       this.speaking = false;
       return;
     }
+    this.waiting = false;
+    if (ev.kind === 'dropped') return;
     clearTimeout(this.#timer);
     if (ev.kind === 'started') {
       this.speaking = true;
@@ -42,11 +46,19 @@ export class Speaker {
     };
   }
 
+  /** 読上中または待機中（停止の対象あり）。 */
+  get busy(): boolean {
+    return this.speaking || this.waiting;
+  }
+
   say(text: string, lang: string): void {
-    if (text.trim()) speak(text, lang).catch(() => {});
+    if (!text.trim()) return;
+    this.waiting = true;
+    speak(text, lang).catch(() => (this.waiting = false));
   }
 
   stop(): void {
+    this.waiting = false;
     stopSpeaking().catch(() => {});
   }
 }

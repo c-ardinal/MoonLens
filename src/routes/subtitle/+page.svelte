@@ -348,7 +348,7 @@
         await onSubtitle((ev) => {
           if (ev.window !== label) return;
           view = reduce(view, ev);
-          if (speakOn && ev.kind === 'chunk') speaker.say(ev.translated, targetLanguage);
+          if (speakOn && ev.kind === 'chunk') speaker.say(ev.translated, ev.language ?? targetLanguage);
         })
       );
       unlisteners.push(

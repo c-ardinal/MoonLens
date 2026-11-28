@@ -119,6 +119,9 @@ pub enum LiveEvent {
         /// The new translations came from a cloud provider.
         #[serde(skip_serializing_if = "std::ops::Not::not")]
         via_cloud: bool,
+        /// Target language the blocks were translated into (a change of
+        /// the window's language applies to later readings).
+        language: String,
     },
     /// Hide these blocks (indices into the last `Blocks`): their source
     /// changed and a new reading is on its way.
@@ -199,6 +202,8 @@ struct Shown {
     /// decoded QR payload): what a new reading is compared with.
     text: Option<String>,
     blocks: Vec<LensBlock>,
+    /// Target language of the blocks.
+    language: String,
     /// [`Pipeline::translation_epoch`] the blocks were translated under.
     epoch: String,
     /// Indices already reported stale since the last `Blocks`.
@@ -460,6 +465,7 @@ impl Tracker {
                     translating: false,
                     provider: None,
                     via_cloud: false,
+                    language: self.shown.language.clone(),
                 });
             }
             self.shown.thumb = Some(thumb);
@@ -562,6 +568,7 @@ impl Tracker {
             thumb: Some(thumb),
             text: Some(key),
             blocks: bundle.blocks.clone(),
+            language: env.target_language.to_string(),
             epoch,
             stale: Vec::new(),
         };
@@ -570,6 +577,7 @@ impl Tracker {
             translating: requested,
             provider: None,
             via_cloud: false,
+            language: env.target_language.to_string(),
         });
         if requested {
             // A long text is translated in parts: show each part as it
@@ -586,6 +594,7 @@ impl Tracker {
                         translating: true,
                         provider: None,
                         via_cloud: false,
+                        language: env.target_language.to_string(),
                     });
                 }
             };
@@ -608,6 +617,7 @@ impl Tracker {
                     translating: false,
                     provider: None,
                     via_cloud: false,
+                    language: env.target_language.to_string(),
                 });
                 return Err(user_error::provider(&e, Capability::Translate));
             }
@@ -619,6 +629,7 @@ impl Tracker {
                     translating: false,
                     provider: Some(bundle.result.used_provider.clone()),
                     via_cloud: bundle.result.via_cloud,
+                    language: env.target_language.to_string(),
                 });
             }
         }
@@ -683,6 +694,7 @@ impl Tracker {
             translating: false,
             provider: None,
             via_cloud: false,
+            language: self.shown.language.clone(),
         });
         if !self.shown.stale.is_empty() {
             (env.emit)(LiveEvent::Stale {

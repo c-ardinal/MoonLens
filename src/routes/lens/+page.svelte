@@ -124,9 +124,13 @@
   const speaker = new Speaker();
   /** Translations already read aloud. */
   const spoken: Spoken = new Map();
-  function readAloud(shown: LensBlock[]) {
+  /** 表示中の訳文の言語（翻訳先の変更は以後の結果から反映）。 */
+  let shownLanguage: string | null = null;
+  function readAloud(shown: LensBlock[], language?: string | null) {
+    if (language) shownLanguage = language;
     if (!speakOn || paused) return;
-    for (const text of unspoken(spoken, shown, Date.now())) speaker.say(text, targetLanguage);
+    const lang = shownLanguage ?? targetLanguage;
+    for (const text of unspoken(spoken, shown, Date.now())) speaker.say(text, lang);
   }
   function toggleSpeak() {
     speakOn = !speakOn;
@@ -171,7 +175,7 @@
     hidden = new Set();
     // QR code etc.: no boxes to place, so it is shown as text.
     if (!blocks.length && translation.trim()) showText = true;
-    readAloud(blocks);
+    readAloud(blocks, r.target_language);
   }
 
   /** Continuous reading (`moonlens://lens-live`). */
@@ -190,7 +194,7 @@
         provider = ev.provider;
         viaCloud = ev.via_cloud ?? false;
       }
-      readAloud(ev.blocks);
+      readAloud(ev.blocks, ev.language);
     } else if (ev.kind === 'reading') {
       reading = ev.on;
     } else if (ev.kind === 'stale') {
