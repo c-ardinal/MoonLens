@@ -3,7 +3,7 @@
   import { onDestroy, onMount, tick } from 'svelte';
   import { type UnlistenFn } from '@tauri-apps/api/event';
   import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
-  import { AppWindow, ArrowLeftRight, Check, ChevronDown, Eye, EyeOff, Magnet, Mic, Monitor, Plus, RotateCw, X } from 'lucide-svelte';
+  import { AppWindow, ArrowLeftRight, Check, ChevronDown, Eye, EyeOff, Magnet, Mic, Monitor, Plus, RotateCw, Volume2, VolumeX, X } from 'lucide-svelte';
   import {
     blockSubtitlePhrase,
     closeSubtitleWindow,
@@ -44,6 +44,7 @@
     statusLabel
   } from '$lib/subtitle';
   import { LevelScope, levelRatio, type InputState } from '$lib/subtitle-level';
+  import { Speaker } from '$lib/speech.svelte';
 
   // 音声翻訳ウィンドウ（複数可）。タイトルバーのドラッグで移動、右下隅で寸法変更、
   // × で当該ウィンドウを停止・閉鎖、＋ でウィンドウ追加。音源（PC 全体／アプリ単位）は
@@ -71,6 +72,14 @@
   const partnerOptions = $derived(partnerLanguages(SOURCE_LANGUAGES, targetLanguage));
   let partnerError = $state<string | null>(null);
   let scroller = $state<HTMLElement>();
+  // 訳文の読上（ウィンドウ単位）。音源が PC 全体の場合、読上音声を再認識するため利用不可。
+  let speakOn = $state(false);
+  const speaker = new Speaker();
+  const speakable = $derived(view.source.kind === 'app');
+  function toggleSpeak() {
+    speakOn = !speakOn;
+    if (!speakOn) speaker.stop();
+  }
   const unlisteners: (UnlistenFn | undefined)[] = [];
 
   // 音源メニュー
@@ -337,7 +346,9 @@
       unlisteners.push(await onSettingsChanged(applySettings));
       unlisteners.push(
         await onSubtitle((ev) => {
-          if (ev.window === label) view = reduce(view, ev);
+          if (ev.window !== label) return;
+          view = reduce(view, ev);
+          if (speakOn && ev.kind === 'chunk') speaker.say(ev.translated, ev.language ?? targetLanguage);
         })
       );
       unlisteners.push(
@@ -348,6 +359,7 @@
       );
       // 開始イベントは受信登録より先行：現況を照会。
       if (!view.running) view = restore(view, await subtitleSession());
+      unlisteners.push(await speaker.listen());
       unlisteners.push(await win.listen<Attachment>(ATTACH_EVENT, (e) => applyAttachment(e.payload)));
       applyAttachment(await windowAttachment(label));
     } catch {
@@ -442,6 +454,22 @@
     {/if}
     <button
       class="btn"
+      class:on={speakOn && speakable}
+      data-action="speak"
+      aria-pressed={speakOn && speakable}
+      aria-label={t('speech:read_aloud')}
+      disabled={!speakable}
+      title={!speakable
+        ? t('speech:unavailable_for_whole_pc')
+        : speakOn
+          ? t('speech:read_aloud_on_subtitle')
+          : t('speech:read_aloud_off_subtitle')}
+      onclick={toggleSpeak}
+    >
+      {#if speakOn && speakable}<Volume2 class="h-4 w-4" />{:else}<VolumeX class="h-4 w-4" />{/if}
+    </button>
+    <button
+      class="btn"
       class:on={showOriginal}
       aria-pressed={showOriginal}
       title={t('common:show_source')}
@@ -487,6 +515,9 @@
     {/if}
     {#if partnerError}
       <p class="err" role="alert">{partnerError}</p>
+    {/if}
+    {#if speaker.note}
+      <p class="err" role="status">{speaker.note}</p>
     {/if}
     {#if !view.running}
       <button class="restart" onclick={restart}><RotateCw class="h-3.5 w-3.5" />{t('subtitle:resume')}</button>

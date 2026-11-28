@@ -20,6 +20,8 @@
     RefreshCw,
     ScanText,
     TextSelect,
+    Volume2,
+    VolumeX,
     X
   } from 'lucide-svelte';
   import { LANGUAGES, languageLabel } from '$lib/lens-overlay';
@@ -37,6 +39,7 @@
     showText,
     targetLanguage,
     readMode = 'subtitle',
+    speak = false,
     hasText = true,
     busy = false,
     maximized = false,
@@ -52,6 +55,7 @@
     onoriginal,
     onlanguage,
     onreadmode,
+    onspeak,
     oncopy,
     ontext,
     onexplain,
@@ -68,6 +72,8 @@
     targetLanguage: string;
     /** 読取方式（字幕：逐次表示の完了後に前文脈付きで翻訳、UI：読取単位で翻訳し前文脈の継承なし）。 */
     readMode?: LensReadMode;
+    /** 訳文の読上（OS の音声合成）。 */
+    speak?: boolean;
     /** 翻訳対象の文字あり（原文切替・コピー・説明の可否）。 */
     hasText?: boolean;
     busy?: boolean;
@@ -92,6 +98,7 @@
     onoriginal: () => void;
     onlanguage: (code: string) => void;
     onreadmode?: (mode: LensReadMode) => void;
+    onspeak?: () => void;
     oncopy: () => void;
     ontext: () => void;
     onexplain: () => void;
@@ -177,6 +184,14 @@
           ? t('lens-actions:read_mode_ui_translates_each_read_on')
           : t('lens-actions:read_mode_subtitles_translates_once_the_text'),
       run: () => onreadmode?.(readMode === 'ui' ? 'subtitle' : 'ui')
+    },
+    {
+      key: 'speak',
+      icon: speak ? Volume2 : VolumeX,
+      label: t('speech:read_aloud'),
+      title: speak ? t('speech:read_aloud_on_window') : t('speech:read_aloud_off_window'),
+      pressed: speak,
+      run: () => onspeak?.()
     },
     {
       key: 'copy',

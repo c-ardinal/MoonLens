@@ -66,6 +66,9 @@ pub enum SubtitleEvent {
         /// in the language of the other person.
         #[serde(skip_serializing_if = "Option::is_none")]
         speaker: Option<Speaker>,
+        /// Language of `translated` (the target when this chunk was
+        /// translated; a change of settings applies to later chunks).
+        language: String,
     },
     /// A short sentence that keeps coming back: the window asks whether
     /// to block it from now on (see `subtitle_filter`).
@@ -235,6 +238,16 @@ impl SubtitleService {
     /// At least one window is recognizing.
     pub fn is_running(&self) -> bool {
         self.sessions.lock().values().any(|s| s.running.is_some())
+    }
+
+    /// A window recognizes everything the PC plays or what the
+    /// microphone picks up, which would include speech of MoonLens' own
+    /// (see [`crate::speech`]).
+    pub fn hears_speech(&self) -> bool {
+        self.sessions
+            .lock()
+            .values()
+            .any(|s| s.running.is_some() && !matches!(s.source, AudioSource::App { .. }))
     }
 
     /// At least one subtitle window is open (recognizing or showing why
@@ -1026,6 +1039,7 @@ pub async fn run_loop(
                     at_ms,
                     duration_ms,
                     speaker,
+                    language: languages.target.clone(),
                 });
                 if correcting && flush {
                     pause(&mut lines, &mut reviser, &languages);
@@ -1236,6 +1250,7 @@ mod tests {
                 at_ms: 0,
                 duration_ms: 0,
                 speaker: None,
+                language: "ja".into(),
             },
             SubtitleEvent::Revised(crate::subtitle_revise::Revision {
                 replaces: vec![7],
@@ -1373,6 +1388,7 @@ mod tests {
             at_ms: 0,
             duration_ms: 0,
             speaker: Some(Speaker::Partner),
+            language: "ja".into(),
         };
         assert_eq!(
             serde_json::to_value(&said).unwrap()["speaker"],

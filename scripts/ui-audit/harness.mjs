@@ -232,6 +232,12 @@ export async function walkWindows(browser, url, { only = null, lang = 'ja' } = {
       await wait(pg, 300); await visit(pg, `lens-${w}`);
       await pg.evaluate(() => window.__emit('moonlens://lens-pause', true)); await wait(pg, 100); await visit(pg, `lens-${w}-paused`);
       await pg.evaluate(() => window.__emit('moonlens://lens-pause', false)); await wait(pg, 100);
+      // 読上：ON と見送り理由の案内（縦メニューへ収納中の幅は縦メニュー経由）
+      await reach(`lens-${w}-speak`, async () => {
+        if (await pg.locator('.tb[data-action="speak"]:not(.off)').count()) await pg.click('.tb[data-action="speak"]:not(.off)', { timeout: 2000 });
+        else { await pg.click('.more', { timeout: 2000 }); await pg.click('.mi[data-action="speak"]', { timeout: 2000 }); }
+      });
+      await pg.evaluate(() => window.__emit('moonlens://speech', { kind: 'skipped', reason: 'no_voice', lang: 'ko' })); await wait(pg, 100); await visit(pg, `lens-${w}-speak`);
       // 縦メニューは収納項目が有る幅のみ表示
       if (await pg.locator('.more').count()) { await reach(`lens-${w}-menu`, async () => { await pg.click('.more', { timeout: 2000 }); await pg.locator('.menu').waitFor({ timeout: 2000 }); }); await visit(pg, `lens-${w}-menu`); }
       // 吸着メニュー：吸着なし（候補一覧）・吸着中（配置・解除）。縦メニューへ収納中の幅は縦メニュー経由
@@ -287,6 +293,10 @@ export async function walkWindows(browser, url, { only = null, lang = 'ja' } = {
       await pg.evaluate((a) => window.__emit('moonlens://attach', a), { ...ATTACHED, dock: 'inside' });
       await attachMenu('attached');
       await pg.keyboard.press('Escape');
+      // 読上：音源がアプリ単位の場合のみ操作可。ON と見送り理由の案内
+      await emit({ kind: 'started', device: 'Visual Novel', source: { kind: 'app', pid: 4242 } });
+      await reach(`subtitle-${w}-speak`, async () => { await pg.click('[data-action="speak"]:not([disabled])', { timeout: 2000 }); });
+      await pg.evaluate(() => window.__emit('moonlens://speech', { kind: 'skipped', reason: 'blocked', lang: 'ja' })); await m('speak');
       await emit({ kind: 'error', message: label(lang)('subtitle:stopped_after_repeated_speech_recognition').replace('{detail}', 'model load failed') }); await emit({ kind: 'stopped' }); await m('error');
       await pg.context().close();
     }

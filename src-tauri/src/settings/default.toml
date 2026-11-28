@@ -118,6 +118,14 @@ model_idle_unload_minutes = 10
 [startup]
 launch_at_login = false
 
+# Read-aloud of translations with the voices installed in the OS (no
+# model, nothing sent anywhere). Each window has its own on/off switch.
+[speech]
+# Id of the preferred voice; "" = the first voice of the language.
+voice = ""
+rate = 1.0
+volume_percent = 100
+
 # ---------------------------------------------------------------------------
 # Providers
 # Each task declares an ordered chain and fallback policy. Provider ids of the

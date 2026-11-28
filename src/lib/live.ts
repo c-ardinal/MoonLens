@@ -17,6 +17,8 @@ export type LiveEvent =
       provider?: string;
       /** The new translations came from a cloud provider. */
       via_cloud?: boolean;
+      /** Target language the blocks were translated into. */
+      language?: string;
     }
   | { kind: "stale"; indices: number[] }
   | { kind: "clear" }
