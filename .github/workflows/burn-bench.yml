@@ -61,7 +61,7 @@ jobs:
             "| LGPL 共有 | $(& $mb (Get-Item D:\ff\lgpl-shared.zip).Length) MB | $(& $mb $shared) MB |"
             "| GPL 静的（参考） | $(& $mb (Get-Item D:\ff\gpl.zip).Length) MB | $(& $mb (Get-Item $gpl).Length) MB |"
             ''
-          ) | Out-File -Append -Encoding utf8 $env:GITHUB_STEP_SUMMARY
+          ) | Tee-Object -Append -FilePath $env:GITHUB_STEP_SUMMARY | Write-Host
           & $lgpl -hide_banner -encoders 2>$null | Select-String 'h264|openh264|_mf'
           & $lgpl -hide_banner -filters 2>$null | Select-String ' subtitles '
 
@@ -77,6 +77,7 @@ jobs:
         shell: pwsh
         working-directory: src-tauri
         run: |
+          git config --global core.longpaths true
           New-Item -ItemType Directory -Force ..\build | Out-Null
           $env:CARGO_TARGET_DIR = 'D:\t'
           cargo build --release --no-default-features --example burn_subtitle

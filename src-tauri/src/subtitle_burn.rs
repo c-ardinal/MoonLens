@@ -478,18 +478,21 @@ pub fn burn(
         filter.push_str(":fontsdir=fonts");
     }
 
+    // ffmpeg runs in the work folder: relative paths would point there.
+    let input = std::path::absolute(job.input)?;
+    let output = std::path::absolute(job.output)?;
     let mut cmd = command(job.ffmpeg);
     cmd.current_dir(&work)
         .args(["-hide_banner", "-nostats", "-loglevel", "error", "-y"])
         .args(["-progress", "pipe:1", "-stats_period", "0.5"])
         .args(["-hwaccel", "auto", "-i"])
-        .arg(job.input)
+        .arg(&input)
         .args([
             "-map", "0:v:0", "-map", "0:a?", "-vf", &filter, "-pix_fmt", "yuv420p",
         ])
         .args(encoder.args(target_kbps(&probe)))
         .args(["-c:a", "copy"])
-        .arg(job.output)
+        .arg(&output)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     let mut child = cmd.spawn().map_err(BurnError::Spawn)?;
@@ -518,11 +521,11 @@ pub fn burn(
     let status = child.wait()?;
     let errors = errors.join().unwrap_or_default();
     if cancelled || cancel.load(Ordering::Relaxed) {
-        let _ = std::fs::remove_file(job.output);
+        let _ = std::fs::remove_file(&output);
         return Err(BurnError::Cancelled);
     }
     if !status.success() {
-        let _ = std::fs::remove_file(job.output);
+        let _ = std::fs::remove_file(&output);
         let tail: String = errors
             .lines()
             .rev()
