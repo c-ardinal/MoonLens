@@ -596,6 +596,7 @@ impl FileSubtitleService {
                             at_ms: cue.end_ms,
                             duration_ms: cue.end_ms - cue.start_ms,
                             speaker: None,
+                            language: inner.target_language.clone(),
                         });
                         Some(cue)
                     }
