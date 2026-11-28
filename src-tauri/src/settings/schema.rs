@@ -147,6 +147,9 @@ pub struct Hotkeys {
     /// translations so the original on screen can be read.
     pub hold_window_original: String,
     pub toggle_subtitle: String,
+    /// Subtitle: switch every window between letting the mouse through
+    /// to the app underneath (default) and taking it (select / copy).
+    pub toggle_subtitle_operate: String,
     pub open_command_palette: String,
     pub open_history: String,
     pub reverse_image_search: String,
@@ -164,6 +167,7 @@ impl Default for Hotkeys {
             toggle_window_pause: "CommandOrControl+Shift+X".into(),
             hold_window_original: "CommandOrControl+Shift+O".into(),
             toggle_subtitle: "CommandOrControl+Shift+S".into(),
+            toggle_subtitle_operate: "CommandOrControl+Shift+Y".into(),
             open_command_palette: "CommandOrControl+K".into(),
             open_history: "CommandOrControl+Shift+H".into(),
             reverse_image_search: "CommandOrControl+Shift+G".into(),
@@ -187,6 +191,7 @@ pub struct Triggers {
     pub toggle_window_pause: String,
     pub hold_window_original: String,
     pub toggle_subtitle: String,
+    pub toggle_subtitle_operate: String,
     pub open_command_palette: String,
     pub open_history: String,
 }

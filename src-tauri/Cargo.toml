@@ -24,6 +24,9 @@ tauri = { version = "2", features = [
     # overlay windows depend on platform-native transparency; without this
     # feature the macOS target fails to build (the method is gated off).
     "macos-private-api",
+    # The player of file subtitles loads the chosen video through the
+    # asset protocol; access is granted per file (`file_subtitle_media`).
+    "protocol-asset",
 ] }
 tauri-plugin-global-shortcut = "2"
 tauri-plugin-shell = "2"

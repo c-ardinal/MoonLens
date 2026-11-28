@@ -123,6 +123,11 @@ jobs:
       - name: UI overflow audit (English)
         run: npm run audit:overflow:en
 
+      # File subtitles player: subtitles in sync with the video, waiting
+      # for the generation, jumping from the list, unplayable formats.
+      - name: UI player check (file subtitles)
+        run: npm run audit:player
+
       # English display: no window may still show a Japanese source string.
       - name: UI i18n audit (English)
         run: npm run audit:i18n

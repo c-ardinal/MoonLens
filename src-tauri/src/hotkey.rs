@@ -38,6 +38,8 @@ pub enum Action {
     HoldOriginal,
     /// Subtitle: toggle the live subtitle service.
     ToggleSubtitle,
+    /// Subtitle: mouse through the windows / operate them.
+    ToggleSubtitleOperate,
     OpenHistory,
     OpenCommandPalette,
 }
@@ -67,6 +69,9 @@ impl Action {
             }
             Action::HoldOriginal => {}
             Action::ToggleSubtitle => state.subtitle.toggle_checked(app),
+            Action::ToggleSubtitleOperate => {
+                crate::subtitle_mouse::toggle_operate(app, &state.subtitle_mouse);
+            }
             // History and the command palette live in the main window:
             // bring it up first, or the event lands in a hidden window
             // and nothing happens. (Reverse image search is not bound: it
@@ -82,7 +87,7 @@ impl Action {
 }
 
 /// The shortcut of every action.
-fn shortcuts(h: &Hotkeys) -> [(Action, &str); 8] {
+fn shortcuts(h: &Hotkeys) -> [(Action, &str); 9] {
     [
         (Action::OpenWindow, &h.capture_region),
         (Action::ToggleWindows, &h.toggle_pin_overlay),
@@ -90,13 +95,14 @@ fn shortcuts(h: &Hotkeys) -> [(Action, &str); 8] {
         (Action::TogglePause, &h.toggle_window_pause),
         (Action::HoldOriginal, &h.hold_window_original),
         (Action::ToggleSubtitle, &h.toggle_subtitle),
+        (Action::ToggleSubtitleOperate, &h.toggle_subtitle_operate),
         (Action::OpenHistory, &h.open_history),
         (Action::OpenCommandPalette, &h.open_command_palette),
     ]
 }
 
 /// The extra trigger of every action (see `trigger.rs` for the text form).
-pub fn triggers(t: &Triggers) -> [(Action, &str); 8] {
+pub fn triggers(t: &Triggers) -> [(Action, &str); 9] {
     [
         (Action::OpenWindow, &t.capture_region),
         (Action::ToggleWindows, &t.toggle_pin_overlay),
@@ -104,6 +110,7 @@ pub fn triggers(t: &Triggers) -> [(Action, &str); 8] {
         (Action::TogglePause, &t.toggle_window_pause),
         (Action::HoldOriginal, &t.hold_window_original),
         (Action::ToggleSubtitle, &t.toggle_subtitle),
+        (Action::ToggleSubtitleOperate, &t.toggle_subtitle_operate),
         (Action::OpenHistory, &t.open_history),
         (Action::OpenCommandPalette, &t.open_command_palette),
     ]
@@ -201,7 +208,7 @@ mod tests {
 
     #[test]
     fn every_shortcut_action_has_an_extra_trigger() {
-        let actions = |pairs: [(Action, &str); 8]| pairs.map(|(a, _)| a);
+        let actions = |pairs: [(Action, &str); 9]| pairs.map(|(a, _)| a);
         assert_eq!(
             actions(shortcuts(&Hotkeys::default())),
             actions(triggers(&Triggers::default()))

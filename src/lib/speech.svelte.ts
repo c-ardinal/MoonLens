@@ -51,10 +51,11 @@ export class Speaker {
     return this.speaking || this.waiting;
   }
 
-  say(text: string, lang: string): void {
+  /** `sourceMs`：元の発話の長さ（音声翻訳）。指定時は読上速度が話速へ追随。 */
+  say(text: string, lang: string, sourceMs?: number): void {
     if (!text.trim()) return;
     this.waiting = true;
-    speak(text, lang).catch(() => (this.waiting = false));
+    speak(text, lang, sourceMs).catch(() => (this.waiting = false));
   }
 
   stop(): void {

@@ -1263,6 +1263,30 @@ pub async fn file_subtitle_status(
     Ok(state.file_subtitle.status())
 }
 
+/// 生成済みの字幕の全件（再生画面の同期表示用）。
+#[tauri::command]
+pub async fn file_subtitle_cues(
+    state: State<'_, AppState>,
+) -> Result<Vec<crate::file_subtitle::Cue>, String> {
+    Ok(state.file_subtitle.cues())
+}
+
+/// 字幕生成の対象ファイル（再生画面用）。当該ファイルのみ asset
+/// プロトコルでの読込を許可。ファイル未選択時は `None`。
+#[tauri::command]
+pub async fn file_subtitle_media(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<Option<String>, String> {
+    let Some(path) = state.file_subtitle.media() else {
+        return Ok(None);
+    };
+    app.asset_protocol_scope()
+        .allow_file(&path)
+        .map_err(|e| e.to_string())?;
+    Ok(Some(path.to_string_lossy().to_string()))
+}
+
 /// 生成済みの字幕を SRT・テキストで保存（中止・失敗時は途中まで）。
 /// 保存先ダイアログの取消は `None`。
 #[tauri::command]
@@ -1569,6 +1593,26 @@ pub async fn subtitle_session(
     state: State<'_, AppState>,
 ) -> Result<Option<crate::subtitle::SessionInfo>, String> {
     Ok(state.subtitle.session(window.label()))
+}
+
+/// Mouse handling of the calling subtitle window: operate mode as the
+/// user set it, and whether its popups cover the body (see
+/// [`crate::subtitle_mouse`]).
+#[tauri::command]
+pub async fn set_subtitle_mouse(
+    window: tauri::WebviewWindow,
+    state: State<'_, AppState>,
+    operate: bool,
+    interactive: bool,
+) -> Result<(), String> {
+    state.subtitle_mouse.set(
+        window.label(),
+        crate::subtitle_mouse::Mouse {
+            operate,
+            interactive,
+        },
+    );
+    Ok(())
 }
 
 /// The applications a subtitle window can listen to.

@@ -106,6 +106,12 @@ const HOTKEY_FIELDS: Extract<Field, { kind: 'hotkey' }>[] = [
         help: 'settings:hides_translations_in_all_windows_and_shows'
       },
       { kind: 'hotkey', path: 'hotkeys.toggle_subtitle', label: 'common:audio_translation_start_stop' },
+      {
+        kind: 'hotkey',
+        path: 'hotkeys.toggle_subtitle_operate',
+        label: 'settings:audio_translation_click_through_interact',
+        help: 'settings:switches_every_audio_translation_window_click_through'
+      },
       { kind: 'hotkey', path: 'hotkeys.open_command_palette', label: 'settings:command_palette' },
       { kind: 'hotkey', path: 'hotkeys.open_history', label: 'settings:open_history' }
     ];

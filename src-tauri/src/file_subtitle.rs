@@ -84,6 +84,10 @@ pub enum Event {
     /// The audio up to here is done.
     Progress {
         done_ms: u64,
+        /// Every subtitle before here is out: a sentence still open
+        /// (it may go on in the next window) holds this back to its
+        /// start. The player waits here, not at `done_ms`.
+        ready_ms: u64,
     },
 }
 
@@ -150,8 +154,12 @@ pub async fn run(
         if let Some(done) = joiner.close_before(samples_ms(window_start)) {
             finish(engine, emit, done, &mut history).await;
         }
+        let done_ms = samples_ms(window_start);
         emit(Event::Progress {
-            done_ms: samples_ms(window_start),
+            done_ms,
+            ready_ms: joiner
+                .open_start()
+                .map_or(done_ms, |start| start.min(done_ms)),
         });
     }
     if let Some(done) = joiner.take() {
@@ -308,6 +316,11 @@ impl Joiner {
         })
     }
 
+    /// Start of the cue still open, if one is.
+    fn open_start(&self) -> Option<u64> {
+        self.open.as_ref().map(|open| open.start_ms)
+    }
+
     fn take_if(&mut self, closes: impl Fn(&Open) -> bool) -> Option<Open> {
         if self.open.as_ref().is_some_and(closes) {
             self.take()
@@ -452,6 +465,8 @@ pub struct Status {
     pub duration_ms: Option<u64>,
     /// The audio up to here is done.
     pub done_ms: u64,
+    /// Every subtitle before here is out (see [`Event::Progress`]).
+    pub ready_ms: u64,
     /// Subtitles so far.
     pub cues: usize,
     /// Why the job failed.
@@ -580,8 +595,9 @@ impl FileSubtitleService {
                     return;
                 }
                 let cue = match event {
-                    Event::Progress { done_ms } => {
+                    Event::Progress { done_ms, ready_ms } => {
                         inner.status.done_ms = done_ms;
+                        inner.status.ready_ms = ready_ms;
                         None
                     }
                     Event::Cue(cue) => {
@@ -639,6 +655,28 @@ impl FileSubtitleService {
             inner.status.phase = Phase::Cancelled;
         }
         inner.status.clone()
+    }
+
+    /// The subtitles so far, oldest first: the page's player shows the
+    /// one under the playback position.
+    pub fn cues(&self) -> Vec<Cue> {
+        self.inner
+            .lock()
+            .lines
+            .iter()
+            .map(|l| Cue {
+                start_ms: l.start_ms as u64,
+                end_ms: l.end_ms as u64,
+                original: l.original.clone(),
+                translated: l.translated.clone(),
+            })
+            .collect()
+    }
+
+    /// The media file of the job, for the player. `None` before a file.
+    pub fn media(&self) -> Option<PathBuf> {
+        let inner = self.inner.lock();
+        (inner.status.phase != Phase::Idle).then(|| inner.path.clone())
     }
 
     /// The subtitles so far as a file: its text, the folder of the
@@ -891,12 +929,21 @@ mod tests {
         assert_eq!(cues.len(), 3);
         assert_eq!((cues[0].start_ms, cues[0].end_ms), (1000, 3000));
         // A later window starts where the one before ended.
-        assert_eq!(events[1], Event::Progress { done_ms: 28_000 });
+        assert_eq!(
+            events[1],
+            Event::Progress {
+                done_ms: 28_000,
+                ready_ms: 28_000
+            }
+        );
         assert_eq!(cues[1].start_ms, 28_000 + 1000);
         assert_eq!(cues[1].translated, "訳：Sentence 1.");
         assert_eq!(
             events.last(),
-            Some(&Event::Progress { done_ms: 70_000 }),
+            Some(&Event::Progress {
+                done_ms: 70_000,
+                ready_ms: 70_000
+            }),
             "the whole file is reported done"
         );
     }
@@ -945,13 +992,83 @@ mod tests {
         assert!(count.load(Ordering::SeqCst) >= (BLOCKS / 28) as usize);
     }
 
+    /// Recognizes one unfinished sentence near the end of the first
+    /// window, and nothing after it.
+    struct Unfinished {
+        calls: AtomicUsize,
+    }
+
+    #[async_trait]
+    impl Engine for Unfinished {
+        async fn recognize(&self, _: &[i16]) -> Result<Vec<TranscriptSegment>, String> {
+            if self.calls.fetch_add(1, Ordering::SeqCst) > 0 {
+                return Ok(Vec::new());
+            }
+            Ok(vec![TranscriptSegment {
+                start_s: 20.0,
+                end_s: 27.0,
+                text: "and so we".into(),
+            }])
+        }
+
+        async fn translate(&self, text: &str, _: &[(String, String)]) -> Option<String> {
+            Some(format!("訳：{text}"))
+        }
+    }
+
+    #[tokio::test]
+    async fn an_open_sentence_holds_back_the_ready_position() {
+        let engine = Unfinished {
+            calls: AtomicUsize::new(0),
+        };
+        let (tx, rx) = mpsc::channel(QUEUE);
+        tokio::spawn(async move {
+            for block in vec![tone(RATE); 40] {
+                tx.send(block).await.unwrap();
+            }
+        });
+        let events = Mutex::new(Vec::new());
+        let emit = |e: Event| events.lock().push(e);
+        run(rx, &engine, &SubtitleSettings::default(), &emit)
+            .await
+            .unwrap();
+        let events = events.into_inner();
+        // The sentence may go on in the next window: no subtitle yet,
+        // and the player must not pass its start.
+        assert_eq!(
+            events[0],
+            Event::Progress {
+                done_ms: 28_000,
+                ready_ms: 20_000
+            }
+        );
+        // Closed by the silence that follows: every subtitle is out.
+        let Event::Cue(cue) = &events[1] else {
+            panic!("{events:?}")
+        };
+        assert_eq!((cue.start_ms, cue.end_ms), (20_000, 27_000));
+        assert_eq!(
+            events.last(),
+            Some(&Event::Progress {
+                done_ms: 40_000,
+                ready_ms: 40_000
+            })
+        );
+    }
+
     #[tokio::test]
     async fn silence_is_not_recognized() {
         let engine = Stub::default();
         let (events, result) = cues_of(vec![vec![0; RATE]; 40], &engine).await;
         result.unwrap();
         assert_eq!(engine.calls.load(Ordering::SeqCst), 0);
-        assert_eq!(events.last(), Some(&Event::Progress { done_ms: 40_000 }));
+        assert_eq!(
+            events.last(),
+            Some(&Event::Progress {
+                done_ms: 40_000,
+                ready_ms: 40_000
+            })
+        );
     }
 
     #[test]

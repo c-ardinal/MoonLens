@@ -39,6 +39,8 @@ export type SubtitleView = {
   idBase: number;
   /** 採番済みの最大 ID（加算後）。 */
   lastId: number;
+  /** クリア時点の最大 ID。以下の ID の行は消去済み（補正による復元を防止）。 */
+  clearedThrough: number;
 };
 
 /** 保持件数の上限（超過分は旧字幕から破棄）。 */
@@ -53,7 +55,8 @@ export const initialView = (): SubtitleView => ({
   candidates: [],
   error: null,
   idBase: 0,
-  lastId: 0
+  lastId: 0,
+  clearedThrough: 0
 });
 
 /** バックエンドのイベント（`moonlens://subtitle`）を表示状態へ反映。 */
@@ -92,6 +95,9 @@ export function reduce(view: SubtitleView, ev: SubtitleEvent): SubtitleView {
       const base = view.idBase;
       const replaces = ev.replaces.map((id) => base + id);
       const lastId = Math.max(view.lastId, base + ev.id, base + (ev.rest?.id ?? 0));
+      // 置換対象にクリア済みの行を含む文：補正後の文は消去済みの内容を含むため不採用、
+      // 表示中の行は補正前のまま維持。
+      if (replaces.some((id) => id <= view.clearedThrough)) return { ...view, lastId };
       // 置換対象が保持範囲外（破棄済み）の場合、行は不変。
       const at = view.lines.findIndex((l) => replaces.includes(l.id));
       if (at < 0) return lastId === view.lastId ? view : { ...view, lastId };
@@ -114,6 +120,14 @@ export function reduce(view: SubtitleView, ev: SubtitleEvent): SubtitleView {
     case 'error':
       return { ...view, error: ev.message };
   }
+}
+
+/**
+ * 表示中の字幕を消去（クリア）。履歴の記録は維持。消去済みの行を含む文への補正は
+ * 不採用（`reduce` の `revised`、消去済みの内容の復元を防止）。
+ */
+export function clear(view: SubtitleView): SubtitleView {
+  return view.lines.length ? { ...view, lines: [], clearedThrough: view.lastId } : view;
 }
 
 /**

@@ -85,3 +85,38 @@ fn subscribing_receives_snapshots_after_save() {
         .expect("subscriber should get the saved snapshot");
     assert_eq!(received.subtitle.target_language, "de");
 }
+
+/// 音声翻訳の操作透過ショートカット：追加前の設定ファイルは既定値で補完、
+/// 利用者の割当ては保存・再読込で維持。
+#[test]
+fn subtitle_operate_shortcut_fills_in_and_round_trips() {
+    let tmp = tempfile::tempdir().unwrap();
+    let config_path = tmp.path().join("config.toml");
+    std::fs::write(
+        &config_path,
+        r##"
+        [hotkeys]
+        toggle_subtitle = "CommandOrControl+Shift+S"
+        [triggers]
+        toggle_subtitle = "Mouse4"
+        "##,
+    )
+    .unwrap();
+    let store = SettingsStore::load_from(config_path.clone()).unwrap();
+    let mut s = (*store.snapshot()).clone();
+    assert_eq!(
+        s.hotkeys.toggle_subtitle_operate,
+        "CommandOrControl+Shift+Y"
+    );
+    assert_eq!(s.triggers.toggle_subtitle_operate, "");
+
+    s.hotkeys.toggle_subtitle_operate = "CommandOrControl+Alt+T".into();
+    s.triggers.toggle_subtitle_operate = "Mouse5".into();
+    store.save(s).unwrap();
+    let reloaded = SettingsStore::load_from(config_path).unwrap().snapshot();
+    assert_eq!(
+        reloaded.hotkeys.toggle_subtitle_operate,
+        "CommandOrControl+Alt+T"
+    );
+    assert_eq!(reloaded.triggers.toggle_subtitle_operate, "Mouse5");
+}
