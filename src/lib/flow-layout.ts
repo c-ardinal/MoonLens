@@ -253,15 +253,16 @@ export function flowLayout(text: string, o: FlowOptions): FlowResult {
     const pitch = fillPitch(n, fs);
     const c = n > 1 ? c0 + i * pitch : c0;
     const half = (fs * 1.2) / 2;
-    let room = Infinity;
+    // Right edge: the nearest one of every row the text overlaps.
+    let edge = Infinity;
     let at = 0;
     rows.forEach((r, j) => {
-      if (bandTop(j) <= c + half && bandBottom(j) >= c - half) room = Math.min(room, rowRight(r) - rowLeft(r));
+      if (bandTop(j) <= c + half && bandBottom(j) >= c - half) edge = Math.min(edge, rowRight(r));
       if (bandTop(j) <= c && bandBottom(j) >= c) at = j;
     });
     const left = rowLeft(rows[at]);
     const height = n > 1 ? pitch : first.height;
-    return { left, room: Math.min(room, rowRight(rows[at]) - left), top: c - height / 2, height };
+    return { left, room: Math.min(edge, rowRight(rows[at])) - left, top: c - height / 2, height };
   };
   const fillLines = (fs: number, n: number) =>
     breakLines(tokens, (i) => slot(i, n, fs).room, (t) => unitW(t) * fs);

@@ -242,4 +242,22 @@ describe('flowLayout fill', () => {
       if (centre(l) - r.fontSize * 0.6 < 5 * 22 + 16 + 3) expect(l.textWidth).toBeLessThanOrEqual(200.01);
     }
   });
+
+  it('ends an indented line overlapping a picture row at the picture', () => {
+    // 3 indented full-width rows, then 5 rows beside a picture at x = 200.
+    const src = rows(8, 22, 16).map((row, i) =>
+      i < 3 ? { ...row, left: 40, width: 360 } : { ...row, width: 190, limit: 200 }
+    );
+    const r = flowLayout('あ'.repeat(85), {
+      width: 400,
+      height: 7 * 22 + 16,
+      rows: src,
+      align: 'left',
+      maxFont: 14,
+      measure
+    });
+    for (const l of r.lines) {
+      if (centre(l) + r.fontSize * 0.6 > 3 * 22 - 3) expect(l.left + l.textWidth).toBeLessThanOrEqual(200.01);
+    }
+  });
 });
