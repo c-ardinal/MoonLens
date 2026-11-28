@@ -303,4 +303,18 @@ describe('flowLayout fill', () => {
     expect(r.lines.map((l) => l.text).join('')).toBe('あ'.repeat(58));
     expect(centre(r.lines[r.lines.length - 1])).toBeCloseTo(7 * 22 + 8);
   });
+
+  it('does not enlarge a character past a narrow row beside a picture', () => {
+    // The first row leaves 16 px before a picture.
+    const src = rows(8, 22, 16).map((row, i) => (i === 0 ? { ...row, width: 16, limit: 16 } : row));
+    const r = flowLayout('あ'.repeat(70), {
+      width: 400,
+      height: 7 * 22 + 16,
+      rows: src,
+      align: 'left',
+      maxFont: 14,
+      measure
+    });
+    expect(r.lines.every((l) => l.textWidth <= l.width + 0.01)).toBe(true);
+  });
 });

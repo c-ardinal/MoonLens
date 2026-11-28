@@ -270,7 +270,11 @@ export function flowLayout(text: string, o: FlowOptions): FlowResult {
   const fillLines = (fs: number, n: number) => {
     const rooms: number[] = [];
     const room = (i: number) => (rooms[i] ??= slot(i, n, fs).room);
-    return breakLines(tokens, room, (t) => unitW(t) * fs);
+    const lines = breakLines(tokens, room, (t) => unitW(t) * fs);
+    // breakLines lets a single character overflow a too narrow line;
+    // an enlarged font must not run into a picture that way.
+    const fits = lines.every((t, i) => textWidth(t, fs) <= room(i) + 0.01);
+    return { lines, fits };
   };
   const widest = Math.max(...rows.map((_, i) => rowRoom(i)));
   const total = tokens.reduce((w, t) => w + (isSpace(t) ? 0 : unitW(t)), 0);
@@ -292,8 +296,8 @@ export function flowLayout(text: string, o: FlowOptions): FlowResult {
         const pitch = n > 1 ? fillPitch(n, fs) : Infinity;
         // More lines only get tighter.
         if (pitch + 0.01 < Math.min(fs * FILL_LINE_HEIGHT, srcPitch)) break;
-        const lines = fillLines(fs, n);
-        if (lines.length > n) continue;
+        const { lines, fits } = fillLines(fs, n);
+        if (lines.length > n || !fits) continue;
         // The last line sits on the last row only when every slot is used.
         const reaches = n > 1 && lines.length === n && pitch + 0.01 >= (c1 - c0) / (n - 1);
         if (reaches) {
