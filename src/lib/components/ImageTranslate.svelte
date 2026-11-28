@@ -61,6 +61,10 @@
   $effect(() => (busy ? holdMotion() : undefined));
   let phase = $state<'ocr' | 'translate'>('ocr');
   let error = $state<UiError | null>(null);
+  // 表示は新規の失敗を優先：ファイル選択側の通知の到着時、従前の翻訳エラーを破棄
+  $effect(() => {
+    if (notice) error = null;
+  });
   const shownError = $derived(error ?? notice);
   let showOriginal = $state(false);
   let target = $state('ja');
