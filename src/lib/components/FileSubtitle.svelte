@@ -158,8 +158,15 @@
               <Square class="h-3.5 w-3.5" />{t('file-burn:cancel', { n: burnPercent ?? 0 })}
             </button>
           {:else}
-            <button class="sbtn" onclick={startBurn} disabled={status.cues === 0} title={t('file-burn:hint')}>
-              <Film class="h-3.5 w-3.5" />{t('file-burn:start')}
+            <!-- 1 画面収容のため記号のみ（文言は title・aria-label） -->
+            <button
+              class="sbtn"
+              onclick={startBurn}
+              disabled={status.cues === 0}
+              title={t('file-burn:hint')}
+              aria-label={t('file-burn:start')}
+            >
+              <Film class="h-3.5 w-3.5" />
             </button>
           {/if}
         {/if}
