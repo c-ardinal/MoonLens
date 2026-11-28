@@ -372,4 +372,21 @@ describe('字幕のクリア', () => {
     );
     expect(v.lines).toEqual([{ id: 4, original: 'Thanks.', translated: 'ありがとう。' }]);
   });
+
+  it('クリアを跨ぐ文の補正は不採用（消去済みの内容を復元しない）', () => {
+    let v = run([started, { kind: 'chunk', id: 1, original: 'Where is', translated: 'どこ' }]);
+    v = clear(v);
+    v = run(
+      [
+        { kind: 'chunk', id: 2, original: 'the station?', translated: '駅は' },
+        { kind: 'revised', replaces: [1, 2], id: 3, original: 'Where is the station?', translated: '駅はどこですか。', rest: null },
+        { kind: 'chunk', id: 4, original: 'Thanks.', translated: 'ありがとう。' },
+        { kind: 'chunk', id: 5, original: 'See', translated: 'また' },
+        { kind: 'revised', replaces: [5], id: 6, original: 'See you.', translated: 'またね。', rest: null }
+      ],
+      v
+    );
+    // クリア後のみの文は従来どおり補正。
+    expect(v.lines.map((l) => l.translated)).toEqual(['駅は', 'ありがとう。', 'またね。']);
+  });
 });
